@@ -1,0 +1,1 @@
+node_modules/ dist/ build/ *.log backend_axenta/vendor/ frontend_axenta/node_modules/ frontend_axenta/dist/

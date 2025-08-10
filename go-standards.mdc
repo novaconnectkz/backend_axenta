@@ -1,0 +1,10 @@
+package api
+
+import (
+"github.com/gin-gonic/gin"
+)
+
+func HandlerName(c \*gin.Context) {
+// Логика хендлера
+c.JSON(200, gin.H{"status": "success", "data": nil})
+}
