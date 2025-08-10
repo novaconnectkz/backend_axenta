@@ -1,0 +1,26 @@
+name: Deploy Backend
+on:
+  push:
+    branches: [ "main" ]   # если ветка другая — поменяй тут
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-backend-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Remote deploy (backend)
+        run: |
+          ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes \
+             "${{ secrets.SSH_USER }}"@"${{ secrets.SERVER_HOST }}" \
+             "sudo /usr/local/bin/deploy_backend.sh"
