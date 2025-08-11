@@ -1,26 +1,39 @@
-name: Deploy Backend
+name: Deploy (git pull over SSH)
+
 on:
   push:
-    branches: [ "main" ]   # если ветка другая — поменяй тут
-  workflow_dispatch: {}
-
-concurrency:
-  group: deploy-backend-${{ github.ref }}
-  cancel-in-progress: false
+    branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Prepare SSH
+      - name: Prepare ~/.ssh
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
+          chmod 700 ~/.ssh
+          touch ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
 
-      - name: Remote deploy (backend)
+      - name: Add server to known_hosts
         run: |
-          ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes \
-             "${{ secrets.SSH_USER }}"@"${{ secrets.SERVER_HOST }}" \
-             "sudo /usr/local/bin/deploy_backend.sh"
+          ssh-keyscan -p "${{ secrets.SSH_PORT }}" -T 5 "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: SSH and git pull
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script_stop: true
+          script: |
+            set -e
+            cd "${{ secrets.REPO_PATH }}"
+            git fetch --all --prune
+            rm axenta_backend
+            git pull origin "${{ secrets.BRANCH || 'main' }}"
+            /usr/local/go/bin/go build -ldflags="-w -s" -o axenta_backend main.go
+            sudo systemctl restart axenta-backend
+
