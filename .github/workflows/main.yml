@@ -32,7 +32,7 @@ jobs:
             set -e
             cd "${{ secrets.REPO_PATH }}"
             git fetch --all --prune
-            rm axenta_backend
+            rm -f axenta_backend
             git pull origin "${{ secrets.BRANCH || 'main' }}"
             /usr/local/go/bin/go build -ldflags="-w -s" -o axenta_backend main.go
             sudo systemctl restart axenta-backend
