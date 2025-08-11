@@ -1,0 +1,50 @@
+# Правила для проекта Axenta Backend
+
+Используйте camelCase для переменных и функций.
+Следуйте стандартам go fmt и golint.
+Модели данных создавайте с GORM, используя теги gorm для PostgreSQL.
+API-роуты разрабатывайте с Gin, следуя RESTful подходу (GET, POST, PUT, DELETE).
+Возвращайте JSON-ответы с полями status, data, error.
+
+## Авторизация через Axenta Cloud API
+
+Для авторизации используйте:
+- POST https://axenta.cloud/api/auth/login/ 
+- GET https://axenta.cloud/api/current_user/
+- Заголовок Authorization: Bearer <token>
+
+Пример структуры запроса логина:
+```go
+type LoginRequest struct {
+    Username string `json:"username" binding:"required,min=3,max=64"`
+    Password string `json:"password" binding:"required,min=3,max=64"`
+}
+```
+
+## Шаблоны хендлеров
+
+Простой хендлер (package api):
+```go
+package api
+
+import (
+    "github.com/gin-gonic/gin"
+)
+
+func HandlerName(c *gin.Context) {
+    // Логика хендлера
+    c.JSON(200, gin.H{"status": "success", "data": nil})
+}
+```
+
+Сложные хендлеры размещайте в package handlers с использованием @handler-template.go
+
+Всегда валидируйте входные данные, используйте HTTPS для внешних API-запросов.
+Включайте в логи операций company_id, device_id, user_id.
+
+Роли доступа:
+- manager/admin: все операции с складом
+- tech: резервирование, установка, удаление только для назначенных заказов  
+- accountant: просмотр списков и истории
+
+Всегда проверяйте company_id в операциях для безопасности.
