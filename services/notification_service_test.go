@@ -1,0 +1,526 @@
+package services
+
+import (
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+
+	"backend_axenta/models"
+)
+
+// MockTelegramClient представляет мок Telegram клиента для тестов
+type MockTelegramClient struct {
+	mock.Mock
+}
+
+func (m *MockTelegramClient) SendMessage(chatID, message string) (interface{}, error) {
+	args := m.Called(chatID, message)
+	return args.Get(0), args.Error(1)
+}
+
+func (m *MockTelegramClient) IsHealthy() bool {
+	args := m.Called()
+	return args.Bool(0)
+}
+
+// setupTestDB создает тестовую базу данных
+func setupTestDB() *gorm.DB {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		panic("failed to connect database")
+	}
+
+	// Автомиграция тестовых моделей
+	db.AutoMigrate(
+		&models.Company{},
+		&models.User{},
+		&models.NotificationTemplate{},
+		&models.NotificationLog{},
+		&models.NotificationSettings{},
+		&models.UserNotificationPreferences{},
+		&models.Installation{},
+		&models.Object{},
+		&models.Installer{},
+	)
+
+	return db
+}
+
+// setupTestData создает тестовые данные
+func setupTestData(db *gorm.DB) (uint, uint, uint) {
+	// Создаем компанию
+	company := models.Company{
+		Name:   "Test Company",
+		Domain: "test.com",
+	}
+	db.Create(&company)
+
+	// Создаем пользователя
+	user := models.User{
+		Username:   "testuser",
+		Email:      "test@test.com",
+		Phone:      "+1234567890",
+		TelegramID: "123456789",
+		CompanyID:  company.ID,
+	}
+	db.Create(&user)
+
+	// Создаем настройки уведомлений
+	settings := models.NotificationSettings{
+		CompanyID:         company.ID,
+		TelegramEnabled:   true,
+		TelegramBotToken:  "test_token",
+		EmailEnabled:      true,
+		SMTPHost:          "smtp.test.com",
+		SMTPPort:          587,
+		SMTPUsername:      "test@test.com",
+		SMTPPassword:      "password",
+		SMTPFromEmail:     "noreply@test.com",
+		SMTPFromName:      "Test System",
+		DefaultLanguage:   "ru",
+		MaxRetryAttempts:  3,
+		RetryDelayMinutes: 5,
+	}
+	db.Create(&settings)
+
+	// Создаем шаблон уведомления
+	template := models.NotificationTemplate{
+		Name:        "Test Template",
+		Type:        "test_notification",
+		Channel:     "telegram",
+		Template:    "Тест: {{.Message}}",
+		Description: "Test template",
+		CompanyID:   company.ID,
+		IsActive:    true,
+	}
+	db.Create(&template)
+
+	return company.ID, user.ID, template.ID
+}
+
+func TestNotificationService_SendNotification(t *testing.T) {
+	db := setupTestDB()
+	cache := NewCacheService(nil, nil) // Простой кэш для тестов
+	service := NewNotificationService(db, cache)
+
+	companyID, userID, _ := setupTestData(db)
+
+	templateData := map[string]interface{}{
+		"Message": "Test message",
+		"UserID":  userID,
+	}
+
+	// Тест отправки уведомления (должен создать лог, но не отправить реально)
+	_ = service.SendNotification("test_notification", "telegram", "123456789", templateData, companyID, 1, "test")
+
+	// Проверяем, что создался лог уведомления
+	var log models.NotificationLog
+	result := db.Where("type = ? AND channel = ? AND recipient = ?", "test_notification", "telegram", "123456789").First(&log)
+
+	assert.NoError(t, result.Error)
+	assert.Equal(t, "test_notification", log.Type)
+	assert.Equal(t, "telegram", log.Channel)
+	assert.Equal(t, "123456789", log.Recipient)
+	assert.Contains(t, log.Message, "Test message")
+
+	// Поскольку у нас нет реального Telegram клиента, статус должен быть failed
+	assert.Equal(t, "failed", log.Status)
+	assert.NotEmpty(t, log.ErrorMessage)
+}
+
+func TestNotificationService_GetNotificationTemplate(t *testing.T) {
+	db := setupTestDB()
+	cache := NewCacheService(nil, nil)
+	service := NewNotificationService(db, cache)
+
+	companyID, _, templateID := setupTestData(db)
+
+	// Тест получения существующего шаблона
+	template, err := service.getNotificationTemplate("test_notification", "telegram", companyID)
+	assert.NoError(t, err)
+	assert.Equal(t, templateID, template.ID)
+	assert.Equal(t, "Test Template", template.Name)
+
+	// Тест получения несуществующего шаблона
+	_, err = service.getNotificationTemplate("nonexistent", "telegram", companyID)
+	assert.Error(t, err)
+}
+
+func TestNotificationService_RenderTemplate(t *testing.T) {
+	db := setupTestDB()
+	cache := NewCacheService(nil, nil)
+	service := NewNotificationService(db, cache)
+
+	template := &models.NotificationTemplate{
+		Subject:  "Тема: {{.Subject}}",
+		Template: "Сообщение: {{.Message}}, Пользователь: {{.UserName}}",
+	}
+
+	templateData := map[string]interface{}{
+		"Subject":  "Тестовая тема",
+		"Message":  "Тестовое сообщение",
+		"UserName": "Тестовый пользователь",
+	}
+
+	subject, message, err := service.renderTemplate(template, templateData)
+
+	assert.NoError(t, err)
+	assert.Equal(t, "Тема: Тестовая тема", subject)
+	assert.Equal(t, "Сообщение: Тестовое сообщение, Пользователь: Тестовый пользователь", message)
+}
+
+func TestNotificationService_GetNotificationLogs(t *testing.T) {
+	db := setupTestDB()
+	cache := NewCacheService(nil, nil)
+	service := NewNotificationService(db, cache)
+
+	companyID, userID, _ := setupTestData(db)
+
+	// Создаем несколько тестовых логов
+	logs := []models.NotificationLog{
+		{
+			Type:        "test1",
+			Channel:     "telegram",
+			Recipient:   "123456789",
+			Message:     "Test message 1",
+			Status:      "sent",
+			CompanyID:   companyID,
+			UserID:      &userID,
+			RelatedType: "test",
+		},
+		{
+			Type:        "test2",
+			Channel:     "email",
+			Recipient:   "test@test.com",
+			Message:     "Test message 2",
+			Status:      "failed",
+			CompanyID:   companyID,
+			UserID:      &userID,
+			RelatedType: "test",
+		},
+	}
+
+	for _, log := range logs {
+		db.Create(&log)
+	}
+
+	// Тест получения логов без фильтров
+	result, total, err := service.GetNotificationLogs(10, 0, map[string]interface{}{}, companyID)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(2), total)
+	assert.Len(t, result, 2)
+
+	// Тест получения логов с фильтром по типу
+	filters := map[string]interface{}{"type": "test1"}
+	result, total, err = service.GetNotificationLogs(10, 0, filters, companyID)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(1), total)
+	assert.Len(t, result, 1)
+	assert.Equal(t, "test1", result[0].Type)
+
+	// Тест получения логов с фильтром по каналу
+	filters = map[string]interface{}{"channel": "telegram"}
+	result, total, err = service.GetNotificationLogs(10, 0, filters, companyID)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(1), total)
+	assert.Equal(t, "telegram", result[0].Channel)
+}
+
+func TestNotificationService_GetNotificationStatistics(t *testing.T) {
+	db := setupTestDB()
+	cache := NewCacheService(nil, nil)
+	service := NewNotificationService(db, cache)
+
+	companyID, userID, _ := setupTestData(db)
+
+	// Создаем тестовые логи с разными статусами
+	logs := []models.NotificationLog{
+		{Type: "test1", Channel: "telegram", Status: "sent", CompanyID: companyID, UserID: &userID, Recipient: "123", Message: "test"},
+		{Type: "test2", Channel: "telegram", Status: "sent", CompanyID: companyID, UserID: &userID, Recipient: "123", Message: "test"},
+		{Type: "test3", Channel: "email", Status: "failed", CompanyID: companyID, UserID: &userID, Recipient: "test@test.com", Message: "test"},
+		{Type: "test4", Channel: "sms", Status: "pending", CompanyID: companyID, UserID: &userID, Recipient: "123", Message: "test"},
+	}
+
+	for _, log := range logs {
+		db.Create(&log)
+	}
+
+	stats, err := service.GetNotificationStatistics(companyID)
+	assert.NoError(t, err)
+
+	assert.Equal(t, int64(4), stats["total"])
+	assert.Equal(t, int64(2), stats["sent"])
+	assert.Equal(t, int64(1), stats["failed"])
+	assert.Equal(t, int64(1), stats["pending"])
+
+	// Проверяем статистику по каналам
+	channelStats := stats["by_channel"].([]struct {
+		Channel string `json:"channel"`
+		Count   int64  `json:"count"`
+	})
+	assert.Len(t, channelStats, 3)
+
+	// Проверяем статистику по типам
+	typeStats := stats["by_type"].([]struct {
+		Type  string `json:"type"`
+		Count int64  `json:"count"`
+	})
+	assert.Len(t, typeStats, 4)
+}
+
+func TestNotificationService_CreateDefaultTemplates(t *testing.T) {
+	db := setupTestDB()
+	cache := NewCacheService(nil, nil)
+	service := NewNotificationService(db, cache)
+
+	companyID, _, _ := setupTestData(db)
+
+	// Создаем шаблоны по умолчанию
+	err := service.CreateDefaultTemplates(companyID)
+	assert.NoError(t, err)
+
+	// Проверяем, что шаблоны созданы
+	var templates []models.NotificationTemplate
+	db.Where("company_id = ?", companyID).Find(&templates)
+
+	// Должно быть больше одного шаблона (исходный тестовый + новые)
+	assert.Greater(t, len(templates), 1)
+
+	// Проверяем наличие конкретных шаблонов
+	var telegramReminder models.NotificationTemplate
+	err = db.Where("type = ? AND channel = ? AND company_id = ?",
+		"installation_reminder", "telegram", companyID).First(&telegramReminder).Error
+	assert.NoError(t, err)
+	assert.Contains(t, telegramReminder.Template, "Напоминание о монтаже")
+
+	// Повторный вызов не должен создавать дубликаты
+	initialCount := len(templates)
+	err = service.CreateDefaultTemplates(companyID)
+	assert.NoError(t, err)
+
+	db.Where("company_id = ?", companyID).Find(&templates)
+	assert.Equal(t, initialCount, len(templates))
+}
+
+func TestNotificationService_ProcessRetryNotifications(t *testing.T) {
+	db := setupTestDB()
+	cache := NewCacheService(nil, nil)
+	service := NewNotificationService(db, cache)
+
+	companyID, userID, templateID := setupTestData(db)
+
+	// Создаем уведомление для повтора
+	retryTime := time.Now().Add(-1 * time.Minute) // В прошлом
+	log := models.NotificationLog{
+		Type:         "test_notification",
+		Channel:      "telegram",
+		Recipient:    "123456789",
+		Message:      "Test retry message",
+		Status:       "retry",
+		CompanyID:    companyID,
+		UserID:       &userID,
+		TemplateID:   &templateID,
+		AttemptCount: 1,
+		NextRetryAt:  &retryTime,
+		RelatedType:  "test",
+	}
+	db.Create(&log)
+
+	// Получаем шаблон и устанавливаем лимит попыток
+	var template models.NotificationTemplate
+	db.First(&template, templateID)
+	template.RetryAttempts = 3
+	db.Save(&template)
+
+	// Обрабатываем повторы
+	err := service.ProcessRetryNotifications()
+	assert.NoError(t, err)
+
+	// Проверяем, что лог обновился
+	var updatedLog models.NotificationLog
+	db.First(&updatedLog, log.ID)
+	assert.Equal(t, 2, updatedLog.AttemptCount) // Должен увеличиться
+	// Статус может остаться retry или стать failed в зависимости от реализации
+}
+
+// Benchmark тесты
+
+func BenchmarkNotificationService_SendNotification(b *testing.B) {
+	db := setupTestDB()
+	cache := NewCacheService(nil, nil)
+	service := NewNotificationService(db, cache)
+
+	companyID, userID, _ := setupTestData(db)
+	templateData := map[string]interface{}{
+		"Message": "Benchmark test message",
+		"UserID":  userID,
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		service.SendNotification("test_notification", "telegram", "123456789", templateData, companyID, uint(i), "benchmark")
+	}
+}
+
+func BenchmarkNotificationService_RenderTemplate(b *testing.B) {
+	db := setupTestDB()
+	cache := NewCacheService(nil, nil)
+	service := NewNotificationService(db, cache)
+
+	template := &models.NotificationTemplate{
+		Subject:  "Тема: {{.Subject}}",
+		Template: "Сообщение: {{.Message}}, Пользователь: {{.UserName}}, Время: {{.Time}}",
+	}
+
+	templateData := map[string]interface{}{
+		"Subject":  "Benchmark тема",
+		"Message":  "Benchmark сообщение",
+		"UserName": "Benchmark пользователь",
+		"Time":     time.Now().Format("15:04:05"),
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		service.renderTemplate(template, templateData)
+	}
+}
+
+// Интеграционные тесты
+
+func TestNotificationService_Integration_InstallationReminder(t *testing.T) {
+	db := setupTestDB()
+	cache := NewCacheService(nil, nil)
+	service := NewNotificationService(db, cache)
+
+	companyID, _, _ := setupTestData(db)
+
+	// Создаем объект
+	object := models.Object{
+		Name: "Test Object",
+	}
+	db.Create(&object)
+
+	// Создаем монтажника
+	installer := models.Installer{
+		FirstName:  "Test",
+		LastName:   "Installer",
+		Phone:      "+1234567890",
+		TelegramID: "installer123",
+	}
+	db.Create(&installer)
+
+	// Создаем монтаж
+	installation := models.Installation{
+		ObjectID:      object.ID,
+		InstallerID:   installer.ID,
+		ScheduledAt:   time.Now().Add(24 * time.Hour),
+		Address:       "Test Address",
+		ClientContact: "+0987654321",
+		CompanyID:     companyID,
+		Object:        &object,
+		Installer:     &installer,
+	}
+	db.Create(&installation)
+
+	// Создаем шаблоны для напоминаний
+	templates := []models.NotificationTemplate{
+		{
+			Name:      "Installation Reminder Telegram",
+			Type:      "installation_reminder",
+			Channel:   "telegram",
+			Template:  "Напоминание о монтаже {{.Date}} в {{.Time}} по адресу {{.Address}}",
+			CompanyID: companyID,
+			IsActive:  true,
+		},
+		{
+			Name:      "Installation Reminder SMS",
+			Type:      "installation_reminder",
+			Channel:   "sms",
+			Template:  "Напоминание: {{.Date}} в {{.Time}} монтаж по адресу {{.Address}}",
+			CompanyID: companyID,
+			IsActive:  true,
+		},
+	}
+
+	for _, tmpl := range templates {
+		db.Create(&tmpl)
+	}
+
+	// Отправляем напоминание
+	err := service.SendInstallationReminder(&installation)
+	assert.NoError(t, err)
+
+	// Проверяем, что создались логи уведомлений
+	var logs []models.NotificationLog
+	db.Where("type = ? AND company_id = ?", "installation_reminder", companyID).Find(&logs)
+
+	// Должно быть как минимум одно уведомление (Telegram или SMS монтажнику)
+	assert.Greater(t, len(logs), 0)
+
+	// Проверяем содержание уведомления
+	found := false
+	for _, log := range logs {
+		if log.Channel == "telegram" && log.Recipient == installer.TelegramID {
+			assert.Contains(t, log.Message, "Test Address")
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "Уведомление монтажнику через Telegram должно быть отправлено")
+}
+
+// Тесты для моделей уведомлений
+
+func TestNotificationTemplate_GetPriorityDisplayName(t *testing.T) {
+	tests := []struct {
+		priority string
+		expected string
+	}{
+		{"low", "Низкий"},
+		{"normal", "Обычный"},
+		{"high", "Высокий"},
+		{"urgent", "Срочный"},
+		{"unknown", "Обычный"},
+	}
+
+	for _, test := range tests {
+		template := models.NotificationTemplate{Priority: test.priority}
+		assert.Equal(t, test.expected, template.GetPriorityDisplayName())
+	}
+}
+
+func TestNotificationLog_GetStatusDisplayName(t *testing.T) {
+	tests := []struct {
+		status   string
+		expected string
+	}{
+		{"pending", "Ожидает отправки"},
+		{"sent", "Отправлено"},
+		{"failed", "Ошибка отправки"},
+		{"retry", "Повторная попытка"},
+		{"unknown", "Неизвестно"},
+	}
+
+	for _, test := range tests {
+		log := models.NotificationLog{Status: test.status}
+		assert.Equal(t, test.expected, log.GetStatusDisplayName())
+	}
+}
+
+func TestUserNotificationPreferences_IsInQuietHours(t *testing.T) {
+	// Тест для тихих часов, не пересекающих полночь (22:00 - 08:00)
+	quietPrefs := models.UserNotificationPreferences{
+		QuietHoursStart: "22:00",
+		QuietHoursEnd:   "08:00",
+	}
+
+	// Функция должна работать с текущим временем, но мы не можем его мокнуть легко
+	// Поэтому просто проверим, что функция не паникует
+	assert.NotPanics(t, func() {
+		quietPrefs.IsInQuietHours()
+	})
+}

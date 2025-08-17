@@ -13,15 +13,53 @@ Backend часть проекта Axenta, построенная на Go с ис
 ## Модели
 
 ### Object
+
 - `Name` - название объекта (varchar 100)
 - `Latitude` - широта (float64)
-- `Longitude` - долгота (float64) 
+- `Longitude` - долгота (float64)
 - `IMEI` - уникальный идентификатор устройства
 
 ## API Endpoints
 
+### Публичные
+
 - `GET /ping` - проверка работоспособности
-- `GET /api/objects` - получение списка всех объектов
+- `POST /api/auth/login` - авторизация пользователя
+
+### Объекты мониторинга
+
+- `GET /api/objects` - получение списка объектов с фильтрацией и пагинацией
+- `GET /api/objects/:id` - получение конкретного объекта по ID
+- `POST /api/objects` - создание нового объекта
+- `PUT /api/objects/:id` - обновление существующего объекта
+- `DELETE /api/objects/:id` - мягкое удаление объекта
+
+### Плановое удаление объектов
+
+- `PUT /api/objects/:id/schedule-delete` - запланировать удаление объекта на указанную дату
+- `PUT /api/objects/:id/cancel-delete` - отменить плановое удаление объекта
+
+### Корзина объектов
+
+- `GET /api/objects-trash` - получение списка удаленных объектов
+- `PUT /api/objects/:id/restore` - восстановление объекта из корзины
+- `DELETE /api/objects/:id/permanent` - окончательное удаление объекта
+
+### Шаблоны объектов
+
+- `GET /api/object-templates` - получение списка шаблонов объектов
+- `GET /api/object-templates/:id` - получение конкретного шаблона по ID
+- `POST /api/object-templates` - создание нового шаблона объекта
+- `PUT /api/object-templates/:id` - обновление существующего шаблона
+- `DELETE /api/object-templates/:id` - удаление шаблона объекта
+
+### Пользователи и роли
+
+- `GET /api/users` - получение списка пользователей
+- `GET/POST/PUT/DELETE /api/users/*` - управление пользователями
+- `GET/POST/PUT/DELETE /api/roles/*` - управление ролями
+- `GET/POST /api/permissions/*` - управление правами доступа
+- `GET/POST/PUT/DELETE /api/user-templates/*` - управление шаблонами пользователей
 
 ## Запуск
 

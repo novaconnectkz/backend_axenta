@@ -17,10 +17,10 @@ type BillingPlan struct {
 	Name        string  `json:"name" gorm:"uniqueIndex;not null;type:varchar(100)"`
 	Description string  `json:"description" gorm:"type:text"`
 	Price       float64 `json:"price" gorm:"not null"`
-	Currency    string  `json:"currency" gorm:"default:'RUB';type:varchar(3)"`
+	Currency    string  `json:"currency" gorm:"default:RUB;type:varchar(3)"`
 
 	// Период тарификации
-	BillingPeriod string `json:"billing_period" gorm:"default:'monthly';type:varchar(20)"` // monthly, yearly, one-time
+	BillingPeriod string `json:"billing_period" gorm:"default:monthly;type:varchar(20)"` // monthly, yearly, one-time
 
 	// Лимиты и возможности
 	MaxDevices      int  `json:"max_devices" gorm:"default:0"` // 0 = безлимитно
@@ -36,7 +36,7 @@ type BillingPlan struct {
 	IsPopular bool `json:"is_popular" gorm:"default:false"`
 
 	// Для управления доступом
-	CompanyID uint `json:"company_id" gorm:"index"` // Если тариф специфичен для компании
+	CompanyID *uint `json:"company_id" gorm:"index"` // Если тариф специфичен для компании (nullable)
 }
 
 // TableName задает имя таблицы для модели BillingPlan
@@ -61,7 +61,7 @@ type Subscription struct {
 	EndDate   *time.Time `json:"end_date"`
 
 	// Статус подписки
-	Status      string `json:"status" gorm:"default:'active';type:varchar(20)"` // active, expired, cancelled, suspended
+	Status      string `json:"status" gorm:"default:active;type:varchar(20)"` // active, expired, cancelled, suspended
 	IsAutoRenew bool   `json:"is_auto_renew" gorm:"default:true"`
 
 	// Платежная информация

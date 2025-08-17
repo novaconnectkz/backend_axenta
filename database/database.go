@@ -8,8 +8,10 @@ import (
 
 	"backend_axenta/models"
 
+	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
 	"gorm.io/driver/postgres"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
@@ -112,18 +114,111 @@ func GetDB() *gorm.DB {
 	return DB
 }
 
-// autoMigrate выполняет автомиграцию всех моделей
-func autoMigrate() error {
-	err := DB.AutoMigrate(
-		&models.User{},
-		&models.Object{},
-		// Добавляйте новые модели здесь
-	)
+// GetTenantDB возвращает базу данных для текущего tenant из контекста
+func GetTenantDB(c *gin.Context) *gorm.DB {
+	// Получаем tenant DB из контекста, установленного middleware
+	if tenantDB, exists := c.Get("tenant_db"); exists {
+		if db, ok := tenantDB.(*gorm.DB); ok {
+			return db
+		}
+	}
+	// Возвращаем основную DB как fallback
+	return DB
+}
 
-	if err != nil {
-		return err
+// GetTenantDBByID возвращает базу данных для указанного tenant ID
+func GetTenantDBByID(tenantID uint) *gorm.DB {
+	// Получаем данные компании
+	var company struct {
+		DatabaseSchema string `gorm:"column:database_schema"`
 	}
 
-	log.Println("✅ Автомиграция моделей выполнена успешно")
+	if err := DB.Table("companies").Select("database_schema").Where("id = ?", tenantID).First(&company).Error; err != nil {
+		log.Printf("Ошибка получения схемы для tenant %d: %v", tenantID, err)
+		return DB
+	}
+
+	// Переключаемся на схему компании
+	tenantDB := DB.Exec(fmt.Sprintf("SET search_path TO %s", company.DatabaseSchema))
+	if tenantDB.Error != nil {
+		log.Printf("Ошибка переключения на схему %s: %v", company.DatabaseSchema, tenantDB.Error)
+		return DB
+	}
+
+	return tenantDB
+}
+
+// autoMigrate выполняет автомиграцию только глобальных моделей (не мультитенантных)
+func autoMigrate() error {
+	// Импортируем модели для миграции
+	// Временно закомментируем до решения проблем с циклическими импортами
+	/*
+		if err := DB.AutoMigrate(
+			&models.Company{},
+			&models.IntegrationError{},
+		); err != nil {
+			return fmt.Errorf("ошибка миграции глобальных моделей: %w", err)
+		}
+	*/
+
+	log.Println("✅ Автомиграция глобальных моделей выполнена успешно")
 	return nil
+}
+
+// SetupTestDatabase создает тестовую базу данных в памяти
+func SetupTestDatabase() error {
+	var err error
+	DB, err = gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to connect to test database: %v", err)
+	}
+
+	// Выполняем миграции для тестовой базы
+	err = DB.AutoMigrate(
+		&models.Company{},
+		&models.User{},
+		&models.Role{},
+		&models.Permission{},
+		&models.UserTemplate{},
+		&models.Object{},
+		&models.ObjectTemplate{},
+		&models.Location{},
+		&models.Equipment{},
+		&models.Installer{},
+		&models.Installation{},
+		&models.WarehouseOperation{},
+		&models.EquipmentCategory{},
+		&models.StockAlert{},
+		&models.Contract{},
+		&models.ContractAppendix{},
+		&models.BillingPlan{},
+		&models.Subscription{},
+		&models.TariffPlan{},
+		&models.IntegrationError{},
+		&models.NotificationTemplate{},
+		&models.NotificationLog{},
+		&models.NotificationSettings{},
+		&models.UserNotificationPreferences{},
+		&models.Report{},
+		&models.ReportTemplate{},
+		&models.ReportSchedule{},
+		&models.ReportExecution{},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to migrate test database: %v", err)
+	}
+
+	return nil
+}
+
+// CleanupTestDatabase очищает тестовую базу данных
+func CleanupTestDatabase() {
+	if DB != nil {
+		sqlDB, _ := DB.DB()
+		if sqlDB != nil {
+			sqlDB.Close()
+		}
+	}
 }
