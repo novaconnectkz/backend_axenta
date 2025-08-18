@@ -1,6 +1,7 @@
 package services
 
 import (
+	"backend_axenta/config"
 	"backend_axenta/database"
 	"backend_axenta/models"
 	"context"
@@ -59,8 +60,9 @@ func NewIntegrationService(axetnaBaseURL string, logger *log.Logger) (*Integrati
 
 	axetnaClient := NewAxetnaClient(axetnaBaseURL, logger)
 
-	// Получаем ключ шифрования из переменной окружения
-	encryptionKey := os.Getenv("ENCRYPTION_KEY")
+	// Получаем ключ шифрования из конфигурации
+	cfg := config.GetConfig()
+	encryptionKey := cfg.Axenta.EncryptionKey
 	if encryptionKey == "" {
 		// В продакшене это должно быть обязательно
 		logger.Println("ПРЕДУПРЕЖДЕНИЕ: Не задан ENCRYPTION_KEY, используется значение по умолчанию")

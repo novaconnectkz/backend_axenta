@@ -5,8 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"strconv"
 	"time"
+
+	"backend_axenta/config"
 
 	"github.com/go-redis/redis/v8"
 )
@@ -17,17 +18,13 @@ var Ctx = context.Background()
 
 // InitRedis инициализирует подключение к Redis
 func InitRedis() error {
-	// Получаем настройки Redis из переменных окружения
-	host := getEnv("REDIS_HOST", "localhost")
-	port := getEnv("REDIS_PORT", "6379")
-	password := getEnv("REDIS_PASSWORD", "")
-	dbStr := getEnv("REDIS_DB", "0")
+	cfg := config.GetConfig()
 
-	// Конвертируем номер БД в int
-	db, err := strconv.Atoi(dbStr)
-	if err != nil {
-		db = 0
-	}
+	// Получаем настройки Redis из конфигурации
+	host := cfg.Redis.Host
+	port := cfg.Redis.Port
+	password := cfg.Redis.Password
+	db := cfg.Redis.DB
 
 	// Создаем клиент Redis
 	Redis = redis.NewClient(&redis.Options{

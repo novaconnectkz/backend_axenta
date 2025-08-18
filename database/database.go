@@ -4,8 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-	"os"
 
+	"backend_axenta/config"
 	"backend_axenta/models"
 
 	"github.com/gin-gonic/gin"
@@ -20,13 +20,15 @@ var DB *gorm.DB
 
 // CreateDatabaseIfNotExists создает базу данных, если она не существует
 func CreateDatabaseIfNotExists() error {
+	cfg := config.GetConfig()
+
 	// Получаем настройки подключения
-	host := getEnv("DB_HOST", "localhost")
-	port := getEnv("DB_PORT", "5432")
-	user := getEnv("DB_USER", "postgres")
-	password := getEnv("DB_PASSWORD", "")
-	dbname := getEnv("DB_NAME", "axenta_db")
-	sslmode := getEnv("DB_SSLMODE", "disable")
+	host := cfg.Database.Host
+	port := cfg.Database.Port
+	user := cfg.Database.User
+	password := cfg.Database.Password
+	dbname := cfg.Database.Name
+	sslmode := cfg.Database.SSLMode
 
 	// Подключаемся к PostgreSQL без указания конкретной БД (к postgres по умолчанию)
 	adminDSN := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=postgres sslmode=%s",
@@ -69,17 +71,10 @@ func CreateDatabaseIfNotExists() error {
 
 // ConnectDatabase инициализирует подключение к PostgreSQL
 func ConnectDatabase() error {
-	// Получаем переменные окружения для подключения к БД
-	host := getEnv("DB_HOST", "localhost")
-	port := getEnv("DB_PORT", "5432")
-	user := getEnv("DB_USER", "postgres")
-	password := getEnv("DB_PASSWORD", "")
-	dbname := getEnv("DB_NAME", "axenta_db")
-	sslmode := getEnv("DB_SSLMODE", "disable")
+	cfg := config.GetConfig()
 
 	// Формируем DSN (Data Source Name)
-	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
-		host, port, user, password, dbname, sslmode)
+	dsn := cfg.GetDatabaseDSN()
 
 	// Подключаемся к базе данных
 	var err error
@@ -102,11 +97,26 @@ func ConnectDatabase() error {
 }
 
 // getEnv получает переменную окружения или возвращает значение по умолчанию
+// Deprecated: используйте config.GetConfig() вместо этого
 func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
+	cfg := config.GetConfig()
+	switch key {
+	case "DB_HOST":
+		return cfg.Database.Host
+	case "DB_PORT":
+		return cfg.Database.Port
+	case "DB_USER":
+		return cfg.Database.User
+	case "DB_PASSWORD":
+		return cfg.Database.Password
+	case "DB_NAME":
+		return cfg.Database.Name
+	case "DB_SSLMODE":
+		return cfg.Database.SSLMode
+	default:
+		// Fallback для обратной совместимости
+		return defaultValue
 	}
-	return defaultValue
 }
 
 // GetDB возвращает экземпляр базы данных

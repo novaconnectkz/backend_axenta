@@ -2,10 +2,10 @@ package main
 
 import (
 	"backend_axenta/api"
+	"backend_axenta/config"
 	"backend_axenta/database"
 	"backend_axenta/middleware"
 	"backend_axenta/services"
-	"os"
 
 	// "backend_axenta/models" // Temporarily commented out
 	"log"
@@ -16,6 +16,15 @@ import (
 
 func main() {
 	log.Println("Starting Axenta Backend Server...")
+
+	// Загружаем конфигурацию
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		log.Fatalf("Failed to load configuration: %v", err)
+	}
+
+	// Выводим конфигурацию в лог
+	cfg.LogConfig()
 
 	// Создаем базу данных если её нет
 	if err := database.CreateDatabaseIfNotExists(); err != nil {
@@ -31,12 +40,6 @@ func main() {
 	if err := database.InitRedis(); err != nil {
 		log.Printf("Warning: Failed to connect to Redis: %v", err)
 		log.Println("Continuing without Redis caching...")
-	}
-
-	// Инициализируем сервис интеграций
-	axetnaBaseURL := os.Getenv("AXETNA_API_URL")
-	if axetnaBaseURL == "" {
-		axetnaBaseURL = "https://api.axetna.cloud" // URL по умолчанию
 	}
 
 	// Временно отключаем Integration Service для запуска сервера
@@ -56,7 +59,7 @@ func main() {
 	log.Println("✅ 1C Integration Service initialized successfully")
 
 	// Инициализируем систему уведомлений
-	cache := services.NewCacheService(database.RedisClient, log.New(os.Stdout, "CACHE: ", log.LstdFlags))
+	cache := services.NewCacheService(database.RedisClient, log.New(log.Writer(), "CACHE: ", log.LstdFlags))
 	notificationService := services.NewNotificationService(database.DB, cache)
 	_ = services.NewNotificationFallbackService(database.DB, notificationService) // fallbackService для будущего использования
 	notificationAPI := api.NewNotificationAPI(notificationService)
@@ -317,6 +320,6 @@ func main() {
 	// Публичный webhook для Telegram (без авторизации)
 	r.POST("/api/notifications/telegram/webhook/:company_id", notificationAPI.ProcessTelegramWebhook)
 
-	log.Println("Server starting on port 8080...")
-	r.Run(":8080")
+	log.Printf("Server starting on port %s...", cfg.App.Port)
+	r.Run(":" + cfg.App.Port)
 }
