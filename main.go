@@ -79,13 +79,28 @@ func main() {
 	tenantMiddleware := middleware.NewTenantMiddleware(database.DB)
 
 	r := gin.Default()
-	r.Use(cors.Default())
+
+	// Настройка CORS
+	corsConfig := cors.DefaultConfig()
+	corsConfig.AllowOrigins = []string{"http://localhost:3000", "http://127.0.0.1:3000"}
+	corsConfig.AllowHeaders = append(corsConfig.AllowHeaders, "Authorization", "authorization", "X-Tenant-ID")
+	corsConfig.AllowCredentials = true
+	r.Use(cors.New(corsConfig))
 
 	// Публичные маршруты (без проверки tenant)
 	r.GET("/ping", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "success", "message": "pong"})
 	})
 	r.POST("/api/auth/login", api.Login)
+
+	// Dashboard endpoints без мультитенантности (пока)
+	r.GET("/api/dashboard/stats", api.GetDashboardStatsSimple)
+	r.GET("/api/dashboard/activity", api.GetDashboardActivitySimple)
+	r.GET("/api/dashboard/layouts", api.GetDashboardLayouts)
+	r.GET("/api/dashboard/layouts/default", api.GetDefaultDashboardLayout)
+	r.GET("/api/notifications", api.GetDashboardNotificationsSimple)
+
+	// Billing endpoints убраны, так как уже есть в apiGroup
 
 	// Группа API с мультитенантностью
 	apiGroup := r.Group("/api")
