@@ -82,9 +82,18 @@ func main() {
 
 	// Настройка CORS
 	corsConfig := cors.DefaultConfig()
-	corsConfig.AllowOrigins = []string{"http://localhost:3000", "http://127.0.0.1:3000"}
+	corsConfig.AllowOrigins = []string{
+		"http://localhost:3000", 
+		"http://127.0.0.1:3000",
+		"http://localhost:3001",
+		"https://axenta.glonass-saratov.ru",
+		"http://axenta.glonass-saratov.ru",
+		"https://api.axenta.glonass-saratov.ru",
+		"http://api.axenta.glonass-saratov.ru",
+	}
 	corsConfig.AllowHeaders = append(corsConfig.AllowHeaders, "Authorization", "authorization", "X-Tenant-ID")
 	corsConfig.AllowCredentials = true
+	corsConfig.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
 	r.Use(cors.New(corsConfig))
 
 	// Публичные маршруты (без проверки tenant)
