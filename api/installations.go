@@ -1,6 +1,7 @@
 package api
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -161,7 +162,8 @@ func (api *InstallationAPI) GetInstallations(c *gin.Context) {
 	countQuery.Count(&total)
 
 	if err := query.Limit(limit).Offset(offset).Find(&installations).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при получении списка монтажей"})
+		log.Printf("ERROR: Failed to get installations: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при получении списка монтажей: " + err.Error()})
 		return
 	}
 

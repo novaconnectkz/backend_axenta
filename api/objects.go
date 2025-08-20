@@ -938,7 +938,7 @@ func applyContractTariff(db *gorm.DB, object *models.Object) error {
 	// Создаем TariffPlan для расчета стоимости
 	tariffPlan := models.TariffPlan{
 		BillingPlan:        contract.TariffPlan,
-		PricePerObject:     decimal.NewFromFloat(contract.TariffPlan.Price),
+		PricePerObject:     contract.TariffPlan.Price,
 		InactivePriceRatio: decimal.NewFromFloat(0.5), // 50% для неактивных объектов
 	}
 

@@ -49,7 +49,7 @@ func createReportTestData(t *testing.T, db *gorm.DB) {
 		BillingPlan: models.BillingPlan{
 			Name:        "Test Tariff",
 			Description: "Test tariff plan",
-			Price:       1000.0,
+			Price:       decimal.NewFromFloat(1000.0),
 			Currency:    "RUB",
 		},
 		PricePerObject: decimal.NewFromFloat(100.0),

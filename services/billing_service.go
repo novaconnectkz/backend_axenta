@@ -120,7 +120,7 @@ func (bs *BillingService) CalculateBillingForContract(contractID uint, periodSta
 	}
 
 	// Рассчитываем базовую стоимость подписки
-	result.BaseAmount = decimal.NewFromFloat(tariffPlan.Price)
+	result.BaseAmount = tariffPlan.Price
 	if result.BaseAmount.GreaterThan(decimal.Zero) {
 		result.Items = append(result.Items, InvoiceItemData{
 			Name:        fmt.Sprintf("Подписка \"%s\"", tariffPlan.Name),

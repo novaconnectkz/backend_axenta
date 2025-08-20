@@ -86,7 +86,7 @@ func createTestData(t *testing.T, db *gorm.DB) (models.Contract, models.ObjectTe
 	// Создаем тарифный план
 	billingPlan := models.BillingPlan{
 		Name:          "Тестовый план",
-		Price:         1000.0,
+		Price:         decimal.NewFromFloat(1000.0),
 		Currency:      "RUB",
 		BillingPeriod: "monthly",
 		IsActive:      true,

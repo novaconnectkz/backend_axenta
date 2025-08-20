@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -55,7 +56,7 @@ func createServiceTestData(db *gorm.DB) (models.Object, models.Installer, models
 	// Создаем тарифный план
 	billingPlan := models.BillingPlan{
 		Name:     "Тестовый план",
-		Price:    1000,
+		Price:    decimal.NewFromInt(1000),
 		Currency: "RUB",
 	}
 	db.Create(&billingPlan)

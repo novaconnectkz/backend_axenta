@@ -51,7 +51,7 @@ func TestBillingService_CalculateBillingForContract(t *testing.T) {
 	tariffPlan := &models.TariffPlan{
 		BillingPlan: models.BillingPlan{
 			Name:     "Basic Plan",
-			Price:    1000.0,
+			Price:    decimal.NewFromFloat(1000.0),
 			Currency: "RUB",
 		},
 		PricePerObject:     decimal.NewFromFloat(100),
@@ -169,7 +169,7 @@ func TestBillingService_GenerateInvoiceForContract(t *testing.T) {
 	tariffPlan := &models.TariffPlan{
 		BillingPlan: models.BillingPlan{
 			Name:     "Basic Plan",
-			Price:    1000.0,
+			Price:    decimal.NewFromFloat(1000.0),
 			Currency: "RUB",
 		},
 		PricePerObject:     decimal.NewFromFloat(100),

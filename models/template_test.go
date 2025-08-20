@@ -119,7 +119,7 @@ func TestObjectTemplateModel(t *testing.T) {
 		// Создаем необходимые связанные сущности для объектов
 		billingPlan := BillingPlan{
 			Name:          "План для шаблона",
-			Price:         2000.0,
+			Price:         decimal.NewFromFloat(2000.0),
 			Currency:      "RUB",
 			BillingPeriod: "monthly",
 			IsActive:      true,

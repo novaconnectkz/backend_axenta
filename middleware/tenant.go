@@ -118,8 +118,13 @@ func (tm *TenantMiddleware) getCompanyByID(tenantID string) (*models.Company, er
 		return &company, nil
 	}
 
-	// Если нет в кэше, получаем из БД
-	if err := tm.DB.Where("id = ? AND is_active = ?", tenantID, true).First(&company).Error; err != nil {
+	// Если нет в кэше, получаем из БД (используем основную схему)
+	// Создаем новое подключение к БД с основной схемой
+	mainDB := tm.DB.Session(&gorm.Session{})
+	if err := mainDB.Exec("SET search_path TO public").Error; err != nil {
+		return nil, fmt.Errorf("ошибка переключения на основную схему: %v", err)
+	}
+	if err := mainDB.Where("id = ? AND is_active = ?", tenantID, true).First(&company).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, fmt.Errorf("компания с ID %s не найдена", tenantID)
 		}

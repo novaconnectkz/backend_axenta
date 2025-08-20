@@ -81,7 +81,7 @@ func CreateBillingPlan(c *gin.Context) {
 		return
 	}
 
-	if plan.Price < 0 {
+	if plan.Price.LessThan(decimal.Zero) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
 			"error":  "Цена не может быть отрицательной",
@@ -134,7 +134,7 @@ func UpdateBillingPlan(c *gin.Context) {
 	}
 
 	// Валидация
-	if updateData.Price < 0 {
+	if updateData.Price.LessThan(decimal.Zero) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
 			"error":  "Цена не может быть отрицательной",

@@ -9,11 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shopspring/decimal"
+
 	"backend_axenta/database"
 	"backend_axenta/models"
 
 	"github.com/gin-gonic/gin"
-	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -26,7 +27,7 @@ func TestCreateContract(t *testing.T) {
 	tariffPlan := models.BillingPlan{
 		Name:          "Test Plan",
 		Description:   "Test tariff plan",
-		Price:         1000.0,
+		Price:         decimal.NewFromFloat(1000.0),
 		Currency:      "RUB",
 		BillingPeriod: "monthly",
 		IsActive:      true,
@@ -92,7 +93,7 @@ func TestGetContracts(t *testing.T) {
 	// Создаем тарифный план
 	tariffPlan := models.BillingPlan{
 		Name:     "Test Plan",
-		Price:    1000.0,
+		Price:    decimal.NewFromFloat(1000.0),
 		Currency: "RUB",
 		IsActive: true,
 	}
@@ -163,7 +164,7 @@ func TestCalculateContractCost(t *testing.T) {
 	// Создаем тарифный план
 	tariffPlan := models.BillingPlan{
 		Name:     "Test Plan",
-		Price:    500.0, // 500 рублей за объект
+		Price:    decimal.NewFromFloat(500.0), // 500 рублей за объект
 		Currency: "RUB",
 		IsActive: true,
 	}
@@ -265,7 +266,7 @@ func TestContractAppendices(t *testing.T) {
 	// Создаем тарифный план и договор
 	tariffPlan := models.BillingPlan{
 		Name:     "Test Plan",
-		Price:    1000.0,
+		Price:    decimal.NewFromFloat(1000.0),
 		Currency: "RUB",
 		IsActive: true,
 	}

@@ -185,7 +185,7 @@ func CreateContract(c *gin.Context) {
 	// Рассчитываем общую стоимость на основе тарифного плана
 	if contract.TotalAmount.IsZero() {
 		// Базовая стоимость из тарифного плана
-		contract.TotalAmount = decimal.NewFromFloat(tariffPlan.Price)
+		contract.TotalAmount = tariffPlan.Price
 
 		// Если есть период, умножаем на количество периодов
 		duration := contract.EndDate.Sub(contract.StartDate)
@@ -487,7 +487,7 @@ func CalculateContractCost(c *gin.Context) {
 		// Создаем TariffPlan из BillingPlan для расчета
 		tariffPlan := models.TariffPlan{
 			BillingPlan:        contract.TariffPlan,
-			PricePerObject:     decimal.NewFromFloat(contract.TariffPlan.Price),
+			PricePerObject:     contract.TariffPlan.Price,
 			InactivePriceRatio: decimal.NewFromFloat(0.5), // 50% для неактивных объектов
 		}
 

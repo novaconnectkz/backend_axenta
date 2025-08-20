@@ -3,6 +3,7 @@ package models
 import (
 	"time"
 
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
 
@@ -14,10 +15,10 @@ type BillingPlan struct {
 	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
 
 	// Основные поля тарифного плана
-	Name        string  `json:"name" gorm:"uniqueIndex;not null;type:varchar(100)"`
-	Description string  `json:"description" gorm:"type:text"`
-	Price       float64 `json:"price" gorm:"not null"`
-	Currency    string  `json:"currency" gorm:"default:RUB;type:varchar(3)"`
+	Name        string          `json:"name" gorm:"uniqueIndex;not null;type:varchar(100)"`
+	Description string          `json:"description" gorm:"type:text"`
+	Price       decimal.Decimal `json:"price" gorm:"not null;type:decimal(10,2)"`
+	Currency    string          `json:"currency" gorm:"default:RUB;type:varchar(3)"`
 
 	// Период тарификации
 	BillingPeriod string `json:"billing_period" gorm:"default:monthly;type:varchar(20)"` // monthly, yearly, one-time

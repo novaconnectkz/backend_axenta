@@ -7,7 +7,7 @@ import (
 	"backend_axenta/middleware"
 	"backend_axenta/services"
 
-	// "backend_axenta/models" // Temporarily commented out
+	// "backend_axenta/models" // Не используется в main.go, миграции в database.go
 	"log"
 
 	"github.com/gin-contrib/cors"
@@ -66,14 +66,7 @@ func main() {
 	log.Println("✅ Notification System initialized successfully")
 
 	// Выполняем миграции для основных таблиц (не мультитенантных)
-	// Временно отключаем миграции для отладки
-	/*
-		if err := database.DB.AutoMigrate(
-			&models.Company{},
-		); err != nil {
-			log.Fatalf("Failed to migrate main database: %v", err)
-		}
-	*/
+	// Миграции выполняются в database.ConnectDatabase() через autoMigrate()
 
 	// Создаем middleware для мультитенантности
 	tenantMiddleware := middleware.NewTenantMiddleware(database.DB)
@@ -83,7 +76,7 @@ func main() {
 	// Настройка CORS
 	corsConfig := cors.DefaultConfig()
 	corsConfig.AllowOrigins = []string{
-		"http://localhost:3000", 
+		"http://localhost:3000",
 		"http://127.0.0.1:3000",
 		"http://localhost:3001",
 		"https://axenta.glonass-saratov.ru",
@@ -109,7 +102,41 @@ func main() {
 	r.GET("/api/dashboard/layouts/default", api.GetDefaultDashboardLayout)
 	r.GET("/api/notifications", api.GetDashboardNotificationsSimple)
 
-	// Billing endpoints убраны, так как уже есть в apiGroup
+	// Простые billing endpoints для отладки (без мультитенантности)
+	r.GET("/api/billing-plans-simple", api.GetBillingPlansSimple)
+	r.GET("/api/subscriptions-simple", api.GetSubscriptionsSimple)
+
+	// Административные маршруты (без мультитенантности)
+	adminGroup := r.Group("/api/admin")
+	{
+		// Управление учетными записями (компаниями)
+		companiesAPI := api.NewCompaniesAPI(database.DB, tenantMiddleware)
+		companiesAPI.RegisterCompaniesRoutes(adminGroup)
+	}
+
+	// Временные endpoints без мультитенантности для тестирования
+	testGroup := r.Group("/api/test")
+	{
+		installationAPI := api.NewInstallationAPI(database.DB)
+		testGroup.GET("/installations", installationAPI.GetInstallations)
+		testGroup.GET("/installations/statistics", func(c *gin.Context) {
+			c.JSON(200, gin.H{
+				"total":           0,
+				"today":           0,
+				"overdue":         0,
+				"completion_rate": 0.0,
+			})
+		})
+
+		installerAPI := api.NewInstallerAPI(database.DB)
+		testGroup.GET("/installers", installerAPI.GetInstallers)
+
+		locationAPI := api.NewLocationAPI(database.DB)
+		testGroup.GET("/locations", locationAPI.GetLocations)
+
+		equipmentAPI := api.NewEquipmentAPI(database.DB)
+		testGroup.GET("/equipment", equipmentAPI.GetEquipment)
+	}
 
 	// Группа API с мультитенантностью
 	apiGroup := r.Group("/api")
@@ -191,6 +218,10 @@ func main() {
 		apiGroup.POST("/billing/subscriptions", api.CreateSubscription)
 		apiGroup.PUT("/billing/subscriptions/:id", api.UpdateSubscription)
 		apiGroup.DELETE("/billing/subscriptions/:id", api.DeleteSubscription)
+
+		// Алиасы для совместимости с frontend
+		apiGroup.GET("/subscriptions", api.GetSubscriptions)
+		apiGroup.GET("/billing-plans", api.GetBillingPlans)
 
 		// Новые эндпоинты системы биллинга
 		// Расчеты и счета

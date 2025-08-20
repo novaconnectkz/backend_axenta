@@ -491,7 +491,7 @@ func TestSchemaIsolation(t *testing.T) {
 		globalPlan := BillingPlan{
 			Name:          "Global Plan",
 			Description:   "Plan available for all companies",
-			Price:         1000.0,
+			Price:         decimal.NewFromFloat(1000.0),
 			Currency:      "RUB",
 			BillingPeriod: "monthly",
 			IsActive:      true,
@@ -523,7 +523,7 @@ func TestSchemaIsolation(t *testing.T) {
 			BillingPlan: BillingPlan{
 				Name:          "Tenant Specific Plan",
 				Description:   "Plan specific to this tenant",
-				Price:         1500.0,
+				Price:         decimal.NewFromFloat(1500.0),
 				Currency:      "RUB",
 				BillingPeriod: "monthly",
 				IsActive:      true,

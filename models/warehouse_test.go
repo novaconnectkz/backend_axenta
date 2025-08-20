@@ -175,7 +175,7 @@ func TestEquipmentModel(t *testing.T) {
 		// Создаем необходимые связанные сущности для объекта
 		billingPlan := BillingPlan{
 			Name:          "План для оборудования",
-			Price:         1000.0,
+			Price:         decimal.NewFromFloat(1000.0),
 			Currency:      "RUB",
 			BillingPeriod: "monthly",
 			IsActive:      true,
@@ -317,7 +317,7 @@ func TestLocationModel(t *testing.T) {
 		// Создаем необходимые сущности для объектов
 		billingPlan := BillingPlan{
 			Name:          "План для локации",
-			Price:         800.0,
+			Price:         decimal.NewFromFloat(800.0),
 			Currency:      "RUB",
 			BillingPeriod: "monthly",
 			IsActive:      true,
@@ -568,7 +568,7 @@ func TestInstallationModel(t *testing.T) {
 		// Создаем необходимые связанные сущности
 		billingPlan := BillingPlan{
 			Name:          "План для монтажа",
-			Price:         1200.0,
+			Price:         decimal.NewFromFloat(1200.0),
 			Currency:      "RUB",
 			BillingPeriod: "monthly",
 			IsActive:      true,
@@ -637,7 +637,7 @@ func TestInstallationModel(t *testing.T) {
 		// Создаем минимальные связанные сущности
 		billingPlan := BillingPlan{
 			Name:          "План статуса",
-			Price:         1000.0,
+			Price:         decimal.NewFromFloat(1000.0),
 			Currency:      "RUB",
 			BillingPeriod: "monthly",
 			IsActive:      true,
@@ -728,7 +728,7 @@ func TestInstallationModel(t *testing.T) {
 		// Создаем все необходимые связанные сущности
 		billingPlan := BillingPlan{
 			Name:          "План связей",
-			Price:         1500.0,
+			Price:         decimal.NewFromFloat(1500.0),
 			Currency:      "RUB",
 			BillingPeriod: "monthly",
 			IsActive:      true,
@@ -829,7 +829,7 @@ func TestInstallationModel(t *testing.T) {
 		// Создаем минимальные связанные сущности
 		billingPlan := BillingPlan{
 			Name:          "План качества",
-			Price:         900.0,
+			Price:         decimal.NewFromFloat(900.0),
 			Currency:      "RUB",
 			BillingPeriod: "monthly",
 			IsActive:      true,

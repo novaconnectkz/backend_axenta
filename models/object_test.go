@@ -28,7 +28,7 @@ func TestObjectModel(t *testing.T) {
 		billingPlan := BillingPlan{
 			Name:          "Базовый тариф",
 			Description:   "Базовый тарифный план",
-			Price:         1000.0,
+			Price:         decimal.NewFromFloat(1000.0),
 			Currency:      "RUB",
 			BillingPeriod: "monthly",
 			IsActive:      true,
@@ -82,7 +82,7 @@ func TestObjectModel(t *testing.T) {
 		// Создаем договор для объектов
 		billingPlan := BillingPlan{
 			Name:          "Уникальный тариф",
-			Price:         500.0,
+			Price:         decimal.NewFromFloat(500.0),
 			Currency:      "RUB",
 			BillingPeriod: "monthly",
 			IsActive:      true,
@@ -140,7 +140,7 @@ func TestObjectModel(t *testing.T) {
 
 		billingPlan := BillingPlan{
 			Name:          "Премиум тариф",
-			Price:         2000.0,
+			Price:         decimal.NewFromFloat(2000.0),
 			Currency:      "RUB",
 			BillingPeriod: "monthly",
 			IsActive:      true,
@@ -203,7 +203,7 @@ func TestObjectModel(t *testing.T) {
 		// Создаем минимальные связанные сущности
 		billingPlan := BillingPlan{
 			Name:          "Тариф для удаления",
-			Price:         100.0,
+			Price:         decimal.NewFromFloat(100.0),
 			Currency:      "RUB",
 			BillingPeriod: "monthly",
 			IsActive:      true,
@@ -248,7 +248,7 @@ func TestObjectModel(t *testing.T) {
 		// Создаем минимальные связанные сущности
 		billingPlan := BillingPlan{
 			Name:          "Тариф активности",
-			Price:         150.0,
+			Price:         decimal.NewFromFloat(150.0),
 			Currency:      "RUB",
 			BillingPeriod: "monthly",
 			IsActive:      true,
@@ -305,7 +305,7 @@ func TestContractModel(t *testing.T) {
 		billingPlan := BillingPlan{
 			Name:          "Стандартный план",
 			Description:   "Стандартный тарифный план",
-			Price:         1500.0,
+			Price:         decimal.NewFromFloat(1500.0),
 			Currency:      "RUB",
 			BillingPeriod: "monthly",
 			IsActive:      true,
@@ -353,7 +353,7 @@ func TestContractModel(t *testing.T) {
 		// Создаем тарифный план
 		billingPlan := BillingPlan{
 			Name:          "План для уникальности",
-			Price:         800.0,
+			Price:         decimal.NewFromFloat(800.0),
 			Currency:      "RUB",
 			BillingPeriod: "monthly",
 			IsActive:      true,
@@ -396,7 +396,7 @@ func TestContractModel(t *testing.T) {
 		// Создаем тарифный план
 		billingPlan := BillingPlan{
 			Name:          "План для сроков",
-			Price:         1200.0,
+			Price:         decimal.NewFromFloat(1200.0),
 			Currency:      "RUB",
 			BillingPeriod: "monthly",
 			IsActive:      true,
@@ -473,7 +473,7 @@ func TestContractModel(t *testing.T) {
 		billingPlan := BillingPlan{
 			Name:          "Премиум план",
 			Description:   "Расширенный тарифный план",
-			Price:         2500.0,
+			Price:         decimal.NewFromFloat(2500.0),
 			Currency:      "RUB",
 			BillingPeriod: "monthly",
 			HasAnalytics:  true,
@@ -511,7 +511,7 @@ func TestContractModel(t *testing.T) {
 		// Создаем тарифный план
 		billingPlan := BillingPlan{
 			Name:          "План с приложениями",
-			Price:         1000.0,
+			Price:         decimal.NewFromFloat(1000.0),
 			Currency:      "RUB",
 			BillingPeriod: "monthly",
 			IsActive:      true,
@@ -582,7 +582,7 @@ func TestContractAppendixModel(t *testing.T) {
 		// Создаем тарифный план и договор
 		billingPlan := BillingPlan{
 			Name:          "План для приложений",
-			Price:         1500.0,
+			Price:         decimal.NewFromFloat(1500.0),
 			Currency:      "RUB",
 			BillingPeriod: "monthly",
 			IsActive:      true,
@@ -633,7 +633,7 @@ func TestContractAppendixModel(t *testing.T) {
 		// Создаем тарифный план и договор
 		billingPlan := BillingPlan{
 			Name:          "План истечения",
-			Price:         1000.0,
+			Price:         decimal.NewFromFloat(1000.0),
 			Currency:      "RUB",
 			BillingPeriod: "monthly",
 			IsActive:      true,
@@ -698,7 +698,7 @@ func TestContractAppendixModel(t *testing.T) {
 		// Создаем тарифный план и договор
 		billingPlan := BillingPlan{
 			Name:          "План связи",
-			Price:         800.0,
+			Price:         decimal.NewFromFloat(800.0),
 			Currency:      "RUB",
 			BillingPeriod: "monthly",
 			IsActive:      true,

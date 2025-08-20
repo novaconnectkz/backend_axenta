@@ -1,6 +1,7 @@
 package models
 
 import (
+	"math/rand"
 	"time"
 
 	"gorm.io/gorm"
@@ -49,8 +50,8 @@ type Company struct {
 	Currency string `json:"currency" gorm:"default:'RUB';type:varchar(3)"`
 
 	// Подписка и биллинг
-	SubscriptionID *uint         `json:"subscription_id"`
-	Subscription   *Subscription `json:"subscription,omitempty" gorm:"foreignKey:SubscriptionID"`
+	SubscriptionID *uint `json:"subscription_id"`
+	// Subscription   *Subscription `json:"subscription,omitempty" gorm:"foreignKey:SubscriptionID"`
 }
 
 // TableName задает имя таблицы для модели Company
@@ -62,7 +63,7 @@ func (Company) TableName() string {
 func (c *Company) BeforeCreate(tx *gorm.DB) error {
 	// Генерируем имя схемы БД если не указано
 	if c.DatabaseSchema == "" {
-		c.DatabaseSchema = "tenant_" + generateRandomString(8)
+		c.DatabaseSchema = "tenant_default"
 	}
 	return nil
 }
@@ -81,8 +82,9 @@ func (c *Company) IsValidForTenant() bool {
 func generateRandomString(length int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
 	b := make([]byte, length)
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	for i := range b {
-		b[i] = charset[time.Now().UnixNano()%int64(len(charset))]
+		b[i] = charset[r.Intn(len(charset))]
 	}
 	return string(b)
 }
