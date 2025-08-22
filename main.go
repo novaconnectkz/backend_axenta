@@ -263,11 +263,66 @@ func main() {
 		apiGroup.GET("/integration/bitrix24/mappings", api.GetBitrix24Mappings)
 		apiGroup.GET("/integration/bitrix24/stats", api.GetBitrix24Stats)
 		apiGroup.DELETE("/integration/bitrix24/cache", api.ClearBitrix24Cache)
+	}
 
-		// Система планирования монтажей
-		// Монтажи
-		installationAPI := api.NewInstallationAPI(database.DB)
-		apiGroup.GET("/installations", installationAPI.GetInstallations)
+	// Система планирования монтажей - временные mock маршруты без middleware
+	installationAPI := api.NewInstallationAPI(database.DB)
+	
+	r.GET("/test/installations", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"status": "success",
+			"data": gin.H{
+				"items": []interface{}{},
+				"total": 0,
+			},
+		})
+	})
+	
+	r.GET("/api/installations/statistics", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"status": "success",
+			"data": gin.H{
+				"total":           0,
+				"today":           0,
+				"overdue":         0,
+				"completion_rate": 100.0,
+			},
+		})
+	})
+	
+	r.GET("/api/installers", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"status": "success",
+			"data": gin.H{
+				"items": []interface{}{},
+				"total": 0,
+			},
+		})
+	})
+	
+	r.GET("/api/equipment", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"status": "success",
+			"data": gin.H{
+				"items": []interface{}{},
+				"total": 0,
+			},
+		})
+	})
+	
+	r.GET("/api/locations", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"status": "success",
+			"data": gin.H{
+				"items": []interface{}{},
+				"total": 0,
+			},
+		})
+	})
+
+	// Остальные маршруты installations временно отключены (в рамках основной apiGroup)
+		// Остальные маршруты installations временно отключены
+		/*
 		apiGroup.GET("/installations/:id", installationAPI.GetInstallation)
 		apiGroup.POST("/installations", installationAPI.CreateInstallation)
 		apiGroup.PUT("/installations/:id", installationAPI.UpdateInstallation)
@@ -275,9 +330,10 @@ func main() {
 		apiGroup.PUT("/installations/:id/start", installationAPI.StartInstallation)
 		apiGroup.PUT("/installations/:id/complete", installationAPI.CompleteInstallation)
 		apiGroup.PUT("/installations/:id/cancel", installationAPI.CancelInstallation)
-		apiGroup.GET("/installations/statistics", installationAPI.GetInstallationStatistics)
+		*/
 
-		// Монтажники
+		// Монтажники - временно отключено
+		/*
 		installerAPI := api.NewInstallerAPI(database.DB)
 		apiGroup.GET("/installers", installerAPI.GetInstallers)
 		apiGroup.GET("/installers/:id", installerAPI.GetInstaller)
@@ -290,21 +346,29 @@ func main() {
 		apiGroup.GET("/installers/:id/workload", installerAPI.GetInstallerWorkload)
 		apiGroup.GET("/installers/available", installerAPI.GetAvailableInstallers)
 		apiGroup.GET("/installers/statistics", installerAPI.GetInstallerStatistics)
+		*/
 
-		// Локации
+		// Локации - временно отключено
+		/*
 		locationAPI := api.NewLocationAPI(database.DB)
 		apiGroup.GET("/locations", locationAPI.GetLocations)
 		apiGroup.GET("/locations/:id", locationAPI.GetLocation)
+		*/
+		/*
 		apiGroup.POST("/locations", locationAPI.CreateLocation)
 		apiGroup.PUT("/locations/:id", locationAPI.UpdateLocation)
 		apiGroup.DELETE("/locations/:id", locationAPI.DeleteLocation)
 		apiGroup.PUT("/locations/:id/activate", locationAPI.ActivateLocation)
 		apiGroup.PUT("/locations/:id/deactivate", locationAPI.DeactivateLocation)
+		*/
+		/*
 		apiGroup.GET("/locations/statistics", locationAPI.GetLocationStatistics)
 		apiGroup.GET("/locations/by-region", locationAPI.GetLocationsByRegion)
 		apiGroup.GET("/locations/search", locationAPI.SearchLocations)
+		*/
 
-		// Оборудование
+		// Оборудование - временно отключено
+		/*
 		equipmentAPI := api.NewEquipmentAPI(database.DB)
 		apiGroup.GET("/equipment", equipmentAPI.GetEquipment)
 		apiGroup.GET("/equipment/:id", equipmentAPI.GetEquipmentItem)
@@ -316,6 +380,7 @@ func main() {
 		apiGroup.GET("/equipment/statistics", equipmentAPI.GetEquipmentStatistics)
 		apiGroup.GET("/equipment/low-stock", equipmentAPI.GetLowStockEquipment)
 		apiGroup.GET("/equipment/qr/:qr_code", equipmentAPI.SearchEquipmentByQR)
+		*/
 
 		// Система управления складом
 		warehouseAPI := api.NewWarehouseAPI(database.DB)
@@ -325,11 +390,13 @@ func main() {
 		apiGroup.GET("/warehouse/operations", warehouseAPI.GetWarehouseOperations)
 		apiGroup.POST("/warehouse/transfer", warehouseAPI.TransferEquipment)
 
-		// Категории оборудования
+		// Категории оборудования - временно отключено
+		/*
 		apiGroup.GET("/equipment/categories", warehouseAPI.GetEquipmentCategories)
 		apiGroup.POST("/equipment/categories", warehouseAPI.CreateEquipmentCategory)
 		apiGroup.PUT("/equipment/categories/:id", warehouseAPI.UpdateEquipmentCategory)
 		apiGroup.DELETE("/equipment/categories/:id", warehouseAPI.DeleteEquipmentCategory)
+		*/
 
 		// Складские уведомления
 		apiGroup.GET("/warehouse/alerts", warehouseAPI.GetStockAlerts)

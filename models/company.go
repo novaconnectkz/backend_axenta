@@ -4,12 +4,13 @@ import (
 	"math/rand"
 	"time"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
 // Company представляет компанию (tenant) в мультитенантной системе
 type Company struct {
-	ID        uint           `json:"id" gorm:"primarykey"`
+	ID        uuid.UUID      `json:"id" gorm:"type:uuid;default:gen_random_uuid();primarykey"`
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
@@ -50,7 +51,7 @@ type Company struct {
 	Currency string `json:"currency" gorm:"default:'RUB';type:varchar(3)"`
 
 	// Подписка и биллинг
-	SubscriptionID *uint `json:"subscription_id"`
+	SubscriptionID *uuid.UUID `json:"subscription_id"`
 	// Subscription   *Subscription `json:"subscription,omitempty" gorm:"foreignKey:SubscriptionID"`
 }
 
