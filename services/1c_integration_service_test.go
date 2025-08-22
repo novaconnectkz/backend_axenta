@@ -10,6 +10,7 @@ import (
 
 	"backend_axenta/models"
 
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -63,7 +64,7 @@ func createTestCompany(db *gorm.DB) *models.Company {
 	return company
 }
 
-func createTestIntegration(db *gorm.DB, companyID uint) *models.Integration {
+func createTestIntegration(db *gorm.DB, companyID uuid.UUID) *models.Integration {
 	config := OneCIntegrationConfig{
 		CompanyID:         companyID,
 		BaseURL:           "http://test.1c.local",
@@ -96,7 +97,7 @@ func createTestIntegration(db *gorm.DB, companyID uint) *models.Integration {
 	return integration
 }
 
-func createTestInvoice(db *gorm.DB, companyID uint, status string) *models.Invoice {
+func createTestInvoice(db *gorm.DB, companyID uuid.UUID, status string) *models.Invoice {
 	invoice := &models.Invoice{
 		Number:             "INV-TEST-001",
 		Title:              "Тестовый счет",

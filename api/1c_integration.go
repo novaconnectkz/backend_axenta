@@ -33,21 +33,6 @@ func InitOneCService() {
 	oneCIntegrationService = services.NewOneCIntegrationService(database.DB, oneCClient, cacheService, logger)
 }
 
-// GetCompanyID извлекает ID компании из контекста Gin
-func GetCompanyID(c *gin.Context) uint {
-	if companyID, exists := c.Get("company_id"); exists {
-		if id, ok := companyID.(uint); ok {
-			return id
-		}
-	}
-	if tenantID, exists := c.Get("tenant_id"); exists {
-		if id, ok := tenantID.(uint); ok {
-			return id
-		}
-	}
-	return 0
-}
-
 // OneCIntegrationAPI API для работы с интеграцией 1С
 type OneCIntegrationAPI struct {
 	db                     *gorm.DB

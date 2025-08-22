@@ -7,6 +7,7 @@ import (
 	"backend_axenta/database"
 	"backend_axenta/models"
 
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
@@ -25,7 +26,7 @@ func NewBillingService() *BillingService {
 
 // BillingCalculationResult содержит результаты расчета биллинга
 type BillingCalculationResult struct {
-	CompanyID          uint              `json:"company_id"`
+	CompanyID          uuid.UUID         `json:"company_id"`
 	ContractID         uint              `json:"contract_id"`
 	TariffPlanID       uint              `json:"tariff_plan_id"`
 	BillingPeriodStart time.Time         `json:"billing_period_start"`
@@ -404,7 +405,7 @@ func (bs *BillingService) ProcessPayment(invoiceID uint, amount decimal.Decimal,
 }
 
 // GetBillingHistory возвращает историю биллинга для компании
-func (bs *BillingService) GetBillingHistory(companyID uint, limit, offset int) ([]models.BillingHistory, int64, error) {
+func (bs *BillingService) GetBillingHistory(companyID uuid.UUID, limit, offset int) ([]models.BillingHistory, int64, error) {
 	var history []models.BillingHistory
 	var total int64
 
@@ -434,7 +435,7 @@ func (bs *BillingService) GetBillingHistory(companyID uint, limit, offset int) (
 }
 
 // GetOverdueInvoices возвращает просроченные счета
-func (bs *BillingService) GetOverdueInvoices(companyID *uint) ([]models.Invoice, error) {
+func (bs *BillingService) GetOverdueInvoices(companyID *uuid.UUID) ([]models.Invoice, error) {
 	query := bs.db.Where("due_date < ? AND status NOT IN ?", time.Now(), []string{"paid", "cancelled"}).
 		Preload("Contract").
 		Preload("TariffPlan").

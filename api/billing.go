@@ -11,6 +11,7 @@ import (
 	"backend_axenta/services"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
 
@@ -244,7 +245,7 @@ func CreateSubscription(c *gin.Context) {
 	}
 
 	// Валидация обязательных полей
-	if subscription.CompanyID == 0 {
+	if subscription.CompanyID == uuid.Nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
 			"error":  "Поле company_id обязательно",
@@ -739,7 +740,7 @@ func GetBillingHistory(c *gin.Context) {
 		return
 	}
 
-	companyID, err := strconv.ParseUint(companyIDStr, 10, 32)
+	companyID, err := uuid.Parse(companyIDStr)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
@@ -766,7 +767,7 @@ func GetBillingHistory(c *gin.Context) {
 	billingService := services.NewBillingService()
 
 	// Получаем историю
-	history, total, err := billingService.GetBillingHistory(uint(companyID), limit, offset)
+	history, total, err := billingService.GetBillingHistory(companyID, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
@@ -788,10 +789,10 @@ func GetBillingHistory(c *gin.Context) {
 // GetOverdueInvoices получает просроченные счета
 func GetOverdueInvoices(c *gin.Context) {
 	companyIDStr := c.Query("company_id")
-	var companyID *uint
+	var companyID *uuid.UUID
 
 	if companyIDStr != "" {
-		cID, err := strconv.ParseUint(companyIDStr, 10, 32)
+		cID, err := uuid.Parse(companyIDStr)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "error",
@@ -799,8 +800,7 @@ func GetOverdueInvoices(c *gin.Context) {
 			})
 			return
 		}
-		companyIDUint := uint(cID)
-		companyID = &companyIDUint
+		companyID = &cID
 	}
 
 	// Создаем сервис биллинга
@@ -834,7 +834,7 @@ func GetBillingSettings(c *gin.Context) {
 		return
 	}
 
-	companyID, err := strconv.ParseUint(companyIDStr, 10, 32)
+	companyID, err := uuid.Parse(companyIDStr)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
@@ -844,10 +844,10 @@ func GetBillingSettings(c *gin.Context) {
 	}
 
 	var settings models.BillingSettings
-	if err := database.DB.Where("company_id = ?", uint(companyID)).First(&settings).Error; err != nil {
+	if err := database.DB.Where("company_id = ?", companyID).First(&settings).Error; err != nil {
 		// Создаем настройки по умолчанию
 		settings = models.BillingSettings{
-			CompanyID:               uint(companyID),
+			CompanyID:               companyID,
 			AutoGenerateInvoices:    true,
 			InvoiceGenerationDay:    1,
 			InvoicePaymentTermDays:  14,

@@ -88,8 +88,26 @@ func (tm *TenantMiddleware) SetTenant() gin.HandlerFunc {
 
 // extractCompany извлекает информацию о компании из запроса
 func (tm *TenantMiddleware) extractCompany(c *gin.Context) (*models.Company, error) {
-	// Временно: всегда используем компанию по умолчанию для упрощения отладки
-	// TODO: восстановить полную логику после исправления типов данных
+	// 1. Пробуем получить из заголовка X-Tenant-ID
+	if tenantID := c.GetHeader("X-Tenant-ID"); tenantID != "" {
+		company, err := tm.getCompanyByID(tenantID)
+		if err == nil && company != nil {
+			return company, nil
+		}
+		// Логируем ошибку, но продолжаем с дефолтной компанией
+		fmt.Printf("Warning: Failed to get company by ID %s: %v\n", tenantID, err)
+	}
+
+	// 2. Пробуем получить из JWT токена (если есть информация о компании)
+	if companyID := tm.extractCompanyFromToken(c); companyID != "" {
+		company, err := tm.getCompanyByID(companyID)
+		if err == nil && company != nil {
+			return company, nil
+		}
+		fmt.Printf("Warning: Failed to get company by token ID %s: %v\n", companyID, err)
+	}
+
+	// 3. Используем компанию по умолчанию
 	return tm.getDefaultCompany()
 
 	/* Отключено до исправления типов данных:

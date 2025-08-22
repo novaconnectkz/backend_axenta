@@ -1,14 +1,14 @@
 package services
 
-// Глобальная переменная для сервиса интеграций
-var GlobalIntegrationService *IntegrationService
+// Временно отключено - IntegrationService недоступен
+// var GlobalIntegrationService *IntegrationService
 
 // GetIntegrationService возвращает глобальный сервис интеграций
-func GetIntegrationService() *IntegrationService {
-	return GlobalIntegrationService
+func GetIntegrationService() interface{} {
+	return nil // Временно отключено
 }
 
 // SetIntegrationService устанавливает глобальный сервис интеграций
-func SetIntegrationService(service *IntegrationService) {
-	GlobalIntegrationService = service
+func SetIntegrationService(service interface{}) {
+	// Временно отключено
 }

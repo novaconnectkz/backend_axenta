@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
@@ -483,6 +484,88 @@ func UpdateUser(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
 		"data":   userResponse,
+	})
+}
+
+// GetUsersStats возвращает статистику пользователей
+func GetUsersStats(c *gin.Context) {
+	db := database.GetTenantDB(c)
+	if db == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Database connection not available",
+		})
+		return
+	}
+
+	// Подсчет общего количества пользователей
+	var totalUsers int64
+	if err := db.Model(&models.User{}).Count(&totalUsers).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to count total users: " + err.Error(),
+		})
+		return
+	}
+
+	// Подсчет активных пользователей
+	var activeUsers int64
+	if err := db.Model(&models.User{}).Where("is_active = ?", true).Count(&activeUsers).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to count active users: " + err.Error(),
+		})
+		return
+	}
+
+	// Подсчет неактивных пользователей
+	inactiveUsers := totalUsers - activeUsers
+
+	// Подсчет пользователей по ролям
+	type RoleStats struct {
+		RoleName string `json:"role_name"`
+		Count    int64  `json:"count"`
+	}
+
+	var roleStats []RoleStats
+	if err := db.Table("users").
+		Select("roles.display_name as role_name, COUNT(users.id) as count").
+		Joins("LEFT JOIN roles ON users.role_id = roles.id").
+		Where("users.deleted_at IS NULL").
+		Group("roles.id, roles.display_name").
+		Scan(&roleStats).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to get role statistics: " + err.Error(),
+		})
+		return
+	}
+
+	// Подсчет пользователей, созданных за последние 30 дней
+	var recentUsers int64
+	thirtyDaysAgo := time.Now().AddDate(0, 0, -30)
+	if err := db.Model(&models.User{}).
+		Where("created_at >= ?", thirtyDaysAgo).
+		Count(&recentUsers).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to count recent users: " + err.Error(),
+		})
+		return
+	}
+
+	stats := gin.H{
+		"total_users":    totalUsers,
+		"active_users":   activeUsers,
+		"inactive_users": inactiveUsers,
+		"recent_users":   recentUsers,
+		"role_stats":     roleStats,
+		"last_updated":   time.Now().Format("2006-01-02T15:04:05Z"),
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data":   stats,
 	})
 }
 

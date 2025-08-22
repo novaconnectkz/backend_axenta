@@ -47,7 +47,7 @@ type CreatePermissionRequest struct {
 	IsActive    *bool  `json:"is_active"`
 }
 
-// GetRoles возвращает список ролей с фильтрацией
+// GetRoles возвращает список ролей с фильтрацией и пагинацией
 func GetRoles(c *gin.Context) {
 	db := database.GetTenantDB(c)
 	if db == nil {
@@ -58,8 +58,19 @@ func GetRoles(c *gin.Context) {
 		return
 	}
 
+	// Параметры пагинации
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "100"))
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 1000 {
+		limit = 100
+	}
+	offset := (page - 1) * limit
+
 	// Параметры фильтрации
-	active := c.Query("active")
+	active := c.Query("active_only")
 	search := c.Query("search")
 	withPermissions := c.Query("with_permissions") == "true"
 
@@ -84,11 +95,22 @@ func GetRoles(c *gin.Context) {
 		)
 	}
 
+	// Подсчет общего количества
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to count roles: " + err.Error(),
+		})
+		return
+	}
+
 	// Сортировка по приоритету (убывание) и имени
 	query = query.Order("priority DESC, name ASC")
 
+	// Получение данных с пагинацией
 	var roles []models.Role
-	if err := query.Find(&roles).Error; err != nil {
+	if err := query.Offset(offset).Limit(limit).Find(&roles).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  "Failed to fetch roles: " + err.Error(),
@@ -98,7 +120,13 @@ func GetRoles(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
-		"data":   roles,
+		"data": gin.H{
+			"items": roles,
+			"total": total,
+			"page":  page,
+			"limit": limit,
+			"pages": (total + int64(limit) - 1) / int64(limit),
+		},
 	})
 }
 

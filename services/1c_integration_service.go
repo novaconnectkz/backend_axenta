@@ -10,6 +10,7 @@ import (
 
 	"backend_axenta/models"
 
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
@@ -24,20 +25,20 @@ type OneCIntegrationService struct {
 
 // OneCIntegrationConfig конфигурация интеграции с 1С
 type OneCIntegrationConfig struct {
-	CompanyID         uint   `json:"company_id"`
-	BaseURL           string `json:"base_url"`
-	Username          string `json:"username"`
-	Password          string `json:"password"`
-	Database          string `json:"database"`
-	APIVersion        string `json:"api_version"`
-	OrganizationCode  string `json:"organization_code"`  // Код организации в 1С
-	BankAccountCode   string `json:"bank_account_code"`  // Код банковского счета
-	PaymentTypeCode   string `json:"payment_type_code"`  // Код типа платежа
-	ContractTypeCode  string `json:"contract_type_code"` // Код типа договора
-	CurrencyCode      string `json:"currency_code"`      // Код валюты (RUB)
-	AutoExportEnabled bool   `json:"auto_export_enabled"`
-	AutoImportEnabled bool   `json:"auto_import_enabled"`
-	SyncInterval      int    `json:"sync_interval"` // Интервал синхронизации в минутах
+	CompanyID         uuid.UUID `json:"company_id"`
+	BaseURL           string    `json:"base_url"`
+	Username          string    `json:"username"`
+	Password          string    `json:"password"`
+	Database          string    `json:"database"`
+	APIVersion        string    `json:"api_version"`
+	OrganizationCode  string    `json:"organization_code"`  // Код организации в 1С
+	BankAccountCode   string    `json:"bank_account_code"`  // Код банковского счета
+	PaymentTypeCode   string    `json:"payment_type_code"`  // Код типа платежа
+	ContractTypeCode  string    `json:"contract_type_code"` // Код типа договора
+	CurrencyCode      string    `json:"currency_code"`      // Код валюты (RUB)
+	AutoExportEnabled bool      `json:"auto_export_enabled"`
+	AutoImportEnabled bool      `json:"auto_import_enabled"`
+	SyncInterval      int       `json:"sync_interval"` // Интервал синхронизации в минутах
 }
 
 // OneCIntegrationError ошибка интеграции с 1С
@@ -46,7 +47,7 @@ type OneCIntegrationError struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 
-	CompanyID    uint       `json:"company_id" gorm:"not null;index"`
+	CompanyID    uuid.UUID  `json:"company_id" gorm:"type:uuid;not null;index"`
 	Operation    string     `json:"operation" gorm:"not null;type:varchar(50)"` // export_payment, import_counterparty, sync_status
 	EntityType   string     `json:"entity_type" gorm:"type:varchar(50)"`        // invoice, payment, counterparty
 	EntityID     string     `json:"entity_id" gorm:"type:varchar(50)"`
@@ -81,8 +82,8 @@ func (s *OneCIntegrationService) SetOneCClient(client interface{}) {
 }
 
 // GetCredentials получает учетные данные для 1С из кэша или БД
-func (s *OneCIntegrationService) GetCredentials(ctx context.Context, companyID uint) (*OneCCredentials, error) {
-	cacheKey := fmt.Sprintf("1c_credentials_%d", companyID)
+func (s *OneCIntegrationService) GetCredentials(ctx context.Context, companyID uuid.UUID) (*OneCCredentials, error) {
+	cacheKey := fmt.Sprintf("1c_credentials_%s", companyID.String())
 
 	// Пытаемся получить из кэша
 	if s.cacheService != nil {
@@ -130,7 +131,7 @@ func (s *OneCIntegrationService) GetCredentials(ctx context.Context, companyID u
 }
 
 // ExportPaymentRegistry экспортирует реестр платежей в 1С
-func (s *OneCIntegrationService) ExportPaymentRegistry(ctx context.Context, companyID uint, invoices []models.Invoice, registryNumber string) error {
+func (s *OneCIntegrationService) ExportPaymentRegistry(ctx context.Context, companyID uuid.UUID, invoices []models.Invoice, registryNumber string) error {
 	credentials, err := s.GetCredentials(ctx, companyID)
 	if err != nil {
 		return err
@@ -201,7 +202,7 @@ func (s *OneCIntegrationService) ExportPaymentRegistry(ctx context.Context, comp
 }
 
 // ImportCounterparties импортирует контрагентов из 1С
-func (s *OneCIntegrationService) ImportCounterparties(ctx context.Context, companyID uint) error {
+func (s *OneCIntegrationService) ImportCounterparties(ctx context.Context, companyID uuid.UUID) error {
 	credentials, err := s.GetCredentials(ctx, companyID)
 	if err != nil {
 		return err
@@ -236,12 +237,12 @@ func (s *OneCIntegrationService) ImportCounterparties(ctx context.Context, compa
 		offset += limit
 	}
 
-	s.logger.Printf("Импорт контрагентов завершен: %d из 1С в компанию %d", totalImported, companyID)
+	s.logger.Printf("Импорт контрагентов завершен: %d из 1С в компанию %s", totalImported, companyID.String())
 	return nil
 }
 
 // importSingleCounterparty импортирует одного контрагента
-func (s *OneCIntegrationService) importSingleCounterparty(ctx context.Context, companyID uint, cp *OneCCounterparty) error {
+func (s *OneCIntegrationService) importSingleCounterparty(ctx context.Context, companyID uuid.UUID, cp *OneCCounterparty) error {
 	// Проверяем, есть ли уже такой контрагент
 	var existingUser models.User
 	err := s.db.Where("company_id = ? AND (email = ? OR phone = ?) AND external_id = ?",
@@ -288,7 +289,7 @@ func (s *OneCIntegrationService) importSingleCounterparty(ctx context.Context, c
 }
 
 // SyncPaymentStatuses синхронизирует статусы платежей с 1С
-func (s *OneCIntegrationService) SyncPaymentStatuses(ctx context.Context, companyID uint) error {
+func (s *OneCIntegrationService) SyncPaymentStatuses(ctx context.Context, companyID uuid.UUID) error {
 	credentials, err := s.GetCredentials(ctx, companyID)
 	if err != nil {
 		return err
@@ -334,7 +335,7 @@ func (s *OneCIntegrationService) SyncPaymentStatuses(ctx context.Context, compan
 }
 
 // getConfig получает конфигурацию интеграции
-func (s *OneCIntegrationService) getConfig(ctx context.Context, companyID uint) (*OneCIntegrationConfig, error) {
+func (s *OneCIntegrationService) getConfig(ctx context.Context, companyID uuid.UUID) (*OneCIntegrationConfig, error) {
 	var integration models.Integration
 	if err := s.db.Where("company_id = ? AND integration_type = ?", companyID, "1c").First(&integration).Error; err != nil {
 		return nil, fmt.Errorf("интеграция с 1С не настроена: %w", err)
@@ -349,7 +350,7 @@ func (s *OneCIntegrationService) getConfig(ctx context.Context, companyID uint) 
 }
 
 // logError логирует ошибку интеграции
-func (s *OneCIntegrationService) logError(ctx context.Context, companyID uint, operation, entityType, entityID, errorCode, errorMessage string, requestData, responseData interface{}) {
+func (s *OneCIntegrationService) logError(ctx context.Context, companyID uuid.UUID, operation, entityType, entityID, errorCode, errorMessage string, requestData, responseData interface{}) {
 	var requestJSON, responseJSON string
 
 	if requestData != nil {
@@ -383,7 +384,7 @@ func (s *OneCIntegrationService) logError(ctx context.Context, companyID uint, o
 }
 
 // TestConnection тестирует подключение к 1С
-func (s *OneCIntegrationService) TestConnection(ctx context.Context, companyID uint) error {
+func (s *OneCIntegrationService) TestConnection(ctx context.Context, companyID uuid.UUID) error {
 	credentials, err := s.GetCredentials(ctx, companyID)
 	if err != nil {
 		return err
@@ -393,12 +394,12 @@ func (s *OneCIntegrationService) TestConnection(ctx context.Context, companyID u
 		return fmt.Errorf("тест подключения к 1С не пройден: %w", err)
 	}
 
-	s.logger.Printf("Тест подключения к 1С успешно пройден для компании %d", companyID)
+	s.logger.Printf("Тест подключения к 1С успешно пройден для компании %s", companyID.String())
 	return nil
 }
 
 // GetIntegrationErrors возвращает список ошибок интеграции
-func (s *OneCIntegrationService) GetIntegrationErrors(ctx context.Context, companyID uint, resolved bool) ([]OneCIntegrationError, error) {
+func (s *OneCIntegrationService) GetIntegrationErrors(ctx context.Context, companyID uuid.UUID, resolved bool) ([]OneCIntegrationError, error) {
 	var errors []OneCIntegrationError
 	query := s.db.Where("company_id = ?", companyID)
 
@@ -430,7 +431,7 @@ func (s *OneCIntegrationService) ResolveError(ctx context.Context, errorID uint)
 }
 
 // ScheduleAutoExport планирует автоматический экспорт
-func (s *OneCIntegrationService) ScheduleAutoExport(ctx context.Context, companyID uint) error {
+func (s *OneCIntegrationService) ScheduleAutoExport(ctx context.Context, companyID uuid.UUID) error {
 	config, err := s.getConfig(ctx, companyID)
 	if err != nil {
 		return err
@@ -460,6 +461,6 @@ func (s *OneCIntegrationService) ScheduleAutoExport(ctx context.Context, company
 		return fmt.Errorf("ошибка автоэкспорта: %w", err)
 	}
 
-	s.logger.Printf("Автоэкспорт выполнен для компании %d: %d счетов", companyID, len(invoices))
+	s.logger.Printf("Автоэкспорт выполнен для компании %s: %d счетов", companyID.String(), len(invoices))
 	return nil
 }

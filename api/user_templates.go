@@ -3,7 +3,6 @@ package api
 import (
 	"backend_axenta/database"
 	"backend_axenta/models"
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -17,7 +16,7 @@ type CreateUserTemplateRequest struct {
 	Name        string `json:"name" binding:"required,min=2,max=100"`
 	Description string `json:"description" binding:"max=500"`
 	RoleID      uint   `json:"role_id" binding:"required,min=1"`
-	Settings    string `json:"settings" binding:"omitempty"`
+	Settings    string `json:"settings"`
 	IsActive    *bool  `json:"is_active"`
 }
 
@@ -30,21 +29,7 @@ type UpdateUserTemplateRequest struct {
 	IsActive    *bool  `json:"is_active"`
 }
 
-// UserTemplateResponse представляет ответ с данными шаблона пользователя
-type UserTemplateResponse struct {
-	ID          uint        `json:"id"`
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	RoleID      uint        `json:"role_id"`
-	Role        models.Role `json:"role"`
-	Settings    string      `json:"settings"`
-	IsActive    bool        `json:"is_active"`
-	UserCount   int64       `json:"user_count"`
-	CreatedAt   string      `json:"created_at"`
-	UpdatedAt   string      `json:"updated_at"`
-}
-
-// GetUserTemplates возвращает список шаблонов пользователей с фильтрацией
+// GetUserTemplates возвращает список шаблонов пользователей с фильтрацией и пагинацией
 func GetUserTemplates(c *gin.Context) {
 	db := database.GetTenantDB(c)
 	if db == nil {
@@ -55,29 +40,28 @@ func GetUserTemplates(c *gin.Context) {
 		return
 	}
 
+	// Параметры пагинации
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "100"))
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 1000 {
+		limit = 100
+	}
+	offset := (page - 1) * limit
+
 	// Параметры фильтрации
-	active := c.Query("active")
-	roleID := c.Query("role_id")
+	active := c.Query("active_only")
 	search := c.Query("search")
-	withUsers := c.Query("with_users") == "true"
 
 	// Построение запроса
 	query := db.Model(&models.UserTemplate{}).Preload("Role")
-	if withUsers {
-		query = query.Preload("Users")
-	}
 
 	// Фильтр по активности
 	if active != "" {
 		isActive := active == "true"
 		query = query.Where("is_active = ?", isActive)
-	}
-
-	// Фильтр по роли
-	if roleID != "" {
-		if id, err := strconv.ParseUint(roleID, 10, 32); err == nil {
-			query = query.Where("role_id = ?", id)
-		}
 	}
 
 	// Поиск по имени или описанию
@@ -89,11 +73,22 @@ func GetUserTemplates(c *gin.Context) {
 		)
 	}
 
+	// Подсчет общего количества
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to count user templates: " + err.Error(),
+		})
+		return
+	}
+
 	// Сортировка по имени
 	query = query.Order("name ASC")
 
+	// Получение данных с пагинацией
 	var templates []models.UserTemplate
-	if err := query.Find(&templates).Error; err != nil {
+	if err := query.Offset(offset).Limit(limit).Find(&templates).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  "Failed to fetch user templates: " + err.Error(),
@@ -101,30 +96,15 @@ func GetUserTemplates(c *gin.Context) {
 		return
 	}
 
-	// Преобразование в response format с подсчетом пользователей
-	templateResponses := make([]UserTemplateResponse, len(templates))
-	for i, template := range templates {
-		// Подсчитываем количество пользователей для каждого шаблона
-		var userCount int64
-		db.Model(&models.User{}).Where("template_id = ?", template.ID).Count(&userCount)
-
-		templateResponses[i] = UserTemplateResponse{
-			ID:          template.ID,
-			Name:        template.Name,
-			Description: template.Description,
-			RoleID:      template.RoleID,
-			Role:        template.Role,
-			Settings:    template.Settings,
-			IsActive:    template.IsActive,
-			UserCount:   userCount,
-			CreatedAt:   template.CreatedAt.Format("2006-01-02T15:04:05Z"),
-			UpdatedAt:   template.UpdatedAt.Format("2006-01-02T15:04:05Z"),
-		}
-	}
-
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
-		"data":   templateResponses,
+		"data": gin.H{
+			"items": templates,
+			"total": total,
+			"page":  page,
+			"limit": limit,
+			"pages": (total + int64(limit) - 1) / int64(limit),
+		},
 	})
 }
 
@@ -149,7 +129,7 @@ func GetUserTemplate(c *gin.Context) {
 	}
 
 	var template models.UserTemplate
-	if err := db.Preload("Role").Preload("Users").First(&template, templateID).Error; err != nil {
+	if err := db.Preload("Role").First(&template, templateID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{
 				"status": "error",
@@ -164,26 +144,9 @@ func GetUserTemplate(c *gin.Context) {
 		return
 	}
 
-	// Подсчитываем количество пользователей
-	var userCount int64
-	db.Model(&models.User{}).Where("template_id = ?", template.ID).Count(&userCount)
-
-	templateResponse := UserTemplateResponse{
-		ID:          template.ID,
-		Name:        template.Name,
-		Description: template.Description,
-		RoleID:      template.RoleID,
-		Role:        template.Role,
-		Settings:    template.Settings,
-		IsActive:    template.IsActive,
-		UserCount:   userCount,
-		CreatedAt:   template.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:   template.UpdatedAt.Format("2006-01-02T15:04:05Z"),
-	}
-
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
-		"data":   templateResponse,
+		"data":   template,
 	})
 }
 
@@ -217,17 +180,6 @@ func CreateUserTemplate(c *gin.Context) {
 		return
 	}
 
-	// Валидируем JSON настройки, если они указаны
-	if req.Settings != "" {
-		if !isValidJSON(req.Settings) {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"status": "error",
-				"error":  "Invalid JSON format in settings",
-			})
-			return
-		}
-	}
-
 	// Создаем шаблон
 	isActive := true
 	if req.IsActive != nil {
@@ -243,6 +195,15 @@ func CreateUserTemplate(c *gin.Context) {
 	}
 
 	if err := db.Create(&template).Error; err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "duplicate") ||
+			strings.Contains(strings.ToLower(err.Error()), "unique") ||
+			strings.Contains(strings.ToLower(err.Error()), "constraint") {
+			c.JSON(http.StatusConflict, gin.H{
+				"status": "error",
+				"error":  "User template with this name already exists",
+			})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  "Failed to create user template: " + err.Error(),
@@ -250,7 +211,7 @@ func CreateUserTemplate(c *gin.Context) {
 		return
 	}
 
-	// Загружаем созданный шаблон с ролью
+	// Загружаем созданный шаблон с связями
 	if err := db.Preload("Role").First(&template, template.ID).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
@@ -259,22 +220,9 @@ func CreateUserTemplate(c *gin.Context) {
 		return
 	}
 
-	templateResponse := UserTemplateResponse{
-		ID:          template.ID,
-		Name:        template.Name,
-		Description: template.Description,
-		RoleID:      template.RoleID,
-		Role:        template.Role,
-		Settings:    template.Settings,
-		IsActive:    template.IsActive,
-		UserCount:   0, // Новый шаблон, пользователей еще нет
-		CreatedAt:   template.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:   template.UpdatedAt.Format("2006-01-02T15:04:05Z"),
-	}
-
 	c.JSON(http.StatusCreated, gin.H{
 		"status": "success",
-		"data":   templateResponse,
+		"data":   template,
 	})
 }
 
@@ -336,17 +284,6 @@ func UpdateUserTemplate(c *gin.Context) {
 		}
 	}
 
-	// Валидируем JSON настройки, если они указаны
-	if req.Settings != "" {
-		if !isValidJSON(req.Settings) {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"status": "error",
-				"error":  "Invalid JSON format in settings",
-			})
-			return
-		}
-	}
-
 	// Обновляем поля
 	updates := make(map[string]interface{})
 	if req.Name != "" {
@@ -366,6 +303,15 @@ func UpdateUserTemplate(c *gin.Context) {
 	}
 
 	if err := db.Model(&template).Updates(updates).Error; err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "duplicate") ||
+			strings.Contains(strings.ToLower(err.Error()), "unique") ||
+			strings.Contains(strings.ToLower(err.Error()), "constraint") {
+			c.JSON(http.StatusConflict, gin.H{
+				"status": "error",
+				"error":  "User template with this name already exists",
+			})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  "Failed to update user template: " + err.Error(),
@@ -373,7 +319,7 @@ func UpdateUserTemplate(c *gin.Context) {
 		return
 	}
 
-	// Загружаем обновленный шаблон с ролью
+	// Загружаем обновленный шаблон с связями
 	if err := db.Preload("Role").First(&template, template.ID).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
@@ -382,30 +328,13 @@ func UpdateUserTemplate(c *gin.Context) {
 		return
 	}
 
-	// Подсчитываем количество пользователей
-	var userCount int64
-	db.Model(&models.User{}).Where("template_id = ?", template.ID).Count(&userCount)
-
-	templateResponse := UserTemplateResponse{
-		ID:          template.ID,
-		Name:        template.Name,
-		Description: template.Description,
-		RoleID:      template.RoleID,
-		Role:        template.Role,
-		Settings:    template.Settings,
-		IsActive:    template.IsActive,
-		UserCount:   userCount,
-		CreatedAt:   template.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:   template.UpdatedAt.Format("2006-01-02T15:04:05Z"),
-	}
-
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
-		"data":   templateResponse,
+		"data":   template,
 	})
 }
 
-// DeleteUserTemplate удаляет шаблон пользователя (только если не используется)
+// DeleteUserTemplate удаляет шаблон пользователя (soft delete)
 func DeleteUserTemplate(c *gin.Context) {
 	db := database.GetTenantDB(c)
 	if db == nil {
@@ -473,10 +402,4 @@ func DeleteUserTemplate(c *gin.Context) {
 		"status":  "success",
 		"message": "User template deleted successfully",
 	})
-}
-
-// isValidJSON проверяет, является ли строка валидным JSON
-func isValidJSON(s string) bool {
-	var js interface{}
-	return json.Unmarshal([]byte(s), &js) == nil
 }

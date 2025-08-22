@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -73,7 +74,7 @@ func createReportTestData(t *testing.T, db *gorm.DB) {
 		LastName:  "User",
 		IsActive:  true,
 		RoleID:    role.ID,
-		CompanyID: 1,
+		CompanyID: uuid.New(),
 	}
 	require.NoError(t, db.Create(&user).Error)
 
@@ -94,7 +95,7 @@ func createReportTestData(t *testing.T, db *gorm.DB) {
 		EndDate:     time.Now().AddDate(1, 0, 0),
 		Status:      "active",
 		TotalAmount: decimal.NewFromFloat(10000.0),
-		CompanyID:   1,
+		CompanyID:   uuid.New(),
 	}
 	require.NoError(t, db.Create(&contract).Error)
 
@@ -219,7 +220,7 @@ func createReportTestData(t *testing.T, db *gorm.DB) {
 			Title:              "Test Invoice 1",
 			InvoiceDate:        now,
 			DueDate:            now.AddDate(0, 0, 30),
-			CompanyID:          1,
+			CompanyID:          uuid.New(),
 			TariffPlanID:       tariffPlan.ID,
 			BillingPeriodStart: now.AddDate(0, -1, 0),
 			BillingPeriodEnd:   now,
@@ -234,7 +235,7 @@ func createReportTestData(t *testing.T, db *gorm.DB) {
 			Title:              "Test Invoice 2",
 			InvoiceDate:        now,
 			DueDate:            now.AddDate(0, 0, 30),
-			CompanyID:          1,
+			CompanyID:          uuid.New(),
 			TariffPlanID:       tariffPlan.ID,
 			BillingPeriodStart: now.AddDate(0, -1, 0),
 			BillingPeriodEnd:   now,

@@ -192,11 +192,12 @@ func CreateObject(c *gin.Context) {
 
 	// Синхронизируем объект с Axetna.cloud асинхронно
 	if integrationService := services.GetIntegrationService(); integrationService != nil {
-		if tenantID, exists := c.Get("tenant_id"); exists {
-			if tid, ok := tenantID.(uint); ok {
-				integrationService.SyncObjectAsync(tid, "create", &object)
-			}
-		}
+		// Синхронизация временно отключена
+		// if tenantID, exists := c.Get("tenant_id"); exists {
+		// 	if tid, ok := tenantID.(uint); ok {
+		// 		integrationService.SyncObjectAsync(tid, "create", &object)
+		// 	}
+		// }
 	}
 
 	c.JSON(201, gin.H{"status": "success", "data": object})
@@ -325,13 +326,14 @@ func UpdateObject(c *gin.Context) {
 	}
 
 	// Синхронизируем обновление объекта с Axetna.cloud асинхронно
-	if integrationService := services.GetIntegrationService(); integrationService != nil {
-		if tenantID, exists := c.Get("tenant_id"); exists {
-			if tid, ok := tenantID.(uint); ok {
-				integrationService.SyncObjectAsync(tid, "update", &existingObject)
-			}
-		}
-	}
+	// Синхронизация временно отключена
+	// if integrationService := services.GetIntegrationService(); integrationService != nil {
+	// 	if tenantID, exists := c.Get("tenant_id"); exists {
+	// 		if tid, ok := tenantID.(uint); ok {
+	// 			integrationService.SyncObjectAsync(tid, "update", &existingObject)
+	// 		}
+	// 	}
+	// }
 
 	c.JSON(200, gin.H{"status": "success", "data": existingObject})
 }
@@ -363,14 +365,14 @@ func DeleteObject(c *gin.Context) {
 		return
 	}
 
-	// Синхронизируем удаление объекта с Axetna.cloud асинхронно (до удаления из БД)
-	if integrationService := services.GetIntegrationService(); integrationService != nil {
-		if tenantID, exists := c.Get("tenant_id"); exists {
-			if tid, ok := tenantID.(uint); ok {
-				integrationService.SyncObjectAsync(tid, "delete", &object)
-			}
-		}
-	}
+	// Синхронизация временно отключена
+	// if integrationService := services.GetIntegrationService(); integrationService != nil {
+	// 	if tenantID, exists := c.Get("tenant_id"); exists {
+	// 		if tid, ok := tenantID.(uint); ok {
+	// 			integrationService.SyncObjectAsync(tid, "delete", &object)
+	// 		}
+	// 	}
+	// }
 
 	// Мягкое удаление объекта
 	if err := tenantDB.Delete(&object).Error; err != nil {

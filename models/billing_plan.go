@@ -3,6 +3,7 @@ package models
 import (
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
@@ -37,7 +38,7 @@ type BillingPlan struct {
 	IsPopular bool `json:"is_popular" gorm:"default:false"`
 
 	// Для управления доступом
-	CompanyID *uint `json:"company_id" gorm:"index"` // Если тариф специфичен для компании (nullable)
+	CompanyID *uuid.UUID `json:"company_id" gorm:"type:uuid;index"` // Если тариф специфичен для компании (nullable)
 }
 
 // TableName задает имя таблицы для модели BillingPlan
@@ -53,7 +54,7 @@ type Subscription struct {
 	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
 
 	// Связи
-	CompanyID     uint        `json:"company_id" gorm:"not null;index"`
+	CompanyID     uuid.UUID   `json:"company_id" gorm:"type:uuid;not null;index"`
 	BillingPlanID uint        `json:"billing_plan_id" gorm:"not null"`
 	BillingPlan   BillingPlan `json:"billing_plan" gorm:"foreignKey:BillingPlanID"`
 

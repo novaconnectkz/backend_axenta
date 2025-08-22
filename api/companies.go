@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -67,7 +68,7 @@ type CompanyRequest struct {
 
 // CompanyResponse структура ответа для компании
 type CompanyResponse struct {
-	ID             uint      `json:"id"`
+	ID             uuid.UUID `json:"id"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 	Name           string    `json:"name"`
@@ -761,7 +762,7 @@ func (api *CompaniesAPI) testAxentaConnection(login, password string) (bool, str
 }
 
 // clearCompanyCache очищает кэш компании
-func (api *CompaniesAPI) clearCompanyCache(companyID uint) {
-	cacheKey := fmt.Sprintf("company:id:%d", companyID)
+func (api *CompaniesAPI) clearCompanyCache(companyID uuid.UUID) {
+	cacheKey := fmt.Sprintf("company:id:%s", companyID.String())
 	database.CacheDel(cacheKey)
 }

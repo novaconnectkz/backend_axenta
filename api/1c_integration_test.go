@@ -15,6 +15,7 @@ import (
 	"backend_axenta/services"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -85,7 +86,7 @@ func setupOneCAPITest() (*gin.Engine, *gorm.DB, *services.OneCClientMock, *model
 	return r, db, mockClient, company
 }
 
-func createTestOneCIntegration(db *gorm.DB, companyID uint) *models.Integration {
+func createTestOneCIntegration(db *gorm.DB, companyID uuid.UUID) *models.Integration {
 	config := services.OneCIntegrationConfig{
 		CompanyID:         companyID,
 		BaseURL:           "http://test.1c.local",
@@ -118,7 +119,7 @@ func createTestOneCIntegration(db *gorm.DB, companyID uint) *models.Integration 
 	return integration
 }
 
-func createTestOneCInvoice(db *gorm.DB, companyID uint, status string) *models.Invoice {
+func createTestOneCInvoice(db *gorm.DB, companyID uuid.UUID, status string) *models.Invoice {
 	invoice := &models.Invoice{
 		Number:             "INV-TEST-001",
 		Title:              "Тестовый счет",

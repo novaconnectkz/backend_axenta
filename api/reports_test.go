@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
@@ -65,7 +66,7 @@ func createReportsTestData(t *testing.T, db *gorm.DB) {
 		LastName:  "User",
 		IsActive:  true,
 		RoleID:    role.ID,
-		CompanyID: 1,
+		CompanyID: uuid.New(),
 	}
 	require.NoError(t, db.Create(&user).Error)
 
