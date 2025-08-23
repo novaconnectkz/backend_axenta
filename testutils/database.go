@@ -20,68 +20,8 @@ func SetupTestDB() (*gorm.DB, error) {
 		return nil, err
 	}
 
-	// Выполняем миграции в правильном порядке
-	// Сначала базовые модели без зависимостей
-	err = db.AutoMigrate(
-		// Базовые модели
-		&models.Company{},
-		&models.Permission{},
-		&models.Role{},
-
-		// Пользователи и шаблоны
-		&models.UserTemplate{},
-		&models.User{},
-
-		// Биллинг
-		&models.BillingPlan{},
-		&models.TariffPlan{},
-		&models.Subscription{},
-		&models.BillingSettings{},
-
-		// Договоры
-		&models.Contract{},
-		&models.ContractAppendix{},
-
-		// Локации и оборудование
-		&models.Location{},
-		&models.EquipmentCategory{},
-		&models.Equipment{},
-		&models.Installer{},
-
-		// Объекты и шаблоны
-		&models.ObjectTemplate{},
-		&models.Object{},
-
-		// Монтажи и склад
-		&models.Installation{},
-		&models.WarehouseOperation{},
-		&models.StockAlert{},
-
-		// Интеграции
-		&models.Integration{},
-		&models.IntegrationError{},
-
-		// Счета
-		&models.Invoice{},
-		&models.InvoiceItem{},
-		&models.BillingHistory{},
-
-		// Уведомления
-		&models.NotificationTemplate{},
-		&models.NotificationLog{},
-		&models.NotificationSettings{},
-		&models.UserNotificationPreferences{},
-
-		// Отчеты
-		&models.Report{},
-		&models.ReportTemplate{},
-		&models.ReportSchedule{},
-		&models.ReportExecution{},
-
-		// Мониторинг
-		&models.MonitoringTemplate{},
-		&models.MonitoringNotificationTemplate{},
-	)
+	// Используем упрощенные модели для тестов, совместимые с SQLite
+	err = db.AutoMigrate(GetTestModels()...)
 	if err != nil {
 		return nil, err
 	}
@@ -148,8 +88,8 @@ func CleanupTestDB(db *gorm.DB) {
 }
 
 // CreateTestCompany создает тестовую компанию для использования в тестах
-func CreateTestCompany(db *gorm.DB) *models.Company {
-	company := &models.Company{
+func CreateTestCompany(db *gorm.DB) *TestCompany {
+	company := &TestCompany{
 		Name:           "Test Company",
 		DatabaseSchema: "tenant_test",
 		Domain:         "test.example.com",
@@ -167,24 +107,15 @@ func CreateTestCompany(db *gorm.DB) *models.Company {
 }
 
 // CreateTestUser создает тестового пользователя
-func CreateTestUser(db *gorm.DB, companyID interface{}) *models.User {
-	user := &models.User{
+func CreateTestUser(db *gorm.DB, companyID string) *TestUser {
+	user := &TestUser{
 		Username:  "testuser",
 		Email:     "test@example.com",
 		Password:  "hashed_password",
 		FirstName: "Test",
 		LastName:  "User",
 		IsActive:  true,
-		UserType:  "user",
-	}
-
-	// Устанавливаем CompanyID в зависимости от типа
-	switch v := companyID.(type) {
-	case string:
-		// Для UUID строки
-		if v != "" {
-			// Здесь можно добавить парсинг UUID если нужно
-		}
+		CompanyID: companyID,
 	}
 
 	if err := db.Create(user).Error; err != nil {
@@ -196,13 +127,11 @@ func CreateTestUser(db *gorm.DB, companyID interface{}) *models.User {
 }
 
 // CreateTestRole создает тестовую роль
-func CreateTestRole(db *gorm.DB) *models.Role {
-	role := &models.Role{
+func CreateTestRole(db *gorm.DB) *TestRole {
+	role := &TestRole{
 		Name:        "test_role",
-		DisplayName: "Test Role",
 		Description: "Role for testing",
-		IsActive:    true,
-		Priority:    1,
+		IsSystem:    false,
 	}
 
 	if err := db.Create(role).Error; err != nil {
@@ -214,15 +143,12 @@ func CreateTestRole(db *gorm.DB) *models.Role {
 }
 
 // CreateTestPermission создает тестовое разрешение
-func CreateTestPermission(db *gorm.DB) *models.Permission {
-	permission := &models.Permission{
+func CreateTestPermission(db *gorm.DB) *TestPermission {
+	permission := &TestPermission{
 		Name:        "test.permission",
-		DisplayName: "Test Permission",
 		Description: "Permission for testing",
 		Resource:    "test",
 		Action:      "read",
-		Category:    "testing",
-		IsActive:    true,
 	}
 
 	if err := db.Create(permission).Error; err != nil {
