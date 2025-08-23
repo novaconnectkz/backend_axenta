@@ -4,8 +4,16 @@
 GitHub Actions не может подключиться к серверу из-за отсутствующих или неправильно настроенных секретов.
 
 ## Ошибки в логах:
+- `Error: missing server host` - отсутствует секрет SERVER_HOST
 - `ssh.ParsePrivateKey: ssh: no key found` - отсутствует SSH ключ
 - `dial tcp: lookup your-server-host on 168.63.129.16:53: no such host` - неправильный хост сервера
+
+## Быстрая настройка
+
+### Шаг 1: Перейдите в настройки репозитория
+1. Откройте ваш репозиторий на GitHub
+2. Перейдите в **Settings** (Настройки)
+3. В левом меню выберите **Secrets and variables** → **Actions**
 
 ## Необходимые GitHub Secrets
 

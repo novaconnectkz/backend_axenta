@@ -34,13 +34,49 @@ jobs:
           # Пропускаем тесты с проблемами SQLite миграций
           echo "Skipping problematic tests until SQLite compatibility is fixed"
           
+  check-deployment:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && secrets.SERVER_HOST == ''
+    steps:
+      - name: Deployment info
+        run: |
+          echo "🎉 Tests passed successfully!"
+          echo ""
+          echo "⚠️  Deployment is skipped because GitHub Secrets are not configured."
+          echo ""
+          echo "📋 To enable automatic deployment, please configure the following GitHub Secrets:"
+          echo "   - SERVER_HOST: IP address or domain of your server"
+          echo "   - SERVER_USERNAME: SSH username for deployment"
+          echo "   - SERVER_SSH_KEY: Private SSH key for server access"
+          echo "   - SERVER_PORT: SSH port (optional, defaults to 22)"
+          echo ""
+          echo "📖 For detailed setup instructions, see:"
+          echo "   https://github.com/${{ github.repository }}/blob/main/GITHUB_SECRETS_SETUP.md"
+          echo ""
+          echo "🔧 Once configured, the next push will automatically deploy to your server."
+          
   deploy:
     needs: test
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && secrets.SERVER_HOST != ''
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        
+      - name: Check deployment secrets
+        run: |
+          if [ -z "${{ secrets.SERVER_HOST }}" ]; then
+            echo "⚠️  SERVER_HOST secret is not configured"
+            echo "📋 Please configure the following GitHub Secrets for deployment:"
+            echo "   - SERVER_HOST: IP address or domain of your server"
+            echo "   - SERVER_USERNAME: SSH username"
+            echo "   - SERVER_SSH_KEY: Private SSH key"
+            echo "   - SERVER_PORT: SSH port (optional, defaults to 22)"
+            echo ""
+            echo "📖 See GITHUB_SECRETS_SETUP.md for detailed instructions"
+            exit 0
+          fi
         
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
