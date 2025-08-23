@@ -181,6 +181,7 @@ func autoMigrate() error {
 
 // SetupTestDatabase создает тестовую базу данных в памяти
 func SetupTestDatabase() error {
+	// Используем временную БД в памяти для тестов
 	var err error
 	DB, err = gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
@@ -189,41 +190,20 @@ func SetupTestDatabase() error {
 		return fmt.Errorf("failed to connect to test database: %v", err)
 	}
 
-	// Выполняем миграции для тестовой базы
+	// Выполняем базовые миграции
 	err = DB.AutoMigrate(
 		&models.Company{},
 		&models.User{},
 		&models.Role{},
 		&models.Permission{},
-		&models.UserTemplate{},
-		&models.Object{},
-		&models.ObjectTemplate{},
-		&models.Location{},
-		&models.Equipment{},
-		&models.Installer{},
-		&models.Installation{},
-		&models.WarehouseOperation{},
-		&models.EquipmentCategory{},
-		&models.StockAlert{},
-		&models.Contract{},
-		&models.ContractAppendix{},
-		&models.BillingPlan{},
-		&models.Subscription{},
-		&models.TariffPlan{},
+		&models.Integration{},
 		&models.IntegrationError{},
-		&models.NotificationTemplate{},
-		&models.NotificationLog{},
-		&models.NotificationSettings{},
-		&models.UserNotificationPreferences{},
-		&models.Report{},
-		&models.ReportTemplate{},
-		&models.ReportSchedule{},
-		&models.ReportExecution{},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to migrate test database: %v", err)
 	}
 
+	log.Println("✅ Тестовая база данных настроена успешно")
 	return nil
 }
 

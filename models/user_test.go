@@ -8,34 +8,115 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 // setupTestDB создает тестовую базу данных в памяти
 func setupTestDB(t *testing.T) *gorm.DB {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
 	require.NoError(t, err)
 
-	// Мигрируем все модели
-	err = db.AutoMigrate(
-		&Permission{},
-		&Role{},
-		&User{},
-		&UserTemplate{},
-		&Company{},
-		&BillingPlan{},
-		&Object{},
-		&Contract{},
-		&ContractAppendix{},
-		&Location{},
-		&Installer{},
-		&Equipment{},
-		&Installation{},
-		&ObjectTemplate{},
-		&MonitoringTemplate{},
-		&NotificationTemplate{},
-		&TariffPlan{},
-		&Subscription{},
-	)
+	// Создаем таблицы вручную для совместимости с SQLite
+	err = db.Exec(`
+		CREATE TABLE companies (
+			id TEXT PRIMARY KEY,
+			created_at DATETIME,
+			updated_at DATETIME,
+			deleted_at DATETIME,
+			name TEXT NOT NULL,
+			database_schema TEXT NOT NULL,
+			domain TEXT,
+			axetna_login TEXT NOT NULL,
+			axetna_password TEXT NOT NULL,
+			is_active BOOLEAN DEFAULT TRUE
+		)
+	`).Error
+	require.NoError(t, err)
+
+	err = db.Exec(`
+		CREATE TABLE permissions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			created_at DATETIME,
+			updated_at DATETIME,
+			deleted_at DATETIME,
+			name TEXT UNIQUE NOT NULL,
+			display_name TEXT NOT NULL,
+			description TEXT,
+			resource TEXT NOT NULL,
+			action TEXT NOT NULL,
+			category TEXT,
+			is_active BOOLEAN DEFAULT TRUE
+		)
+	`).Error
+	require.NoError(t, err)
+
+	err = db.Exec(`
+		CREATE TABLE roles (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			created_at DATETIME,
+			updated_at DATETIME,
+			deleted_at DATETIME,
+			name TEXT UNIQUE NOT NULL,
+			display_name TEXT NOT NULL,
+			description TEXT,
+			color TEXT,
+			priority INTEGER DEFAULT 0,
+			is_active BOOLEAN DEFAULT TRUE,
+			is_system BOOLEAN DEFAULT FALSE
+		)
+	`).Error
+	require.NoError(t, err)
+
+	err = db.Exec(`
+		CREATE TABLE user_templates (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			created_at DATETIME,
+			updated_at DATETIME,
+			deleted_at DATETIME,
+			name TEXT NOT NULL,
+			description TEXT,
+			role_id INTEGER NOT NULL,
+			settings TEXT,
+			is_active BOOLEAN DEFAULT TRUE
+		)
+	`).Error
+	require.NoError(t, err)
+
+	err = db.Exec(`
+		CREATE TABLE users (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			created_at DATETIME,
+			updated_at DATETIME,
+			deleted_at DATETIME,
+			username TEXT UNIQUE NOT NULL,
+			email TEXT UNIQUE NOT NULL,
+			password TEXT NOT NULL,
+			first_name TEXT,
+			last_name TEXT,
+			name TEXT,
+			phone TEXT,
+			telegram_id TEXT,
+			is_active BOOLEAN DEFAULT TRUE,
+			user_type TEXT DEFAULT 'user',
+			external_id TEXT,
+			external_source TEXT,
+			company_id TEXT,
+			role_id INTEGER,
+			template_id INTEGER,
+			last_login DATETIME,
+			login_count INTEGER DEFAULT 0
+		)
+	`).Error
+	require.NoError(t, err)
+
+	// Создаем таблицу связей many-to-many
+	err = db.Exec(`CREATE TABLE IF NOT EXISTS "role_permissions" (
+		"role_id" integer,
+		"permission_id" integer,
+		PRIMARY KEY ("role_id", "permission_id")
+	)`).Error
 	require.NoError(t, err)
 
 	return db

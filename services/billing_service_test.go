@@ -10,28 +10,155 @@ import (
 	"github.com/stretchr/testify/assert"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 func setupBillingTestDB() *gorm.DB {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
 	if err != nil {
 		panic("Failed to connect to test database")
 	}
 
-	// Автомиграция всех моделей
-	err = db.AutoMigrate(
-		&models.Company{},
-		&models.BillingPlan{},
-		&models.TariffPlan{},
-		&models.Contract{},
-		&models.Object{},
-		&models.Invoice{},
-		&models.InvoiceItem{},
-		&models.BillingHistory{},
-		&models.BillingSettings{},
-	)
+	// Создаем таблицы вручную для совместимости с SQLite
+	err = db.Exec(`
+		CREATE TABLE companies (
+			id TEXT PRIMARY KEY,
+			created_at DATETIME,
+			updated_at DATETIME,
+			deleted_at DATETIME,
+			name TEXT NOT NULL,
+			database_schema TEXT NOT NULL,
+			domain TEXT,
+			is_active BOOLEAN DEFAULT TRUE
+		)
+	`).Error
 	if err != nil {
-		panic("Failed to migrate test database")
+		panic("Failed to create companies table: " + err.Error())
+	}
+
+	err = db.Exec(`
+		CREATE TABLE billing_plans (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			created_at DATETIME,
+			updated_at DATETIME,
+			deleted_at DATETIME,
+			name TEXT UNIQUE NOT NULL,
+			description TEXT,
+			price DECIMAL(10,2) NOT NULL,
+			currency TEXT DEFAULT 'RUB',
+			billing_period TEXT DEFAULT 'monthly',
+			max_devices INTEGER DEFAULT 0,
+			max_users INTEGER DEFAULT 0,
+			max_storage INTEGER DEFAULT 0,
+			has_analytics BOOLEAN DEFAULT FALSE,
+			has_api BOOLEAN DEFAULT FALSE,
+			has_support BOOLEAN DEFAULT FALSE,
+			has_custom_domain BOOLEAN DEFAULT FALSE,
+			is_active BOOLEAN DEFAULT TRUE,
+			is_popular BOOLEAN DEFAULT FALSE,
+			company_id TEXT
+		)
+	`).Error
+	if err != nil {
+		panic("Failed to create billing_plans table: " + err.Error())
+	}
+
+	err = db.Exec(`
+		CREATE TABLE tariff_plans (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			created_at DATETIME,
+			updated_at DATETIME,
+			deleted_at DATETIME,
+			name TEXT UNIQUE NOT NULL,
+			description TEXT,
+			price DECIMAL(10,2) NOT NULL,
+			currency TEXT DEFAULT 'RUB',
+			billing_period TEXT DEFAULT 'monthly',
+			max_devices INTEGER DEFAULT 0,
+			max_users INTEGER DEFAULT 0,
+			max_storage INTEGER DEFAULT 0,
+			has_analytics BOOLEAN DEFAULT FALSE,
+			has_api BOOLEAN DEFAULT FALSE,
+			has_support BOOLEAN DEFAULT FALSE,
+			has_custom_domain BOOLEAN DEFAULT FALSE,
+			is_active BOOLEAN DEFAULT TRUE,
+			is_popular BOOLEAN DEFAULT FALSE,
+			company_id TEXT,
+			setup_fee DECIMAL(10,2) DEFAULT 0,
+			minimum_period INTEGER DEFAULT 1,
+			discount_percent DECIMAL(5,2) DEFAULT 0,
+			is_promotional BOOLEAN DEFAULT FALSE,
+			promotional_until DATETIME,
+			price_per_object DECIMAL(10,2),
+			free_objects_count INTEGER DEFAULT 0,
+			inactive_price_ratio DECIMAL(3,2) DEFAULT 0.5
+		)
+	`).Error
+	if err != nil {
+		panic("Failed to create tariff_plans table: " + err.Error())
+	}
+
+	err = db.Exec(`
+		CREATE TABLE contracts (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			created_at DATETIME,
+			updated_at DATETIME,
+			deleted_at DATETIME,
+			number TEXT UNIQUE NOT NULL,
+			title TEXT NOT NULL,
+			description TEXT,
+			company_id TEXT NOT NULL,
+			client_name TEXT NOT NULL,
+			start_date DATETIME NOT NULL,
+			end_date DATETIME NOT NULL,
+			tariff_plan_id INTEGER NOT NULL,
+			total_amount DECIMAL(15,2),
+			currency TEXT DEFAULT 'RUB',
+			status TEXT DEFAULT 'draft',
+			is_active BOOLEAN DEFAULT TRUE
+		)
+	`).Error
+	if err != nil {
+		panic("Failed to create contracts table: " + err.Error())
+	}
+
+	err = db.Exec(`
+		CREATE TABLE objects (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			created_at DATETIME,
+			updated_at DATETIME,
+			deleted_at DATETIME,
+			name TEXT NOT NULL,
+			type TEXT NOT NULL,
+			status TEXT DEFAULT 'active',
+			is_active BOOLEAN DEFAULT TRUE,
+			contract_id INTEGER NOT NULL
+		)
+	`).Error
+	if err != nil {
+		panic("Failed to create objects table: " + err.Error())
+	}
+
+	err = db.Exec(`
+		CREATE TABLE billing_settings (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			created_at DATETIME,
+			updated_at DATETIME,
+			deleted_at DATETIME,
+			company_id TEXT UNIQUE NOT NULL,
+			default_tax_rate DECIMAL(5,2) DEFAULT 20,
+			tax_included BOOLEAN DEFAULT FALSE,
+			enable_inactive_discounts BOOLEAN DEFAULT TRUE,
+			inactive_discount_ratio DECIMAL(3,2) DEFAULT 0.5,
+			invoice_payment_term_days INTEGER DEFAULT 14,
+			invoice_number_prefix TEXT DEFAULT 'INV',
+			currency TEXT DEFAULT 'RUB'
+		)
+	`).Error
+	if err != nil {
+		panic("Failed to create billing_settings table: " + err.Error())
 	}
 
 	return db

@@ -9,33 +9,21 @@ import (
 	"time"
 
 	"backend_axenta/models"
+	"backend_axenta/testutils"
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
 func setupOneCIntegrationTest() (*gorm.DB, *OneCIntegrationService, *OneCClientMock) {
-	// Создаем временную БД в памяти
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	// Создаем временную БД в памяти используя общую функцию
+	db, err := testutils.SetupTestDB()
 	if err != nil {
 		panic("failed to connect database")
 	}
-
-	// Мигрируем схему
-	db.AutoMigrate(
-		&models.Company{},
-		&models.User{},
-		&models.Invoice{},
-		&models.InvoiceItem{},
-		&models.Integration{},
-		&OneCIntegrationError{},
-		&models.Contract{},
-		&models.TariffPlan{},
-	)
 
 	// Создаем мок клиент
 	logger := log.New(os.Stdout, "TEST: ", log.LstdFlags)

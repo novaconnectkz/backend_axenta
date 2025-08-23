@@ -1,4 +1,4 @@
-name: Deploy (git pull over SSH)
+name: Deploy Backend
 
 on:
   push:
@@ -9,31 +9,22 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Prepare ~/.ssh
-        run: |
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          touch ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
-
-      - name: Add server to known_hosts
-        run: |
-          ssh-keyscan -p "${{ secrets.SSH_PORT }}" -T 5 "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
-
-      - name: SSH and git pull
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_KEY }}
-          port: ${{ secrets.SSH_PORT }}
+          host: 'your-server-host'
+          username: 'your-username'
+          key: 'your-private-key'
+          port: '22'
           script_stop: true
           script: |
             set -e
-            cd "${{ secrets.REPO_PATH }}"
+            cd /var/www/backend_axenta
             git fetch --all --prune
             rm -f axenta_backend
-            git pull origin "${{ secrets.BRANCH || 'main' }}"
+            git pull origin main
             /usr/local/go/bin/go build -ldflags="-w -s" -o axenta_backend main.go
             sudo systemctl restart axenta-backend
-
