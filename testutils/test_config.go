@@ -6,14 +6,13 @@ import (
 	"testing"
 
 	"backend_axenta/config"
-	"backend_axenta/database"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
 
-// SetupTestDB создает тестовую базу данных SQLite
-func SetupTestDB(t *testing.T) *gorm.DB {
+// SetupTestDBWithTempFile создает тестовую базу данных SQLite с временным файлом
+func SetupTestDBWithTempFile(t *testing.T) *gorm.DB {
 	// Создаем временный файл для тестовой БД
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
@@ -26,8 +25,8 @@ func SetupTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("Failed to connect to test database: %v", err)
 	}
 
-	// Выполняем миграции
-	err = database.AutoMigrate(db)
+	// Выполняем миграции с тестовыми моделями
+	err = db.AutoMigrate(GetTestModels()...)
 	if err != nil {
 		t.Fatalf("Failed to migrate test database: %v", err)
 	}
@@ -48,12 +47,4 @@ func SetupTestConfig() {
 	config.LoadConfig()
 }
 
-// CleanupTestDB очищает тестовую базу данных
-func CleanupTestDB(db *gorm.DB) {
-	if db != nil {
-		sqlDB, _ := db.DB()
-		if sqlDB != nil {
-			sqlDB.Close()
-		}
-	}
-}
+

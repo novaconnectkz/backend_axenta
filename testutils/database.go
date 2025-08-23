@@ -3,8 +3,6 @@ package testutils
 import (
 	"log"
 
-	"backend_axenta/models"
-
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
