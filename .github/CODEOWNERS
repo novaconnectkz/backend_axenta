@@ -1,0 +1,94 @@
+# CODEOWNERS для Axenta CRM Backend
+# Этот файл определяет владельцев кода для различных частей проекта
+# Подробнее: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Глобальные владельцы (по умолчанию)
+# * @owner-username
+
+# =============================================================================
+# 🚫 КРИТИЧЕСКИ ВАЖНЫЕ ФАЙЛЫ - ТОЛЬКО АДМИНИСТРАТОРЫ
+# =============================================================================
+
+# GitHub Workflows - максимальная защита
+/.github/workflows/ @admin-username
+/.github/workflows/* @admin-username
+
+# Конфигурация GitHub
+/.github/ @admin-username
+
+# Конфигурационные файлы деплоя
+/deploy*.sh @admin-username
+/deploy*.yml @admin-username
+
+# Конфигурация окружения
+/.env* @admin-username
+/config/ @admin-username
+
+# =============================================================================
+# 📋 ОСНОВНЫЕ КОМПОНЕНТЫ
+# =============================================================================
+
+# API и маршруты
+/api/ @backend-team
+/handlers/ @backend-team
+
+# Модели данных
+/models/ @backend-team @data-team
+
+# Сервисы и бизнес-логика
+/services/ @backend-team
+
+# Middleware и безопасность
+/middleware/ @backend-team @security-team
+
+# База данных
+/database/ @backend-team @data-team
+
+# =============================================================================
+# 📚 ДОКУМЕНТАЦИЯ
+# =============================================================================
+
+# README файлы
+/*README.md @docs-team
+/**/*README.md @docs-team
+
+# Документация
+/*.md @docs-team
+/docs/ @docs-team
+
+# =============================================================================
+# 🧪 ТЕСТИРОВАНИЕ
+# =============================================================================
+
+# Тесты
+/*_test.go @backend-team @qa-team
+/testutils/ @backend-team @qa-team
+
+# =============================================================================
+# 🔧 ИНФРАСТРУКТУРА
+# =============================================================================
+
+# Go модули
+/go.mod @backend-team
+/go.sum @backend-team
+
+# Главный файл приложения
+/main.go @backend-team
+
+# =============================================================================
+# 📝 ПРИМЕЧАНИЯ
+# =============================================================================
+
+# Чтобы активировать защиту CODEOWNERS:
+# 1. Перейдите в Settings -> Branches
+# 2. Добавьте или отредактируйте branch protection rule для main
+# 3. Включите "Require review from CODEOWNERS"
+# 4. Включите "Include administrators" для максимальной защиты
+
+# Замените placeholder'ы на реальные GitHub username'ы:
+# @admin-username     - администратор проекта
+# @backend-team       - команда backend разработчиков  
+# @security-team      - команда безопасности
+# @data-team          - команда работы с данными
+# @qa-team            - команда тестирования
+# @docs-team          - команда документации
