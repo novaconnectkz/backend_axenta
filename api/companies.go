@@ -123,6 +123,7 @@ func (api *CompaniesAPI) RegisterCompaniesRoutes(r *gin.RouterGroup) {
 		companies.PUT("/:id/deactivate", api.DeactivateCompany)
 		companies.GET("/:id/usage", api.GetCompanyUsage)
 		companies.POST("/:id/test-connection", api.TestCompanyConnection)
+		companies.GET("/filter-options", api.GetFilterOptions)
 	}
 }
 
@@ -133,6 +134,10 @@ func (api *CompaniesAPI) GetCompanies(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
 	search := c.Query("search")
 	isActive := c.Query("is_active")
+	city := c.Query("city")
+	country := c.Query("country")
+	language := c.Query("language")
+	currency := c.Query("currency")
 
 	offset := (page - 1) * limit
 
@@ -162,12 +167,33 @@ func (api *CompaniesAPI) GetCompanies(c *gin.Context) {
 		}
 	}
 
+	// Фильтр по статусу активности
 	if isActive != "" {
 		if isActive == "true" {
 			query = query.Where("is_active = ?", true)
 		} else if isActive == "false" {
 			query = query.Where("is_active = ?", false)
 		}
+	}
+
+	// Фильтр по городу
+	if city != "" {
+		query = query.Where("city ILIKE ?", "%"+city+"%")
+	}
+
+	// Фильтр по стране
+	if country != "" {
+		query = query.Where("country = ?", country)
+	}
+
+	// Фильтр по языку
+	if language != "" {
+		query = query.Where("language = ?", language)
+	}
+
+	// Фильтр по валюте
+	if currency != "" {
+		query = query.Where("currency = ?", currency)
 	}
 
 	// Получаем общее количество
@@ -1004,5 +1030,125 @@ func (api *CompaniesAPI) BulkDeactivateCompanies(c *gin.Context) {
 		"status":      "success",
 		"message":     "Companies deactivated successfully",
 		"deactivated": result.RowsAffected,
+	})
+}
+
+// FilterOptionsResponse структура ответа для опций фильтрации
+type FilterOptionsResponse struct {
+	Cities     []FilterOption `json:"cities"`
+	Countries  []FilterOption `json:"countries"`
+	Languages  []FilterOption `json:"languages"`
+	Currencies []FilterOption `json:"currencies"`
+	Statuses   []FilterOption `json:"statuses"`
+}
+
+// FilterOption опция для фильтра с количеством
+type FilterOption struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+	Count int64  `json:"count"`
+}
+
+// GetFilterOptions получает все доступные опции для фильтров
+func (api *CompaniesAPI) GetFilterOptions(c *gin.Context) {
+	var companies []models.Company
+	if err := api.DB.Find(&companies).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка получения компаний: " + err.Error(),
+		})
+		return
+	}
+
+	response := FilterOptionsResponse{}
+
+	// Подсчитываем статусы
+	var activeCount, inactiveCount int64
+	api.DB.Model(&models.Company{}).Where("is_active = ?", true).Count(&activeCount)
+	api.DB.Model(&models.Company{}).Where("is_active = ?", false).Count(&inactiveCount)
+
+	response.Statuses = []FilterOption{
+		{Value: "", Label: fmt.Sprintf("Все (%d)", len(companies)), Count: int64(len(companies))},
+		{Value: "true", Label: fmt.Sprintf("Активные (%d)", activeCount), Count: activeCount},
+		{Value: "false", Label: fmt.Sprintf("Неактивные (%d)", inactiveCount), Count: inactiveCount},
+	}
+
+	// Группируем по городам
+	cityMap := make(map[string]int64)
+	for _, company := range companies {
+		if company.City != "" {
+			cityMap[company.City]++
+		}
+	}
+	for city, count := range cityMap {
+		response.Cities = append(response.Cities, FilterOption{
+			Value: city,
+			Label: fmt.Sprintf("%s (%d)", city, count),
+			Count: count,
+		})
+	}
+
+	// Группируем по странам
+	countryMap := make(map[string]int64)
+	for _, company := range companies {
+		if company.Country != "" {
+			countryMap[company.Country]++
+		}
+	}
+	for country, count := range countryMap {
+		response.Countries = append(response.Countries, FilterOption{
+			Value: country,
+			Label: fmt.Sprintf("%s (%d)", country, count),
+			Count: count,
+		})
+	}
+
+	// Группируем по языкам
+	languageMap := make(map[string]int64)
+	for _, company := range companies {
+		if company.Language != "" {
+			languageMap[company.Language]++
+		}
+	}
+	for language, count := range languageMap {
+		languageLabel := language
+		if language == "ru" {
+			languageLabel = "Русский"
+		} else if language == "en" {
+			languageLabel = "English"
+		}
+		response.Languages = append(response.Languages, FilterOption{
+			Value: language,
+			Label: fmt.Sprintf("%s (%d)", languageLabel, count),
+			Count: count,
+		})
+	}
+
+	// Группируем по валютам
+	currencyMap := make(map[string]int64)
+	for _, company := range companies {
+		if company.Currency != "" {
+			currencyMap[company.Currency]++
+		}
+	}
+	for currency, count := range currencyMap {
+		currencyLabel := currency
+		if currency == "RUB" {
+			currencyLabel = "Российский рубль"
+		} else if currency == "USD" {
+			currencyLabel = "Доллар США"
+		} else if currency == "EUR" {
+			currencyLabel = "Евро"
+		}
+		response.Currencies = append(response.Currencies, FilterOption{
+			Value: currency,
+			Label: fmt.Sprintf("%s (%d)", currencyLabel, count),
+			Count: count,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data":   response,
 	})
 }
