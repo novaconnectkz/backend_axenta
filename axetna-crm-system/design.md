@@ -77,11 +77,15 @@ graph TB
 1. **Dashboard Module** - панель управления с виджетами
 2. **Objects Module** - управление объектами мониторинга
 3. **Users Module** - управление пользователями и ролями
-4. **Billing Module** - биллинг и тарификация
-5. **Installation Module** - планирование монтажей
-6. **Warehouse Module** - управление складом
-7. **Reports Module** - система отчетности
-8. **Settings Module** - настройки и справочники
+4. **Companies Module** - управление учетными записями компаний
+5. **Contracts Module** - управление договорами и приложениями
+6. **Billing Module** - биллинг и тарификация
+7. **Installation Module** - планирование монтажей
+8. **Warehouse Module** - управление складом
+9. **Reports Module** - система отчетности
+10. **Settings Module** - настройки и справочники
+11. **Documentation Module** - управление документацией
+12. **Performance Module** - мониторинг производительности
 
 #### Архитектура компонентов:
 ```
@@ -91,14 +95,22 @@ src/
 │   ├── dashboard/       # Виджеты панели управления
 │   ├── objects/         # Компоненты объектов
 │   ├── users/           # Управление пользователями
+│   ├── companies/       # Управление компаниями
+│   ├── contracts/       # Управление договорами
 │   ├── billing/         # Биллинг компоненты
 │   ├── installation/    # Планирование монтажей
 │   ├── warehouse/       # Складские компоненты
-│   └── reports/         # Отчеты
+│   ├── reports/         # Отчеты
+│   ├── settings/        # Настройки и интеграции
+│   ├── documentation/   # Документация
+│   └── performance/     # Мониторинг производительности
 ├── stores/              # Pinia stores
 ├── services/            # API сервисы
+├── composables/         # Vue Composables
 ├── router/              # Vue Router
-└── utils/               # Утилиты
+├── types/               # TypeScript типы
+├── utils/               # Утилиты
+└── constants/           # Константы
 ```
 
 ### Backend сервисы (Go)
@@ -107,15 +119,21 @@ src/
 ```go
 // Основные контроллеры
 type Controllers struct {
-    ObjectController      *ObjectController
-    UserController        *UserController
-    BillingController     *BillingController
-    InstallationController *InstallationController
-    WarehouseController   *WarehouseController
-    ReportController      *ReportController
-    TemplateController    *TemplateController
-    ContractController    *ContractController
-    DirectoryController   *DirectoryController
+    ObjectController         *ObjectController
+    UserController           *UserController
+    CompanyController        *CompanyController
+    ContractController       *ContractController
+    BillingController        *BillingController
+    InstallationController   *InstallationController
+    WarehouseController      *WarehouseController
+    ReportController         *ReportController
+    TemplateController       *TemplateController
+    DirectoryController      *DirectoryController
+    NotificationController   *NotificationController
+    IntegrationController    *IntegrationController
+    PerformanceController    *PerformanceController
+    DocumentationController  *DocumentationController
+    SettingsController       *SettingsController
 }
 
 // Middleware для мультитенантности
@@ -157,6 +175,65 @@ type NotificationTemplate struct {
     Template string
     Channels []string
 }
+
+#### Billing Service
+```go
+type BillingService struct {
+    DB                    *gorm.DB
+    IntegrationService    *IntegrationService
+    NotificationService   *NotificationService
+    AutomationService     *BillingAutomationService
+}
+
+type BillingAutomationService struct {
+    BillingService *BillingService
+    Scheduler      *cron.Cron
+}
+```
+
+#### Report Service
+```go
+type ReportService struct {
+    DB                  *gorm.DB
+    NotificationService *NotificationService
+    FileStorage         *FileStorage
+}
+
+type ReportSchedulerService struct {
+    ReportService *ReportService
+    Scheduler     *cron.Cron
+}
+```
+
+#### Warehouse Service
+```go
+type WarehouseService struct {
+    DB                  *gorm.DB
+    NotificationService *NotificationService
+    QRGenerator         *QRGenerator
+}
+
+type QRGenerator struct {
+    BaseURL string
+    Size    int
+}
+```
+
+#### Performance Service
+```go
+type PerformanceService struct {
+    Redis              *redis.Client
+    DB                 *gorm.DB
+    MetricsCollector   *MetricsCollector
+    CacheService       *PerformanceCacheService
+    LoadTestService    *LoadTestService
+}
+
+type PerformanceCacheService struct {
+    Redis   *redis.Client
+    Metrics map[string]*CacheMetrics
+}
+```
 ```
 
 ## Модели данных
@@ -336,6 +413,131 @@ type UserTemplate struct {
     Description string
     CreatedAt   time.Time
     UpdatedAt   time.Time
+}
+
+// Биллинг и счета
+type Invoice struct {
+    ID                 uint            `gorm:"primaryKey"`
+    Number             string          `gorm:"uniqueIndex;not null"`
+    Title              string          `gorm:"not null"`
+    InvoiceDate        time.Time       `gorm:"not null"`
+    DueDate            time.Time       `gorm:"not null"`
+    CompanyID          uuid.UUID       `gorm:"type:uuid;not null"`
+    ContractID         *uint
+    Contract           *Contract       `gorm:"foreignKey:ContractID"`
+    TariffPlanID       uint            `gorm:"not null"`
+    TariffPlan         *TariffPlan     `gorm:"foreignKey:TariffPlanID"`
+    BillingPeriodStart time.Time       `gorm:"not null"`
+    BillingPeriodEnd   time.Time       `gorm:"not null"`
+    SubtotalAmount     decimal.Decimal `gorm:"type:decimal(15,2)"`
+    TaxAmount          decimal.Decimal `gorm:"type:decimal(15,2)"`
+    TotalAmount        decimal.Decimal `gorm:"type:decimal(15,2)"`
+    Status             string          `gorm:"default:'draft'"`
+    PaidAt             *time.Time
+    Items              []InvoiceItem   `gorm:"foreignKey:InvoiceID"`
+    CreatedAt          time.Time
+    UpdatedAt          time.Time
+}
+
+type InvoiceItem struct {
+    ID          uint            `gorm:"primaryKey"`
+    InvoiceID   uint            `gorm:"not null"`
+    Name        string          `gorm:"not null"`
+    Description string
+    ItemType    string          `gorm:"not null"`
+    ObjectID    *uint
+    Object      *Object         `gorm:"foreignKey:ObjectID"`
+    Quantity    decimal.Decimal `gorm:"type:decimal(10,3)"`
+    UnitPrice   decimal.Decimal `gorm:"type:decimal(15,2)"`
+    Amount      decimal.Decimal `gorm:"type:decimal(15,2)"`
+    PeriodStart *time.Time
+    PeriodEnd   *time.Time
+    CreatedAt   time.Time
+    UpdatedAt   time.Time
+}
+
+// Система уведомлений
+type NotificationTemplate struct {
+    ID            uint      `gorm:"primaryKey"`
+    Name          string    `gorm:"not null;uniqueIndex"`
+    Type          string    `gorm:"not null"`
+    Channel       string    `gorm:"not null"`
+    Subject       string
+    Template      string    `gorm:"type:text;not null"`
+    Description   string
+    IsActive      bool      `gorm:"default:true"`
+    Language      string    `gorm:"default:'ru'"`
+    Priority      string    `gorm:"default:'normal'"`
+    RetryAttempts int       `gorm:"default:3"`
+    CompanyID     uuid.UUID `gorm:"type:uuid"`
+    CreatedAt     time.Time
+    UpdatedAt     time.Time
+}
+
+type NotificationLog struct {
+    ID           uint           `gorm:"primaryKey"`
+    Type         string         `gorm:"not null"`
+    Channel      string         `gorm:"not null"`
+    Recipient    string         `gorm:"not null"`
+    Subject      string
+    Message      string         `gorm:"type:text;not null"`
+    Status       string         `gorm:"default:'pending'"`
+    ErrorMessage string         `gorm:"type:text"`
+    SentAt       *time.Time
+    RelatedID    *uint
+    RelatedType  string
+    UserID       *uint
+    TemplateID   *uint
+    CompanyID    uuid.UUID      `gorm:"type:uuid"`
+    CreatedAt    time.Time
+    UpdatedAt    time.Time
+    DeletedAt    gorm.DeletedAt `gorm:"index"`
+}
+
+// Система отчетности
+type Report struct {
+    ID          uint         `gorm:"primaryKey"`
+    Name        string       `gorm:"not null"`
+    Description string       `gorm:"type:text"`
+    Type        string       `gorm:"not null"`
+    Parameters  string       `gorm:"type:jsonb"`
+    DateFrom    *time.Time
+    DateTo      *time.Time
+    Status      string       `gorm:"default:'pending'"`
+    ErrorMsg    string       `gorm:"type:text"`
+    FilePath    string       `gorm:"type:varchar(500)"`
+    FileSize    int64
+    RecordCount int
+    Format      string       `gorm:"not null"`
+    CreatedByID uint         `gorm:"not null"`
+    CreatedBy   *User        `gorm:"foreignKey:CreatedByID"`
+    CompanyID   uint
+    StartedAt   *time.Time
+    CompletedAt *time.Time
+    Duration    int
+    CreatedAt   time.Time
+    UpdatedAt   time.Time
+    DeletedAt   gorm.DeletedAt `gorm:"index"`
+}
+
+type ReportTemplate struct {
+    ID          uint           `gorm:"primaryKey"`
+    Name        string         `gorm:"not null"`
+    Description string         `gorm:"type:text"`
+    Type        string         `gorm:"not null"`
+    Config      string         `gorm:"type:jsonb"`
+    SQLQuery    string         `gorm:"type:text"`
+    Parameters  string         `gorm:"type:jsonb"`
+    Headers     string         `gorm:"type:jsonb"`
+    Formatting  string         `gorm:"type:jsonb"`
+    IsActive    bool           `gorm:"default:true"`
+    IsPublic    bool           `gorm:"default:false"`
+    CreatedByID uint           `gorm:"not null"`
+    CreatedBy   *User          `gorm:"foreignKey:CreatedByID"`
+    CompanyID   uint
+    CreatedAt   time.Time
+    UpdatedAt   time.Time
+    DeletedAt   gorm.DeletedAt `gorm:"index"`
 }
 ```
 
