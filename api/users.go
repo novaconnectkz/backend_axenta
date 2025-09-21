@@ -98,11 +98,38 @@ func GetUsers(c *gin.Context) {
 
 	// Поиск по имени, email или username
 	if search != "" {
-		searchPattern := "%" + strings.ToLower(search) + "%"
-		query = query.Where(
-			"LOWER(username) LIKE ? OR LOWER(email) LIKE ? OR LOWER(first_name) LIKE ? OR LOWER(last_name) LIKE ?",
-			searchPattern, searchPattern, searchPattern, searchPattern,
-		)
+		// Проверяем, есть ли запятые для множественного поиска
+		if strings.Contains(search, ",") {
+			// Множественный поиск по точному совпадению
+			searchTerms := strings.Split(search, ",")
+			var trimmedTerms []string
+			for _, term := range searchTerms {
+				trimmed := strings.TrimSpace(term)
+				if trimmed != "" {
+					trimmedTerms = append(trimmedTerms, trimmed)
+				}
+			}
+			if len(trimmedTerms) > 0 {
+				// Поиск по точному совпадению username, email или полному имени
+				var conditions []string
+				var args []interface{}
+
+				for _, term := range trimmedTerms {
+					lowerTerm := strings.ToLower(term)
+					conditions = append(conditions, "(LOWER(username) = ? OR LOWER(email) = ? OR LOWER(CONCAT(first_name, ' ', last_name)) = ?)")
+					args = append(args, lowerTerm, lowerTerm, lowerTerm)
+				}
+
+				query = query.Where(strings.Join(conditions, " OR "), args...)
+			}
+		} else {
+			// Обычный поиск по частичному совпадению
+			searchPattern := "%" + strings.ToLower(search) + "%"
+			query = query.Where(
+				"LOWER(username) LIKE ? OR LOWER(email) LIKE ? OR LOWER(first_name) LIKE ? OR LOWER(last_name) LIKE ?",
+				searchPattern, searchPattern, searchPattern, searchPattern,
+			)
+		}
 	}
 
 	// Подсчет общего количества
@@ -618,5 +645,89 @@ func DeleteUser(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
 		"message": "User deleted successfully",
+	})
+}
+
+// BulkDeleteUsersRequest представляет запрос на массовое удаление пользователей
+type BulkDeleteUsersRequest struct {
+	UserIDs []uint `json:"user_ids" binding:"required,min=1"`
+}
+
+// BulkDeleteUsers массово удаляет пользователей (soft delete)
+func BulkDeleteUsers(c *gin.Context) {
+	db := database.GetTenantDB(c)
+	if db == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Database connection not available",
+		})
+		return
+	}
+
+	var req BulkDeleteUsersRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Invalid request data: " + err.Error(),
+		})
+		return
+	}
+
+	if len(req.UserIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "No user IDs provided",
+		})
+		return
+	}
+
+	// Проверяем, что все пользователи существуют и загружаем их с ролями
+	var existingUsers []models.User
+	if err := db.Preload("Role").Where("id IN ?", req.UserIDs).Find(&existingUsers).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to fetch users: " + err.Error(),
+		})
+		return
+	}
+
+	if len(existingUsers) != len(req.UserIDs) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Some users not found",
+		})
+		return
+	}
+
+	// Проверяем, что среди пользователей нет администраторов
+	var adminUsers []string
+	for _, user := range existingUsers {
+		if user.Role != nil && (user.Role.Name == "admin" || user.Role.Name == "administrator") {
+			adminUsers = append(adminUsers, user.Username)
+		}
+	}
+
+	if len(adminUsers) > 0 {
+		c.JSON(http.StatusForbidden, gin.H{
+			"status": "error",
+			"error":  "Cannot delete administrator users: " + strings.Join(adminUsers, ", "),
+		})
+		return
+	}
+
+	// Выполняем массовое мягкое удаление
+	result := db.Where("id IN ?", req.UserIDs).Delete(&models.User{})
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to delete users: " + result.Error.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Users deleted successfully",
+		"deleted": result.RowsAffected,
 	})
 }

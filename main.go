@@ -176,6 +176,7 @@ func main() {
 	apiGroup.POST("/users", api.CreateUser)
 	apiGroup.PUT("/users/:id", api.UpdateUser)
 	apiGroup.DELETE("/users/:id", api.DeleteUser)
+	apiGroup.POST("/users/bulk-delete", api.BulkDeleteUsers)
 
 	// Роли
 	apiGroup.GET("/roles", api.GetRoles)

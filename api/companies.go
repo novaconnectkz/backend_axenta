@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -115,6 +116,9 @@ func (api *CompaniesAPI) RegisterCompaniesRoutes(r *gin.RouterGroup) {
 		companies.GET("/:id", api.GetCompany)
 		companies.PUT("/:id", api.UpdateCompany)
 		companies.DELETE("/:id", api.DeleteCompany)
+		companies.POST("/bulk-delete", api.BulkDeleteCompanies)
+		companies.POST("/bulk-activate", api.BulkActivateCompanies)
+		companies.POST("/bulk-deactivate", api.BulkDeactivateCompanies)
 		companies.PUT("/:id/activate", api.ActivateCompany)
 		companies.PUT("/:id/deactivate", api.DeactivateCompany)
 		companies.GET("/:id/usage", api.GetCompanyUsage)
@@ -135,10 +139,27 @@ func (api *CompaniesAPI) GetCompanies(c *gin.Context) {
 	// Базовый запрос
 	query := api.DB.Model(&models.Company{})
 
-	// Применяем фильтры
+	// Применяем фильтры поиска
 	if search != "" {
-		query = query.Where("name ILIKE ? OR contact_email ILIKE ? OR city ILIKE ?",
-			"%"+search+"%", "%"+search+"%", "%"+search+"%")
+		// Проверяем, есть ли запятые для множественного поиска
+		if strings.Contains(search, ",") {
+			// Множественный поиск по точному совпадению названий
+			searchTerms := strings.Split(search, ",")
+			var trimmedTerms []string
+			for _, term := range searchTerms {
+				trimmed := strings.TrimSpace(term)
+				if trimmed != "" {
+					trimmedTerms = append(trimmedTerms, trimmed)
+				}
+			}
+			if len(trimmedTerms) > 0 {
+				query = query.Where("name IN ?", trimmedTerms)
+			}
+		} else {
+			// Обычный поиск по частичному совпадению
+			query = query.Where("name ILIKE ? OR contact_email ILIKE ? OR city ILIKE ?",
+				"%"+search+"%", "%"+search+"%", "%"+search+"%")
+		}
 	}
 
 	if isActive != "" {
@@ -765,4 +786,223 @@ func (api *CompaniesAPI) testAxentaConnection(login, password string) (bool, str
 func (api *CompaniesAPI) clearCompanyCache(companyID uuid.UUID) {
 	cacheKey := fmt.Sprintf("company:id:%s", companyID.String())
 	database.CacheDel(cacheKey)
+}
+
+// BulkDeleteCompaniesRequest структура запроса для массового удаления компаний
+type BulkDeleteCompaniesRequest struct {
+	CompanyIDs []string `json:"company_ids" binding:"required,min=1"`
+}
+
+// BulkDeleteCompanies массово удаляет компании
+func (api *CompaniesAPI) BulkDeleteCompanies(c *gin.Context) {
+	var req BulkDeleteCompaniesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Invalid request data: " + err.Error(),
+		})
+		return
+	}
+
+	if len(req.CompanyIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "No company IDs provided",
+		})
+		return
+	}
+
+	// Преобразуем строковые ID в UUID
+	var companyUUIDs []uuid.UUID
+	for _, idStr := range req.CompanyIDs {
+		companyUUID, err := uuid.Parse(idStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error",
+				"error":  fmt.Sprintf("Invalid company ID format: %s", idStr),
+			})
+			return
+		}
+		companyUUIDs = append(companyUUIDs, companyUUID)
+	}
+
+	// Проверяем, что все компании существуют
+	var existingCompanies []models.Company
+	if err := api.DB.Where("id IN ?", companyUUIDs).Find(&existingCompanies).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to fetch companies: " + err.Error(),
+		})
+		return
+	}
+
+	if len(existingCompanies) != len(companyUUIDs) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Some companies not found",
+		})
+		return
+	}
+
+	// Проверяем, что среди компаний нет активных с пользователями
+	var protectedCompanies []string
+	for _, company := range existingCompanies {
+		if company.IsActive {
+			// Здесь можно добавить проверку количества пользователей
+			// Для демо просто проверим активность
+			var userCount int64
+			if err := api.DB.Table("users").Where("company_id = ? AND deleted_at IS NULL", company.ID).Count(&userCount).Error; err == nil && userCount > 0 {
+				protectedCompanies = append(protectedCompanies, company.Name)
+			}
+		}
+	}
+
+	if len(protectedCompanies) > 0 {
+		c.JSON(http.StatusForbidden, gin.H{
+			"status": "error",
+			"error":  "Cannot delete active companies with users: " + fmt.Sprintf("%v", protectedCompanies),
+		})
+		return
+	}
+
+	// Выполняем массовое мягкое удаление
+	result := api.DB.Where("id IN ?", companyUUIDs).Delete(&models.Company{})
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to delete companies: " + result.Error.Error(),
+		})
+		return
+	}
+
+	// Очищаем кэш для удаленных компаний
+	for _, companyUUID := range companyUUIDs {
+		api.clearCompanyCache(companyUUID)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Companies deleted successfully",
+		"deleted": result.RowsAffected,
+	})
+}
+
+// BulkActivateCompaniesRequest структура запроса для массовой активации компаний
+type BulkActivateCompaniesRequest struct {
+	CompanyIDs []string `json:"company_ids" binding:"required,min=1"`
+}
+
+// BulkActivateCompanies массово активирует компании
+func (api *CompaniesAPI) BulkActivateCompanies(c *gin.Context) {
+	var req BulkActivateCompaniesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Invalid request data: " + err.Error(),
+		})
+		return
+	}
+
+	if len(req.CompanyIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "No company IDs provided",
+		})
+		return
+	}
+
+	// Преобразуем строковые ID в UUID
+	var companyUUIDs []uuid.UUID
+	for _, idStr := range req.CompanyIDs {
+		companyUUID, err := uuid.Parse(idStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error",
+				"error":  fmt.Sprintf("Invalid company ID format: %s", idStr),
+			})
+			return
+		}
+		companyUUIDs = append(companyUUIDs, companyUUID)
+	}
+
+	// Выполняем массовую активацию
+	result := api.DB.Model(&models.Company{}).Where("id IN ?", companyUUIDs).Update("is_active", true)
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to activate companies: " + result.Error.Error(),
+		})
+		return
+	}
+
+	// Очищаем кэш для обновленных компаний
+	for _, companyUUID := range companyUUIDs {
+		api.clearCompanyCache(companyUUID)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":    "success",
+		"message":   "Companies activated successfully",
+		"activated": result.RowsAffected,
+	})
+}
+
+// BulkDeactivateCompaniesRequest структура запроса для массовой деактивации компаний
+type BulkDeactivateCompaniesRequest struct {
+	CompanyIDs []string `json:"company_ids" binding:"required,min=1"`
+}
+
+// BulkDeactivateCompanies массово деактивирует компании
+func (api *CompaniesAPI) BulkDeactivateCompanies(c *gin.Context) {
+	var req BulkDeactivateCompaniesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Invalid request data: " + err.Error(),
+		})
+		return
+	}
+
+	if len(req.CompanyIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "No company IDs provided",
+		})
+		return
+	}
+
+	// Преобразуем строковые ID в UUID
+	var companyUUIDs []uuid.UUID
+	for _, idStr := range req.CompanyIDs {
+		companyUUID, err := uuid.Parse(idStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error",
+				"error":  fmt.Sprintf("Invalid company ID format: %s", idStr),
+			})
+			return
+		}
+		companyUUIDs = append(companyUUIDs, companyUUID)
+	}
+
+	// Выполняем массовую деактивацию
+	result := api.DB.Model(&models.Company{}).Where("id IN ?", companyUUIDs).Update("is_active", false)
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to deactivate companies: " + result.Error.Error(),
+		})
+		return
+	}
+
+	// Очищаем кэш для обновленных компаний
+	for _, companyUUID := range companyUUIDs {
+		api.clearCompanyCache(companyUUID)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":      "success",
+		"message":     "Companies deactivated successfully",
+		"deactivated": result.RowsAffected,
+	})
 }
