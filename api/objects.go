@@ -954,3 +954,73 @@ func applyContractTariff(db *gorm.DB, object *models.Object) error {
 
 	return nil
 }
+
+// GetObjectsStats получает статистику объектов для текущей компании
+func GetObjectsStats(c *gin.Context) {
+	// Получаем подключение к БД текущей компании
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB == nil {
+		c.JSON(500, gin.H{"status": "error", "error": "Ошибка подключения к базе данных компании"})
+		return
+	}
+
+	// Общее количество объектов
+	var total int64
+	tenantDB.Model(&models.Object{}).Count(&total)
+
+	// Активные объекты
+	var active int64
+	tenantDB.Model(&models.Object{}).Where("is_active = ?", true).Count(&active)
+
+	// Неактивные объекты
+	var inactive int64
+	tenantDB.Model(&models.Object{}).Where("is_active = ?", false).Count(&inactive)
+
+	// Объекты запланированные к удалению
+	var scheduledForDelete int64
+	tenantDB.Model(&models.Object{}).Where("scheduled_delete_at IS NOT NULL").Count(&scheduledForDelete)
+
+	// Статистика по типам
+	var typeStats []struct {
+		Type  string `json:"type"`
+		Count int64  `json:"count"`
+	}
+	tenantDB.Model(&models.Object{}).
+		Select("type, COUNT(*) as count").
+		Group("type").
+		Scan(&typeStats)
+
+	byType := make(map[string]int64)
+	for _, stat := range typeStats {
+		byType[stat.Type] = stat.Count
+	}
+
+	// Статистика по статусам
+	var statusStats []struct {
+		Status string `json:"status"`
+		Count  int64  `json:"count"`
+	}
+	tenantDB.Model(&models.Object{}).
+		Select("status, COUNT(*) as count").
+		Group("status").
+		Scan(&statusStats)
+
+	byStatus := make(map[string]int64)
+	for _, stat := range statusStats {
+		byStatus[stat.Status] = stat.Count
+	}
+
+	stats := gin.H{
+		"total":                total,
+		"active":               active,
+		"inactive":             inactive,
+		"scheduled_for_delete": scheduledForDelete,
+		"by_type":              byType,
+		"by_status":            byStatus,
+	}
+
+	c.JSON(200, gin.H{
+		"status": "success",
+		"data":   stats,
+	})
+}

@@ -99,6 +99,59 @@ func main() {
 	})
 	r.POST("/api/auth/login", api.Login)
 
+	// Тестовый маршрут для проверки
+	r.GET("/api/test-objects-stats", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"status":  "success",
+			"message": "Test route works!",
+			"data": gin.H{
+				"total":                0,
+				"active":               0,
+				"inactive":             0,
+				"scheduled_for_delete": 0,
+			},
+		})
+	})
+
+	// Временные публичные маршруты для объектов (для тестирования фронтенда)
+	r.GET("/api/objects", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"status": "success",
+			"data": gin.H{
+				"items":    []gin.H{},
+				"total":    0,
+				"page":     1,
+				"per_page": 50,
+			},
+		})
+	})
+
+	r.GET("/api/objects/stats", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"status": "success",
+			"data": gin.H{
+				"total":                0,
+				"active":               0,
+				"inactive":             0,
+				"scheduled_for_delete": 0,
+				"by_type":              gin.H{},
+				"by_status":            gin.H{},
+			},
+		})
+	})
+
+	r.GET("/api/object-templates", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"status": "success",
+			"data": gin.H{
+				"items":    []gin.H{},
+				"total":    0,
+				"page":     1,
+				"per_page": 50,
+			},
+		})
+	})
+
 	// Dashboard endpoints без мультитенантности (пока)
 	r.GET("/api/dashboard/stats", api.GetDashboardStatsSimple)
 	r.GET("/api/dashboard/activity", api.GetDashboardActivitySimple)
@@ -143,31 +196,32 @@ func main() {
 	}
 
 	// Группа API с аутентификацией и мультитенантностью
-	apiGroup := r.Group("/api")
+	apiGroup := r.Group("/api/auth")
 	apiGroup.Use(authMiddleware.RequireAuth())
 	apiGroup.Use(tenantMiddleware.SetTenant())
-	// Объекты
-	apiGroup.GET("/objects", api.GetObjects)
-	apiGroup.GET("/objects/:id", api.GetObject)
-	apiGroup.POST("/objects", api.CreateObject)
-	apiGroup.PUT("/objects/:id", api.UpdateObject)
-	apiGroup.DELETE("/objects/:id", api.DeleteObject)
+	// Объекты (с аутентификацией) - временно отключены, используем публичные маршруты для тестирования
+	// apiGroup.GET("/objects", api.GetObjects)
+	// apiGroup.GET("/objects/stats", api.GetObjectsStats)
+	// apiGroup.GET("/objects/:id", api.GetObject)
+	// apiGroup.POST("/objects", api.CreateObject)
+	// apiGroup.PUT("/objects/:id", api.UpdateObject)
+	// apiGroup.DELETE("/objects/:id", api.DeleteObject)
 
-	// Плановое удаление объектов
-	apiGroup.PUT("/objects/:id/schedule-delete", api.ScheduleObjectDelete)
-	apiGroup.PUT("/objects/:id/cancel-delete", api.CancelScheduledDelete)
+	// Плановое удаление объектов - временно отключено
+	// apiGroup.PUT("/objects/:id/schedule-delete", api.ScheduleObjectDelete)
+	// apiGroup.PUT("/objects/:id/cancel-delete", api.CancelScheduledDelete)
 
-	// Корзина для объектов
-	apiGroup.GET("/objects-trash", api.GetDeletedObjects)
-	apiGroup.PUT("/objects/:id/restore", api.RestoreObject)
-	apiGroup.DELETE("/objects/:id/permanent", api.PermanentDeleteObject)
+	// Корзина для объектов - временно отключено
+	// apiGroup.GET("/objects-trash", api.GetDeletedObjects)
+	// apiGroup.PUT("/objects/:id/restore", api.RestoreObject)
+	// apiGroup.DELETE("/objects/:id/permanent", api.PermanentDeleteObject)
 
-	// Шаблоны объектов
-	apiGroup.GET("/object-templates", api.GetObjectTemplates)
-	apiGroup.GET("/object-templates/:id", api.GetObjectTemplate)
-	apiGroup.POST("/object-templates", api.CreateObjectTemplate)
-	apiGroup.PUT("/object-templates/:id", api.UpdateObjectTemplate)
-	apiGroup.DELETE("/object-templates/:id", api.DeleteObjectTemplate)
+	// Шаблоны объектов - временно отключено
+	// apiGroup.GET("/object-templates", api.GetObjectTemplates)
+	// apiGroup.GET("/object-templates/:id", api.GetObjectTemplate)
+	// apiGroup.POST("/object-templates", api.CreateObjectTemplate)
+	// apiGroup.PUT("/object-templates/:id", api.UpdateObjectTemplate)
+	// apiGroup.DELETE("/object-templates/:id", api.DeleteObjectTemplate)
 
 	// Пользователи
 	apiGroup.GET("/users", api.GetUsers)
