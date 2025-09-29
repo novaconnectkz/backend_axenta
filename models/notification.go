@@ -3,7 +3,6 @@ package models
 import (
 	"time"
 
-	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -30,7 +29,7 @@ type NotificationTemplate struct {
 	DelaySeconds  int    `json:"delay_seconds" gorm:"default:0"`   // Задержка перед отправкой
 
 	// Для мультитенантности
-	CompanyID uuid.UUID `json:"company_id" gorm:"type:uuid;index"`
+	CompanyID uint `json:"company_id" gorm:"index"`
 }
 
 // NotificationLog представляет лог отправленных уведомлений
@@ -62,7 +61,7 @@ type NotificationLog struct {
 	ExternalID   string     `json:"external_id"`                    // ID во внешней системе (Telegram message_id)
 
 	// Для мультитенантности
-	CompanyID uuid.UUID `json:"company_id" gorm:"type:uuid;index"`
+	CompanyID uint `json:"company_id" gorm:"index"`
 
 	// Связи
 	Template *NotificationTemplate `json:"template,omitempty" gorm:"foreignKey:TemplateID"`
@@ -104,7 +103,7 @@ type NotificationSettings struct {
 	RetryDelayMinutes int    `json:"retry_delay_minutes" gorm:"default:5"` // Задержка между попытками
 
 	// Для мультитенантности
-	CompanyID uuid.UUID `json:"company_id" gorm:"type:uuid;uniqueIndex"`
+	CompanyID uint `json:"company_id" gorm:"uniqueIndex"`
 
 	// Связи
 	Company *Company `json:"company,omitempty" gorm:"foreignKey:CompanyID"`
@@ -139,7 +138,7 @@ type UserNotificationPreferences struct {
 	Timezone        string `json:"timezone" gorm:"default:'Europe/Moscow'"`  // Часовой пояс
 
 	// Для мультитенантности
-	CompanyID uuid.UUID `json:"company_id" gorm:"type:uuid;index"`
+	CompanyID uint `json:"company_id" gorm:"index"`
 }
 
 // GetStatusDisplayName возвращает читаемое название статуса

@@ -1,9 +1,11 @@
 package api
 
 import (
+	"backend_axenta/database"
 	"backend_axenta/middleware"
 	"backend_axenta/models"
 	"backend_axenta/services"
+	"encoding/json"
 	"strconv"
 	"time"
 
@@ -94,7 +96,7 @@ func GetObject(c *gin.Context) {
 
 	// Ищем объект
 	var object models.Object
-	if err := tenantDB.Preload("Contract").Preload("Template").Preload("Location").Preload("Equipment").First(&object, id).Error; err != nil {
+	if err := tenantDB.Preload("Company").Preload("Contract").Preload("Template").Preload("Location").Preload("Equipment").First(&object, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(404, gin.H{"status": "error", "error": "Объект не найден"})
 		} else {
@@ -131,8 +133,23 @@ func CreateObject(c *gin.Context) {
 		c.JSON(400, gin.H{"status": "error", "error": "Тип объекта обязателен"})
 		return
 	}
+	if object.CompanyID == 0 {
+		c.JSON(400, gin.H{"status": "error", "error": "ID компании обязателен"})
+		return
+	}
 	if object.ContractID == 0 {
 		c.JSON(400, gin.H{"status": "error", "error": "ID договора обязателен"})
+		return
+	}
+
+	// Проверяем существование компании
+	var company models.Company
+	if err := database.DB.First(&company, object.CompanyID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(400, gin.H{"status": "error", "error": "Компания не найдена"})
+		} else {
+			c.JSON(500, gin.H{"status": "error", "error": "Ошибка проверки компании: " + err.Error()})
+		}
 		return
 	}
 
@@ -185,7 +202,7 @@ func CreateObject(c *gin.Context) {
 	}
 
 	// Загружаем созданный объект со всеми связями
-	if err := tenantDB.Preload("Contract").Preload("Template").Preload("Location").First(&object, object.ID).Error; err != nil {
+	if err := tenantDB.Preload("Company").Preload("Contract").Preload("Template").Preload("Location").First(&object, object.ID).Error; err != nil {
 		c.JSON(500, gin.H{"status": "error", "error": "Ошибка загрузки созданного объекта: " + err.Error()})
 		return
 	}
@@ -320,7 +337,7 @@ func UpdateObject(c *gin.Context) {
 	}
 
 	// Загружаем обновленный объект со всеми связями
-	if err := tenantDB.Preload("Contract").Preload("Template").Preload("Location").First(&existingObject, existingObject.ID).Error; err != nil {
+	if err := tenantDB.Preload("Company").Preload("Contract").Preload("Template").Preload("Location").First(&existingObject, existingObject.ID).Error; err != nil {
 		c.JSON(500, gin.H{"status": "error", "error": "Ошибка загрузки обновленного объекта: " + err.Error()})
 		return
 	}
@@ -915,6 +932,113 @@ func DeleteObjectTemplate(c *gin.Context) {
 	}
 
 	c.JSON(200, gin.H{"status": "success", "message": "Шаблон объекта успешно удален"})
+}
+
+// CreateTemplateFromObject создает шаблон на основе существующего объекта
+func CreateTemplateFromObject(c *gin.Context) {
+	// Получаем подключение к БД текущей компании
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB == nil {
+		c.JSON(500, gin.H{"status": "error", "error": "Ошибка подключения к базе данных компании"})
+		return
+	}
+
+	// Получаем ID объекта
+	objectID, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(400, gin.H{"status": "error", "error": "Некорректный ID объекта"})
+		return
+	}
+
+	// Ищем объект
+	var object models.Object
+	if err := tenantDB.Preload("Template").First(&object, objectID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(404, gin.H{"status": "error", "error": "Объект не найден"})
+		} else {
+			c.JSON(500, gin.H{"status": "error", "error": "Ошибка поиска объекта: " + err.Error()})
+		}
+		return
+	}
+
+	// Парсим данные для нового шаблона
+	var templateData struct {
+		Name        string `json:"name" binding:"required"`
+		Description string `json:"description"`
+		Category    string `json:"category" binding:"required"`
+		Icon        string `json:"icon"`
+		Color       string `json:"color"`
+	}
+
+	if err := c.ShouldBindJSON(&templateData); err != nil {
+		c.JSON(400, gin.H{"status": "error", "error": "Некорректные данные: " + err.Error()})
+		return
+	}
+
+	// Создаем конфигурацию на основе объекта
+	config := map[string]interface{}{
+		"type":              object.Type,
+		"default_imei":      object.IMEI != "",
+		"default_phone":     object.PhoneNumber != "",
+		"default_serial":    object.SerialNumber != "",
+		"location_required": object.LocationID != 0,
+	}
+
+	// Создаем настройки по умолчанию на основе объекта
+	defaultSettings := map[string]interface{}{
+		"type":      object.Type,
+		"status":    "active",
+		"is_active": true,
+	}
+
+	// Если у объекта есть настройки, используем их как базу
+	if object.Settings != "" {
+		defaultSettings["custom_settings"] = object.Settings
+	}
+
+	// Определяем требуемое оборудование на основе типа объекта
+	requiredEquipment := []string{}
+	switch object.Type {
+	case "vehicle":
+		requiredEquipment = []string{"GPS-трекер", "Датчик топлива"}
+	case "equipment":
+		requiredEquipment = []string{"GPS-трекер"}
+	case "asset":
+		requiredEquipment = []string{"GPS-трекер", "Датчик движения"}
+	default:
+		requiredEquipment = []string{"GPS-трекер"}
+	}
+
+	// Конвертируем в JSON
+	configJSON, _ := json.Marshal(config)
+	defaultSettingsJSON, _ := json.Marshal(defaultSettings)
+
+	// Создаем новый шаблон
+	template := models.ObjectTemplate{
+		Name:              templateData.Name,
+		Description:       templateData.Description,
+		Category:          templateData.Category,
+		Icon:              templateData.Icon,
+		Color:             templateData.Color,
+		Config:            string(configJSON),
+		DefaultSettings:   string(defaultSettingsJSON),
+		RequiredEquipment: requiredEquipment,
+		IsActive:          true,
+		IsSystem:          false,
+		UsageCount:        0,
+	}
+
+	// Сохраняем шаблон
+	if err := tenantDB.Create(&template).Error; err != nil {
+		c.JSON(500, gin.H{"status": "error", "error": "Ошибка создания шаблона: " + err.Error()})
+		return
+	}
+
+	c.JSON(201, gin.H{
+		"status":  "success",
+		"message": "Шаблон успешно создан на основе объекта",
+		"data":    template,
+	})
 }
 
 // applyContractTariff автоматически применяет тариф на основе договора объекта

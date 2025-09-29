@@ -35,6 +35,9 @@ type Object struct {
 	LastActivityAt    *time.Time `json:"last_activity_at"`    // Последняя активность
 
 	// Связи с другими сущностями
+	CompanyID uint     `json:"company_id" gorm:"not null;index"`
+	Company   *Company `json:"company,omitempty" gorm:"foreignKey:CompanyID"`
+
 	ContractID uint      `json:"contract_id" gorm:"not null;index"`
 	Contract   *Contract `json:"contract,omitempty" gorm:"foreignKey:ContractID"`
 

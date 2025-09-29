@@ -3,7 +3,6 @@ package models
 import (
 	"time"
 
-	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -15,10 +14,10 @@ type Integration struct {
 	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
 
 	// Основные поля
-	CompanyID       uuid.UUID `json:"company_id" gorm:"type:uuid;not null;index"`
-	IntegrationType string    `json:"integration_type" gorm:"not null;type:varchar(50)"` // axetna_cloud, bitrix24, 1c
-	Name            string    `json:"name" gorm:"not null;type:varchar(100)"`
-	Description     string    `json:"description" gorm:"type:text"`
+	CompanyID       uint   `json:"company_id" gorm:"not null;index"`
+	IntegrationType string `json:"integration_type" gorm:"not null;type:varchar(50)"` // axetna_cloud, bitrix24, 1c
+	Name            string `json:"name" gorm:"not null;type:varchar(100)"`
+	Description     string `json:"description" gorm:"type:text"`
 
 	// Настройки интеграции (JSON)
 	Settings string `json:"settings" gorm:"type:text"` // Зашифрованные настройки подключения

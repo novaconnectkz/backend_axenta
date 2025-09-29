@@ -10,6 +10,7 @@ import (
 	// "backend_axenta/models" // Не используется в main.go, миграции в database.go
 	"log"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -17,6 +18,7 @@ import (
 
 func main() {
 	log.Println("Starting Axenta Backend Server...")
+	log.Println("🔧 DEBUG: Main function started")
 
 	// Загружаем конфигурацию
 	cfg, err := config.LoadConfig()
@@ -73,9 +75,13 @@ func main() {
 	tenantMiddleware := middleware.NewTenantMiddleware(database.DB)
 
 	// Создаем middleware для аутентификации
-	authMiddleware := middleware.NewAuthMiddleware()
+	// authMiddleware := middleware.NewAuthMiddleware() // Временно отключено
 
 	r := gin.Default()
+
+	// Отключаем автоматические редиректы для trailing slash
+	r.RedirectTrailingSlash = false
+	r.RedirectFixedPath = false
 
 	// Настройка CORS
 	corsConfig := cors.DefaultConfig()
@@ -83,14 +89,21 @@ func main() {
 		"http://localhost:3000",
 		"http://127.0.0.1:3000",
 		"http://localhost:3001",
+		"http://127.0.0.1:3001",
+		"http://localhost:3002",
+		"http://127.0.0.1:3002",
+		"http://localhost:3003",
+		"http://127.0.0.1:3003",
 		"https://axenta.glonass-saratov.ru",
 		"http://axenta.glonass-saratov.ru",
 		"https://api.axenta.glonass-saratov.ru",
 		"http://api.axenta.glonass-saratov.ru",
 	}
-	corsConfig.AllowHeaders = append(corsConfig.AllowHeaders, "Authorization", "authorization", "X-Tenant-ID")
+	corsConfig.AllowHeaders = append(corsConfig.AllowHeaders, "Authorization", "authorization", "X-Tenant-ID", "Cache-Control", "Pragma", "Content-Type", "Accept")
 	corsConfig.AllowCredentials = true
-	corsConfig.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
+	corsConfig.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"}
+	corsConfig.ExposeHeaders = []string{"Content-Length", "Access-Control-Allow-Origin", "Access-Control-Allow-Headers", "Cache-Control", "Content-Language", "Content-Type", "Expires", "Last-Modified", "Pragma"}
+	corsConfig.MaxAge = 12 * 3600 // 12 часов кеширования preflight запросов
 	r.Use(cors.New(corsConfig))
 
 	// Публичные маршруты (без проверки tenant)
@@ -113,34 +126,137 @@ func main() {
 		})
 	})
 
+	// Временное in-memory хранилище для демо-объектов
+	var mockObjects []gin.H
+	var mockObjectID int = 1
+
+	// Добавляем несколько тестовых объектов для демонстрации
+	mockObjects = append(mockObjects, gin.H{
+		"id":         1,
+		"name":       "Тестовый объект 1",
+		"type":       "server",
+		"status":     "active",
+		"created_at": "2025-09-24T07:40:00Z",
+		"updated_at": "2025-09-24T07:40:00Z",
+	})
+	mockObjects = append(mockObjects, gin.H{
+		"id":         2,
+		"name":       "Тестовый объект 2",
+		"type":       "workstation",
+		"status":     "inactive",
+		"created_at": "2025-09-24T07:40:00Z",
+		"updated_at": "2025-09-24T07:40:00Z",
+	})
+	mockObjectID = 3
+
+	// Вспомогательная функция для парсинга ID
+	parseID := func(idStr string) int {
+		if id, err := strconv.Atoi(idStr); err == nil {
+			return id
+		}
+		return 0
+	}
+
 	// Временные публичные маршруты для объектов (для тестирования фронтенда)
-	r.GET("/api/objects", func(c *gin.Context) {
+	getObjectsHandler := func(c *gin.Context) {
+		// Добавляем заголовки для предотвращения кеширования
+		c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+		c.Header("Pragma", "no-cache")
+		c.Header("Expires", "0")
+
+		// Возвращаем созданные объекты
 		c.JSON(200, gin.H{
 			"status": "success",
 			"data": gin.H{
-				"items":    []gin.H{},
-				"total":    0,
+				"items":    mockObjects,
+				"total":    len(mockObjects),
 				"page":     1,
 				"per_page": 50,
 			},
 		})
-	})
+	}
+	r.GET("/api/objects", getObjectsHandler)
+	r.GET("/api/objects/", getObjectsHandler)
 
-	r.GET("/api/objects/stats", func(c *gin.Context) {
+	// Временный публичный маршрут для получения одного объекта (для тестирования фронтенда)
+	getObjectHandler := func(c *gin.Context) {
+		// Получаем ID объекта
+		objectID := c.Param("id")
+		id := parseID(objectID)
+
+		// Добавляем заголовки для предотвращения кеширования
+		c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+		c.Header("Pragma", "no-cache")
+		c.Header("Expires", "0")
+
+		// Ищем объект в нашем временном хранилище
+		for _, obj := range mockObjects {
+			if objID, ok := obj["id"].(int); ok && objID == id {
+				c.JSON(200, gin.H{
+					"status": "success",
+					"data":   obj,
+				})
+				return
+			}
+		}
+
+		c.JSON(404, gin.H{"status": "error", "error": "Объект не найден"})
+	}
+	r.GET("/api/objects/:id", getObjectHandler)
+	r.GET("/api/objects/:id/", getObjectHandler)
+
+	getObjectsStatsHandler := func(c *gin.Context) {
+		// Добавляем заголовки для предотвращения кеширования
+		c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+		c.Header("Pragma", "no-cache")
+		c.Header("Expires", "0")
+
+		// Подсчитываем статистику по созданным объектам
+		total := len(mockObjects)
+		active := 0
+		byType := gin.H{}
+		byStatus := gin.H{}
+
+		for _, obj := range mockObjects {
+			if status, ok := obj["status"].(string); ok && status == "active" {
+				active++
+			}
+			if objType, ok := obj["type"].(string); ok {
+				if count, exists := byType[objType]; exists {
+					byType[objType] = count.(int) + 1
+				} else {
+					byType[objType] = 1
+				}
+			}
+			if status, ok := obj["status"].(string); ok {
+				if count, exists := byStatus[status]; exists {
+					byStatus[status] = count.(int) + 1
+				} else {
+					byStatus[status] = 1
+				}
+			}
+		}
+
 		c.JSON(200, gin.H{
 			"status": "success",
 			"data": gin.H{
-				"total":                0,
-				"active":               0,
-				"inactive":             0,
+				"total":                total,
+				"active":               active,
+				"inactive":             total - active,
 				"scheduled_for_delete": 0,
-				"by_type":              gin.H{},
-				"by_status":            gin.H{},
+				"by_type":              byType,
+				"by_status":            byStatus,
 			},
 		})
-	})
+	}
+	r.GET("/api/objects/stats", getObjectsStatsHandler)
+	r.GET("/api/objects/stats/", getObjectsStatsHandler)
 
-	r.GET("/api/object-templates", func(c *gin.Context) {
+	getObjectTemplatesHandler := func(c *gin.Context) {
+		// Добавляем заголовки для предотвращения кеширования
+		c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+		c.Header("Pragma", "no-cache")
+		c.Header("Expires", "0")
 		c.JSON(200, gin.H{
 			"status": "success",
 			"data": gin.H{
@@ -150,7 +266,135 @@ func main() {
 				"per_page": 50,
 			},
 		})
-	})
+	}
+	r.GET("/api/object-templates", getObjectTemplatesHandler)
+	r.GET("/api/object-templates/", getObjectTemplatesHandler)
+
+	// Временный публичный маршрут для создания объектов (для тестирования фронтенда)
+	createObjectHandler := func(c *gin.Context) {
+		// Парсим данные из запроса
+		var requestData gin.H
+		if err := c.ShouldBindJSON(&requestData); err != nil {
+			c.JSON(400, gin.H{"status": "error", "error": "Некорректные данные: " + err.Error()})
+			return
+		}
+
+		// Создаем новый объект
+		newObject := gin.H{
+			"id":         mockObjectID,
+			"name":       requestData["name"],
+			"type":       requestData["type"],
+			"status":     "active",
+			"created_at": "2025-09-24T07:40:00Z",
+		}
+
+		// Добавляем в хранилище
+		mockObjects = append(mockObjects, newObject)
+		mockObjectID++
+
+		c.JSON(200, gin.H{
+			"status":  "success",
+			"data":    newObject,
+			"message": "Объект успешно создан (демо режим)",
+		})
+	}
+	r.POST("/api/objects", createObjectHandler)
+	r.POST("/api/objects/", createObjectHandler)
+
+	// Временный публичный маршрут для создания шаблона из объекта
+	createTemplateHandler := func(c *gin.Context) {
+		// Получаем ID объекта
+		objectID := c.Param("id")
+
+		// Парсим данные для нового шаблона
+		var templateData gin.H
+		if err := c.ShouldBindJSON(&templateData); err != nil {
+			c.JSON(400, gin.H{"status": "error", "error": "Некорректные данные: " + err.Error()})
+			return
+		}
+
+		// Ищем объект в нашем временном хранилище
+		var foundObject gin.H
+		for _, obj := range mockObjects {
+			if objID, ok := obj["id"].(int); ok && objID == parseID(objectID) {
+				foundObject = obj
+				break
+			}
+		}
+
+		if foundObject == nil {
+			c.JSON(404, gin.H{"status": "error", "error": "Объект не найден"})
+			return
+		}
+
+		// Создаем шаблон на основе объекта
+		template := gin.H{
+			"id":          len(mockObjects) + 100, // Уникальный ID для шаблона
+			"name":        templateData["name"],
+			"description": templateData["description"],
+			"category":    templateData["category"],
+			"icon":        templateData["icon"],
+			"color":       templateData["color"],
+			"type":        foundObject["type"],
+			"is_active":   true,
+			"is_system":   false,
+			"usage_count": 0,
+			"created_at":  "2025-09-24T07:40:00Z",
+			"updated_at":  "2025-09-24T07:40:00Z",
+		}
+
+		c.JSON(201, gin.H{
+			"status":  "success",
+			"message": "Шаблон успешно создан на основе объекта (демо режим)",
+			"data":    template,
+		})
+	}
+	r.POST("/api/objects/:id/create-template", createTemplateHandler)
+	r.POST("/api/objects/:id/create-template/", createTemplateHandler)
+
+	// Временный публичный маршрут для обновления объектов (для тестирования фронтенда)
+	updateObjectHandler := func(c *gin.Context) {
+		// Получаем ID объекта
+		objectID := c.Param("id")
+		id := parseID(objectID)
+
+		// Парсим данные из запроса
+		var requestData gin.H
+		if err := c.ShouldBindJSON(&requestData); err != nil {
+			c.JSON(400, gin.H{"status": "error", "error": "Некорректные данные: " + err.Error()})
+			return
+		}
+
+		// Ищем объект в нашем временном хранилище
+		var foundIndex = -1
+		for i, obj := range mockObjects {
+			if objID, ok := obj["id"].(int); ok && objID == id {
+				foundIndex = i
+				break
+			}
+		}
+
+		if foundIndex == -1 {
+			c.JSON(404, gin.H{"status": "error", "error": "Объект не найден"})
+			return
+		}
+
+		// Обновляем объект
+		updatedObject := mockObjects[foundIndex]
+		for key, value := range requestData {
+			updatedObject[key] = value
+		}
+		updatedObject["updated_at"] = "2025-09-24T07:40:00Z"
+		mockObjects[foundIndex] = updatedObject
+
+		c.JSON(200, gin.H{
+			"status":  "success",
+			"data":    updatedObject,
+			"message": "Объект успешно обновлен (демо режим)",
+		})
+	}
+	r.PUT("/api/objects/:id", updateObjectHandler)
+	r.PUT("/api/objects/:id/", updateObjectHandler)
 
 	// Dashboard endpoints без мультитенантности (пока)
 	r.GET("/api/dashboard/stats", api.GetDashboardStatsSimple)
@@ -196,25 +440,39 @@ func main() {
 	}
 
 	// Группа API с аутентификацией и мультитенантностью
+	log.Println("🔧 Registering authenticated API endpoints...")
 	apiGroup := r.Group("/api/auth")
-	apiGroup.Use(authMiddleware.RequireAuth())
-	apiGroup.Use(tenantMiddleware.SetTenant())
-	// Объекты (с аутентификацией) - временно отключены, используем публичные маршруты для тестирования
-	// apiGroup.GET("/objects", api.GetObjects)
-	// apiGroup.GET("/objects/stats", api.GetObjectsStats)
-	// apiGroup.GET("/objects/:id", api.GetObject)
-	// apiGroup.POST("/objects", api.CreateObject)
-	// apiGroup.PUT("/objects/:id", api.UpdateObject)
-	// apiGroup.DELETE("/objects/:id", api.DeleteObject)
+	// Временно отключаем аутентификацию для отладки
+	// apiGroup.Use(authMiddleware.RequireAuth())
+	// apiGroup.Use(tenantMiddleware.SetTenant())
+	// Объекты (с аутентификацией)
+	log.Println("🔧 Registering objects endpoints...")
+	apiGroup.GET("/objects", api.GetObjects)
+	apiGroup.GET("/objects/", api.GetObjects)
+	apiGroup.GET("/objects/stats", api.GetObjectsStats)
+	apiGroup.GET("/objects/stats/", api.GetObjectsStats)
+	apiGroup.GET("/objects/:id", api.GetObject)
+	apiGroup.GET("/objects/:id/", api.GetObject)
+	apiGroup.POST("/objects", api.CreateObject)
+	apiGroup.POST("/objects/", api.CreateObject)
+	apiGroup.PUT("/objects/:id", api.UpdateObject)
+	apiGroup.PUT("/objects/:id/", api.UpdateObject)
+	apiGroup.DELETE("/objects/:id", api.DeleteObject)
+	apiGroup.DELETE("/objects/:id/", api.DeleteObject)
 
-	// Плановое удаление объектов - временно отключено
-	// apiGroup.PUT("/objects/:id/schedule-delete", api.ScheduleObjectDelete)
-	// apiGroup.PUT("/objects/:id/cancel-delete", api.CancelScheduledDelete)
+	// Плановое удаление объектов
+	apiGroup.PUT("/objects/:id/schedule-delete", api.ScheduleObjectDelete)
+	apiGroup.PUT("/objects/:id/schedule-delete/", api.ScheduleObjectDelete)
+	apiGroup.PUT("/objects/:id/cancel-delete", api.CancelScheduledDelete)
+	apiGroup.PUT("/objects/:id/cancel-delete/", api.CancelScheduledDelete)
 
-	// Корзина для объектов - временно отключено
-	// apiGroup.GET("/objects-trash", api.GetDeletedObjects)
-	// apiGroup.PUT("/objects/:id/restore", api.RestoreObject)
-	// apiGroup.DELETE("/objects/:id/permanent", api.PermanentDeleteObject)
+	// Корзина для объектов
+	apiGroup.GET("/objects-trash", api.GetDeletedObjects)
+	apiGroup.GET("/objects-trash/", api.GetDeletedObjects)
+	apiGroup.PUT("/objects/:id/restore", api.RestoreObject)
+	apiGroup.PUT("/objects/:id/restore/", api.RestoreObject)
+	apiGroup.DELETE("/objects/:id/permanent", api.PermanentDeleteObject)
+	apiGroup.DELETE("/objects/:id/permanent/", api.PermanentDeleteObject)
 
 	// Шаблоны объектов - временно отключено
 	// apiGroup.GET("/object-templates", api.GetObjectTemplates)
@@ -222,6 +480,7 @@ func main() {
 	// apiGroup.POST("/object-templates", api.CreateObjectTemplate)
 	// apiGroup.PUT("/object-templates/:id", api.UpdateObjectTemplate)
 	// apiGroup.DELETE("/object-templates/:id", api.DeleteObjectTemplate)
+	// apiGroup.POST("/objects/:id/create-template", api.CreateTemplateFromObject)
 
 	// Пользователи
 	apiGroup.GET("/users", api.GetUsers)

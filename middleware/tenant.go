@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -79,7 +79,7 @@ func (tm *TenantMiddleware) SetTenant() gin.HandlerFunc {
 		// Сохраняем информацию о текущей компании и БД в контексте
 		c.Set("company", company)
 		c.Set("tenant_db", tenantDB)
-		c.Set("company_id", company.ID.String())
+		c.Set("company_id", company.ID)
 		c.Set("schema_name", company.GetSchemaName())
 
 		c.Next()
@@ -150,13 +150,14 @@ func (tm *TenantMiddleware) getCompanyByID(tenantID string) (*models.Company, er
 	if err := mainDB.Exec("SET search_path TO public").Error; err != nil {
 		return nil, fmt.Errorf("ошибка переключения на основную схему: %v", err)
 	}
-	// Парсим UUID из строки
-	companyUUID, err := uuid.Parse(tenantID)
+
+	// Парсим ID как uint (так как Company.ID имеет тип uint)
+	companyID, err := strconv.ParseUint(tenantID, 10, 32)
 	if err != nil {
 		return nil, fmt.Errorf("некорректный формат ID компании: %v", err)
 	}
 
-	if err := mainDB.Where("id = ? AND is_active = ?", companyUUID, true).First(&company).Error; err != nil {
+	if err := mainDB.Where("id = ? AND is_active = ?", uint(companyID), true).First(&company).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, fmt.Errorf("компания с ID %s не найдена", tenantID)
 		}
@@ -467,11 +468,11 @@ func GetCurrentCompany(c *gin.Context) *models.Company {
 }
 
 // GetCompanyID возвращает ID текущей компании из контекста
-func GetCompanyID(c *gin.Context) string {
+func GetCompanyID(c *gin.Context) uint {
 	if companyID, exists := c.Get("company_id"); exists {
-		if id, ok := companyID.(string); ok {
+		if id, ok := companyID.(uint); ok {
 			return id
 		}
 	}
-	return ""
+	return 0
 }

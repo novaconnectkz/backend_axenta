@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
@@ -77,7 +76,6 @@ func setupTestEnvironment(t *testing.T) (*gin.Engine, *gorm.DB, func()) {
 // createTestCompanyWithData создает тестовую компанию с данными
 func createTestCompanyWithData(t *testing.T, db *gorm.DB, name, schema string) (*models.Company, *gorm.DB) {
 	company := &models.Company{
-		ID:             uuid.New(), // Вручную генерируем UUID для SQLite
 		Name:           name,
 		DatabaseSchema: schema,
 		AxetnaLogin:    "test_login",
@@ -153,7 +151,7 @@ func TestMultiTenantObjectsAPI(t *testing.T) {
 	t.Run("Компания 1 видит только свои объекты", func(t *testing.T) {
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("GET", "/api/objects", nil)
-		req.Header.Set("X-Tenant-ID", company1.ID.String())
+		req.Header.Set("X-Tenant-ID", fmt.Sprintf("%d", company1.ID))
 
 		router.ServeHTTP(w, req)
 
@@ -177,7 +175,7 @@ func TestMultiTenantObjectsAPI(t *testing.T) {
 	t.Run("Компания 2 видит только свои объекты", func(t *testing.T) {
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("GET", "/api/objects", nil)
-		req.Header.Set("X-Tenant-ID", company2.ID.String())
+		req.Header.Set("X-Tenant-ID", fmt.Sprintf("%d", company2.ID))
 
 		router.ServeHTTP(w, req)
 
@@ -230,11 +228,11 @@ func TestTenantSwitchingPerformance(t *testing.T) {
 
 			w := httptest.NewRecorder()
 			req, _ := http.NewRequest("GET", "/api/objects", nil)
-			req.Header.Set("X-Tenant-ID", company.ID.String())
+			req.Header.Set("X-Tenant-ID", fmt.Sprintf("%d", company.ID))
 
 			router.ServeHTTP(w, req)
 
-			assert.Equal(t, http.StatusOK, w.Code, "Запрос %d к компании %s должен быть успешным", i, company.ID.String())
+			assert.Equal(t, http.StatusOK, w.Code, "Запрос %d к компании %d должен быть успешным", i, company.ID)
 		}
 	})
 }
@@ -283,7 +281,7 @@ func TestTenantMiddlewareEdgeCases(t *testing.T) {
 
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("GET", "/api/objects", nil)
-		req.Header.Set("X-Tenant-ID", company.ID.String())
+		req.Header.Set("X-Tenant-ID", fmt.Sprintf("%d", company.ID))
 
 		router.ServeHTTP(w, req)
 
@@ -375,10 +373,10 @@ func TestConcurrentTenantAccess(t *testing.T) {
 
 		// Запускаем горутины для каждой компании
 		for i := 0; i < 5; i++ {
-			go func(companyID uuid.UUID, expectedPrefix string) {
+			go func(companyID uint, expectedPrefix string) {
 				w := httptest.NewRecorder()
 				req, _ := http.NewRequest("GET", "/api/objects", nil)
-				req.Header.Set("X-Tenant-ID", companyID.String())
+				req.Header.Set("X-Tenant-ID", fmt.Sprintf("%d", companyID))
 
 				router.ServeHTTP(w, req)
 
@@ -406,10 +404,10 @@ func TestConcurrentTenantAccess(t *testing.T) {
 				results <- success
 			}(company1.ID, "Company1_Object_")
 
-			go func(companyID uuid.UUID, expectedPrefix string) {
+			go func(companyID uint, expectedPrefix string) {
 				w := httptest.NewRecorder()
 				req, _ := http.NewRequest("GET", "/api/objects", nil)
-				req.Header.Set("X-Tenant-ID", companyID.String())
+				req.Header.Set("X-Tenant-ID", fmt.Sprintf("%d", companyID))
 
 				router.ServeHTTP(w, req)
 

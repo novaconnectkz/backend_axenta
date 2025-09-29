@@ -10,7 +10,7 @@ import (
 
 // Company представляет компанию (tenant) в мультитенантной системе
 type Company struct {
-	ID        uuid.UUID      `json:"id" gorm:"type:uuid;default:gen_random_uuid();primarykey"`
+	ID        uint           `json:"id" gorm:"primarykey"`
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`

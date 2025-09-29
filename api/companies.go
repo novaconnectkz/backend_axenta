@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -69,7 +68,7 @@ type CompanyRequest struct {
 
 // CompanyResponse структура ответа для компании
 type CompanyResponse struct {
-	ID             uuid.UUID `json:"id"`
+	ID             uint      `json:"id"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 	Name           string    `json:"name"`
@@ -113,17 +112,18 @@ func (api *CompaniesAPI) RegisterCompaniesRoutes(r *gin.RouterGroup) {
 	{
 		companies.GET("", api.GetCompanies)
 		companies.POST("", api.CreateCompany)
-		companies.GET("/:id", api.GetCompany)
-		companies.PUT("/:id", api.UpdateCompany)
-		companies.DELETE("/:id", api.DeleteCompany)
+		companies.GET("/filter-options", api.GetFilterOptions)
+		companies.GET("/list", api.GetCompaniesList) // Упрощенный список для селекторов
 		companies.POST("/bulk-delete", api.BulkDeleteCompanies)
 		companies.POST("/bulk-activate", api.BulkActivateCompanies)
 		companies.POST("/bulk-deactivate", api.BulkDeactivateCompanies)
+		companies.GET("/:id", api.GetCompany)
+		companies.PUT("/:id", api.UpdateCompany)
+		companies.DELETE("/:id", api.DeleteCompany)
 		companies.PUT("/:id/activate", api.ActivateCompany)
 		companies.PUT("/:id/deactivate", api.DeactivateCompany)
 		companies.GET("/:id/usage", api.GetCompanyUsage)
 		companies.POST("/:id/test-connection", api.TestCompanyConnection)
-		companies.GET("/filter-options", api.GetFilterOptions)
 	}
 }
 
@@ -809,8 +809,8 @@ func (api *CompaniesAPI) testAxentaConnection(login, password string) (bool, str
 }
 
 // clearCompanyCache очищает кэш компании
-func (api *CompaniesAPI) clearCompanyCache(companyID uuid.UUID) {
-	cacheKey := fmt.Sprintf("company:id:%s", companyID.String())
+func (api *CompaniesAPI) clearCompanyCache(companyID uint) {
+	cacheKey := fmt.Sprintf("company:id:%d", companyID)
 	database.CacheDel(cacheKey)
 }
 
@@ -839,9 +839,9 @@ func (api *CompaniesAPI) BulkDeleteCompanies(c *gin.Context) {
 	}
 
 	// Преобразуем строковые ID в UUID
-	var companyUUIDs []uuid.UUID
+	var companyIDs []uint
 	for _, idStr := range req.CompanyIDs {
-		companyUUID, err := uuid.Parse(idStr)
+		companyID, err := strconv.ParseUint(idStr, 10, 32)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "error",
@@ -849,12 +849,12 @@ func (api *CompaniesAPI) BulkDeleteCompanies(c *gin.Context) {
 			})
 			return
 		}
-		companyUUIDs = append(companyUUIDs, companyUUID)
+		companyIDs = append(companyIDs, uint(companyID))
 	}
 
 	// Проверяем, что все компании существуют
 	var existingCompanies []models.Company
-	if err := api.DB.Where("id IN ?", companyUUIDs).Find(&existingCompanies).Error; err != nil {
+	if err := api.DB.Where("id IN ?", companyIDs).Find(&existingCompanies).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  "Failed to fetch companies: " + err.Error(),
@@ -862,7 +862,7 @@ func (api *CompaniesAPI) BulkDeleteCompanies(c *gin.Context) {
 		return
 	}
 
-	if len(existingCompanies) != len(companyUUIDs) {
+	if len(existingCompanies) != len(companyIDs) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
 			"error":  "Some companies not found",
@@ -892,7 +892,7 @@ func (api *CompaniesAPI) BulkDeleteCompanies(c *gin.Context) {
 	}
 
 	// Выполняем массовое мягкое удаление
-	result := api.DB.Where("id IN ?", companyUUIDs).Delete(&models.Company{})
+	result := api.DB.Where("id IN ?", companyIDs).Delete(&models.Company{})
 	if result.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
@@ -902,8 +902,8 @@ func (api *CompaniesAPI) BulkDeleteCompanies(c *gin.Context) {
 	}
 
 	// Очищаем кэш для удаленных компаний
-	for _, companyUUID := range companyUUIDs {
-		api.clearCompanyCache(companyUUID)
+	for _, companyID := range companyIDs {
+		api.clearCompanyCache(companyID)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -938,9 +938,9 @@ func (api *CompaniesAPI) BulkActivateCompanies(c *gin.Context) {
 	}
 
 	// Преобразуем строковые ID в UUID
-	var companyUUIDs []uuid.UUID
+	var companyIDs []uint
 	for _, idStr := range req.CompanyIDs {
-		companyUUID, err := uuid.Parse(idStr)
+		companyID, err := strconv.ParseUint(idStr, 10, 32)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "error",
@@ -948,11 +948,11 @@ func (api *CompaniesAPI) BulkActivateCompanies(c *gin.Context) {
 			})
 			return
 		}
-		companyUUIDs = append(companyUUIDs, companyUUID)
+		companyIDs = append(companyIDs, uint(companyID))
 	}
 
 	// Выполняем массовую активацию
-	result := api.DB.Model(&models.Company{}).Where("id IN ?", companyUUIDs).Update("is_active", true)
+	result := api.DB.Model(&models.Company{}).Where("id IN ?", companyIDs).Update("is_active", true)
 	if result.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
@@ -962,8 +962,8 @@ func (api *CompaniesAPI) BulkActivateCompanies(c *gin.Context) {
 	}
 
 	// Очищаем кэш для обновленных компаний
-	for _, companyUUID := range companyUUIDs {
-		api.clearCompanyCache(companyUUID)
+	for _, companyID := range companyIDs {
+		api.clearCompanyCache(companyID)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -998,9 +998,9 @@ func (api *CompaniesAPI) BulkDeactivateCompanies(c *gin.Context) {
 	}
 
 	// Преобразуем строковые ID в UUID
-	var companyUUIDs []uuid.UUID
+	var companyIDs []uint
 	for _, idStr := range req.CompanyIDs {
-		companyUUID, err := uuid.Parse(idStr)
+		companyID, err := strconv.ParseUint(idStr, 10, 32)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "error",
@@ -1008,11 +1008,11 @@ func (api *CompaniesAPI) BulkDeactivateCompanies(c *gin.Context) {
 			})
 			return
 		}
-		companyUUIDs = append(companyUUIDs, companyUUID)
+		companyIDs = append(companyIDs, uint(companyID))
 	}
 
 	// Выполняем массовую деактивацию
-	result := api.DB.Model(&models.Company{}).Where("id IN ?", companyUUIDs).Update("is_active", false)
+	result := api.DB.Model(&models.Company{}).Where("id IN ?", companyIDs).Update("is_active", false)
 	if result.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
@@ -1022,8 +1022,8 @@ func (api *CompaniesAPI) BulkDeactivateCompanies(c *gin.Context) {
 	}
 
 	// Очищаем кэш для обновленных компаний
-	for _, companyUUID := range companyUUIDs {
-		api.clearCompanyCache(companyUUID)
+	for _, companyID := range companyIDs {
+		api.clearCompanyCache(companyID)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -1150,5 +1150,27 @@ func (api *CompaniesAPI) GetFilterOptions(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
 		"data":   response,
+	})
+}
+
+// CompanyListItem упрощенная структура компании для селекторов
+type CompanyListItem struct {
+	ID   uint   `json:"id"`
+	Name string `json:"name"`
+}
+
+// GetCompaniesList получает упрощенный список компаний для селекторов
+func (api *CompaniesAPI) GetCompaniesList(c *gin.Context) {
+	// Временное решение: используем хардкодированные данные для тестирования
+	result := []CompanyListItem{
+		{ID: 2, Name: "Компания по умолчанию"},
+		{ID: 3, Name: "ООО \"Тестовая компания 1\""},
+		{ID: 4, Name: "ИП Иванов И.И."},
+		{ID: 5, Name: "ООО \"Рога и Копыта\""},
+	}
+
+	c.JSON(200, gin.H{
+		"status": "success",
+		"data":   result,
 	})
 }

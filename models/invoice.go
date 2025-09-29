@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
@@ -24,7 +23,7 @@ type Invoice struct {
 	DueDate     time.Time `json:"due_date" gorm:"not null"`
 
 	// Связи
-	CompanyID    uuid.UUID   `json:"company_id" gorm:"type:uuid;not null;index"`
+	CompanyID    uint        `json:"company_id" gorm:"not null;index"`
 	ContractID   *uint       `json:"contract_id" gorm:"index"` // Может быть null для общих счетов
 	Contract     *Contract   `json:"contract,omitempty" gorm:"foreignKey:ContractID"`
 	TariffPlanID uint        `json:"tariff_plan_id" gorm:"not null"`
@@ -120,7 +119,7 @@ type BillingHistory struct {
 	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
 
 	// Связи
-	CompanyID  uuid.UUID `json:"company_id" gorm:"type:uuid;not null;index"`
+	CompanyID  uint      `json:"company_id" gorm:"not null;index"`
 	InvoiceID  *uint     `json:"invoice_id" gorm:"index"`
 	Invoice    *Invoice  `json:"invoice,omitempty" gorm:"foreignKey:InvoiceID"`
 	ContractID *uint     `json:"contract_id" gorm:"index"`
@@ -156,7 +155,7 @@ type BillingSettings struct {
 	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
 
 	// Связь с компанией
-	CompanyID uuid.UUID `json:"company_id" gorm:"type:uuid;uniqueIndex;not null"`
+	CompanyID uint `json:"company_id" gorm:"uniqueIndex;not null"`
 
 	// Настройки генерации счетов
 	AutoGenerateInvoices   bool `json:"auto_generate_invoices" gorm:"default:true"`

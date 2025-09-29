@@ -245,7 +245,7 @@ func CreateSubscription(c *gin.Context) {
 	}
 
 	// Валидация обязательных полей
-	if subscription.CompanyID == uuid.Nil {
+	if subscription.CompanyID == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
 			"error":  "Поле company_id обязательно",
@@ -789,10 +789,10 @@ func GetBillingHistory(c *gin.Context) {
 // GetOverdueInvoices получает просроченные счета
 func GetOverdueInvoices(c *gin.Context) {
 	companyIDStr := c.Query("company_id")
-	var companyID *uuid.UUID
+	var companyID *uint
 
 	if companyIDStr != "" {
-		cID, err := uuid.Parse(companyIDStr)
+		cIDUint, err := strconv.ParseUint(companyIDStr, 10, 32)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "error",
@@ -800,6 +800,7 @@ func GetOverdueInvoices(c *gin.Context) {
 			})
 			return
 		}
+		cID := uint(cIDUint)
 		companyID = &cID
 	}
 
@@ -834,7 +835,7 @@ func GetBillingSettings(c *gin.Context) {
 		return
 	}
 
-	companyID, err := uuid.Parse(companyIDStr)
+	companyIDUint, err := strconv.ParseUint(companyIDStr, 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
@@ -842,6 +843,7 @@ func GetBillingSettings(c *gin.Context) {
 		})
 		return
 	}
+	companyID := uint(companyIDUint)
 
 	var settings models.BillingSettings
 	if err := database.DB.Where("company_id = ?", companyID).First(&settings).Error; err != nil {

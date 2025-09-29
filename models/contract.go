@@ -3,7 +3,6 @@ package models
 import (
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
@@ -21,7 +20,7 @@ type Contract struct {
 	Description string `json:"description" gorm:"type:text"`
 
 	// Связь с компанией (мультитенантность)
-	CompanyID uuid.UUID `json:"company_id" gorm:"type:uuid;not null;index"`
+	CompanyID uint `json:"company_id" gorm:"not null;index"`
 
 	// Клиент
 	ClientName    string `json:"client_name" gorm:"not null;type:varchar(200)"`

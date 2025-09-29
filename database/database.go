@@ -88,11 +88,14 @@ func ConnectDatabase() error {
 
 	log.Println("✅ Успешно подключено к PostgreSQL")
 
-	// Автомиграция моделей - отключена из-за проблем с моделью Company
+	// Автомиграция моделей временно отключена
+	log.Println("⚠️ Автомиграция отключена - используем существующие таблицы")
 	// if err := autoMigrate(); err != nil {
-	// 	return fmt.Errorf("ошибка автомиграции: %w", err)
+	// 	log.Printf("⚠️ Ошибка автомиграции: %v", err)
+	// 	log.Println("Продолжаем без автомиграции - таблицы должны быть созданы вручную")
+	// } else {
+	// 	log.Println("✅ Автомиграция выполнена успешно")
 	// }
-	log.Println("⚠️ Автомиграция отключена - таблицы должны быть созданы вручную")
 
 	return nil
 }
@@ -166,6 +169,8 @@ func autoMigrate() error {
 	// Миграции для глобальных таблиц (в схеме public)
 	globalModels := []interface{}{
 		&models.Company{},
+		// &models.BillingPlan{}, // Временно отключено из-за ошибки миграции
+		// &models.Subscription{}, // Временно отключено из-за ошибки миграции
 		&models.IntegrationError{},
 	}
 

@@ -26,7 +26,7 @@ func NewBillingService() *BillingService {
 
 // BillingCalculationResult содержит результаты расчета биллинга
 type BillingCalculationResult struct {
-	CompanyID          uuid.UUID         `json:"company_id"`
+	CompanyID          uint              `json:"company_id"`
 	ContractID         uint              `json:"contract_id"`
 	TariffPlanID       uint              `json:"tariff_plan_id"`
 	BillingPeriodStart time.Time         `json:"billing_period_start"`
@@ -435,7 +435,7 @@ func (bs *BillingService) GetBillingHistory(companyID uuid.UUID, limit, offset i
 }
 
 // GetOverdueInvoices возвращает просроченные счета
-func (bs *BillingService) GetOverdueInvoices(companyID *uuid.UUID) ([]models.Invoice, error) {
+func (bs *BillingService) GetOverdueInvoices(companyID *uint) ([]models.Invoice, error) {
 	query := bs.db.Where("due_date < ? AND status NOT IN ?", time.Now(), []string{"paid", "cancelled"}).
 		Preload("Contract").
 		Preload("TariffPlan").

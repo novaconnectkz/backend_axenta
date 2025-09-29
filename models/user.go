@@ -3,7 +3,6 @@ package models
 import (
 	"time"
 
-	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -33,7 +32,7 @@ type User struct {
 	ExternalSource string `json:"external_source" gorm:"type:varchar(50)"`          // bitrix24, 1c, etc.
 
 	// Для мультитенантности (временно, пока не перейдем полностью на схемы)
-	CompanyID uuid.UUID `json:"company_id" gorm:"type:uuid;index"`
+	CompanyID uint `json:"company_id" gorm:"index"`
 
 	// Роль и права доступа
 	RoleID uint  `json:"role_id" gorm:"index"`
