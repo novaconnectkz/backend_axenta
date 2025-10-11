@@ -192,6 +192,9 @@ func (api *CompaniesAPI) GetCompanies(c *gin.Context) {
 	isActive := c.Query("is_active")
 	accountType := c.Query("type")
 
+	fmt.Printf("🔧 DEBUG: Received parameters - page: %s, per_page: %s, ordering: %s, search: %s, is_active: '%s', type: %s\n",
+		page, perPage, ordering, search, isActive, accountType)
+
 	// Формируем URL для запроса к Axenta Cloud API
 	axentaURL := "https://axenta.cloud/api/cms/accounts/"
 	params := fmt.Sprintf("?page=%s&per_page=%s&ordering=%s", page, perPage, ordering)
