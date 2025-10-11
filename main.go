@@ -4,6 +4,7 @@ import (
 	"backend_axenta/api"
 	"backend_axenta/config"
 	"backend_axenta/database"
+	"backend_axenta/handlers"
 	"backend_axenta/middleware"
 	"backend_axenta/models"
 	"backend_axenta/services"
@@ -507,6 +508,14 @@ func main() {
 	apiGroup.GET("/users/stats", api.GetUsersStats)
 	apiGroup.GET("/users/:id", api.GetUser)
 	apiGroup.POST("/users", api.CreateUser)
+
+	// Учетные записи (прокси к Axenta API)
+	log.Println("🔧 Registering accounts proxy endpoints...")
+	accountsHandler := handlers.NewAccountsHandler()
+	apiGroup.GET("/accounts", accountsHandler.GetAccounts)
+	apiGroup.GET("/accounts/", accountsHandler.GetAccounts)
+	apiGroup.GET("/accounts/:id", accountsHandler.GetAccount)
+	apiGroup.GET("/accounts/:id/", accountsHandler.GetAccount)
 	apiGroup.PUT("/users/:id", api.UpdateUser)
 	apiGroup.DELETE("/users/:id", api.DeleteUser)
 	apiGroup.POST("/users/bulk-delete", api.BulkDeleteUsers)
