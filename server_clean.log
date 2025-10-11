@@ -1,0 +1,437 @@
+2025/09/24 21:45:55 Starting Axenta Backend Server...
+2025/09/24 21:45:55 🔧 DEBUG: Main function started
+2025/09/24 21:45:55 === Application Configuration ===
+2025/09/24 21:45:55 Environment: development
+2025/09/24 21:45:55 Port: 8080
+2025/09/24 21:45:55 Database Host: localhost:5432
+2025/09/24 21:45:55 Database Name: axenta_db
+2025/09/24 21:45:55 Redis Host: localhost:6379
+2025/09/24 21:45:55 Axenta API URL: https://api.axetna.cloud
+2025/09/24 21:45:55 JWT Issuer: axenta-crm
+2025/09/24 21:45:55 Log Level: info
+2025/09/24 21:45:55 Debug Mode: false
+2025/09/24 21:45:55 ================================
+2025/09/24 21:45:55 ✅ База данных 'axenta_db' уже существует
+2025/09/24 21:45:55 ✅ Успешно подключено к PostgreSQL
+2025/09/24 21:45:55 ⚠️ Автомиграция отключена - используем существующие таблицы
+2025/09/24 21:45:55 ✅ Успешно подключено к Redis
+2025/09/24 21:45:55 ⚠️ Integration Service temporarily disabled
+2025/09/24 21:45:55 ⚠️ Bitrix24 Integration Service temporarily disabled
+2025/09/24 21:45:55 ✅ 1C Integration Service initialized successfully
+2025/09/24 21:45:55 ⚠️ Notification System temporarily disabled
+[GIN-debug] [WARNING] Creating an Engine instance with the Logger and Recovery middleware already attached.
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] GET    /ping                     --> main.main.func1 (4 handlers)
+[GIN-debug] POST   /api/auth/login           --> backend_axenta/api.Login (4 handlers)
+[GIN-debug] GET    /api/test-objects-stats   --> main.main.func2 (4 handlers)
+[GIN-debug] GET    /api/objects              --> main.main.func4 (4 handlers)
+[GIN-debug] GET    /api/objects/             --> main.main.func4 (4 handlers)
+[GIN-debug] GET    /api/objects/:id          --> main.main.func5 (4 handlers)
+[GIN-debug] GET    /api/objects/:id/         --> main.main.func5 (4 handlers)
+[GIN-debug] GET    /api/objects/stats        --> main.main.func6 (4 handlers)
+[GIN-debug] GET    /api/objects/stats/       --> main.main.func6 (4 handlers)
+[GIN-debug] GET    /api/object-templates     --> main.main.func7 (4 handlers)
+[GIN-debug] GET    /api/object-templates/    --> main.main.func7 (4 handlers)
+[GIN-debug] POST   /api/objects              --> main.main.func8 (4 handlers)
+[GIN-debug] POST   /api/objects/             --> main.main.func8 (4 handlers)
+[GIN-debug] POST   /api/objects/:id/create-template --> main.main.func9 (4 handlers)
+[GIN-debug] POST   /api/objects/:id/create-template/ --> main.main.func9 (4 handlers)
+[GIN-debug] PUT    /api/objects/:id          --> main.main.func10 (4 handlers)
+[GIN-debug] PUT    /api/objects/:id/         --> main.main.func10 (4 handlers)
+[GIN-debug] GET    /api/dashboard/stats      --> backend_axenta/api.GetDashboardStatsSimple (4 handlers)
+[GIN-debug] GET    /api/dashboard/activity   --> backend_axenta/api.GetDashboardActivitySimple (4 handlers)
+[GIN-debug] GET    /api/dashboard/layouts    --> backend_axenta/api.GetDashboardLayouts (4 handlers)
+[GIN-debug] GET    /api/dashboard/layouts/default --> backend_axenta/api.GetDefaultDashboardLayout (4 handlers)
+[GIN-debug] GET    /api/notifications        --> backend_axenta/api.GetDashboardNotificationsSimple (4 handlers)
+[GIN-debug] GET    /api/billing-plans-simple --> backend_axenta/api.GetBillingPlansSimple (4 handlers)
+[GIN-debug] GET    /api/subscriptions-simple --> backend_axenta/api.GetSubscriptionsSimple (4 handlers)
+[GIN-debug] GET    /api/admin/accounts       --> backend_axenta/api.(*CompaniesAPI).GetCompanies-fm (4 handlers)
+[GIN-debug] POST   /api/admin/accounts       --> backend_axenta/api.(*CompaniesAPI).CreateCompany-fm (4 handlers)
+[GIN-debug] GET    /api/admin/accounts/filter-options --> backend_axenta/api.(*CompaniesAPI).GetFilterOptions-fm (4 handlers)
+[GIN-debug] GET    /api/admin/accounts/list  --> backend_axenta/api.(*CompaniesAPI).GetCompaniesList-fm (4 handlers)
+[GIN-debug] POST   /api/admin/accounts/bulk-delete --> backend_axenta/api.(*CompaniesAPI).BulkDeleteCompanies-fm (4 handlers)
+[GIN-debug] POST   /api/admin/accounts/bulk-activate --> backend_axenta/api.(*CompaniesAPI).BulkActivateCompanies-fm (4 handlers)
+[GIN-debug] POST   /api/admin/accounts/bulk-deactivate --> backend_axenta/api.(*CompaniesAPI).BulkDeactivateCompanies-fm (4 handlers)
+[GIN-debug] GET    /api/admin/accounts/:id   --> backend_axenta/api.(*CompaniesAPI).GetCompany-fm (4 handlers)
+[GIN-debug] PUT    /api/admin/accounts/:id   --> backend_axenta/api.(*CompaniesAPI).UpdateCompany-fm (4 handlers)
+[GIN-debug] DELETE /api/admin/accounts/:id   --> backend_axenta/api.(*CompaniesAPI).DeleteCompany-fm (4 handlers)
+[GIN-debug] PUT    /api/admin/accounts/:id/activate --> backend_axenta/api.(*CompaniesAPI).ActivateCompany-fm (4 handlers)
+[GIN-debug] PUT    /api/admin/accounts/:id/deactivate --> backend_axenta/api.(*CompaniesAPI).DeactivateCompany-fm (4 handlers)
+[GIN-debug] GET    /api/admin/accounts/:id/usage --> backend_axenta/api.(*CompaniesAPI).GetCompanyUsage-fm (4 handlers)
+[GIN-debug] POST   /api/admin/accounts/:id/test-connection --> backend_axenta/api.(*CompaniesAPI).TestCompanyConnection-fm (4 handlers)
+[GIN-debug] GET    /api/test/installations   --> backend_axenta/api.(*InstallationAPI).GetInstallations-fm (4 handlers)
+[GIN-debug] GET    /api/test/installations/statistics --> main.main.func11 (4 handlers)
+[GIN-debug] GET    /api/test/installers      --> backend_axenta/api.(*InstallerAPI).GetInstallers-fm (4 handlers)
+[GIN-debug] GET    /api/test/locations       --> backend_axenta/api.(*LocationAPI).GetLocations-fm (4 handlers)
+[GIN-debug] GET    /api/test/equipment       --> backend_axenta/api.(*EquipmentAPI).GetEquipment-fm (4 handlers)
+2025/09/24 21:45:55 🔧 Registering authenticated API endpoints...
+2025/09/24 21:45:55 🔧 Registering objects endpoints...
+[GIN-debug] GET    /api/auth/objects         --> backend_axenta/api.GetObjects (4 handlers)
+[GIN-debug] GET    /api/auth/objects/stats   --> backend_axenta/api.GetObjectsStats (4 handlers)
+[GIN-debug] GET    /api/auth/objects/:id     --> backend_axenta/api.GetObject (4 handlers)
+[GIN-debug] POST   /api/auth/objects         --> backend_axenta/api.CreateObject (4 handlers)
+[GIN-debug] PUT    /api/auth/objects/:id     --> backend_axenta/api.UpdateObject (4 handlers)
+[GIN-debug] DELETE /api/auth/objects/:id     --> backend_axenta/api.DeleteObject (4 handlers)
+[GIN-debug] PUT    /api/auth/objects/:id/schedule-delete --> backend_axenta/api.ScheduleObjectDelete (4 handlers)
+[GIN-debug] PUT    /api/auth/objects/:id/cancel-delete --> backend_axenta/api.CancelScheduledDelete (4 handlers)
+[GIN-debug] GET    /api/auth/objects-trash   --> backend_axenta/api.GetDeletedObjects (4 handlers)
+[GIN-debug] PUT    /api/auth/objects/:id/restore --> backend_axenta/api.RestoreObject (4 handlers)
+[GIN-debug] DELETE /api/auth/objects/:id/permanent --> backend_axenta/api.PermanentDeleteObject (4 handlers)
+[GIN-debug] GET    /api/auth/users           --> backend_axenta/api.GetUsers (4 handlers)
+[GIN-debug] GET    /api/auth/users/stats     --> backend_axenta/api.GetUsersStats (4 handlers)
+[GIN-debug] GET    /api/auth/users/:id       --> backend_axenta/api.GetUser (4 handlers)
+[GIN-debug] POST   /api/auth/users           --> backend_axenta/api.CreateUser (4 handlers)
+[GIN-debug] PUT    /api/auth/users/:id       --> backend_axenta/api.UpdateUser (4 handlers)
+[GIN-debug] DELETE /api/auth/users/:id       --> backend_axenta/api.DeleteUser (4 handlers)
+[GIN-debug] POST   /api/auth/users/bulk-delete --> backend_axenta/api.BulkDeleteUsers (4 handlers)
+[GIN-debug] GET    /api/auth/roles           --> backend_axenta/api.GetRoles (4 handlers)
+[GIN-debug] GET    /api/auth/roles/:id       --> backend_axenta/api.GetRole (4 handlers)
+[GIN-debug] POST   /api/auth/roles           --> backend_axenta/api.CreateRole (4 handlers)
+[GIN-debug] PUT    /api/auth/roles/:id       --> backend_axenta/api.UpdateRole (4 handlers)
+[GIN-debug] DELETE /api/auth/roles/:id       --> backend_axenta/api.DeleteRole (4 handlers)
+[GIN-debug] PUT    /api/auth/roles/:id/permissions --> backend_axenta/api.UpdateRolePermissions (4 handlers)
+[GIN-debug] GET    /api/auth/permissions     --> backend_axenta/api.GetPermissions (4 handlers)
+[GIN-debug] POST   /api/auth/permissions     --> backend_axenta/api.CreatePermission (4 handlers)
+[GIN-debug] GET    /api/auth/user-templates  --> backend_axenta/api.GetUserTemplates (4 handlers)
+[GIN-debug] GET    /api/auth/user-templates/:id --> backend_axenta/api.GetUserTemplate (4 handlers)
+[GIN-debug] POST   /api/auth/user-templates  --> backend_axenta/api.CreateUserTemplate (4 handlers)
+[GIN-debug] PUT    /api/auth/user-templates/:id --> backend_axenta/api.UpdateUserTemplate (4 handlers)
+[GIN-debug] DELETE /api/auth/user-templates/:id --> backend_axenta/api.DeleteUserTemplate (4 handlers)
+[GIN-debug] GET    /api/auth/contracts       --> backend_axenta/api.GetContracts (4 handlers)
+[GIN-debug] GET    /api/auth/contracts/:id   --> backend_axenta/api.GetContract (4 handlers)
+[GIN-debug] POST   /api/auth/contracts       --> backend_axenta/api.CreateContract (4 handlers)
+[GIN-debug] PUT    /api/auth/contracts/:id   --> backend_axenta/api.UpdateContract (4 handlers)
+[GIN-debug] DELETE /api/auth/contracts/:id   --> backend_axenta/api.DeleteContract (4 handlers)
+[GIN-debug] GET    /api/auth/contracts/expiring --> backend_axenta/api.GetExpiringContracts (4 handlers)
+[GIN-debug] GET    /api/auth/billing/plans   --> backend_axenta/api.GetBillingPlans (4 handlers)
+[GIN-debug] GET    /api/auth/billing/plans/:id --> backend_axenta/api.GetBillingPlan (4 handlers)
+[GIN-debug] POST   /api/auth/billing/plans   --> backend_axenta/api.CreateBillingPlan (4 handlers)
+[GIN-debug] PUT    /api/auth/billing/plans/:id --> backend_axenta/api.UpdateBillingPlan (4 handlers)
+[GIN-debug] DELETE /api/auth/billing/plans/:id --> backend_axenta/api.DeleteBillingPlan (4 handlers)
+[GIN-debug] GET    /api/auth/billing/subscriptions --> backend_axenta/api.GetSubscriptions (4 handlers)
+[GIN-debug] POST   /api/auth/billing/subscriptions --> backend_axenta/api.CreateSubscription (4 handlers)
+[GIN-debug] PUT    /api/auth/billing/subscriptions/:id --> backend_axenta/api.UpdateSubscription (4 handlers)
+[GIN-debug] DELETE /api/auth/billing/subscriptions/:id --> backend_axenta/api.DeleteSubscription (4 handlers)
+[GIN-debug] GET    /api/auth/subscriptions   --> backend_axenta/api.GetSubscriptions (4 handlers)
+[GIN-debug] GET    /api/auth/billing-plans   --> backend_axenta/api.GetBillingPlans (4 handlers)
+[GIN-debug] GET    /api/auth/billing/contracts/:contract_id/calculate --> backend_axenta/api.CalculateBilling (4 handlers)
+[GIN-debug] POST   /api/auth/billing/contracts/:contract_id/invoice --> backend_axenta/api.GenerateInvoice (4 handlers)
+[GIN-debug] GET    /api/auth/billing/invoices --> backend_axenta/api.GetInvoices (4 handlers)
+[GIN-debug] GET    /api/auth/billing/invoices/:id --> backend_axenta/api.GetInvoice (4 handlers)
+[GIN-debug] POST   /api/auth/billing/invoices/:id/payment --> backend_axenta/api.ProcessPayment (4 handlers)
+[GIN-debug] POST   /api/auth/billing/invoices/:id/cancel --> backend_axenta/api.CancelInvoice (4 handlers)
+[GIN-debug] GET    /api/auth/billing/history --> backend_axenta/api.GetBillingHistory (4 handlers)
+[GIN-debug] GET    /api/auth/billing/invoices/overdue --> backend_axenta/api.GetOverdueInvoices (4 handlers)
+[GIN-debug] GET    /api/auth/billing/settings --> backend_axenta/api.GetBillingSettings (4 handlers)
+[GIN-debug] PUT    /api/auth/billing/settings --> backend_axenta/api.UpdateBillingSettings (4 handlers)
+[GIN-debug] POST   /api/auth/billing/auto-generate --> backend_axenta/api.AutoGenerateInvoices (4 handlers)
+[GIN-debug] POST   /api/auth/billing/process-deletions --> backend_axenta/api.ProcessScheduledDeletions (4 handlers)
+[GIN-debug] GET    /api/auth/billing/statistics --> backend_axenta/api.GetBillingStatistics (4 handlers)
+[GIN-debug] GET    /api/auth/billing/invoices/period --> backend_axenta/api.GetInvoicesByPeriod (4 handlers)
+[GIN-debug] GET    /test/installations       --> main.main.func12 (4 handlers)
+[GIN-debug] GET    /api/installations/statistics --> main.main.func13 (4 handlers)
+[GIN-debug] GET    /api/installers           --> main.main.func14 (4 handlers)
+[GIN-debug] GET    /api/equipment            --> main.main.func15 (4 handlers)
+[GIN-debug] GET    /api/locations            --> main.main.func16 (4 handlers)
+[GIN-debug] POST   /api/auth/warehouse/operations --> backend_axenta/api.(*WarehouseAPI).CreateWarehouseOperation-fm (4 handlers)
+[GIN-debug] GET    /api/auth/warehouse/operations --> backend_axenta/api.(*WarehouseAPI).GetWarehouseOperations-fm (4 handlers)
+[GIN-debug] POST   /api/auth/warehouse/transfer --> backend_axenta/api.(*WarehouseAPI).TransferEquipment-fm (4 handlers)
+[GIN-debug] GET    /api/auth/warehouse/alerts --> backend_axenta/api.(*WarehouseAPI).GetStockAlerts-fm (4 handlers)
+[GIN-debug] POST   /api/auth/warehouse/alerts --> backend_axenta/api.(*WarehouseAPI).CreateStockAlert-fm (4 handlers)
+[GIN-debug] PUT    /api/auth/warehouse/alerts/:id/acknowledge --> backend_axenta/api.(*WarehouseAPI).AcknowledgeStockAlert-fm (4 handlers)
+[GIN-debug] PUT    /api/auth/warehouse/alerts/:id/resolve --> backend_axenta/api.(*WarehouseAPI).ResolveStockAlert-fm (4 handlers)
+[GIN-debug] GET    /api/auth/warehouse/statistics --> backend_axenta/api.(*WarehouseAPI).GetWarehouseStatistics-fm (4 handlers)
+[GIN-debug] POST   /api/auth/1c/setup        --> backend_axenta/api.(*OneCIntegrationAPI).SetupIntegration-fm (4 handlers)
+[GIN-debug] PUT    /api/auth/1c/setup        --> backend_axenta/api.(*OneCIntegrationAPI).UpdateIntegration-fm (4 handlers)
+[GIN-debug] GET    /api/auth/1c/config       --> backend_axenta/api.(*OneCIntegrationAPI).GetIntegrationConfig-fm (4 handlers)
+[GIN-debug] DELETE /api/auth/1c/setup        --> backend_axenta/api.(*OneCIntegrationAPI).DeleteIntegration-fm (4 handlers)
+[GIN-debug] POST   /api/auth/1c/test-connection --> backend_axenta/api.(*OneCIntegrationAPI).TestConnection-fm (4 handlers)
+[GIN-debug] POST   /api/auth/1c/export/payment-registry --> backend_axenta/api.(*OneCIntegrationAPI).ExportPaymentRegistry-fm (4 handlers)
+[GIN-debug] POST   /api/auth/1c/export/payment-registry/auto --> backend_axenta/api.(*OneCIntegrationAPI).ScheduleAutoExport-fm (4 handlers)
+[GIN-debug] POST   /api/auth/1c/import/counterparties --> backend_axenta/api.(*OneCIntegrationAPI).ImportCounterparties-fm (4 handlers)
+[GIN-debug] POST   /api/auth/1c/sync/payment-statuses --> backend_axenta/api.(*OneCIntegrationAPI).SyncPaymentStatuses-fm (4 handlers)
+[GIN-debug] GET    /api/auth/1c/errors       --> backend_axenta/api.(*OneCIntegrationAPI).GetIntegrationErrors-fm (4 handlers)
+[GIN-debug] PUT    /api/auth/1c/errors/:id/resolve --> backend_axenta/api.(*OneCIntegrationAPI).ResolveError-fm (4 handlers)
+[GIN-debug] GET    /api/auth/1c/status       --> backend_axenta/api.(*OneCIntegrationAPI).GetIntegrationStatus-fm (4 handlers)
+[GIN-debug] GET    /api/auth/reports         --> backend_axenta/api.(*ReportsAPI).GetReports-fm (4 handlers)
+[GIN-debug] POST   /api/auth/reports         --> backend_axenta/api.(*ReportsAPI).CreateReport-fm (4 handlers)
+[GIN-debug] GET    /api/auth/reports/:id     --> backend_axenta/api.(*ReportsAPI).GetReport-fm (4 handlers)
+[GIN-debug] PUT    /api/auth/reports/:id     --> backend_axenta/api.(*ReportsAPI).UpdateReport-fm (4 handlers)
+[GIN-debug] DELETE /api/auth/reports/:id     --> backend_axenta/api.(*ReportsAPI).DeleteReport-fm (4 handlers)
+[GIN-debug] POST   /api/auth/reports/:id/generate --> backend_axenta/api.(*ReportsAPI).GenerateReport-fm (4 handlers)
+[GIN-debug] GET    /api/auth/reports/:id/download --> backend_axenta/api.(*ReportsAPI).DownloadReport-fm (4 handlers)
+[GIN-debug] GET    /api/auth/reports/:id/status --> backend_axenta/api.(*ReportsAPI).GetReportStatus-fm (4 handlers)
+[GIN-debug] GET    /api/auth/reports/templates --> backend_axenta/api.(*ReportsAPI).GetReportTemplates-fm (4 handlers)
+[GIN-debug] POST   /api/auth/reports/templates --> backend_axenta/api.(*ReportsAPI).CreateReportTemplate-fm (4 handlers)
+[GIN-debug] GET    /api/auth/reports/templates/:id --> backend_axenta/api.(*ReportsAPI).GetReportTemplate-fm (4 handlers)
+[GIN-debug] PUT    /api/auth/reports/templates/:id --> backend_axenta/api.(*ReportsAPI).UpdateReportTemplate-fm (4 handlers)
+[GIN-debug] DELETE /api/auth/reports/templates/:id --> backend_axenta/api.(*ReportsAPI).DeleteReportTemplate-fm (4 handlers)
+[GIN-debug] GET    /api/auth/reports/schedules --> backend_axenta/api.(*ReportsAPI).GetReportSchedules-fm (4 handlers)
+[GIN-debug] POST   /api/auth/reports/schedules --> backend_axenta/api.(*ReportsAPI).CreateReportSchedule-fm (4 handlers)
+[GIN-debug] GET    /api/auth/reports/schedules/:id --> backend_axenta/api.(*ReportsAPI).GetReportSchedule-fm (4 handlers)
+[GIN-debug] PUT    /api/auth/reports/schedules/:id --> backend_axenta/api.(*ReportsAPI).UpdateReportSchedule-fm (4 handlers)
+[GIN-debug] DELETE /api/auth/reports/schedules/:id --> backend_axenta/api.(*ReportsAPI).DeleteReportSchedule-fm (4 handlers)
+[GIN-debug] POST   /api/auth/reports/schedules/:id/run --> backend_axenta/api.(*ReportsAPI).RunScheduledReport-fm (4 handlers)
+[GIN-debug] GET    /api/auth/reports/schedules/:id/status --> backend_axenta/api.(*ReportsAPI).GetScheduleStatus-fm (4 handlers)
+[GIN-debug] GET    /api/auth/reports/executions --> backend_axenta/api.(*ReportsAPI).GetReportExecutions-fm (4 handlers)
+[GIN-debug] GET    /api/auth/reports/executions/:id --> backend_axenta/api.(*ReportsAPI).GetReportExecution-fm (4 handlers)
+[GIN-debug] GET    /api/auth/reports/stats   --> backend_axenta/api.(*ReportsAPI).GetReportsStats-fm (4 handlers)
+2025/09/24 21:45:55 Server starting on port 8080...
+[GIN-debug] [WARNING] You trusted all proxies, this is NOT safe. We recommend you to set a value.
+Please check https://pkg.go.dev/github.com/gin-gonic/gin#readme-don-t-trust-all-proxies for details.
+[GIN-debug] Listening and serving HTTP on :8080
+
+2025/09/24 21:45:55 [31;1m/Users/com/backend_axenta/services/report_scheduler_service.go:55 [35;1mERROR: relation "report_schedules" does not exist (SQLSTATE 42P01)
+[0m[33m[8.214ms] [34;1m[rows:0][0m SELECT * FROM "report_schedules" WHERE is_active = true AND "report_schedules"."deleted_at" IS NULL
+2025/09/24 21:45:55 Failed to start report scheduler: failed to load schedules: ERROR: relation "report_schedules" does not exist (SQLSTATE 42P01)
+[GIN-debug] redirecting request 301: /api/auth/objects --> /api/auth/objects?page=1&per_page=50&ordering=name
+[GIN-debug] redirecting request 301: /api/auth/objects/stats --> /api/auth/objects/stats
+[GIN] 2025/09/24 - 21:48:45 | 200 |      9.6385ms |             ::1 | GET      "/api/object-templates/?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:48:45 | 200 |   12.554834ms |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:48:55 | 204 |      67.292µs |             ::1 | OPTIONS  "/api/object-templates/?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:48:55 | 200 |        77.5µs |             ::1 | GET      "/api/object-templates/?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:48:55 | 204 |    3.073542ms |             ::1 | OPTIONS  "/api/auth/objects/stats/"
+[GIN] 2025/09/24 - 21:48:55 | 204 |    3.227458ms |             ::1 | OPTIONS  "/api/auth/objects/?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:48:55 | 204 |    3.102667ms |             ::1 | OPTIONS  "/api/admin/accounts/list"
+[GIN-debug] redirecting request 301: /api/auth/objects/stats --> /api/auth/objects/stats
+[GIN-debug] redirecting request 301: /api/auth/objects --> /api/auth/objects?page=1&per_page=50&ordering=name
+[GIN] 2025/09/24 - 21:48:55 | 200 |      47.708µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:51:27 | 200 |    5.608959ms |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:51:27 | 200 |    4.710416ms |             ::1 | GET      "/api/object-templates/?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:51:28 | 200 |      91.125µs |             ::1 | GET      "/api/object-templates/?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:51:28 | 200 |    3.128541ms |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:51:31 | 200 |       96.75µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:51:31 | 200 |     228.959µs |             ::1 | GET      "/api/object-templates/?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:52:26 | 200 |    3.535917ms |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:52:26 | 200 |    3.145209ms |             ::1 | GET      "/api/object-templates/?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:52:30 | 200 |     987.041µs |             ::1 | GET      "/api/object-templates/?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:52:30 | 200 |      40.375µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:53:11 | 200 |     1.63625ms |             ::1 | GET      "/ping"
+[GIN-debug] redirecting request 301: /api/auth/objects/stats --> /api/auth/objects/stats
+[GIN-debug] redirecting request 301: /api/auth/objects --> /api/auth/objects?page=1&per_page=50&ordering=name
+[GIN] 2025/09/24 - 21:53:29 | 200 |    1.010958ms |             ::1 | GET      "/api/object-templates/?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:53:29 | 200 |    1.616083ms |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:53:31 | 200 |      98.083µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:53:31 | 200 |      89.625µs |             ::1 | GET      "/api/object-templates/?page=1&per_page=50&ordering=name"
+[GIN-debug] redirecting request 301: /api/auth/objects/stats --> /api/auth/objects/stats
+[GIN] 2025/09/24 - 21:53:56 | 200 |    3.303958ms |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:53:56 | 200 |    1.861167ms |             ::1 | GET      "/api/object-templates/?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:53:57 | 200 |     278.125µs |             ::1 | GET      "/ping"
+[GIN] 2025/09/24 - 21:53:59 | 200 |      24.375µs |             ::1 | GET      "/api/object-templates/?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:53:59 | 200 |      80.125µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:54:02 | 200 |       82.75µs |             ::1 | GET      "/api/objects/stats/"
+[GIN] 2025/09/24 - 21:54:11 | 500 |     865.417µs |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 21:54:25 | 200 |     213.708µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:54:25 | 200 |     597.541µs |             ::1 | GET      "/api/object-templates/?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:54:25 | 204 |     3.06525ms |             ::1 | OPTIONS  "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:54:25 | 500 |     162.334µs |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:54:27 | 200 |     415.083µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:54:27 | 500 |    1.358417ms |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:54:27 | 200 |     407.833µs |             ::1 | GET      "/api/object-templates/?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:54:29 | 200 |     676.167µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:54:29 | 500 |    3.300667ms |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:54:29 | 200 |      7.0155ms |             ::1 | GET      "/api/object-templates/?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:54:32 | 500 |      75.875µs |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:54:32 | 200 |      63.917µs |             ::1 | GET      "/api/object-templates/?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:54:32 | 200 |     186.667µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:54:32 | 204 |     181.958µs |             ::1 | OPTIONS  "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 21:54:32 | 500 |      97.958µs |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:54:32 | 200 |     3.65925ms |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:54:32 | 200 |    5.061875ms |             ::1 | GET      "/api/object-templates/?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:54:32 | 500 |        29.5µs |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 21:54:34 | 500 |      174.75µs |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:54:34 | 200 |     394.541µs |             ::1 | GET      "/api/object-templates/?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:54:34 | 200 |         402µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:54:34 | 500 |    1.209125ms |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 21:54:44 | 500 |     734.666µs |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:54:44 | 500 |     535.542µs |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 21:54:44 | 200 |    8.995209ms |             ::1 | GET      "/api/object-templates/?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:54:44 | 200 |       199.5µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:54:46 | 500 |      46.667µs |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:54:46 | 200 |      12.417µs |             ::1 | GET      "/api/object-templates/?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:54:46 | 500 |       3.625µs |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 21:54:46 | 200 |     123.208µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:54:47 | 200 |     490.125µs |             ::1 | GET      "/api/object-templates/?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:54:47 | 500 |      78.375µs |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:54:47 | 500 |      45.792µs |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 21:54:47 | 200 |      96.458µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:54:53 | 500 |   35.016375ms |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 21:54:53 | 200 |   14.152875ms |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:54:53 | 200 |    3.308917ms |             ::1 | GET      "/api/object-templates/?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:54:53 | 500 |      21.833µs |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:54:54 | 500 |      117.25µs |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:54:54 | 200 |     113.458µs |             ::1 | GET      "/api/object-templates/?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:54:54 | 500 |     441.625µs |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 21:54:54 | 200 |     156.375µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:54:56 | 500 |      66.125µs |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 21:54:56 | 500 |      26.625µs |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:54:56 | 200 |     131.791µs |             ::1 | GET      "/api/object-templates/?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:54:56 | 200 |     220.959µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:54:57 | 200 |     114.791µs |             ::1 | GET      "/api/object-templates/?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:54:57 | 500 |      58.958µs |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:54:57 | 200 |      20.875µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:54:57 | 500 |      43.792µs |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 21:54:59 | 500 |     324.083µs |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:54:59 | 200 |      57.709µs |             ::1 | GET      "/api/object-templates/?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:54:59 | 200 |      42.333µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:54:59 | 500 |       12.75µs |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 21:55:13 | 200 |     657.333µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:55:13 | 500 |     119.583µs |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:55:13 | 500 |     817.667µs |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 21:55:13 | 200 |    1.318875ms |             ::1 | GET      "/api/object-templates/?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:55:14 | 500 |      22.625µs |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:55:14 | 500 |      12.292µs |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 21:55:14 | 200 |       13.75µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:55:14 | 204 |         178µs |             ::1 | OPTIONS  "/api/object-templates?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:55:14 | 200 |      41.792µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:55:18 | 500 |     118.916µs |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 21:55:18 | 200 |      55.083µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:55:18 | 200 |      36.125µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:55:18 | 500 |     112.541µs |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:55:22 | 200 |      91.833µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:55:22 | 500 |       78.25µs |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:55:22 | 500 |      65.834µs |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 21:55:22 | 200 |     119.333µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:55:24 | 500 |     385.917µs |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:55:24 | 200 |     386.459µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:55:24 | 500 |      59.125µs |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 21:55:24 | 200 |     294.333µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:55:26 | 200 |     358.292µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:55:26 | 200 |     330.791µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:55:26 | 500 |     156.917µs |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 21:55:26 | 500 |         274µs |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:55:33 | 200 |    3.831041ms |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:55:33 | 500 |     4.85475ms |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:55:33 | 200 |       8.628ms |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:55:33 | 500 |   19.606667ms |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 21:55:42 | 200 |       67.25µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:55:42 | 200 |      82.375µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:55:42 | 500 |     133.416µs |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:55:42 | 500 |      98.833µs |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 21:55:45 | 500 |      67.125µs |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:55:45 | 200 |      23.375µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:55:45 | 200 |      20.125µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:55:45 | 500 |       5.375µs |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 21:55:47 | 200 |          29µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:55:47 | 200 |      13.958µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:55:47 | 500 |     521.583µs |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:55:47 | 500 |      79.375µs |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 21:55:58 | 500 |      26.541µs |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 21:55:58 | 200 |       18.25µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:55:58 | 500 |         128µs |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:55:58 | 200 |      20.333µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:55:59 | 500 |       407.5µs |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:55:59 | 500 |      11.958µs |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 21:55:59 | 200 |      21.375µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:55:59 | 200 |      25.292µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:56:03 | 500 |     217.083µs |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 21:56:11 | 500 |      28.708µs |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:56:20 | 200 |      75.458µs |             ::1 | GET      "/api/objects/stats"
+[GIN] 2025/09/24 - 21:56:21 | 200 |       296.5µs |             ::1 | GET      "/api/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:56:52 | 200 |     247.291µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:56:52 | 500 |      70.958µs |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:56:52 | 200 |      45.167µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:56:52 | 500 |      348.25µs |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 21:57:01 | 200 |         719µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:57:01 | 500 |     511.584µs |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 21:57:01 | 200 |     447.167µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:57:01 | 500 |    1.285459ms |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:58:10 | 200 |    4.573792ms |             ::1 | GET      "/ping"
+[GIN] 2025/09/24 - 21:58:47 | 200 |    2.959292ms |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:58:47 | 500 |    3.430834ms |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:58:47 | 500 |    3.448667ms |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 21:58:47 | 200 |    4.412375ms |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 21:58:50 | 500 |      30.125µs |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:58:50 | 200 |      25.792µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 21:58:50 | 500 |          10µs |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 21:58:50 | 200 |      14.333µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 22:00:30 | 200 |   34.314833ms |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:00:30 | 500 |   32.995375ms |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:00:30 | 500 |   31.205542ms |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 22:00:30 | 200 |   33.631042ms |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 22:00:30 | 204 |      41.042µs |             ::1 | OPTIONS  "/api/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:00:30 | 200 |      46.167µs |             ::1 | GET      "/api/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:00:30 | 204 |      10.375µs |             ::1 | OPTIONS  "/api/objects/stats"
+[GIN] 2025/09/24 - 22:00:30 | 200 |       49.25µs |             ::1 | GET      "/api/objects/stats"
+[GIN] 2025/09/24 - 22:00:43 | 200 |    1.631334ms |             ::1 | GET      "/ping"
+[GIN] 2025/09/24 - 22:00:43 | 200 |     127.125µs |             ::1 | GET      "/api/objects/stats"
+[GIN] 2025/09/24 - 22:01:08 | 200 |     263.209µs |             ::1 | GET      "/api/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:01:16 | 500 |       578.5µs |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:01:36 | 200 |      793.25µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:01:36 | 500 |    2.047792ms |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:01:36 | 500 |    7.020166ms |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 22:01:36 | 200 |      94.875µs |             ::1 | GET      "/api/objects/stats"
+[GIN] 2025/09/24 - 22:01:36 | 200 |   10.119166ms |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 22:01:36 | 200 |     291.291µs |             ::1 | GET      "/api/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:02:36 | 200 |      213.75µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 22:02:36 | 500 |     375.792µs |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 22:02:36 | 500 |      39.458µs |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:02:36 | 200 |      18.292µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:02:36 | 200 |      39.208µs |             ::1 | GET      "/api/objects/stats"
+[GIN] 2025/09/24 - 22:02:36 | 200 |      30.416µs |             ::1 | GET      "/api/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:03:15 | 500 |         620µs |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 22:03:15 | 200 |     704.833µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:03:15 | 200 |     541.333µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 22:03:15 | 500 |     554.792µs |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:03:15 | 200 |      376.75µs |             ::1 | GET      "/api/objects/stats"
+[GIN] 2025/09/24 - 22:03:15 | 200 |     550.167µs |             ::1 | GET      "/api/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:03:25 | 500 |     870.417µs |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 22:03:25 | 200 |      98.375µs |             ::1 | GET      "/api/objects/stats"
+[GIN] 2025/09/24 - 22:03:50 | 500 |    5.583042ms |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:03:50 | 500 |    5.785166ms |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 22:03:50 | 200 |    5.607542ms |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:03:50 | 200 |    8.692875ms |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 22:03:50 | 200 |     383.667µs |             ::1 | GET      "/api/objects/stats"
+[GIN] 2025/09/24 - 22:03:50 | 200 |     538.917µs |             ::1 | GET      "/api/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:04:07 | 500 |   33.068208ms |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:04:07 | 500 |        54.5µs |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 22:04:07 | 200 |   69.633416ms |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:04:07 | 200 |     443.083µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 22:04:07 | 200 |       95.25µs |             ::1 | GET      "/api/objects/stats"
+[GIN] 2025/09/24 - 22:04:07 | 200 |     129.875µs |             ::1 | GET      "/api/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:04:10 | 200 |      90.125µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:04:10 | 200 |      54.583µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 22:04:10 | 500 |       31.75µs |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:04:10 | 500 |    1.283292ms |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 22:04:10 | 200 |      35.041µs |             ::1 | GET      "/api/objects/stats"
+[GIN] 2025/09/24 - 22:04:10 | 200 |     102.834µs |             ::1 | GET      "/api/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:04:26 | 500 |     151.875µs |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 22:04:26 | 200 |          67µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 22:04:26 | 200 |      25.459µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:04:26 | 500 |     1.29075ms |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:04:26 | 200 |    13.35625ms |             ::1 | GET      "/api/objects/stats"
+[GIN] 2025/09/24 - 22:04:26 | 200 |   42.565458ms |             ::1 | GET      "/api/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:04:45 | 500 |       2.718ms |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:04:45 | 200 |      2.7365ms |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:04:45 | 200 |    2.634125ms |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 22:04:45 | 500 |    2.700708ms |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 22:04:45 | 200 |     103.166µs |             ::1 | GET      "/api/objects/stats"
+[GIN] 2025/09/24 - 22:04:45 | 200 |      93.708µs |             ::1 | GET      "/api/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:04:48 | 500 |     102.042µs |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:04:48 | 500 |          99µs |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 22:04:48 | 200 |     200.333µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:04:48 | 200 |      45.125µs |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 22:04:48 | 200 |     269.375µs |             ::1 | GET      "/api/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:04:48 | 200 |       56.25µs |             ::1 | GET      "/api/objects/stats"
+[GIN] 2025/09/24 - 22:05:16 | 204 |      1.2025ms |             ::1 | OPTIONS  "/api/auth/objects/1/schedule-delete"
+[GIN] 2025/09/24 - 22:05:16 | 500 |     248.375µs |             ::1 | PUT      "/api/auth/objects/1/schedule-delete"
+[GIN] 2025/09/24 - 22:05:44 | 500 |   21.265333ms |             ::1 | GET      "/api/auth/objects/stats"
+[GIN] 2025/09/24 - 22:05:44 | 500 |   20.547417ms |             ::1 | GET      "/api/auth/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:05:44 | 200 |      24.259ms |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/09/24 - 22:05:44 | 200 |   22.597791ms |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:05:44 | 200 |       35.75µs |             ::1 | GET      "/api/objects?page=1&per_page=50&ordering=name"
+[GIN] 2025/09/24 - 22:05:44 | 200 |      62.209µs |             ::1 | GET      "/api/objects/stats"
+[GIN] 2025/09/29 - 07:45:26 | 204 |    2.957917ms |             ::1 | OPTIONS  "/api/auth/login"
+2025/09/29 07:45:26 AUTH_LOG: {"company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-09-29T07:45:26+03:00","user_agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 YaBrowser/25.8.0.0 Safari/537.36","user_id":"","username":"glomos"}
+2025/09/29 07:45:27 AUTH_LOG: {"company_id":"","content_type":"application/json","operation":"axenta_login_response","response_code":200,"response_size":52,"timestamp":"2025-09-29T07:45:27+03:00","user_id":"","username":"glomos"}
+2025/09/29 07:45:27 AUTH_LOG: {"company_id":"","operation":"axenta_login_success","status":"success","timestamp":"2025-09-29T07:45:27+03:00","token_length":40,"user_id":"","username":"glomos"}
+2025/09/29 07:45:27 AUTH_LOG: {"auth_header":"Token 5e515a8f2874fc...","company_id":"","operation":"axenta_user_request_headers","timestamp":"2025-09-29T07:45:27+03:00","url":"https://axenta.cloud/api/current_user/","user_id":"","username":"glomos"}
+2025/09/29 07:45:27 AUTH_LOG: {"company_id":"","content_type":"application/json","operation":"axenta_user_response","response_code":200,"response_size":1528,"timestamp":"2025-09-29T07:45:27+03:00","user_id":"","username":"glomos"}
+2025/09/29 07:45:27 AUTH_LOG: {"account_id":186,"account_name":"GLOMOS","account_type":"partner","company_id":"","email":"chudin@glomos.ru","full_data":true,"is_admin":true,"operation":"login_success_full","status":"success","timestamp":"2025-09-29T07:45:27+03:00","user_id":"215","username":"glomos"}
+[GIN] 2025/09/29 - 07:45:27 | 200 |  760.251709ms |             ::1 | POST     "/api/auth/login"
+[GIN] 2025/09/29 - 07:50:28 | 204 |    1.612667ms |             ::1 | OPTIONS  "/api/auth/refresh"
+[GIN] 2025/09/29 - 07:50:28 | 404 |       2.625µs |             ::1 | POST     "/api/auth/refresh"

@@ -1,0 +1,15 @@
+2025/10/11 07:14:52 Starting Axenta Backend Server...
+2025/10/11 07:14:52 🔧 DEBUG: Main function started
+2025/10/11 07:14:52 === Application Configuration ===
+2025/10/11 07:14:52 Environment: development
+2025/10/11 07:14:52 Port: 8080
+2025/10/11 07:14:52 Database Host: localhost:5432
+2025/10/11 07:14:52 Database Name: axenta_db
+2025/10/11 07:14:52 Redis Host: localhost:6379
+2025/10/11 07:14:52 Axenta API URL: https://api.axetna.cloud
+2025/10/11 07:14:52 JWT Issuer: axenta-crm
+2025/10/11 07:14:52 Log Level: info
+2025/10/11 07:14:52 Debug Mode: false
+2025/10/11 07:14:52 ================================
+2025/10/11 07:14:52 Failed to create database: не удалось проверить подключение к PostgreSQL: dial tcp [::1]:5432: connect: connection refused
+exit status 1

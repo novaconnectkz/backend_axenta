@@ -1,0 +1,369 @@
+2025/10/11 07:32:28 Starting Axenta Backend Server...
+2025/10/11 07:32:28 🔧 DEBUG: Main function started
+2025/10/11 07:32:28 === Application Configuration ===
+2025/10/11 07:32:28 Environment: development
+2025/10/11 07:32:28 Port: 8080
+2025/10/11 07:32:28 Database Host: localhost:5432
+2025/10/11 07:32:28 Database Name: axenta_db
+2025/10/11 07:32:28 Redis Host: localhost:6379
+2025/10/11 07:32:28 Axenta API URL: https://api.axetna.cloud
+2025/10/11 07:32:28 JWT Issuer: axenta-crm
+2025/10/11 07:32:28 Log Level: info
+2025/10/11 07:32:28 Debug Mode: false
+2025/10/11 07:32:28 ================================
+2025/10/11 07:32:28 ✅ База данных 'axenta_db' уже существует
+2025/10/11 07:32:28 ✅ Успешно подключено к PostgreSQL
+2025/10/11 07:32:28 ⚠️ Автомиграция отключена - используем существующие таблицы
+2025/10/11 07:32:28 ✅ Успешно подключено к Redis
+2025/10/11 07:32:28 ⚠️ Integration Service temporarily disabled
+2025/10/11 07:32:28 ⚠️ Bitrix24 Integration Service temporarily disabled
+2025/10/11 07:32:28 ✅ 1C Integration Service initialized successfully
+2025/10/11 07:32:28 ⚠️ Notification System temporarily disabled
+
+2025/10/11 07:32:28 [32m/Users/com/backend_axenta/main.go:75
+[0m[33m[13.320ms] [34;1m[rows:1][0m SELECT count(*) FROM information_schema.tables WHERE table_schema = CURRENT_SCHEMA() AND table_name = 'companies' AND table_type = 'BASE TABLE'
+
+2025/10/11 07:32:28 [32m/Users/com/backend_axenta/main.go:75
+[0m[33m[1.486ms] [34;1m[rows:1][0m SELECT CURRENT_DATABASE()
+
+2025/10/11 07:32:28 [32m/Users/com/backend_axenta/main.go:75
+[0m[33m[21.300ms] [34;1m[rows:-][0m SELECT c.column_name, c.is_nullable = 'YES', c.udt_name, c.character_maximum_length, c.numeric_precision, c.numeric_precision_radix, c.numeric_scale, c.datetime_precision, 8 * typlen, c.column_default, pd.description, c.identity_increment FROM information_schema.columns AS c JOIN pg_type AS pgt ON c.udt_name = pgt.typname LEFT JOIN pg_catalog.pg_description as pd ON pd.objsubid = c.ordinal_position AND pd.objoid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = c.table_name AND relnamespace = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = c.table_schema)) where table_catalog = 'postgres' AND table_schema = CURRENT_SCHEMA() AND table_name = 'companies'
+
+2025/10/11 07:32:28 [31;1m/Users/com/backend_axenta/main.go:75 [35;1minsufficient arguments
+[0m[33m[0.142ms] [34;1m[rows:-][0m SELECT * FROM "companies" LIMIT 1
+2025/10/11 07:32:28 Warning: Failed to migrate local auth models: insufficient arguments
+[GIN-debug] [WARNING] Creating an Engine instance with the Logger and Recovery middleware already attached.
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] GET    /ping                     --> main.main.func1 (4 handlers)
+[GIN-debug] POST   /api/auth/login           --> backend_axenta/api.Login (4 handlers)
+[GIN-debug] POST   /api/local/login          --> backend_axenta/api.(*LocalAuthAPI).LocalLogin-fm (4 handlers)
+[GIN-debug] POST   /api/local/refresh        --> backend_axenta/api.(*LocalAuthAPI).RefreshToken-fm (4 handlers)
+[GIN-debug] GET    /api/local/current_user   --> backend_axenta/api.(*LocalAuthAPI).LocalCurrentUser-fm (5 handlers)
+[GIN-debug] POST   /api/local/logout         --> backend_axenta/api.(*LocalAuthAPI).LocalLogout-fm (5 handlers)
+[GIN-debug] POST   /api/local/register       --> backend_axenta/api.(*LocalAuthAPI).RegisterLocalUser-fm (6 handlers)
+[GIN-debug] GET    /ws/live-data/:company_id --> backend_axenta/api.(*WebSocketAuthAPI).LiveData-fm (4 handlers)
+[GIN-debug] GET    /api/test-objects-stats   --> main.main.func2 (4 handlers)
+[GIN-debug] GET    /api/objects              --> main.main.func4 (4 handlers)
+[GIN-debug] GET    /api/objects/             --> main.main.func4 (4 handlers)
+[GIN-debug] GET    /api/objects/:id          --> main.main.func5 (4 handlers)
+[GIN-debug] GET    /api/objects/:id/         --> main.main.func5 (4 handlers)
+[GIN-debug] GET    /api/objects/stats        --> main.main.func6 (4 handlers)
+[GIN-debug] GET    /api/objects/stats/       --> main.main.func6 (4 handlers)
+[GIN-debug] GET    /api/object-templates     --> main.main.func7 (4 handlers)
+[GIN-debug] GET    /api/object-templates/    --> main.main.func7 (4 handlers)
+[GIN-debug] POST   /api/objects              --> main.main.func8 (4 handlers)
+[GIN-debug] POST   /api/objects/             --> main.main.func8 (4 handlers)
+[GIN-debug] POST   /api/objects/:id/create-template --> main.main.func9 (4 handlers)
+[GIN-debug] POST   /api/objects/:id/create-template/ --> main.main.func9 (4 handlers)
+[GIN-debug] PUT    /api/objects/:id          --> main.main.func10 (4 handlers)
+[GIN-debug] PUT    /api/objects/:id/         --> main.main.func10 (4 handlers)
+[GIN-debug] GET    /api/dashboard/stats      --> backend_axenta/api.GetDashboardStatsSimple (4 handlers)
+[GIN-debug] GET    /api/dashboard/activity   --> backend_axenta/api.GetDashboardActivitySimple (4 handlers)
+[GIN-debug] GET    /api/dashboard/layouts    --> backend_axenta/api.GetDashboardLayouts (4 handlers)
+[GIN-debug] GET    /api/dashboard/layouts/default --> backend_axenta/api.GetDefaultDashboardLayout (4 handlers)
+[GIN-debug] GET    /api/notifications        --> backend_axenta/api.GetDashboardNotificationsSimple (4 handlers)
+[GIN-debug] GET    /api/billing-plans-simple --> backend_axenta/api.GetBillingPlansSimple (4 handlers)
+[GIN-debug] GET    /api/subscriptions-simple --> backend_axenta/api.GetSubscriptionsSimple (4 handlers)
+[GIN-debug] GET    /api/admin/accounts       --> backend_axenta/api.(*CompaniesAPI).GetCompanies-fm (4 handlers)
+[GIN-debug] POST   /api/admin/accounts       --> backend_axenta/api.(*CompaniesAPI).CreateCompany-fm (4 handlers)
+[GIN-debug] GET    /api/admin/accounts/filter-options --> backend_axenta/api.(*CompaniesAPI).GetFilterOptions-fm (4 handlers)
+[GIN-debug] GET    /api/admin/accounts/list  --> backend_axenta/api.(*CompaniesAPI).GetCompaniesList-fm (4 handlers)
+[GIN-debug] POST   /api/admin/accounts/bulk-delete --> backend_axenta/api.(*CompaniesAPI).BulkDeleteCompanies-fm (4 handlers)
+[GIN-debug] POST   /api/admin/accounts/bulk-activate --> backend_axenta/api.(*CompaniesAPI).BulkActivateCompanies-fm (4 handlers)
+[GIN-debug] POST   /api/admin/accounts/bulk-deactivate --> backend_axenta/api.(*CompaniesAPI).BulkDeactivateCompanies-fm (4 handlers)
+[GIN-debug] GET    /api/admin/accounts/:id   --> backend_axenta/api.(*CompaniesAPI).GetCompany-fm (4 handlers)
+[GIN-debug] PUT    /api/admin/accounts/:id   --> backend_axenta/api.(*CompaniesAPI).UpdateCompany-fm (4 handlers)
+[GIN-debug] DELETE /api/admin/accounts/:id   --> backend_axenta/api.(*CompaniesAPI).DeleteCompany-fm (4 handlers)
+[GIN-debug] PUT    /api/admin/accounts/:id/activate --> backend_axenta/api.(*CompaniesAPI).ActivateCompany-fm (4 handlers)
+[GIN-debug] PUT    /api/admin/accounts/:id/deactivate --> backend_axenta/api.(*CompaniesAPI).DeactivateCompany-fm (4 handlers)
+[GIN-debug] GET    /api/admin/accounts/:id/usage --> backend_axenta/api.(*CompaniesAPI).GetCompanyUsage-fm (4 handlers)
+[GIN-debug] POST   /api/admin/accounts/:id/test-connection --> backend_axenta/api.(*CompaniesAPI).TestCompanyConnection-fm (4 handlers)
+[GIN-debug] GET    /api/test/installations   --> backend_axenta/api.(*InstallationAPI).GetInstallations-fm (4 handlers)
+[GIN-debug] GET    /api/test/installations/statistics --> main.main.func11 (4 handlers)
+[GIN-debug] GET    /api/test/installers      --> backend_axenta/api.(*InstallerAPI).GetInstallers-fm (4 handlers)
+[GIN-debug] GET    /api/test/locations       --> backend_axenta/api.(*LocationAPI).GetLocations-fm (4 handlers)
+[GIN-debug] GET    /api/test/equipment       --> backend_axenta/api.(*EquipmentAPI).GetEquipment-fm (4 handlers)
+2025/10/11 07:32:28 🔧 Registering authenticated API endpoints...
+2025/10/11 07:32:28 🔧 Registering objects endpoints...
+[GIN-debug] GET    /api/auth/objects         --> backend_axenta/api.GetObjects (4 handlers)
+[GIN-debug] GET    /api/auth/objects/        --> backend_axenta/api.GetObjects (4 handlers)
+[GIN-debug] GET    /api/auth/objects/stats   --> backend_axenta/api.GetObjectsStats (4 handlers)
+[GIN-debug] GET    /api/auth/objects/stats/  --> backend_axenta/api.GetObjectsStats (4 handlers)
+[GIN-debug] GET    /api/auth/objects/:id     --> backend_axenta/api.GetObject (4 handlers)
+[GIN-debug] GET    /api/auth/objects/:id/    --> backend_axenta/api.GetObject (4 handlers)
+[GIN-debug] POST   /api/auth/objects         --> backend_axenta/api.CreateObject (4 handlers)
+[GIN-debug] POST   /api/auth/objects/        --> backend_axenta/api.CreateObject (4 handlers)
+[GIN-debug] PUT    /api/auth/objects/:id     --> backend_axenta/api.UpdateObject (4 handlers)
+[GIN-debug] PUT    /api/auth/objects/:id/    --> backend_axenta/api.UpdateObject (4 handlers)
+[GIN-debug] DELETE /api/auth/objects/:id     --> backend_axenta/api.DeleteObject (4 handlers)
+[GIN-debug] DELETE /api/auth/objects/:id/    --> backend_axenta/api.DeleteObject (4 handlers)
+[GIN-debug] PUT    /api/auth/objects/:id/schedule-delete --> backend_axenta/api.ScheduleObjectDelete (4 handlers)
+[GIN-debug] PUT    /api/auth/objects/:id/schedule-delete/ --> backend_axenta/api.ScheduleObjectDelete (4 handlers)
+[GIN-debug] PUT    /api/auth/objects/:id/cancel-delete --> backend_axenta/api.CancelScheduledDelete (4 handlers)
+[GIN-debug] PUT    /api/auth/objects/:id/cancel-delete/ --> backend_axenta/api.CancelScheduledDelete (4 handlers)
+[GIN-debug] GET    /api/auth/objects-trash   --> backend_axenta/api.GetDeletedObjects (4 handlers)
+[GIN-debug] GET    /api/auth/objects-trash/  --> backend_axenta/api.GetDeletedObjects (4 handlers)
+[GIN-debug] PUT    /api/auth/objects/:id/restore --> backend_axenta/api.RestoreObject (4 handlers)
+[GIN-debug] PUT    /api/auth/objects/:id/restore/ --> backend_axenta/api.RestoreObject (4 handlers)
+[GIN-debug] DELETE /api/auth/objects/:id/permanent --> backend_axenta/api.PermanentDeleteObject (4 handlers)
+[GIN-debug] DELETE /api/auth/objects/:id/permanent/ --> backend_axenta/api.PermanentDeleteObject (4 handlers)
+[GIN-debug] GET    /api/auth/users           --> backend_axenta/api.GetUsers (4 handlers)
+[GIN-debug] GET    /api/auth/users/stats     --> backend_axenta/api.GetUsersStats (4 handlers)
+[GIN-debug] GET    /api/auth/users/:id       --> backend_axenta/api.GetUser (4 handlers)
+[GIN-debug] POST   /api/auth/users           --> backend_axenta/api.CreateUser (4 handlers)
+[GIN-debug] PUT    /api/auth/users/:id       --> backend_axenta/api.UpdateUser (4 handlers)
+[GIN-debug] DELETE /api/auth/users/:id       --> backend_axenta/api.DeleteUser (4 handlers)
+[GIN-debug] POST   /api/auth/users/bulk-delete --> backend_axenta/api.BulkDeleteUsers (4 handlers)
+[GIN-debug] GET    /api/auth/roles           --> backend_axenta/api.GetRoles (4 handlers)
+[GIN-debug] GET    /api/auth/roles/:id       --> backend_axenta/api.GetRole (4 handlers)
+[GIN-debug] POST   /api/auth/roles           --> backend_axenta/api.CreateRole (4 handlers)
+[GIN-debug] PUT    /api/auth/roles/:id       --> backend_axenta/api.UpdateRole (4 handlers)
+[GIN-debug] DELETE /api/auth/roles/:id       --> backend_axenta/api.DeleteRole (4 handlers)
+[GIN-debug] PUT    /api/auth/roles/:id/permissions --> backend_axenta/api.UpdateRolePermissions (4 handlers)
+[GIN-debug] GET    /api/auth/permissions     --> backend_axenta/api.GetPermissions (4 handlers)
+[GIN-debug] POST   /api/auth/permissions     --> backend_axenta/api.CreatePermission (4 handlers)
+[GIN-debug] GET    /api/auth/user-templates  --> backend_axenta/api.GetUserTemplates (4 handlers)
+[GIN-debug] GET    /api/auth/user-templates/:id --> backend_axenta/api.GetUserTemplate (4 handlers)
+[GIN-debug] POST   /api/auth/user-templates  --> backend_axenta/api.CreateUserTemplate (4 handlers)
+[GIN-debug] PUT    /api/auth/user-templates/:id --> backend_axenta/api.UpdateUserTemplate (4 handlers)
+[GIN-debug] DELETE /api/auth/user-templates/:id --> backend_axenta/api.DeleteUserTemplate (4 handlers)
+[GIN-debug] GET    /api/auth/contracts       --> backend_axenta/api.GetContracts (4 handlers)
+[GIN-debug] GET    /api/auth/contracts/:id   --> backend_axenta/api.GetContract (4 handlers)
+[GIN-debug] POST   /api/auth/contracts       --> backend_axenta/api.CreateContract (4 handlers)
+[GIN-debug] PUT    /api/auth/contracts/:id   --> backend_axenta/api.UpdateContract (4 handlers)
+[GIN-debug] DELETE /api/auth/contracts/:id   --> backend_axenta/api.DeleteContract (4 handlers)
+[GIN-debug] GET    /api/auth/contracts/expiring --> backend_axenta/api.GetExpiringContracts (4 handlers)
+[GIN-debug] GET    /api/auth/billing/plans   --> backend_axenta/api.GetBillingPlans (4 handlers)
+[GIN-debug] GET    /api/auth/billing/plans/:id --> backend_axenta/api.GetBillingPlan (4 handlers)
+[GIN-debug] POST   /api/auth/billing/plans   --> backend_axenta/api.CreateBillingPlan (4 handlers)
+[GIN-debug] PUT    /api/auth/billing/plans/:id --> backend_axenta/api.UpdateBillingPlan (4 handlers)
+[GIN-debug] DELETE /api/auth/billing/plans/:id --> backend_axenta/api.DeleteBillingPlan (4 handlers)
+[GIN-debug] GET    /api/auth/billing/subscriptions --> backend_axenta/api.GetSubscriptions (4 handlers)
+[GIN-debug] POST   /api/auth/billing/subscriptions --> backend_axenta/api.CreateSubscription (4 handlers)
+[GIN-debug] PUT    /api/auth/billing/subscriptions/:id --> backend_axenta/api.UpdateSubscription (4 handlers)
+[GIN-debug] DELETE /api/auth/billing/subscriptions/:id --> backend_axenta/api.DeleteSubscription (4 handlers)
+[GIN-debug] GET    /api/auth/subscriptions   --> backend_axenta/api.GetSubscriptions (4 handlers)
+[GIN-debug] GET    /api/auth/billing-plans   --> backend_axenta/api.GetBillingPlans (4 handlers)
+[GIN-debug] GET    /api/auth/billing/contracts/:contract_id/calculate --> backend_axenta/api.CalculateBilling (4 handlers)
+[GIN-debug] POST   /api/auth/billing/contracts/:contract_id/invoice --> backend_axenta/api.GenerateInvoice (4 handlers)
+[GIN-debug] GET    /api/auth/billing/invoices --> backend_axenta/api.GetInvoices (4 handlers)
+[GIN-debug] GET    /api/auth/billing/invoices/:id --> backend_axenta/api.GetInvoice (4 handlers)
+[GIN-debug] POST   /api/auth/billing/invoices/:id/payment --> backend_axenta/api.ProcessPayment (4 handlers)
+[GIN-debug] POST   /api/auth/billing/invoices/:id/cancel --> backend_axenta/api.CancelInvoice (4 handlers)
+[GIN-debug] GET    /api/auth/billing/history --> backend_axenta/api.GetBillingHistory (4 handlers)
+[GIN-debug] GET    /api/auth/billing/invoices/overdue --> backend_axenta/api.GetOverdueInvoices (4 handlers)
+[GIN-debug] GET    /api/auth/billing/settings --> backend_axenta/api.GetBillingSettings (4 handlers)
+[GIN-debug] PUT    /api/auth/billing/settings --> backend_axenta/api.UpdateBillingSettings (4 handlers)
+[GIN-debug] POST   /api/auth/billing/auto-generate --> backend_axenta/api.AutoGenerateInvoices (4 handlers)
+[GIN-debug] POST   /api/auth/billing/process-deletions --> backend_axenta/api.ProcessScheduledDeletions (4 handlers)
+[GIN-debug] GET    /api/auth/billing/statistics --> backend_axenta/api.GetBillingStatistics (4 handlers)
+[GIN-debug] GET    /api/auth/billing/invoices/period --> backend_axenta/api.GetInvoicesByPeriod (4 handlers)
+[GIN-debug] GET    /test/installations       --> main.main.func12 (4 handlers)
+[GIN-debug] GET    /api/installations/statistics --> main.main.func13 (4 handlers)
+[GIN-debug] GET    /api/installers           --> main.main.func14 (4 handlers)
+[GIN-debug] GET    /api/equipment            --> main.main.func15 (4 handlers)
+[GIN-debug] GET    /api/locations            --> main.main.func16 (4 handlers)
+[GIN-debug] POST   /api/auth/warehouse/operations --> backend_axenta/api.(*WarehouseAPI).CreateWarehouseOperation-fm (4 handlers)
+[GIN-debug] GET    /api/auth/warehouse/operations --> backend_axenta/api.(*WarehouseAPI).GetWarehouseOperations-fm (4 handlers)
+[GIN-debug] POST   /api/auth/warehouse/transfer --> backend_axenta/api.(*WarehouseAPI).TransferEquipment-fm (4 handlers)
+[GIN-debug] GET    /api/auth/warehouse/alerts --> backend_axenta/api.(*WarehouseAPI).GetStockAlerts-fm (4 handlers)
+[GIN-debug] POST   /api/auth/warehouse/alerts --> backend_axenta/api.(*WarehouseAPI).CreateStockAlert-fm (4 handlers)
+[GIN-debug] PUT    /api/auth/warehouse/alerts/:id/acknowledge --> backend_axenta/api.(*WarehouseAPI).AcknowledgeStockAlert-fm (4 handlers)
+[GIN-debug] PUT    /api/auth/warehouse/alerts/:id/resolve --> backend_axenta/api.(*WarehouseAPI).ResolveStockAlert-fm (4 handlers)
+[GIN-debug] GET    /api/auth/warehouse/statistics --> backend_axenta/api.(*WarehouseAPI).GetWarehouseStatistics-fm (4 handlers)
+[GIN-debug] POST   /api/auth/1c/setup        --> backend_axenta/api.(*OneCIntegrationAPI).SetupIntegration-fm (4 handlers)
+[GIN-debug] PUT    /api/auth/1c/setup        --> backend_axenta/api.(*OneCIntegrationAPI).UpdateIntegration-fm (4 handlers)
+[GIN-debug] GET    /api/auth/1c/config       --> backend_axenta/api.(*OneCIntegrationAPI).GetIntegrationConfig-fm (4 handlers)
+[GIN-debug] DELETE /api/auth/1c/setup        --> backend_axenta/api.(*OneCIntegrationAPI).DeleteIntegration-fm (4 handlers)
+[GIN-debug] POST   /api/auth/1c/test-connection --> backend_axenta/api.(*OneCIntegrationAPI).TestConnection-fm (4 handlers)
+[GIN-debug] POST   /api/auth/1c/export/payment-registry --> backend_axenta/api.(*OneCIntegrationAPI).ExportPaymentRegistry-fm (4 handlers)
+[GIN-debug] POST   /api/auth/1c/export/payment-registry/auto --> backend_axenta/api.(*OneCIntegrationAPI).ScheduleAutoExport-fm (4 handlers)
+[GIN-debug] POST   /api/auth/1c/import/counterparties --> backend_axenta/api.(*OneCIntegrationAPI).ImportCounterparties-fm (4 handlers)
+[GIN-debug] POST   /api/auth/1c/sync/payment-statuses --> backend_axenta/api.(*OneCIntegrationAPI).SyncPaymentStatuses-fm (4 handlers)
+[GIN-debug] GET    /api/auth/1c/errors       --> backend_axenta/api.(*OneCIntegrationAPI).GetIntegrationErrors-fm (4 handlers)
+[GIN-debug] PUT    /api/auth/1c/errors/:id/resolve --> backend_axenta/api.(*OneCIntegrationAPI).ResolveError-fm (4 handlers)
+[GIN-debug] GET    /api/auth/1c/status       --> backend_axenta/api.(*OneCIntegrationAPI).GetIntegrationStatus-fm (4 handlers)
+[GIN-debug] GET    /api/auth/reports         --> backend_axenta/api.(*ReportsAPI).GetReports-fm (4 handlers)
+[GIN-debug] POST   /api/auth/reports         --> backend_axenta/api.(*ReportsAPI).CreateReport-fm (4 handlers)
+[GIN-debug] GET    /api/auth/reports/:id     --> backend_axenta/api.(*ReportsAPI).GetReport-fm (4 handlers)
+[GIN-debug] PUT    /api/auth/reports/:id     --> backend_axenta/api.(*ReportsAPI).UpdateReport-fm (4 handlers)
+[GIN-debug] DELETE /api/auth/reports/:id     --> backend_axenta/api.(*ReportsAPI).DeleteReport-fm (4 handlers)
+[GIN-debug] POST   /api/auth/reports/:id/generate --> backend_axenta/api.(*ReportsAPI).GenerateReport-fm (4 handlers)
+[GIN-debug] GET    /api/auth/reports/:id/download --> backend_axenta/api.(*ReportsAPI).DownloadReport-fm (4 handlers)
+[GIN-debug] GET    /api/auth/reports/:id/status --> backend_axenta/api.(*ReportsAPI).GetReportStatus-fm (4 handlers)
+[GIN-debug] GET    /api/auth/reports/templates --> backend_axenta/api.(*ReportsAPI).GetReportTemplates-fm (4 handlers)
+[GIN-debug] POST   /api/auth/reports/templates --> backend_axenta/api.(*ReportsAPI).CreateReportTemplate-fm (4 handlers)
+[GIN-debug] GET    /api/auth/reports/templates/:id --> backend_axenta/api.(*ReportsAPI).GetReportTemplate-fm (4 handlers)
+[GIN-debug] PUT    /api/auth/reports/templates/:id --> backend_axenta/api.(*ReportsAPI).UpdateReportTemplate-fm (4 handlers)
+[GIN-debug] DELETE /api/auth/reports/templates/:id --> backend_axenta/api.(*ReportsAPI).DeleteReportTemplate-fm (4 handlers)
+[GIN-debug] GET    /api/auth/reports/schedules --> backend_axenta/api.(*ReportsAPI).GetReportSchedules-fm (4 handlers)
+[GIN-debug] POST   /api/auth/reports/schedules --> backend_axenta/api.(*ReportsAPI).CreateReportSchedule-fm (4 handlers)
+[GIN-debug] GET    /api/auth/reports/schedules/:id --> backend_axenta/api.(*ReportsAPI).GetReportSchedule-fm (4 handlers)
+[GIN-debug] PUT    /api/auth/reports/schedules/:id --> backend_axenta/api.(*ReportsAPI).UpdateReportSchedule-fm (4 handlers)
+[GIN-debug] DELETE /api/auth/reports/schedules/:id --> backend_axenta/api.(*ReportsAPI).DeleteReportSchedule-fm (4 handlers)
+[GIN-debug] POST   /api/auth/reports/schedules/:id/run --> backend_axenta/api.(*ReportsAPI).RunScheduledReport-fm (4 handlers)
+[GIN-debug] GET    /api/auth/reports/schedules/:id/status --> backend_axenta/api.(*ReportsAPI).GetScheduleStatus-fm (4 handlers)
+[GIN-debug] GET    /api/auth/reports/executions --> backend_axenta/api.(*ReportsAPI).GetReportExecutions-fm (4 handlers)
+[GIN-debug] GET    /api/auth/reports/executions/:id --> backend_axenta/api.(*ReportsAPI).GetReportExecution-fm (4 handlers)
+[GIN-debug] GET    /api/auth/reports/stats   --> backend_axenta/api.(*ReportsAPI).GetReportsStats-fm (4 handlers)
+2025/10/11 07:32:28 Server starting on port 8080...
+[GIN-debug] [WARNING] You trusted all proxies, this is NOT safe. We recommend you to set a value.
+Please check https://pkg.go.dev/github.com/gin-gonic/gin#readme-don-t-trust-all-proxies for details.
+[GIN-debug] Listening and serving HTTP on :8080
+
+2025/10/11 07:32:28 [31;1m/Users/com/backend_axenta/services/report_scheduler_service.go:55 [35;1mERROR: relation "report_schedules" does not exist (SQLSTATE 42P01)
+[0m[33m[3.553ms] [34;1m[rows:0][0m SELECT * FROM "report_schedules" WHERE is_active = true AND "report_schedules"."deleted_at" IS NULL
+2025/10/11 07:32:28 Failed to start report scheduler: failed to load schedules: ERROR: relation "report_schedules" does not exist (SQLSTATE 42P01)
+[GIN] 2025/10/11 - 07:32:31 | 200 |    1.531916ms |             ::1 | GET      "/ping"
+2025/10/11 07:32:36 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:32:36+03:00","user_agent":"curl/8.7.1","user_id":"","username":"admin"}
+
+2025/10/11 07:32:36 [32m/Users/com/backend_axenta/api/local_auth.go:106
+[0m[33m[4.504ms] [34;1m[rows:1][0m SELECT * FROM "local_users" WHERE (username = 'admin' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
+2025/10/11 07:32:36 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"4e12b3c9-529c-4fe7-98e1-025eed8cb258","operation":"login_invalid_password","status":"failed","timestamp":"2025-10-11T07:32:36+03:00","user_id":"1","username":"admin"}
+[GIN] 2025/10/11 - 07:32:36 | 401 |   65.901667ms |             ::1 | POST     "/api/local/login"
+2025/10/11 07:32:37 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:32:37+03:00","user_agent":"curl/8.7.1","user_id":"","username":"demo"}
+
+2025/10/11 07:32:37 [31;1m/Users/com/backend_axenta/api/local_auth.go:106 [35;1mrecord not found
+[0m[33m[0.426ms] [34;1m[rows:0][0m SELECT * FROM "local_users" WHERE (username = 'demo' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
+2025/10/11 07:32:37 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","error":"record not found","operation":"login_user_not_found","status":"failed","timestamp":"2025-10-11T07:32:37+03:00","user_id":"","username":"demo"}
+[GIN] 2025/10/11 - 07:32:37 | 401 |     714.417µs |             ::1 | POST     "/api/local/login"
+2025/10/11 07:32:41 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:32:41+03:00","user_agent":"curl/8.7.1","user_id":"","username":"admin"}
+
+2025/10/11 07:32:41 [32m/Users/com/backend_axenta/api/local_auth.go:106
+[0m[33m[2.049ms] [34;1m[rows:1][0m SELECT * FROM "local_users" WHERE (username = 'admin' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
+2025/10/11 07:32:41 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"4e12b3c9-529c-4fe7-98e1-025eed8cb258","operation":"login_invalid_password","status":"failed","timestamp":"2025-10-11T07:32:41+03:00","user_id":"1","username":"admin"}
+[GIN] 2025/10/11 - 07:32:41 | 401 |   61.555375ms |             ::1 | POST     "/api/local/login"
+2025/10/11 07:32:49 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:32:49+03:00","user_agent":"curl/8.7.1","user_id":"","username":"test"}
+
+2025/10/11 07:32:49 [32m/Users/com/backend_axenta/api/local_auth.go:106
+[0m[33m[1.859ms] [34;1m[rows:1][0m SELECT * FROM "local_users" WHERE (username = 'test' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
+
+2025/10/11 07:32:49 [32m/Users/com/backend_axenta/services/jwt_service.go:117
+[0m[33m[10.023ms] [34;1m[rows:1][0m INSERT INTO "refresh_tokens" ("user_id","token","expires_at","created_at","is_revoked") VALUES (5,'7c21db4db9832e0c02b4a6ff060fa292f951c96a2356e658e3f0ff5a99073fc8','2025-10-18 07:32:49.9','2025-10-11 07:32:49.901',false) RETURNING "id"
+
+2025/10/11 07:32:49 [32m/Users/com/backend_axenta/models/local_user.go:56
+[0m[33m[2.375ms] [34;1m[rows:1][0m UPDATE "local_users" SET "last_login"='2025-10-11 07:32:49.91',"login_count"=3,"updated_at"='2025-10-11 07:32:49.91' WHERE "local_users"."deleted_at" IS NULL AND "id" = 5
+2025/10/11 07:32:49 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"test-company-id","operation":"login_success","role":"admin","status":"success","timestamp":"2025-10-11T07:32:49+03:00","user_id":"5","username":"test"}
+[GIN] 2025/10/11 - 07:32:49 | 200 |   76.983625ms |             ::1 | POST     "/api/local/login"
+2025/10/11 07:32:56 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:32:56+03:00","user_agent":"curl/8.7.1","user_id":"","username":"admin"}
+
+2025/10/11 07:32:56 [32m/Users/com/backend_axenta/api/local_auth.go:106
+[0m[33m[2.019ms] [34;1m[rows:1][0m SELECT * FROM "local_users" WHERE (username = 'admin' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
+2025/10/11 07:32:56 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"4e12b3c9-529c-4fe7-98e1-025eed8cb258","operation":"login_invalid_password","status":"failed","timestamp":"2025-10-11T07:32:56+03:00","user_id":"1","username":"admin"}
+[GIN] 2025/10/11 - 07:32:56 | 401 |   62.452167ms |             ::1 | POST     "/api/local/login"
+2025/10/11 07:33:01 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:33:01+03:00","user_agent":"curl/8.7.1","user_id":"","username":"admin"}
+
+2025/10/11 07:33:01 [32m/Users/com/backend_axenta/api/local_auth.go:106
+[0m[33m[1.660ms] [34;1m[rows:1][0m SELECT * FROM "local_users" WHERE (username = 'admin' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
+2025/10/11 07:33:01 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"4e12b3c9-529c-4fe7-98e1-025eed8cb258","operation":"login_invalid_password","status":"failed","timestamp":"2025-10-11T07:33:01+03:00","user_id":"1","username":"admin"}
+[GIN] 2025/10/11 - 07:33:01 | 401 |     61.5415ms |             ::1 | POST     "/api/local/login"
+2025/10/11 07:33:20 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:33:20+03:00","user_agent":"curl/8.7.1","user_id":"","username":"admin"}
+
+2025/10/11 07:33:20 [32m/Users/com/backend_axenta/api/local_auth.go:106
+[0m[33m[12.620ms] [34;1m[rows:1][0m SELECT * FROM "local_users" WHERE (username = 'admin' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
+
+2025/10/11 07:33:20 [32m/Users/com/backend_axenta/services/jwt_service.go:117
+[0m[33m[5.414ms] [34;1m[rows:1][0m INSERT INTO "refresh_tokens" ("user_id","token","expires_at","created_at","is_revoked") VALUES (1,'b48467a8f3bf9b1e83fcb73c727fd56fd0ddae896f00e3869dce5b077f848088','2025-10-18 07:33:20.717','2025-10-11 07:33:20.719',false) RETURNING "id"
+
+2025/10/11 07:33:20 [32m/Users/com/backend_axenta/models/local_user.go:56
+[0m[33m[1.685ms] [34;1m[rows:1][0m UPDATE "local_users" SET "last_login"='2025-10-11 07:33:20.723',"login_count"=6,"updated_at"='2025-10-11 07:33:20.724' WHERE "local_users"."deleted_at" IS NULL AND "id" = 1
+2025/10/11 07:33:20 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"4e12b3c9-529c-4fe7-98e1-025eed8cb258","operation":"login_success","role":"admin","status":"success","timestamp":"2025-10-11T07:33:20+03:00","user_id":"1","username":"admin"}
+[GIN] 2025/10/11 - 07:33:20 | 200 |  100.447459ms |             ::1 | POST     "/api/local/login"
+2025/10/11 07:33:28 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:33:28+03:00","user_agent":"curl/8.7.1","user_id":"","username":"demo"}
+
+2025/10/11 07:33:28 [31;1m/Users/com/backend_axenta/api/local_auth.go:106 [35;1mrecord not found
+[0m[33m[2.303ms] [34;1m[rows:0][0m SELECT * FROM "local_users" WHERE (username = 'demo' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
+2025/10/11 07:33:28 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","error":"record not found","operation":"login_user_not_found","status":"failed","timestamp":"2025-10-11T07:33:28+03:00","user_id":"","username":"demo"}
+[GIN] 2025/10/11 - 07:33:28 | 401 |    3.057542ms |             ::1 | POST     "/api/local/login"
+2025/10/11 07:33:44 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:33:44+03:00","user_agent":"curl/8.7.1","user_id":"","username":"admin"}
+
+2025/10/11 07:33:44 [32m/Users/com/backend_axenta/api/local_auth.go:106
+[0m[33m[5.008ms] [34;1m[rows:1][0m SELECT * FROM "local_users" WHERE (username = 'admin' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
+
+2025/10/11 07:33:44 [32m/Users/com/backend_axenta/services/jwt_service.go:117
+[0m[33m[2.019ms] [34;1m[rows:1][0m INSERT INTO "refresh_tokens" ("user_id","token","expires_at","created_at","is_revoked") VALUES (1,'33b6bea6f2cdb661f21f93edf81f264091d26f9b3c55c1d60631b0b54fedee7b','2025-10-18 07:33:44.36','2025-10-11 07:33:44.36',false) RETURNING "id"
+
+2025/10/11 07:33:44 [32m/Users/com/backend_axenta/models/local_user.go:56
+[0m[33m[1.279ms] [34;1m[rows:1][0m UPDATE "local_users" SET "last_login"='2025-10-11 07:33:44.362',"login_count"=7,"updated_at"='2025-10-11 07:33:44.363' WHERE "local_users"."deleted_at" IS NULL AND "id" = 1
+2025/10/11 07:33:44 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"4e12b3c9-529c-4fe7-98e1-025eed8cb258","operation":"login_success","role":"admin","status":"success","timestamp":"2025-10-11T07:33:44+03:00","user_id":"1","username":"admin"}
+[GIN] 2025/10/11 - 07:33:44 | 200 |   70.424042ms |             ::1 | POST     "/api/local/login"
+2025/10/11 07:33:49 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:33:49+03:00","user_agent":"curl/8.7.1","user_id":"","username":"demo"}
+
+2025/10/11 07:33:49 [31;1m/Users/com/backend_axenta/api/local_auth.go:106 [35;1mrecord not found
+[0m[33m[1.475ms] [34;1m[rows:0][0m SELECT * FROM "local_users" WHERE (username = 'demo' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
+2025/10/11 07:33:49 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","error":"record not found","operation":"login_user_not_found","status":"failed","timestamp":"2025-10-11T07:33:49+03:00","user_id":"","username":"demo"}
+[GIN] 2025/10/11 - 07:33:49 | 401 |     1.73125ms |             ::1 | POST     "/api/local/login"
+2025/10/11 07:33:50 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:33:50+03:00","user_agent":"curl/8.7.1","user_id":"","username":"user"}
+
+2025/10/11 07:33:50 [31;1m/Users/com/backend_axenta/api/local_auth.go:106 [35;1mrecord not found
+[0m[33m[0.297ms] [34;1m[rows:0][0m SELECT * FROM "local_users" WHERE (username = 'user' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
+2025/10/11 07:33:50 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","error":"record not found","operation":"login_user_not_found","status":"failed","timestamp":"2025-10-11T07:33:50+03:00","user_id":"","username":"user"}
+[GIN] 2025/10/11 - 07:33:50 | 401 |     446.708µs |             ::1 | POST     "/api/local/login"
+2025/10/11 07:33:51 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:33:51+03:00","user_agent":"curl/8.7.1","user_id":"","username":"test"}
+
+2025/10/11 07:33:51 [32m/Users/com/backend_axenta/api/local_auth.go:106
+[0m[33m[0.410ms] [34;1m[rows:1][0m SELECT * FROM "local_users" WHERE (username = 'test' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
+
+2025/10/11 07:33:51 [32m/Users/com/backend_axenta/services/jwt_service.go:117
+[0m[33m[1.596ms] [34;1m[rows:1][0m INSERT INTO "refresh_tokens" ("user_id","token","expires_at","created_at","is_revoked") VALUES (5,'a4492a6479c673eb0ab2c4629a7c07c01fcfc72ad87311a18676b5b6a035ad48','2025-10-18 07:33:51.174','2025-10-11 07:33:51.174',false) RETURNING "id"
+
+2025/10/11 07:33:51 [32m/Users/com/backend_axenta/models/local_user.go:56
+[0m[33m[0.743ms] [34;1m[rows:1][0m UPDATE "local_users" SET "last_login"='2025-10-11 07:33:51.175',"login_count"=4,"updated_at"='2025-10-11 07:33:51.175' WHERE "local_users"."deleted_at" IS NULL AND "id" = 5
+2025/10/11 07:33:51 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"test-company-id","operation":"login_success","role":"admin","status":"success","timestamp":"2025-10-11T07:33:51+03:00","user_id":"5","username":"test"}
+[GIN] 2025/10/11 - 07:33:51 | 200 |    63.03825ms |             ::1 | POST     "/api/local/login"
+[GIN] 2025/10/11 - 07:34:07 | 200 |    2.460334ms |             ::1 | GET      "/ping"
+2025/10/11 07:34:16 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:34:16+03:00","user_agent":"curl/8.7.1","user_id":"","username":"admin"}
+
+2025/10/11 07:34:16 [32m/Users/com/backend_axenta/api/local_auth.go:106
+[0m[33m[2.068ms] [34;1m[rows:1][0m SELECT * FROM "local_users" WHERE (username = 'admin' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
+
+2025/10/11 07:34:16 [32m/Users/com/backend_axenta/services/jwt_service.go:117
+[0m[33m[2.454ms] [34;1m[rows:1][0m INSERT INTO "refresh_tokens" ("user_id","token","expires_at","created_at","is_revoked") VALUES (1,'1e9dab8b3d15c4440ca9969f6bfeb820e73b373a6e10cc66b165bdaf1eef1e5b','2025-10-18 07:34:16.22','2025-10-11 07:34:16.22',false) RETURNING "id"
+
+2025/10/11 07:34:16 [32m/Users/com/backend_axenta/models/local_user.go:56
+[0m[33m[0.547ms] [34;1m[rows:1][0m UPDATE "local_users" SET "last_login"='2025-10-11 07:34:16.222',"login_count"=8,"updated_at"='2025-10-11 07:34:16.222' WHERE "local_users"."deleted_at" IS NULL AND "id" = 1
+2025/10/11 07:34:16 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"4e12b3c9-529c-4fe7-98e1-025eed8cb258","operation":"login_success","role":"admin","status":"success","timestamp":"2025-10-11T07:34:16+03:00","user_id":"1","username":"admin"}
+[GIN] 2025/10/11 - 07:34:16 | 200 |   65.621875ms |             ::1 | POST     "/api/local/login"
+2025/10/11 07:34:16 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:34:16+03:00","user_agent":"curl/8.7.1","user_id":"","username":"demo"}
+
+2025/10/11 07:34:16 [31;1m/Users/com/backend_axenta/api/local_auth.go:106 [35;1mrecord not found
+[0m[33m[0.275ms] [34;1m[rows:0][0m SELECT * FROM "local_users" WHERE (username = 'demo' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
+2025/10/11 07:34:16 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","error":"record not found","operation":"login_user_not_found","status":"failed","timestamp":"2025-10-11T07:34:16+03:00","user_id":"","username":"demo"}
+[GIN] 2025/10/11 - 07:34:16 | 401 |      419.75µs |             ::1 | POST     "/api/local/login"
+2025/10/11 07:34:17 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:34:17+03:00","user_agent":"curl/8.7.1","user_id":"","username":"user"}
+
+2025/10/11 07:34:17 [31;1m/Users/com/backend_axenta/api/local_auth.go:106 [35;1mrecord not found
+[0m[33m[0.497ms] [34;1m[rows:0][0m SELECT * FROM "local_users" WHERE (username = 'user' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
+2025/10/11 07:34:17 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","error":"record not found","operation":"login_user_not_found","status":"failed","timestamp":"2025-10-11T07:34:17+03:00","user_id":"","username":"user"}
+[GIN] 2025/10/11 - 07:34:17 | 401 |         618µs |             ::1 | POST     "/api/local/login"
+[GIN] 2025/10/11 - 07:34:52 | 204 |    2.121542ms |             ::1 | OPTIONS  "/api/local/login"
+2025/10/11 07:34:52 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:34:52+03:00","user_agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 YaBrowser/25.8.0.0 Safari/537.36","user_id":"","username":"glomos"}
+
+2025/10/11 07:34:52 [31;1m/Users/com/backend_axenta/api/local_auth.go:106 [35;1mrecord not found
+[0m[33m[6.108ms] [34;1m[rows:0][0m SELECT * FROM "local_users" WHERE (username = 'glomos' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
+2025/10/11 07:34:52 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","error":"record not found","operation":"login_user_not_found","status":"failed","timestamp":"2025-10-11T07:34:52+03:00","user_id":"","username":"glomos"}
+[GIN] 2025/10/11 - 07:34:52 | 401 |    6.805333ms |             ::1 | POST     "/api/local/login"
+[GIN] 2025/10/11 - 07:35:05 | 204 |       96.75µs |             ::1 | OPTIONS  "/api/local/login"
+2025/10/11 07:35:05 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:35:05+03:00","user_agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 YaBrowser/25.8.0.0 Safari/537.36","user_id":"","username":"test"}
+
+2025/10/11 07:35:05 [32m/Users/com/backend_axenta/api/local_auth.go:106
+[0m[33m[10.643ms] [34;1m[rows:1][0m SELECT * FROM "local_users" WHERE (username = 'test' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
+
+2025/10/11 07:35:05 [32m/Users/com/backend_axenta/services/jwt_service.go:117
+[0m[33m[63.619ms] [34;1m[rows:1][0m INSERT INTO "refresh_tokens" ("user_id","token","expires_at","created_at","is_revoked") VALUES (5,'cd228683cea06df6505d22d2295f506c731d25f5572d129810ae4b7ae422e769','2025-10-18 07:35:05.466','2025-10-11 07:35:05.476',false) RETURNING "id"
+
+2025/10/11 07:35:05 [32m/Users/com/backend_axenta/models/local_user.go:56
+[0m[33m[3.662ms] [34;1m[rows:1][0m UPDATE "local_users" SET "last_login"='2025-10-11 07:35:05.53',"login_count"=5,"updated_at"='2025-10-11 07:35:05.531' WHERE "local_users"."deleted_at" IS NULL AND "id" = 5
+2025/10/11 07:35:05 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"test-company-id","operation":"login_success","role":"admin","status":"success","timestamp":"2025-10-11T07:35:05+03:00","user_id":"5","username":"test"}
+[GIN] 2025/10/11 - 07:35:05 | 200 |  166.148875ms |             ::1 | POST     "/api/local/login"
+[GIN] 2025/10/11 - 07:35:25 | 204 |     172.584µs |             ::1 | OPTIONS  "/api/local/login"
+2025/10/11 07:35:25 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:35:25+03:00","user_agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 YaBrowser/25.8.0.0 Safari/537.36","user_id":"","username":"glomos"}
+
+2025/10/11 07:35:25 [31;1m/Users/com/backend_axenta/api/local_auth.go:106 [35;1mrecord not found
+[0m[33m[3.904ms] [34;1m[rows:0][0m SELECT * FROM "local_users" WHERE (username = 'glomos' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
+2025/10/11 07:35:25 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","error":"record not found","operation":"login_user_not_found","status":"failed","timestamp":"2025-10-11T07:35:25+03:00","user_id":"","username":"glomos"}
+[GIN] 2025/10/11 - 07:35:25 | 401 |     4.94275ms |             ::1 | POST     "/api/local/login"
