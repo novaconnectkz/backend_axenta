@@ -50,6 +50,9 @@ type Company struct {
 	Timezone string `json:"timezone" gorm:"default:'Europe/Moscow';type:varchar(50)"`
 	Currency string `json:"currency" gorm:"default:'RUB';type:varchar(3)"`
 
+	// Иерархия компании из Axenta Cloud
+	Hierarchy string `json:"hierarchy" gorm:"type:text"`
+
 	// Подписка и биллинг
 	SubscriptionID *uuid.UUID `json:"subscription_id"`
 	// Subscription   *Subscription `json:"subscription,omitempty" gorm:"foreignKey:SubscriptionID"`

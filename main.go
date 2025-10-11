@@ -87,7 +87,7 @@ func main() {
 	tenantMiddleware := middleware.NewTenantMiddleware(database.DB)
 
 	// Создаем middleware для аутентификации
-	// authMiddleware := middleware.NewAuthMiddleware() // Временно отключено
+	authMiddleware := middleware.NewAuthMiddleware()
 	// localAuthMiddleware := middleware.NewLocalAuthMiddleware(jwtService) // Создается в API
 
 	r := gin.Default()
@@ -428,8 +428,9 @@ func main() {
 	r.GET("/api/billing-plans-simple", api.GetBillingPlansSimple)
 	r.GET("/api/subscriptions-simple", api.GetSubscriptionsSimple)
 
-	// Административные маршруты (без мультитенантности)
+	// Административные маршруты (с авторизацией)
 	adminGroup := r.Group("/api/admin")
+	adminGroup.Use(authMiddleware.RequireAuth()) // Требуем авторизацию для админ маршрутов
 	{
 		// Управление учетными записями (компаниями)
 		companiesAPI := api.NewCompaniesAPI(database.DB, tenantMiddleware)

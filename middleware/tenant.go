@@ -476,3 +476,22 @@ func GetCompanyID(c *gin.Context) uint {
 	}
 	return 0
 }
+
+// GetTenantDBByCompanyID возвращает подключение к БД компании по ID
+func (tm *TenantMiddleware) GetTenantDBByCompanyID(companyID uint) *gorm.DB {
+	// Получаем информацию о компании из основной БД
+	var company models.Company
+	if err := tm.DB.First(&company, companyID).Error; err != nil {
+		fmt.Printf("❌ ERROR: Company with ID %d not found: %v\n", companyID, err)
+		return nil
+	}
+
+	// Создаем подключение к БД компании
+	tenantDB, err := database.ConnectToTenant(company.DatabaseSchema)
+	if err != nil {
+		fmt.Printf("❌ ERROR: Failed to connect to tenant DB for company %d: %v\n", companyID, err)
+		return nil
+	}
+
+	return tenantDB
+}

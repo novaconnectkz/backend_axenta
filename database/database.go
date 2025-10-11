@@ -221,3 +221,34 @@ func CleanupTestDatabase() {
 		}
 	}
 }
+
+// ConnectToTenant создает подключение к БД конкретной компании
+func ConnectToTenant(databaseSchema string) (*gorm.DB, error) {
+	cfg := config.GetConfig()
+
+	// Если схема не указана, используем основную БД
+	if databaseSchema == "" {
+		return DB, nil
+	}
+
+	// Формируем DSN для подключения к схеме компании
+	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s search_path=%s",
+		cfg.Database.Host,
+		cfg.Database.Port,
+		cfg.Database.User,
+		cfg.Database.Password,
+		cfg.Database.Name,
+		cfg.Database.SSLMode,
+		databaseSchema,
+	)
+
+	// Создаем подключение к БД
+	tenantDB, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to tenant database schema '%s': %v", databaseSchema, err)
+	}
+
+	return tenantDB, nil
+}
