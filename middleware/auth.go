@@ -67,6 +67,22 @@ func (am *AuthMiddleware) RequireAuth() gin.HandlerFunc {
 			return
 		}
 
+		// Проверяем тип аккаунта - только партнеры могут использовать API
+		if accountType, ok := user["accountType"].(string); ok {
+			if accountType != "partner" {
+				c.JSON(http.StatusForbidden, gin.H{
+					"status": "error",
+					"error":  "Доступ к API разрешен только партнерам Axenta",
+					"details": gin.H{
+						"account_type":  accountType,
+						"required_type": "partner",
+					},
+				})
+				c.Abort()
+				return
+			}
+		}
+
 		// Сохраняем информацию о пользователе в контексте
 		c.Set("user", user)
 		c.Set("token", token)

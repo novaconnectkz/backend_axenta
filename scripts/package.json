@@ -1,0 +1,30 @@
+{
+  "name": "axenta-api-scripts",
+  "version": "1.0.0",
+  "description": "Скрипты для работы с API Axenta",
+  "main": "index.js",
+  "scripts": {
+    "test-auth": "npx tsx axenta_auth_test.ts",
+    "test-auth-advanced": "npx tsx axenta_auth_advanced.ts",
+    "discover-endpoints": "npx tsx axenta_endpoint_discovery.ts",
+    "explore-api": "npx tsx axenta_api_explorer.ts",
+    "start-viewer": "npx tsx start_viewer.ts",
+    "start-proxy": "npx tsx cors_proxy.ts",
+    "build": "tsc",
+    "dev": "npx tsx --watch axenta_auth_test.ts",
+    "dev-advanced": "npx tsx --watch axenta_auth_advanced.ts"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "console-table-printer": "^2.11.2",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "tsx": "^4.0.0"
+  },
+  "keywords": ["axenta", "api", "auth", "crm"],
+  "author": "Axenta CRM Team",
+  "license": "MIT"
+}

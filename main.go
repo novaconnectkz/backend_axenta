@@ -5,9 +5,9 @@ import (
 	"backend_axenta/config"
 	"backend_axenta/database"
 	"backend_axenta/middleware"
+	"backend_axenta/models"
 	"backend_axenta/services"
 
-	// "backend_axenta/models" // Не используется в main.go, миграции в database.go
 	"log"
 	"net/http"
 	"strconv"
@@ -71,11 +71,23 @@ func main() {
 	// Выполняем миграции для основных таблиц (не мультитенантных)
 	// Миграции выполняются в database.ConnectDatabase() через autoMigrate()
 
+	// Выполняем миграции для локальной авторизации
+	if err := database.DB.AutoMigrate(
+		&models.LocalUser{},
+		&models.RefreshToken{},
+	); err != nil {
+		log.Printf("Warning: Failed to migrate local auth models: %v", err)
+	}
+
+	// Создаем сервисы
+	jwtService := services.NewJWTService(database.DB)
+
 	// Создаем middleware для мультитенантности
 	tenantMiddleware := middleware.NewTenantMiddleware(database.DB)
 
 	// Создаем middleware для аутентификации
 	// authMiddleware := middleware.NewAuthMiddleware() // Временно отключено
+	// localAuthMiddleware := middleware.NewLocalAuthMiddleware(jwtService) // Создается в API
 
 	r := gin.Default()
 
@@ -111,6 +123,14 @@ func main() {
 		c.JSON(200, gin.H{"status": "success", "message": "pong"})
 	})
 	r.POST("/api/auth/login", api.Login)
+
+	// === ЛОКАЛЬНАЯ АВТОРИЗАЦИЯ ===
+	localAuthAPI := api.NewLocalAuthAPI(database.DB, jwtService)
+	localAuthAPI.RegisterRoutes(r.Group("/api"))
+
+	// === WEBSOCKET С АВТОРИЗАЦИЕЙ ===
+	wsAPI := api.NewWebSocketAuthAPI(jwtService)
+	wsAPI.RegisterRoutes(r.Group("/ws"))
 
 	// Тестовый маршрут для проверки
 	r.GET("/api/test-objects-stats", func(c *gin.Context) {

@@ -10,6 +10,7 @@ require (
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/google/uuid v1.6.0
+	github.com/gorilla/websocket v1.5.0
 	github.com/joho/godotenv v1.5.1
 	github.com/jung-kurt/gofpdf v1.16.2
 	github.com/lib/pq v1.10.9
@@ -18,6 +19,7 @@ require (
 	github.com/stretchr/testify v1.10.0
 	github.com/xuri/excelize/v2 v2.9.1
 	golang.org/x/crypto v0.38.0
+	golang.org/x/term v0.32.0
 	gorm.io/driver/postgres v1.5.4
 	gorm.io/driver/sqlite v1.6.0
 	gorm.io/gorm v1.30.0

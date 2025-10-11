@@ -280,6 +280,26 @@ func Login(c *gin.Context) {
 		return
 	}
 
+	// Проверяем тип аккаунта - доступ только для партнеров
+	if axentaUser.AccountType != "partner" {
+		userIDStr := fmt.Sprintf("%d", axentaUser.ID)
+		logAuthOperation("login_access_denied", req.Username, userIDStr, "", map[string]interface{}{
+			"status":       "access_denied",
+			"account_type": axentaUser.AccountType,
+			"account_name": axentaUser.AccountName,
+			"reason":       "only_partners_allowed",
+		})
+		c.JSON(403, gin.H{
+			"status": "error",
+			"error":  "Доступ к CRM разрешен только партнерам Axenta",
+			"details": gin.H{
+				"account_type":  axentaUser.AccountType,
+				"required_type": "partner",
+			},
+		})
+		return
+	}
+
 	// Успешное получение данных пользователя
 	userIDStr := fmt.Sprintf("%d", axentaUser.ID)
 	logAuthOperation("login_success_full", req.Username, userIDStr, "", map[string]interface{}{
