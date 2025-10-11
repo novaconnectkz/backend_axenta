@@ -2,10 +2,15 @@ package api
 
 import (
 	"backend_axenta/middleware"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -293,8 +298,8 @@ func (api *CompaniesAPI) GetCompanies(c *gin.Context) {
 			"adminId":            account.AdminID,
 			"adminIsActive":      account.AdminIsActive,
 			"parentAccountName":  account.ParentAccountName,
-			"objectsActive":      objectsActive,      // Реальное количество активных объектов
-			"objectsTotal":       objectsTotal,       // Реальное общее количество объектов
+			"objectsActive":      objectsActive,                // Реальное количество активных объектов
+			"objectsTotal":       objectsTotal,                 // Реальное общее количество объектов
 			"objectsDeleted":     objectsTotal - objectsActive, // Вычисляем удаленные
 			"comment":            account.Comment,
 			"isActive":           account.IsActive,
@@ -305,7 +310,7 @@ func (api *CompaniesAPI) GetCompanies(c *gin.Context) {
 		}
 
 		fmt.Printf("🔧 DEBUG: Account %d - Objects: total=%d, active=%d, deleted=%d\n",
-			account.ID, objectsTotal, objectsActive, objectsTotal - objectsActive)
+			account.ID, objectsTotal, objectsActive, objectsTotal-objectsActive)
 		fmt.Printf("🔧 DEBUG: Final JSON for account %d: type='%s', hierarchy='%s'\n",
 			account.ID, companies[i]["type"], companies[i]["hierarchy"])
 	}
@@ -506,4 +511,100 @@ func (api *CompaniesAPI) getActiveObjectsCountForCompany(companyID int) int64 {
 
 	fmt.Printf("📊 INFO: Company %d has %d active objects\n", companyID, count)
 	return count
+}
+
+// encryptPassword шифрует пароль с использованием AES
+func (api *CompaniesAPI) encryptPassword(password string) string {
+	// Получаем ключ шифрования из переменной окружения
+	key := os.Getenv("ENCRYPTION_KEY")
+	if key == "" {
+		// Используем дефолтный ключ для тестов (32 байта для AES-256)
+		key = "axenta-default-encryption-key-32b"
+	}
+
+	// Убеждаемся, что ключ имеет правильную длину (32 байта для AES-256)
+	if len(key) < 32 {
+		key = key + strings.Repeat("0", 32-len(key))
+	} else if len(key) > 32 {
+		key = key[:32]
+	}
+
+	block, err := aes.NewCipher([]byte(key))
+	if err != nil {
+		fmt.Printf("❌ ERROR: Failed to create cipher: %v\n", err)
+		return password // Возвращаем исходный пароль в случае ошибки
+	}
+
+	// Создаем GCM
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		fmt.Printf("❌ ERROR: Failed to create GCM: %v\n", err)
+		return password
+	}
+
+	// Создаем случайный nonce
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		fmt.Printf("❌ ERROR: Failed to generate nonce: %v\n", err)
+		return password
+	}
+
+	// Шифруем пароль
+	ciphertext := gcm.Seal(nonce, nonce, []byte(password), nil)
+
+	// Кодируем в base64
+	return base64.StdEncoding.EncodeToString(ciphertext)
+}
+
+// decryptPassword дешифрует пароль
+func (api *CompaniesAPI) decryptPassword(encryptedPassword string) string {
+	// Получаем ключ шифрования из переменной окружения
+	key := os.Getenv("ENCRYPTION_KEY")
+	if key == "" {
+		// Используем дефолтный ключ для тестов (32 байта для AES-256)
+		key = "axenta-default-encryption-key-32b"
+	}
+
+	// Убеждаемся, что ключ имеет правильную длину (32 байта для AES-256)
+	if len(key) < 32 {
+		key = key + strings.Repeat("0", 32-len(key))
+	} else if len(key) > 32 {
+		key = key[:32]
+	}
+
+	// Декодируем из base64
+	ciphertext, err := base64.StdEncoding.DecodeString(encryptedPassword)
+	if err != nil {
+		fmt.Printf("❌ ERROR: Failed to decode base64: %v\n", err)
+		return encryptedPassword // Возвращаем исходную строку в случае ошибки
+	}
+
+	block, err := aes.NewCipher([]byte(key))
+	if err != nil {
+		fmt.Printf("❌ ERROR: Failed to create cipher: %v\n", err)
+		return encryptedPassword
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		fmt.Printf("❌ ERROR: Failed to create GCM: %v\n", err)
+		return encryptedPassword
+	}
+
+	if len(ciphertext) < gcm.NonceSize() {
+		fmt.Printf("❌ ERROR: Ciphertext too short\n")
+		return encryptedPassword
+	}
+
+	// Извлекаем nonce и зашифрованные данные
+	nonce, ciphertext := ciphertext[:gcm.NonceSize()], ciphertext[gcm.NonceSize():]
+
+	// Дешифруем
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		fmt.Printf("❌ ERROR: Failed to decrypt: %v\n", err)
+		return encryptedPassword
+	}
+
+	return string(plaintext)
 }

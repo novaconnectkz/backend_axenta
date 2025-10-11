@@ -19,7 +19,6 @@ require (
 	github.com/stretchr/testify v1.10.0
 	github.com/xuri/excelize/v2 v2.9.1
 	golang.org/x/crypto v0.38.0
-	golang.org/x/term v0.32.0
 	gorm.io/driver/postgres v1.5.4
 	gorm.io/driver/sqlite v1.6.0
 	gorm.io/gorm v1.30.0
