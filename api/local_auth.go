@@ -22,6 +22,16 @@ type LocalAuthAPI struct {
 	jwtService *services.JWTService
 }
 
+// getPublicDB возвращает подключение к схеме public для глобальных таблиц
+func (api *LocalAuthAPI) getPublicDB() *gorm.DB {
+	// Клонируем подключение и устанавливаем схему public
+	publicDB := api.db.Session(&gorm.Session{})
+	if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
+		log.Printf("⚠️ Не удалось переключиться на схему public: %v", err)
+	}
+	return publicDB
+}
+
 // NewLocalAuthAPI создает новый API для локальной авторизации
 func NewLocalAuthAPI(db *gorm.DB, jwtService *services.JWTService) *LocalAuthAPI {
 	return &LocalAuthAPI{
@@ -103,9 +113,10 @@ func (api *LocalAuthAPI) LocalLogin(c *gin.Context) {
 		"user_agent": c.GetHeader("User-Agent"),
 	})
 
-	// Находим пользователя
+	// Находим пользователя в схеме public
 	var user models.LocalUser
-	if err := api.db.Where("username = ? AND is_active = true", req.Username).First(&user).Error; err != nil {
+	publicDB := api.getPublicDB()
+	if err := publicDB.Where("username = ? AND is_active = true", req.Username).First(&user).Error; err != nil {
 		// Пользователь не найден в локальной базе - пробуем Axenta Cloud
 		logLocalAuthOperation("login_user_not_found_trying_axenta", req.Username, "", "", map[string]interface{}{
 			"status": "attempting_axenta_auth",
@@ -173,7 +184,7 @@ func (api *LocalAuthAPI) LocalLogin(c *gin.Context) {
 
 		// Сохраняем в БД
 		log.Printf("🔍 DB_DEBUG: Attempting to create user: %+v", newUser)
-		if err := api.db.Create(&newUser).Error; err != nil {
+		if err := publicDB.Create(&newUser).Error; err != nil {
 			log.Printf("🔍 DB_ERROR: Failed to create user: %v", err)
 			logLocalAuthOperation("login_user_creation_error", req.Username, "", "", map[string]interface{}{
 				"error":  err.Error(),
@@ -238,7 +249,7 @@ func (api *LocalAuthAPI) LocalLogin(c *gin.Context) {
 		} else {
 			user.Role = "user"
 		}
-		api.db.Save(&user)
+		publicDB.Save(&user)
 	} else {
 		// Для новых пользователей проверяем пароль локально
 		if !user.CheckPassword(req.Password) {
@@ -340,9 +351,10 @@ func (api *LocalAuthAPI) LocalCurrentUser(c *gin.Context) {
 		return
 	}
 
-	// Получаем пользователя из БД
+	// Получаем пользователя из БД (схема public)
 	var user models.LocalUser
-	if err := api.db.First(&user, userID).Error; err != nil {
+	publicDB := api.getPublicDB()
+	if err := publicDB.First(&user, userID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"status": "error",
 			"error":  "User not found",
@@ -405,9 +417,10 @@ func (api *LocalAuthAPI) RegisterLocalUser(c *gin.Context) {
 		return
 	}
 
-	// Проверяем, что пользователь с таким username не существует
+	// Проверяем, что пользователь с таким username не существует (схема public)
 	var existingUser models.LocalUser
-	if err := api.db.Where("username = ?", req.Username).First(&existingUser).Error; err == nil {
+	publicDB := api.getPublicDB()
+	if err := publicDB.Where("username = ?", req.Username).First(&existingUser).Error; err == nil {
 		c.JSON(http.StatusConflict, gin.H{
 			"status": "error",
 			"error":  "Username already exists",
@@ -434,8 +447,8 @@ func (api *LocalAuthAPI) RegisterLocalUser(c *gin.Context) {
 		return
 	}
 
-	// Сохраняем в БД
-	if err := api.db.Create(&user).Error; err != nil {
+	// Сохраняем в БД (схема public)
+	if err := publicDB.Create(&user).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  "Failed to create user",

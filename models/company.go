@@ -4,7 +4,6 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -54,7 +53,7 @@ type Company struct {
 	Hierarchy string `json:"hierarchy" gorm:"type:text"`
 
 	// Подписка и биллинг
-	SubscriptionID *uuid.UUID `json:"subscription_id"`
+	SubscriptionID *string `json:"subscription_id"` // Изменено на string для совместимости
 	// Subscription   *Subscription `json:"subscription,omitempty" gorm:"foreignKey:SubscriptionID"`
 }
 

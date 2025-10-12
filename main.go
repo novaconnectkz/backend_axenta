@@ -6,7 +6,6 @@ import (
 	"backend_axenta/database"
 	"backend_axenta/handlers"
 	"backend_axenta/middleware"
-	"backend_axenta/models"
 	"backend_axenta/services"
 
 	"log"
@@ -70,15 +69,8 @@ func main() {
 	log.Println("⚠️ Notification System temporarily disabled")
 
 	// Выполняем миграции для основных таблиц (не мультитенантных)
-	// Миграции выполняются в database.ConnectDatabase() через autoMigrate()
-
-	// Выполняем миграции для локальной авторизации
-	if err := database.DB.AutoMigrate(
-		&models.LocalUser{},
-		&models.RefreshToken{},
-	); err != nil {
-		log.Printf("Warning: Failed to migrate local auth models: %v", err)
-	}
+	// Миграции выполняются в database.ConnectDatabase() через RunAllMigrations()
+	// LocalUser и RefreshToken теперь включены в систему миграций как глобальные таблицы
 
 	// Создаем сервисы
 	jwtService := services.NewJWTService(database.DB)

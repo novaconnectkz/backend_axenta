@@ -1,150 +1,157 @@
 package main
 
 import (
+	"backend_axenta/config"
+	"backend_axenta/database"
 	"flag"
 	"fmt"
 	"log"
-
-	"backend_axenta/config"
-	"backend_axenta/database"
+	"os"
 )
 
 func main() {
-	// Определяем флаги командной строки
-	var (
-		globalOnly   = flag.Bool("global", false, "Выполнить только глобальные миграции (таблицы в схеме public)")
-		createSchema = flag.String("create-schema", "", "Создать схему для новой компании (укажите имя схемы)")
-		companyID    = flag.Uint("company-id", 0, "ID компании для создания схемы (используется с -create-schema)")
-		dryRun       = flag.Bool("dry-run", false, "Показать, какие миграции будут выполнены, но не выполнять их")
-		help         = flag.Bool("help", false, "Показать справку")
-	)
+	// Флаги командной строки
+	globalOnly := flag.Bool("global-only", false, "Выполнить только глобальные миграции")
+	force := flag.Bool("force", false, "Принудительно выполнить миграции")
+	help := flag.Bool("help", false, "Показать справку")
 
 	flag.Parse()
 
 	if *help {
-		printHelp()
+		fmt.Println("Утилита для выполнения миграций базы данных Axenta CRM")
+		fmt.Println("")
+		fmt.Println("Использование:")
+		fmt.Println("  go run cmd/migrate/main.go [флаги]")
+		fmt.Println("")
+		fmt.Println("Флаги:")
+		fmt.Println("  -global-only    Выполнить только глобальные миграции (схема public)")
+		fmt.Println("  -force          Принудительно выполнить миграции")
+		fmt.Println("  -help           Показать эту справку")
+		fmt.Println("")
+		fmt.Println("Примеры:")
+		fmt.Println("  go run cmd/migrate/main.go                    # Выполнить все миграции")
+		fmt.Println("  go run cmd/migrate/main.go -global-only       # Только глобальные таблицы")
+		fmt.Println("  go run cmd/migrate/main.go -force             # Принудительно")
 		return
 	}
 
-	// Инициализируем конфигурацию
-	config.LoadConfig()
+	log.Println("🚀 Запуск утилиты миграций Axenta CRM")
 
-	// Создаем базу данных если не существует
+	if *force {
+		log.Println("⚠️ ПРИНУДИТЕЛЬНЫЙ РЕЖИМ: Миграции будут выполнены принудительно")
+	}
+
+	if *globalOnly {
+		log.Println("📋 Режим: только глобальные миграции")
+	} else {
+		log.Println("📋 Режим: все миграции (глобальные + тенантные)")
+	}
+
+	// Загружаем конфигурацию
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		log.Fatalf("❌ Не удалось загрузить конфигурацию: %v", err)
+	}
+
+	log.Printf("🔧 Подключение к базе данных: %s@%s:%s/%s",
+		cfg.Database.User, cfg.Database.Host, cfg.Database.Port, cfg.Database.Name)
+
+	// Создаем базу данных если её нет
 	if err := database.CreateDatabaseIfNotExists(); err != nil {
-		log.Fatalf("❌ Ошибка создания базы данных: %v", err)
+		log.Fatalf("❌ Не удалось создать базу данных: %v", err)
 	}
 
 	// Подключаемся к базе данных
 	if err := database.ConnectDatabase(); err != nil {
-		log.Fatalf("❌ Ошибка подключения к базе данных: %v", err)
+		log.Fatalf("❌ Не удалось подключиться к базе данных: %v", err)
 	}
 
-	// Выполняем запрошенные операции
-	if *createSchema != "" {
-		if *companyID == 0 {
-			log.Fatal("❌ Для создания схемы необходимо указать ID компании с флагом -company-id")
-		}
-
-		if err := database.CreateTenantSchema(*companyID, *createSchema); err != nil {
-			log.Fatalf("❌ Ошибка создания схемы: %v", err)
-		}
-
-		log.Printf("✅ Схема %s для компании ID %d создана успешно", *createSchema, *companyID)
-		return
-	}
-
-	if *dryRun {
-		log.Println("🔍 Режим dry-run: показываем, какие миграции будут выполнены")
-		if err := showMigrationPlan(*globalOnly); err != nil {
-			log.Fatalf("❌ Ошибка анализа миграций: %v", err)
-		}
-		return
-	}
+	log.Println("✅ Подключение к базе данных установлено")
 
 	// Выполняем миграции
-	log.Println("🚀 Запуск миграций базы данных")
+	log.Println("")
+	log.Println("🔄 Начинаем выполнение миграций...")
 
-	if err := database.RunAllMigrations(*globalOnly); err != nil {
-		log.Fatalf("❌ Ошибка выполнения миграций: %v", err)
+	err = database.RunAllMigrations(*globalOnly)
+	if err != nil {
+		log.Printf("❌ Ошибка выполнения миграций: %v", err)
+		if !*force {
+			os.Exit(1)
+		} else {
+			log.Println("⚠️ Игнорируем ошибку в принудительном режиме")
+		}
 	}
 
+	log.Println("")
 	log.Println("🎉 Миграции завершены успешно!")
-}
 
-// showMigrationPlan показывает план миграций без их выполнения
-func showMigrationPlan(globalOnly bool) error {
-	migrations := database.GetAllMigrations()
+	// Показываем информацию о созданных таблицах
+	log.Println("")
+	log.Println("📊 Проверяем созданные таблицы...")
 
-	log.Println("📋 План миграций:")
+	// Проверяем глобальные таблицы
+	globalTables := []string{
+		"companies", "billing_plans", "subscriptions",
+		"integrations", "integration_errors",
+		"local_users", "refresh_tokens",
+	}
 
-	// Показываем глобальные миграции
-	log.Println("\n🌍 Глобальные таблицы (схема public):")
-	for _, migration := range migrations {
-		if migration.IsGlobal {
-			exists, err := database.CheckTableExists(database.GetDB(), migration.TableName)
-			if err != nil {
-				return fmt.Errorf("ошибка проверки таблицы %s: %v", migration.TableName, err)
-			}
+	db := database.GetDB()
 
-			status := "✅ существует"
-			if !exists {
-				status = "🆕 будет создана"
-			} else {
-				// Проверяем структуру
-				differences, err := database.CompareTableStructure(database.GetDB(), migration)
-				if err != nil {
-					return fmt.Errorf("ошибка проверки структуры таблицы %s: %v", migration.TableName, err)
-				}
-
-				if len(differences) > 0 {
-					status = fmt.Sprintf("🔄 будет обновлена (%d изменений)", len(differences))
-				}
-			}
-
-			log.Printf("   - %s: %s - %s", migration.TableName, migration.Description, status)
+	log.Println("📋 Глобальные таблицы (схема public):")
+	for _, table := range globalTables {
+		if db.Migrator().HasTable(table) {
+			log.Printf("  ✅ %s", table)
+		} else {
+			log.Printf("  ❌ %s (отсутствует)", table)
 		}
 	}
 
-	if !globalOnly {
-		// Показываем тенантные миграции
-		log.Println("\n🏢 Тенантные таблицы:")
-		for _, migration := range migrations {
-			if !migration.IsGlobal {
-				log.Printf("   - %s: %s", migration.TableName, migration.Description)
-			}
+	if !*globalOnly {
+		// Получаем список компаний для проверки тенантных таблиц
+		var companies []struct {
+			ID             uint   `json:"id"`
+			Name           string `json:"name"`
+			DatabaseSchema string `json:"database_schema"`
+			IsActive       bool   `json:"is_active"`
 		}
 
-		log.Println("\n📝 Примечание: Тенантные таблицы будут проверены/созданы для каждой активной компании")
+		if err := db.Table("companies").Find(&companies).Error; err != nil {
+			log.Printf("⚠️ Не удалось получить список компаний: %v", err)
+		} else {
+			log.Printf("📋 Найдено компаний: %d", len(companies))
+
+			for _, company := range companies {
+				if !company.IsActive {
+					log.Printf("  ⏭️ %s (схема: %s) - деактивирована", company.Name, company.DatabaseSchema)
+					continue
+				}
+
+				log.Printf("  🏢 %s (схема: %s)", company.Name, company.DatabaseSchema)
+
+				// Переключаемся на схему компании для проверки
+				tenantDB := db.Exec(fmt.Sprintf("SET search_path TO %s", company.DatabaseSchema))
+				if tenantDB.Error != nil {
+					log.Printf("    ❌ Ошибка переключения на схему: %v", tenantDB.Error)
+					continue
+				}
+
+				// Проверяем основные тенантные таблицы
+				tenantTables := []string{"users", "roles", "permissions", "objects", "contracts"}
+				for _, table := range tenantTables {
+					if db.Migrator().HasTable(table) {
+						log.Printf("    ✅ %s", table)
+					} else {
+						log.Printf("    ❌ %s (отсутствует)", table)
+					}
+				}
+			}
+
+			// Возвращаемся к схеме public
+			db.Exec("SET search_path TO public")
+		}
 	}
 
-	return nil
-}
-
-// printHelp выводит справку по использованию
-func printHelp() {
-	fmt.Println("Утилита миграции базы данных Axenta CRM")
-	fmt.Println()
-	fmt.Println("Использование:")
-	fmt.Println("  migrate [флаги]")
-	fmt.Println()
-	fmt.Println("Флаги:")
-	fmt.Println("  -global              Выполнить только глобальные миграции (таблицы в схеме public)")
-	fmt.Println("  -create-schema NAME  Создать схему для новой компании")
-	fmt.Println("  -company-id ID       ID компании для создания схемы (используется с -create-schema)")
-	fmt.Println("  -dry-run             Показать план миграций без их выполнения")
-	fmt.Println("  -help                Показать эту справку")
-	fmt.Println()
-	fmt.Println("Примеры:")
-	fmt.Println("  migrate                                    # Выполнить все миграции")
-	fmt.Println("  migrate -global                            # Только глобальные миграции")
-	fmt.Println("  migrate -dry-run                           # Показать план миграций")
-	fmt.Println("  migrate -create-schema tenant_123 -company-id 123  # Создать схему для компании")
-	fmt.Println()
-	fmt.Println("Переменные окружения:")
-	fmt.Println("  DB_HOST      Хост базы данных (по умолчанию: localhost)")
-	fmt.Println("  DB_PORT      Порт базы данных (по умолчанию: 5432)")
-	fmt.Println("  DB_USER      Пользователь базы данных")
-	fmt.Println("  DB_PASSWORD  Пароль базы данных")
-	fmt.Println("  DB_NAME      Имя базы данных")
-	fmt.Println("  DB_SSLMODE   Режим SSL (по умолчанию: disable)")
+	log.Println("")
+	log.Println("✨ Готово! Теперь можно запускать приложение.")
 }

@@ -86,6 +86,18 @@ func GetAllMigrations() []MigrationInfo {
 			Description: "Ошибки интеграций",
 			IsGlobal:    true,
 		},
+		{
+			TableName:   "local_users",
+			Model:       &models.LocalUser{},
+			Description: "Локальные пользователи для альтернативной авторизации",
+			IsGlobal:    true,
+		},
+		{
+			TableName:   "refresh_tokens",
+			Model:       &models.RefreshToken{},
+			Description: "Refresh токены для локальной авторизации",
+			IsGlobal:    true,
+		},
 
 		// Тенантные таблицы (в схемах компаний)
 		{
@@ -280,21 +292,14 @@ func GetTableInfo(db *gorm.DB, tableName string) (*TableInfo, error) {
 		tableInfo.Columns = append(tableInfo.Columns, col)
 	}
 
-	// Получаем информацию об индексах
+	// Получаем информацию об индексах (упрощенный запрос)
 	indexRows, err := db.Raw(`
 		SELECT 
-			i.indexname,
-			array_agg(a.attname ORDER BY a.attnum) as columns,
-			i.indexdef LIKE '%UNIQUE%' as is_unique
-		FROM pg_indexes i
-		JOIN pg_class c ON c.relname = i.tablename
-		JOIN pg_index idx ON idx.indexrelid = (
-			SELECT oid FROM pg_class WHERE relname = i.indexname
-		)
-		JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = ANY(idx.indkey)
-		WHERE i.schemaname = current_schema()
-		AND i.tablename = ?
-		GROUP BY i.indexname, i.indexdef
+			indexname as name,
+			indexdef LIKE '%UNIQUE%' as is_unique
+		FROM pg_indexes 
+		WHERE schemaname = current_schema()
+		AND tablename = ?
 	`, tableName).Rows()
 
 	if err != nil {
@@ -304,21 +309,14 @@ func GetTableInfo(db *gorm.DB, tableName string) (*TableInfo, error) {
 
 	for indexRows.Next() {
 		var idx IndexInfo
-		var columnsStr string
 
-		err := indexRows.Scan(&idx.Name, &columnsStr, &idx.IsUnique)
+		err := indexRows.Scan(&idx.Name, &idx.IsUnique)
 		if err != nil {
 			return nil, fmt.Errorf("ошибка сканирования индекса: %v", err)
 		}
 
-		// Парсим массив колонок PostgreSQL
-		columnsStr = strings.Trim(columnsStr, "{}")
-		if columnsStr != "" {
-			idx.Columns = strings.Split(columnsStr, ",")
-			for i, col := range idx.Columns {
-				idx.Columns[i] = strings.Trim(col, " \"")
-			}
-		}
+		// Для упрощенной версии не извлекаем колонки
+		idx.Columns = []string{} // Пустой список колонок
 
 		tableInfo.Indexes = append(tableInfo.Indexes, idx)
 	}
@@ -463,60 +461,38 @@ func RunMigration(db *gorm.DB, migration MigrationInfo) MigrationResult {
 		Changes:   []string{},
 	}
 
-	log.Printf("🔄 Проверяем таблицу: %s (%s)", migration.TableName, migration.Description)
+	log.Printf("🔄 Миграция таблицы: %s (%s)", migration.TableName, migration.Description)
 
-	// Проверяем существование таблицы
-	exists, err := CheckTableExists(db, migration.TableName)
-	if err != nil {
-		result.Error = err
-		result.Action = "error"
+	// Для many-to-many таблиц пропускаем
+	if migration.Model == nil {
+		result.Action = "skipped"
+		result.Changes = append(result.Changes, "Many-to-many таблица будет создана автоматически")
 		result.Duration = time.Since(startTime)
 		return result
 	}
 
-	if !exists {
-		// Создаем таблицу
-		if migration.Model != nil {
-			err = db.AutoMigrate(migration.Model)
-			if err != nil {
-				result.Error = fmt.Errorf("ошибка создания таблицы: %v", err)
-				result.Action = "error"
-			} else {
-				result.Action = "created"
-				result.Changes = append(result.Changes, "Таблица создана")
-				log.Printf("✅ Таблица %s создана", migration.TableName)
-			}
-		} else {
-			// Для many-to-many таблиц GORM создаст их автоматически
-			result.Action = "skipped"
-			result.Changes = append(result.Changes, "Many-to-many таблица будет создана автоматически")
-		}
+	// Проверяем существование таблицы
+	exists, err := CheckTableExists(db, migration.TableName)
+	if err != nil {
+		log.Printf("⚠️ Не удалось проверить существование таблицы %s: %v", migration.TableName, err)
+		// Продолжаем с AutoMigrate
+	}
+
+	// Выполняем AutoMigrate (создаст таблицу или обновит структуру)
+	err = db.AutoMigrate(migration.Model)
+	if err != nil {
+		result.Error = fmt.Errorf("ошибка миграции: %v", err)
+		result.Action = "error"
+		log.Printf("❌ Ошибка миграции %s: %v", migration.TableName, err)
 	} else {
-		// Проверяем структуру существующей таблицы
-		differences, err := CompareTableStructure(db, migration)
-		if err != nil {
-			result.Error = err
-			result.Action = "error"
-		} else if len(differences) > 0 {
-			// Обновляем структуру таблицы
-			if migration.Model != nil {
-				err = db.AutoMigrate(migration.Model)
-				if err != nil {
-					result.Error = fmt.Errorf("ошибка обновления таблицы: %v", err)
-					result.Action = "error"
-				} else {
-					result.Action = "updated"
-					result.Changes = differences
-					log.Printf("🔄 Таблица %s обновлена: %v", migration.TableName, differences)
-				}
-			} else {
-				result.Action = "skipped"
-				result.Changes = differences
-			}
+		if exists {
+			result.Action = "updated"
+			result.Changes = append(result.Changes, "Структура таблицы проверена/обновлена")
+			log.Printf("✅ Таблица %s обновлена", migration.TableName)
 		} else {
-			result.Action = "skipped"
-			result.Changes = append(result.Changes, "Структура таблицы актуальна")
-			log.Printf("✅ Таблица %s актуальна", migration.TableName)
+			result.Action = "created"
+			result.Changes = append(result.Changes, "Таблица создана")
+			log.Printf("✅ Таблица %s создана", migration.TableName)
 		}
 	}
 
@@ -537,6 +513,12 @@ func RunAllMigrations(globalOnly bool) error {
 
 	// Выполняем глобальные миграции
 	log.Println("📋 Выполняем миграции глобальных таблиц (схема public)")
+
+	// Убеждаемся, что мы в схеме public для глобальных миграций
+	if err := DB.Exec("SET search_path TO public").Error; err != nil {
+		log.Printf("⚠️ Не удалось переключиться на схему public: %v", err)
+	}
+
 	for _, migration := range migrations {
 		if migration.IsGlobal {
 			result := RunMigration(DB, migration)
@@ -662,12 +644,16 @@ func CreateTenantSchema(companyID uint, schemaName string) error {
 			if result.Error != nil {
 				log.Printf("❌ Ошибка создания таблицы %s в схеме %s: %v", migration.TableName, schemaName, result.Error)
 				// Продолжаем создание других таблиц
+			} else {
+				log.Printf("✅ Таблица %s создана в схеме %s", migration.TableName, schemaName)
 			}
 		}
 	}
 
 	// Возвращаемся к схеме public
-	DB.Exec("SET search_path TO public")
+	if err := DB.Exec("SET search_path TO public").Error; err != nil {
+		log.Printf("⚠️ Не удалось вернуться к схеме public: %v", err)
+	}
 
 	log.Printf("✅ Схема %s создана и настроена", schemaName)
 	return nil

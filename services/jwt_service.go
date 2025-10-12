@@ -30,6 +30,17 @@ type JWTService struct {
 	db              *gorm.DB
 }
 
+// getPublicDB возвращает подключение к схеме public для глобальных таблиц
+func (j *JWTService) getPublicDB() *gorm.DB {
+	// Клонируем подключение и устанавливаем схему public
+	publicDB := j.db.Session(&gorm.Session{})
+	if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
+		// Логируем ошибку, но продолжаем работу
+		fmt.Printf("⚠️ JWTService: Не удалось переключиться на схему public: %v\n", err)
+	}
+	return publicDB
+}
+
 // NewJWTService создает новый JWT сервис
 func NewJWTService(db *gorm.DB) *JWTService {
 	secret := os.Getenv("JWT_SECRET")
@@ -114,7 +125,8 @@ func (j *JWTService) GenerateRefreshToken(user *models.LocalUser) (string, error
 		ExpiresAt: time.Now().Add(j.refreshTokenTTL),
 	}
 
-	if err := j.db.Create(refreshToken).Error; err != nil {
+	publicDB := j.getPublicDB()
+	if err := publicDB.Create(refreshToken).Error; err != nil {
 		return "", fmt.Errorf("failed to save refresh token: %w", err)
 	}
 
@@ -145,7 +157,8 @@ func (j *JWTService) ValidateAccessToken(tokenString string) (*JWTClaims, error)
 func (j *JWTService) RefreshAccessToken(refreshTokenString string) (string, error) {
 	// Находим refresh токен в БД
 	var refreshToken models.RefreshToken
-	if err := j.db.Preload("User").Where("token = ? AND is_revoked = false", refreshTokenString).First(&refreshToken).Error; err != nil {
+	publicDB := j.getPublicDB()
+	if err := publicDB.Preload("User").Where("token = ? AND is_revoked = false", refreshTokenString).First(&refreshToken).Error; err != nil {
 		return "", fmt.Errorf("refresh token not found: %w", err)
 	}
 
@@ -166,23 +179,26 @@ func (j *JWTService) RefreshAccessToken(refreshTokenString string) (string, erro
 // RevokeRefreshToken отзывает refresh токен
 func (j *JWTService) RevokeRefreshToken(tokenString string) error {
 	var refreshToken models.RefreshToken
-	if err := j.db.Where("token = ?", tokenString).First(&refreshToken).Error; err != nil {
+	publicDB := j.getPublicDB()
+	if err := publicDB.Where("token = ?", tokenString).First(&refreshToken).Error; err != nil {
 		return fmt.Errorf("refresh token not found: %w", err)
 	}
 
-	return refreshToken.Revoke(j.db)
+	return refreshToken.Revoke(publicDB)
 }
 
 // RevokeAllUserTokens отзывает все refresh токены пользователя
 func (j *JWTService) RevokeAllUserTokens(userID uint) error {
-	return j.db.Model(&models.RefreshToken{}).
+	publicDB := j.getPublicDB()
+	return publicDB.Model(&models.RefreshToken{}).
 		Where("user_id = ? AND is_revoked = false", userID).
 		Update("is_revoked", true).Error
 }
 
 // CleanupExpiredTokens удаляет истекшие refresh токены
 func (j *JWTService) CleanupExpiredTokens() error {
-	return j.db.Where("expires_at < ? OR is_revoked = true", time.Now()).
+	publicDB := j.getPublicDB()
+	return publicDB.Where("expires_at < ? OR is_revoked = true", time.Now()).
 		Delete(&models.RefreshToken{}).Error
 }
 
