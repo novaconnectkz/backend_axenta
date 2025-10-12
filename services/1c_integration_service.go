@@ -241,7 +241,7 @@ func (s *OneCIntegrationService) ImportCounterparties(ctx context.Context, compa
 }
 
 // importSingleCounterparty импортирует одного контрагента
-func (s *OneCIntegrationService) importSingleCounterparty(ctx context.Context, companyID uint, cp *OneCCounterparty) error {
+func (s *OneCIntegrationService) importSingleCounterparty(_ context.Context, companyID uint, cp *OneCCounterparty) error {
 	// Проверяем, есть ли уже такой контрагент
 	var existingUser models.User
 	err := s.db.Where("company_id = ? AND (email = ? OR phone = ?) AND external_id = ?",
@@ -334,7 +334,7 @@ func (s *OneCIntegrationService) SyncPaymentStatuses(ctx context.Context, compan
 }
 
 // getConfig получает конфигурацию интеграции
-func (s *OneCIntegrationService) getConfig(ctx context.Context, companyID uint) (*OneCIntegrationConfig, error) {
+func (s *OneCIntegrationService) getConfig(_ context.Context, companyID uint) (*OneCIntegrationConfig, error) {
 	var integration models.Integration
 	if err := s.db.Where("company_id = ? AND integration_type = ?", companyID, "1c").First(&integration).Error; err != nil {
 		return nil, fmt.Errorf("интеграция с 1С не настроена: %w", err)
@@ -349,7 +349,7 @@ func (s *OneCIntegrationService) getConfig(ctx context.Context, companyID uint) 
 }
 
 // logError логирует ошибку интеграции
-func (s *OneCIntegrationService) logError(ctx context.Context, companyID uint, operation, entityType, entityID, errorCode, errorMessage string, requestData, responseData interface{}) {
+func (s *OneCIntegrationService) logError(_ context.Context, companyID uint, operation, entityType, entityID, errorCode, errorMessage string, requestData, responseData interface{}) {
 	var requestJSON, responseJSON string
 
 	if requestData != nil {

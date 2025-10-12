@@ -337,6 +337,8 @@ func (api *CompaniesAPI) GetCompanies(c *gin.Context) {
 }
 
 // parseAxentaDate парсит дату из Axenta Cloud API
+// Временно закомментировано - функция не используется
+/*
 func parseAxentaDate(dateStr string) time.Time {
 	if dateStr == "" {
 		return time.Now()
@@ -360,6 +362,7 @@ func parseAxentaDate(dateStr string) time.Time {
 	// Если не удалось распарсить, возвращаем текущее время
 	return time.Now()
 }
+*/
 
 // parseInt безопасно парсит строку в int
 func parseInt(s string) int {

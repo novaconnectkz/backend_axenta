@@ -370,9 +370,12 @@ func (rss *ReportSchedulerService) GetScheduleStatus(scheduleID uint) (map[strin
 }
 
 // formatDate форматирует дату для отображения
+// Временно закомментировано - функция не используется
+/*
 func formatDate(date *time.Time) string {
 	if date == nil {
 		return "не указана"
 	}
 	return date.Format("02.01.2006")
 }
+*/

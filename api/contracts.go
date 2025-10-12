@@ -25,9 +25,10 @@ func GetContracts(c *gin.Context) {
 
 	// Фильтрация по активности
 	if isActive := c.Query("is_active"); isActive != "" {
-		if isActive == "true" {
+		switch isActive {
+		case "true":
 			query = query.Where("is_active = ?", true)
-		} else if isActive == "false" {
+		case "false":
 			query = query.Where("is_active = ?", false)
 		}
 	}

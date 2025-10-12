@@ -2,6 +2,7 @@ package api
 
 import (
 	"backend_axenta/database"
+	"backend_axenta/models"
 	"backend_axenta/services"
 	"bytes"
 	"encoding/json"
@@ -313,11 +314,42 @@ func Login(c *gin.Context) {
 			"account_type": axentaUser.AccountType,
 			"error":        err.Error(),
 		})
-		c.JSON(500, gin.H{
-			"status": "error",
-			"error":  "Failed to sync user with database",
+
+		// Вместо возврата ошибки, продолжаем с данными из Axenta (fallback режим)
+		log.Printf("⚠️ User sync failed, continuing with Axenta data only: %v", err)
+
+		// Создаем fallback пользователя на основе данных из Axenta
+		user = &models.User{
+			ID:             uint(axentaUser.ID), // Используем ID из Axenta как временный
+			Username:       axentaUser.Username,
+			Email:          axentaUser.Email,
+			FirstName:      axentaUser.Name,
+			Name:           axentaUser.Name,
+			IsActive:       axentaUser.IsActive,
+			AxentaUserType: axentaUserService.MapAccountTypeToUserType(axentaUser.AccountType),
+			AxentaUserID:   fmt.Sprintf("%d", axentaUser.ID),
+			IsAxentaUser:   true,
+			ExternalSource: "axenta",
+			ExternalID:     fmt.Sprintf("%d", axentaUser.ID),
+		}
+
+		// Пытаемся назначить роль, если возможно
+		if roleID, roleErr := axentaUserService.GetRoleIDForAxentaUserType(axentaUser.AccountType); roleErr == nil {
+			user.RoleID = roleID
+			// Пытаемся загрузить роль для отображения
+			var role models.Role
+			if db.First(&role, roleID).Error == nil {
+				user.Role = &role
+			}
+		}
+
+		logAuthOperation("login_success_fallback_sync", req.Username, userIDStr, "", map[string]interface{}{
+			"status":           "success",
+			"fallback_mode":    true,
+			"reason":           "user_sync_failed",
+			"account_type":     axentaUser.AccountType,
+			"axenta_user_type": user.AxentaUserType,
 		})
-		return
 	}
 
 	// Успешное получение данных пользователя

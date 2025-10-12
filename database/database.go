@@ -101,6 +101,8 @@ func ConnectDatabase() error {
 
 // getEnv получает переменную окружения или возвращает значение по умолчанию
 // Deprecated: используйте config.GetConfig() вместо этого
+// Временно закомментировано - функция не используется
+/*
 func getEnv(key, defaultValue string) string {
 	cfg := config.GetConfig()
 	switch key {
@@ -121,6 +123,7 @@ func getEnv(key, defaultValue string) string {
 		return defaultValue
 	}
 }
+*/
 
 // GetDB возвращает экземпляр базы данных
 func GetDB() *gorm.DB {
@@ -162,6 +165,8 @@ func GetTenantDBByID(tenantID uint) *gorm.DB {
 }
 
 // autoMigrate выполняет автомиграцию только глобальных моделей (не мультитенантных)
+// Временно закомментировано - функция не используется
+/*
 func autoMigrate() error {
 	log.Println("🔄 Выполняем автомиграцию глобальных таблиц")
 
@@ -182,6 +187,7 @@ func autoMigrate() error {
 	log.Println("✅ Автомиграция глобальных таблиц завершена")
 	return nil
 }
+*/
 
 // SetupTestDatabase создает тестовую базу данных в памяти
 func SetupTestDatabase() error {

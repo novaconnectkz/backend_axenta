@@ -75,9 +75,10 @@ func (api *LocationAPI) GetLocations(c *gin.Context) {
 		query = query.Where("importance = ?", importance)
 	}
 	if isActive := c.Query("is_active"); isActive != "" {
-		if isActive == "true" {
+		switch isActive {
+		case "true":
 			query = query.Where("is_active = true")
-		} else if isActive == "false" {
+		case "false":
 			query = query.Where("is_active = false")
 		}
 	}

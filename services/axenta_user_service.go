@@ -157,6 +157,16 @@ func (s *AxentaUserService) SyncUserWithAxenta(token string, username string) (*
 	return &user, nil
 }
 
+// MapAccountTypeToUserType преобразует тип аккаунта Axenta в тип пользователя системы (публичный метод)
+func (s *AxentaUserService) MapAccountTypeToUserType(accountType string) string {
+	return s.mapAccountTypeToUserType(accountType)
+}
+
+// GetRoleIDForAxentaUserType возвращает ID роли для типа пользователя Axenta (публичный метод)
+func (s *AxentaUserService) GetRoleIDForAxentaUserType(accountType string) (uint, error) {
+	return s.getRoleIDForAxentaUserType(accountType)
+}
+
 // mapAccountTypeToUserType преобразует тип аккаунта Axenta в тип пользователя системы
 func (s *AxentaUserService) mapAccountTypeToUserType(accountType string) string {
 	switch accountType {
