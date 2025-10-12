@@ -29,7 +29,12 @@ type User struct {
 	// Поля для интеграций
 	UserType       string `json:"user_type" gorm:"default:'user';type:varchar(50)"` // user, client, installer, etc.
 	ExternalID     string `json:"external_id" gorm:"type:varchar(100)"`             // ID во внешних системах
-	ExternalSource string `json:"external_source" gorm:"type:varchar(50)"`          // bitrix24, 1c, etc.
+	ExternalSource string `json:"external_source" gorm:"type:varchar(50)"`          // bitrix24, 1c, axenta, etc.
+
+	// Поля для Axenta интеграции
+	AxentaUserType string `json:"axenta_user_type" gorm:"type:varchar(50)"` // partner, client, local
+	AxentaUserID   string `json:"axenta_user_id" gorm:"type:varchar(100)"`  // ID пользователя в Axenta
+	IsAxentaUser   bool   `json:"is_axenta_user" gorm:"default:false"`      // Пользователь из Axenta или локальный
 
 	// Для мультитенантности (временно, пока не перейдем полностью на схемы)
 	CompanyID uint `json:"company_id" gorm:"index"`
@@ -53,4 +58,39 @@ type User struct {
 // TableName задает имя таблицы для модели User
 func (User) TableName() string {
 	return "users"
+}
+
+// IsPartner проверяет, является ли пользователь партнером в Axenta
+func (u *User) IsPartner() bool {
+	return u.IsAxentaUser && u.AxentaUserType == "partner"
+}
+
+// IsClient проверяет, является ли пользователь клиентом в Axenta
+func (u *User) IsClient() bool {
+	return u.IsAxentaUser && u.AxentaUserType == "client"
+}
+
+// IsLocalUser проверяет, является ли пользователь локальным (не из Axenta)
+func (u *User) IsLocalUser() bool {
+	return !u.IsAxentaUser || u.AxentaUserType == "local"
+}
+
+// SetAxentaRole устанавливает роль пользователя из Axenta
+func (u *User) SetAxentaRole(userType string, userID string) {
+	u.AxentaUserType = userType
+	u.AxentaUserID = userID
+	u.IsAxentaUser = true
+	u.ExternalSource = "axenta"
+	u.ExternalID = userID
+}
+
+// ClearAxentaRole очищает роль Axenta (делает пользователя локальным)
+func (u *User) ClearAxentaRole() {
+	u.AxentaUserType = "local"
+	u.AxentaUserID = ""
+	u.IsAxentaUser = false
+	if u.ExternalSource == "axenta" {
+		u.ExternalSource = ""
+		u.ExternalID = ""
+	}
 }

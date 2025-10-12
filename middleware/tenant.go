@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -424,6 +425,61 @@ func (tm *TenantMiddleware) runTenantMigrations(tenantDB *gorm.DB) error {
 	for _, model := range models {
 		if err := tenantDB.AutoMigrate(model); err != nil {
 			return fmt.Errorf("ошибка миграции модели %T: %v", model, err)
+		}
+	}
+
+	// Создаем роли по умолчанию для Axenta пользователей в новой tenant схеме
+	if err := tm.createDefaultRoles(tenantDB); err != nil {
+		log.Printf("Warning: Failed to create default roles in tenant schema: %v", err)
+		// Не возвращаем ошибку, так как это не критично
+	}
+
+	return nil
+}
+
+// createDefaultRoles создает роли по умолчанию в tenant схеме
+func (tm *TenantMiddleware) createDefaultRoles(tenantDB *gorm.DB) error {
+	defaultRoles := []models.Role{
+		{
+			Name:        "partner",
+			DisplayName: "Партнер",
+			Description: "Роль партнера из Axenta",
+			Color:       "#2196F3",
+			Priority:    100,
+			IsActive:    true,
+			IsSystem:    true,
+		},
+		{
+			Name:        "client",
+			DisplayName: "Клиент",
+			Description: "Роль клиента из Axenta",
+			Color:       "#4CAF50",
+			Priority:    50,
+			IsActive:    true,
+			IsSystem:    true,
+		},
+		{
+			Name:        "user",
+			DisplayName: "Пользователь",
+			Description: "Локальный пользователь системы",
+			Color:       "#FF9800",
+			Priority:    25,
+			IsActive:    true,
+			IsSystem:    true,
+		},
+	}
+
+	for _, role := range defaultRoles {
+		var existingRole models.Role
+		err := tenantDB.Where("name = ?", role.Name).First(&existingRole).Error
+		
+		if err == gorm.ErrRecordNotFound {
+			if err := tenantDB.Create(&role).Error; err != nil {
+				return fmt.Errorf("failed to create role %s: %w", role.Name, err)
+			}
+			log.Printf("✅ Created default role in tenant schema: %s", role.Name)
+		} else if err != nil {
+			return fmt.Errorf("failed to check role %s: %w", role.Name, err)
 		}
 	}
 

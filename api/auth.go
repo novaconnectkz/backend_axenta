@@ -1,6 +1,8 @@
 package api
 
 import (
+	"backend_axenta/database"
+	"backend_axenta/services"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -280,44 +282,65 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	// Проверяем тип аккаунта - доступ только для партнеров
-	if axentaUser.AccountType != "partner" {
-		userIDStr := fmt.Sprintf("%d", axentaUser.ID)
-		logAuthOperation("login_access_denied", req.Username, userIDStr, "", map[string]interface{}{
-			"status":       "access_denied",
-			"account_type": axentaUser.AccountType,
-			"account_name": axentaUser.AccountName,
-			"reason":       "only_partners_allowed",
-		})
-		c.JSON(403, gin.H{
+	// Получаем базу данных для работы с пользователями
+	db := database.GetDB()
+	if db == nil {
+		logAuthOperation("database_connection_error", req.Username, "", "", map[string]interface{}{
 			"status": "error",
-			"error":  "Доступ к CRM разрешен только партнерам Axenta",
-			"details": gin.H{
-				"account_type":  axentaUser.AccountType,
-				"required_type": "partner",
-			},
+			"error":  "database_not_available",
+		})
+		c.JSON(500, gin.H{
+			"status": "error",
+			"error":  "Database connection not available",
+		})
+		return
+	}
+
+	// Создаем сервис для работы с пользователями Axenta
+	axentaUserService := services.NewAxentaUserService(db)
+
+	// Убеждаемся, что роли по умолчанию существуют
+	if err := axentaUserService.EnsureDefaultRoles(); err != nil {
+		log.Printf("Failed to ensure default roles: %v", err)
+	}
+
+	// Синхронизируем пользователя с Axenta (поддерживаем как партнеров, так и клиентов)
+	user, err := axentaUserService.SyncUserWithAxenta(axentaLogin.Token, req.Username)
+	if err != nil {
+		userIDStr := fmt.Sprintf("%d", axentaUser.ID)
+		logAuthOperation("user_sync_error", req.Username, userIDStr, "", map[string]interface{}{
+			"status":       "error",
+			"account_type": axentaUser.AccountType,
+			"error":        err.Error(),
+		})
+		c.JSON(500, gin.H{
+			"status": "error",
+			"error":  "Failed to sync user with database",
 		})
 		return
 	}
 
 	// Успешное получение данных пользователя
-	userIDStr := fmt.Sprintf("%d", axentaUser.ID)
+	userIDStr := fmt.Sprintf("%d", user.ID)
 	logAuthOperation("login_success_full", req.Username, userIDStr, "", map[string]interface{}{
-		"status":       "success",
-		"account_type": axentaUser.AccountType,
-		"account_name": axentaUser.AccountName,
-		"account_id":   axentaUser.AccountID,
-		"is_admin":     axentaUser.IsAdmin,
-		"email":        axentaUser.Email,
-		"full_data":    true,
+		"status":           "success",
+		"account_type":     axentaUser.AccountType,
+		"account_name":     axentaUser.AccountName,
+		"account_id":       axentaUser.AccountID,
+		"is_admin":         axentaUser.IsAdmin,
+		"email":            axentaUser.Email,
+		"full_data":        true,
+		"axenta_user_type": user.AxentaUserType,
+		"is_axenta_user":   user.IsAxentaUser,
+		"role_id":          user.RoleID,
 	})
 
-	// Формируем ответ с правильными типами данных
+	// Формируем ответ с правильными типами данных, включая роль из базы данных
 	userResponse := gin.H{
 		"id":                      userIDStr,
-		"username":                axentaUser.Username,
-		"name":                    axentaUser.Name,
-		"email":                   axentaUser.Email,
+		"username":                user.Username,
+		"name":                    user.Name,
+		"email":                   user.Email,
 		"accountName":             axentaUser.AccountName,
 		"accountType":             axentaUser.AccountType,
 		"creatorName":             axentaUser.CreatorName,
@@ -325,9 +348,14 @@ func Login(c *gin.Context) {
 		"accountBlockingDatetime": axentaUser.AccountBlockingDatetime,
 		"accountId":               axentaUser.AccountID,
 		"isAdmin":                 axentaUser.IsAdmin,
-		"isActive":                axentaUser.IsActive,
+		"isActive":                user.IsActive,
 		"language":                axentaUser.Language,
 		"timezone":                axentaUser.Timezone,
+		// Добавляем информацию о роли из нашей системы
+		"axentaUserType": user.AxentaUserType,
+		"isAxentaUser":   user.IsAxentaUser,
+		"roleId":         user.RoleID,
+		"role":           user.Role,
 	}
 
 	c.JSON(200, gin.H{

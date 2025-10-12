@@ -83,6 +83,16 @@ func main() {
 	// Создаем сервисы
 	jwtService := services.NewJWTService(database.DB)
 
+	// Инициализируем роли по умолчанию для Axenta пользователей в схеме public
+	// Так как /api/auth endpoints работают без мультитенантности
+	log.Println("🔧 Initializing default Axenta roles in public schema...")
+	axentaUserService := services.NewAxentaUserService(database.DB)
+	if err := axentaUserService.EnsureDefaultRoles(); err != nil {
+		log.Printf("Warning: Failed to ensure default Axenta roles: %v", err)
+	} else {
+		log.Println("✅ Default Axenta roles initialized successfully in public schema")
+	}
+
 	// Создаем middleware для мультитенантности
 	tenantMiddleware := middleware.NewTenantMiddleware(database.DB)
 
@@ -124,6 +134,10 @@ func main() {
 		c.JSON(200, gin.H{"status": "success", "message": "pong"})
 	})
 	r.POST("/api/auth/login", api.Login)
+
+	// Публичные тестовые endpoints для отладки ролей
+	r.GET("/api/debug/roles", api.TestRolesCreation)
+	r.GET("/api/debug/user-role", api.TestUserWithRole)
 
 	// === ЛОКАЛЬНАЯ АВТОРИЗАЦИЯ ===
 	localAuthAPI := api.NewLocalAuthAPI(database.DB, jwtService)
@@ -515,7 +529,7 @@ func main() {
 
 	// === ЭНДПОИНТЫ С ПРЕФИКСОМ /auth/ ДЛЯ ФРОНТЕНДА ===
 	log.Println("🔧 Registering /auth/ prefixed endpoints for frontend compatibility...")
-	
+
 	// Пользователи с префиксом /auth/
 	apiGroup.GET("/auth/users", api.GetUsersFromAxentaCloud)
 	apiGroup.GET("/auth/users/", api.GetUsersFromAxentaCloud)
@@ -545,6 +559,23 @@ func main() {
 	apiGroup.POST("/auth/user-templates", api.CreateUserTemplate)
 	apiGroup.PUT("/auth/user-templates/:id", api.UpdateUserTemplate)
 	apiGroup.DELETE("/auth/user-templates/:id", api.DeleteUserTemplate)
+
+	// Управление ролями Axenta пользователей
+	log.Println("🔧 Registering Axenta users management endpoints...")
+	apiGroup.GET("/axenta-users", api.GetAxentaUsers)                  // Получить пользователей по типу (?type=partner|client|local|all)
+	apiGroup.GET("/axenta-users/stats", api.GetUsersByAxentaType)      // Статистика по типам пользователей
+	apiGroup.POST("/axenta-users/local", api.CreateLocalUser)          // Создать локального пользователя
+	apiGroup.PUT("/axenta-users/:id/role", api.UpdateUserAxentaRole)   // Обновить роль Axenta пользователя
+	apiGroup.POST("/axenta-users/sync", api.SyncUserWithAxenta)        // Синхронизировать пользователя с Axenta
+	apiGroup.POST("/axenta-users/ensure-roles", api.EnsureAxentaRoles) // Создать роли по умолчанию
+
+	// Синхронизация всех пользователей из Axenta
+	apiGroup.POST("/axenta-users/sync-all", api.SyncAllAxentaUsers) // Синхронизировать всех пользователей из Axenta
+	apiGroup.GET("/users/synced", api.GetSyncedUsersFromLocal)      // Получить синхронизированных пользователей из локальной БД
+
+	// Тестовые endpoints для отладки ролей
+	apiGroup.GET("/test/roles", api.TestRolesCreation)    // Тест создания ролей в tenant схеме
+	apiGroup.GET("/test/user-role", api.TestUserWithRole) // Тест пользователя с назначенной ролью
 
 	// Договоры
 	apiGroup.GET("/contracts", api.GetContracts)

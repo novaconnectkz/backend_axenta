@@ -298,7 +298,7 @@ func (bas *BillingAutomationService) GenerateMonthlyReports(year int, month int)
 		// Временно пропускаем статистику из-за несовместимости типов
 		// stats, err := bas.GetBillingStatistics(company.ID, year, &month)
 		// Просто пропускаем эту компанию
-		fmt.Printf("Пропускаем компанию %s из-за несовместимости типов\n", company.ID)
+		fmt.Printf("Пропускаем компанию %d из-за несовместимости типов\n", company.ID)
 		continue
 
 		// Создаем запись в истории о генерации отчета

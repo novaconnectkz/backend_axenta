@@ -1,6 +1,9 @@
 package api
 
 import (
+	"backend_axenta/database"
+	"backend_axenta/models"
+	"backend_axenta/services"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // AxentaCloudObject представляет объект из Axenta Cloud API
@@ -480,9 +484,32 @@ func GetUsersFromAxentaCloud(c *gin.Context) {
 
 	log.Printf("✅ Получено %d пользователей от Axenta Cloud (всего: %d)", len(axentaResponse.Results), axentaResponse.Count)
 
+	// Получаем базу данных для работы с ролями
+	// Используем основную базу данных, так как /api/auth endpoints работают без мультитенантности
+	db := database.GetDB()
+	if db == nil {
+		log.Printf("❌ Database connection not available for role mapping")
+		// Продолжаем без ролей, но логируем проблему
+	}
+
 	// Преобразуем данные в формат, ожидаемый фронтендом
 	users := make([]gin.H, len(axentaResponse.Results))
 	for i, user := range axentaResponse.Results {
+		// Определяем роль на основе accountType
+		var roleInfo gin.H
+		var roleID interface{} = 0
+
+		if db != nil {
+			accountType, ok := user["accountType"].(string)
+			if ok {
+				role, roleData := getRoleByAxentaType(db, accountType)
+				if role != nil {
+					roleID = role.ID
+					roleInfo = roleData
+				}
+			}
+		}
+
 		users[i] = gin.H{
 			"id":          user["id"],
 			"username":    user["username"],
@@ -490,7 +517,8 @@ func GetUsersFromAxentaCloud(c *gin.Context) {
 			"first_name":  user["name"], // В Axenta Cloud имя хранится в поле "name"
 			"last_name":   "",
 			"is_active":   user["isActive"],
-			"role_id":     0, // Роли в Axenta Cloud работают по-другому
+			"role_id":     roleID,
+			"role":        roleInfo, // Добавляем информацию о роли
 			"template_id": nil,
 			"last_login":  user["lastLogin"],
 			"login_count": 0,
@@ -504,6 +532,11 @@ func GetUsersFromAxentaCloud(c *gin.Context) {
 			"timezone":         user["timezone"],
 			"is_admin":         user["isAdmin"],
 			"has_admin_access": user["hasAdminAccess"],
+			// Поля для Axenta интеграции
+			"axenta_user_type": mapAccountTypeToAxentaType(user["accountType"]),
+			"axenta_user_id":   fmt.Sprintf("%v", user["id"]),
+			"is_axenta_user":   true,
+			"external_source":  "axenta",
 		}
 	}
 
@@ -666,4 +699,83 @@ func GetUsersStatsFromAxentaCloud(c *gin.Context) {
 			"last_updated":   time.Now().Format("2006-01-02T15:04:05Z"),
 		},
 	})
+}
+
+// getRoleByAxentaType получает роль из базы данных на основе типа аккаунта Axenta
+func getRoleByAxentaType(db *gorm.DB, accountType string) (*models.Role, gin.H) {
+	var roleName string
+
+	switch accountType {
+	case "partner":
+		roleName = "partner"
+	case "client":
+		roleName = "client"
+	default:
+		roleName = "user" // Роль по умолчанию
+	}
+
+	var role models.Role
+	err := db.Where("name = ?", roleName).First(&role).Error
+	if err != nil {
+		// Если роль не найдена, создаем роли по умолчанию в этой tenant схеме
+		if err == gorm.ErrRecordNotFound {
+			log.Printf("⚠️ Role %s not found in tenant schema, creating default roles...", roleName)
+
+			// Создаем сервис и роли по умолчанию
+			axentaUserService := services.NewAxentaUserService(db)
+			if createErr := axentaUserService.EnsureDefaultRoles(); createErr != nil {
+				log.Printf("❌ Failed to create default roles: %v", createErr)
+				return nil, nil
+			}
+
+			// Пытаемся найти роль снова
+			err = db.Where("name = ?", roleName).First(&role).Error
+			if err != nil {
+				log.Printf("❌ Role %s still not found after creation: %v", roleName, err)
+				return nil, nil
+			}
+
+			log.Printf("✅ Role %s created and found (ID: %d)", roleName, role.ID)
+		} else {
+			log.Printf("❌ Database error finding role %s: %v", roleName, err)
+			return nil, nil
+		}
+	}
+
+	// Возвращаем роль и данные для frontend
+	roleData := gin.H{
+		"id":           role.ID,
+		"name":         role.Name,
+		"display_name": role.DisplayName,
+		"description":  role.Description,
+		"color":        role.Color,
+		"priority":     role.Priority,
+		"is_active":    role.IsActive,
+		"is_system":    role.IsSystem,
+		"created_at":   role.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		"updated_at":   role.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+	}
+
+	return &role, roleData
+}
+
+// mapAccountTypeToAxentaType преобразует тип аккаунта Axenta в тип пользователя системы
+func mapAccountTypeToAxentaType(accountType interface{}) string {
+	if accountType == nil {
+		return "client"
+	}
+
+	accountTypeStr, ok := accountType.(string)
+	if !ok {
+		return "client"
+	}
+
+	switch accountTypeStr {
+	case "partner":
+		return "partner"
+	case "client":
+		return "client"
+	default:
+		return "client" // По умолчанию
+	}
 }
