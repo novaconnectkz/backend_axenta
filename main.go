@@ -174,9 +174,10 @@ func main() {
 	r.GET("/api/objects", getObjectsHandler)
 	r.GET("/api/objects/", getObjectsHandler)
 
-	// Добавляем публичные CMS эндпоинты для совместимости
-	r.GET("/api/cms/objects", getObjectsHandler)
-	r.GET("/api/cms/objects/", getObjectsHandler)
+	// УДАЛЕНО: Публичные CMS эндпоинты для безопасности
+	// Теперь все запросы объектов требуют аутентификации
+	// r.GET("/api/cms/objects", getObjectsHandler)
+	// r.GET("/api/cms/objects/", getObjectsHandler)
 
 	// Временный публичный маршрут для получения одного объекта (для тестирования фронтенда)
 	getObjectHandler := func(c *gin.Context) {
@@ -217,9 +218,10 @@ func main() {
 	r.GET("/api/objects/stats", getObjectsStatsHandler)
 	r.GET("/api/objects/stats/", getObjectsStatsHandler)
 
-	// Добавляем публичные CMS эндпоинты для статистики
-	r.GET("/api/cms/objects/stats", getObjectsStatsHandler)
-	r.GET("/api/cms/objects/stats/", getObjectsStatsHandler)
+	// УДАЛЕНО: Публичные CMS эндпоинты статистики для безопасности
+	// Теперь вся статистика объектов требует аутентификации
+	// r.GET("/api/cms/objects/stats", getObjectsStatsHandler)
+	// r.GET("/api/cms/objects/stats/", getObjectsStatsHandler)
 
 	getObjectTemplatesHandler := func(c *gin.Context) {
 		// Добавляем заголовки для предотвращения кеширования

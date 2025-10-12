@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -48,8 +49,29 @@ func GetObjectsFromAxentaCloud(c *gin.Context) {
 	// Формируем URL для Axenta Cloud API
 	axentaURL := fmt.Sprintf("https://axenta.cloud/api/cms/objects/?page=%s&per_page=%s&ordering=%s", page, perPage, ordering)
 
-	// Используем рабочий токен Axenta Cloud
-	axentaToken := "5e515a8f2874fc78f31c74af45260333f2c84c35"
+	// Получаем токен пользователя из заголовка Authorization
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  "Токен авторизации не предоставлен",
+		})
+		return
+	}
+
+	// Извлекаем токен из заголовка "Token <token>" или "Bearer <token>"
+	var userToken string
+	if strings.HasPrefix(authHeader, "Token ") {
+		userToken = strings.TrimPrefix(authHeader, "Token ")
+	} else if strings.HasPrefix(authHeader, "Bearer ") {
+		userToken = strings.TrimPrefix(authHeader, "Bearer ")
+	} else {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  "Неверный формат токена авторизации",
+		})
+		return
+	}
 
 	// Создаем запрос к Axenta Cloud
 	req, err := http.NewRequest("GET", axentaURL, nil)
@@ -61,8 +83,8 @@ func GetObjectsFromAxentaCloud(c *gin.Context) {
 		return
 	}
 
-	// Добавляем заголовки авторизации
-	req.Header.Set("Authorization", "Token "+axentaToken)
+	// Добавляем заголовки авторизации с токеном пользователя
+	req.Header.Set("Authorization", "Token "+userToken)
 	req.Header.Set("Content-Type", "application/json")
 
 	// Выполняем запрос
@@ -156,9 +178,32 @@ func GetObjectsFromAxentaCloud(c *gin.Context) {
 
 // GetObjectsStatsFromAxentaCloud получает статистику объектов
 func GetObjectsStatsFromAxentaCloud(c *gin.Context) {
+	// Получаем токен пользователя из заголовка Authorization
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  "Токен авторизации не предоставлен",
+		})
+		return
+	}
+
+	// Извлекаем токен из заголовка "Token <token>" или "Bearer <token>"
+	var userToken string
+	if strings.HasPrefix(authHeader, "Token ") {
+		userToken = strings.TrimPrefix(authHeader, "Token ")
+	} else if strings.HasPrefix(authHeader, "Bearer ") {
+		userToken = strings.TrimPrefix(authHeader, "Bearer ")
+	} else {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  "Неверный формат токена авторизации",
+		})
+		return
+	}
+
 	// Для статистики можно сделать запрос к объектам и посчитать
 	axentaURL := "https://axenta.cloud/api/cms/objects/?page=1&per_page=1"
-	axentaToken := "5e515a8f2874fc78f31c74af45260333f2c84c35"
 
 	req, err := http.NewRequest("GET", axentaURL, nil)
 	if err != nil {
@@ -169,7 +214,7 @@ func GetObjectsStatsFromAxentaCloud(c *gin.Context) {
 		return
 	}
 
-	req.Header.Set("Authorization", "Token "+axentaToken)
+	req.Header.Set("Authorization", "Token "+userToken)
 	req.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{}
