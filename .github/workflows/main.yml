@@ -1,4 +1,4 @@
-name: Deploy Backend
+name: Deploy (git pull over SSH)
 
 on:
   push:
@@ -6,80 +6,33 @@ on:
   workflow_dispatch:
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        
-      - name: Set up Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: '1.21'
-          
-      - name: Run tests
-        env:
-          DB_TYPE: sqlite
-          DB_PATH: ":memory:"
-          REDIS_ENABLED: "false"
-          JWT_SECRET: "test-secret-key-for-testing-only"
-          ENVIRONMENT: test
-        run: |
-          go mod tidy
-          # Запускаем только базовые тесты, пропуская проблемные
-          go test ./testutils -v
-          go test ./models -run TestSimpleModels -v
-          go test ./models -run TestUserModel -v
-          go test ./models -run TestPermissionModel -v
-          # Пропускаем тесты с проблемами SQLite миграций
-          echo "Skipping problematic tests until SQLite compatibility is fixed"
-          
   deploy:
-    needs: test
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        
-      - name: Check deployment secrets
-        id: check-secrets
+      - name: Prepare ~/.ssh
         run: |
-          if [ -z "${{ secrets.SERVER_HOST }}" ]; then
-            echo "🎉 Tests passed successfully!"
-            echo ""
-            echo "⚠️  Deployment is skipped because GitHub Secrets are not configured."
-            echo ""
-            echo "📋 To enable automatic deployment, please configure the following GitHub Secrets:"
-            echo "   - SERVER_HOST: IP address or domain of your server"
-            echo "   - SERVER_USERNAME: SSH username for deployment"
-            echo "   - SERVER_SSH_KEY: Private SSH key for server access"
-            echo "   - SERVER_PORT: SSH port (optional, defaults to 22)"
-            echo ""
-            echo "📖 For detailed setup instructions, see:"
-            echo "   https://github.com/${{ github.repository }}/blob/main/GITHUB_SECRETS_SETUP.md"
-            echo ""
-            echo "🔧 Once configured, the next push will automatically deploy to your server."
-            echo "skip=true" >> $GITHUB_OUTPUT
-          else
-            echo "✅ Deployment secrets are configured. Proceeding with deployment..."
-            echo "skip=false" >> $GITHUB_OUTPUT
-          fi
-        
-      - name: Deploy via SSH
-        if: steps.check-secrets.outputs.skip == 'false'
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          touch ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Add server to known_hosts
+        run: |
+          ssh-keyscan -p "${{ secrets.SSH_PORT }}" -T 5 "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: SSH and git pull
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USERNAME }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          port: ${{ secrets.SERVER_PORT || '22' }}
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT }}
           script_stop: true
           script: |
             set -e
-            cd /var/www/backend_axenta
+            cd "${{ secrets.REPO_PATH }}"
             git fetch --all --prune
             rm -f axenta_backend
-            git pull origin main
+            git pull origin "${{ secrets.BRANCH || 'main' }}"
             /usr/local/go/bin/go build -ldflags="-w -s" -o axenta_backend main.go
             sudo systemctl restart axenta-backend
