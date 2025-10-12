@@ -513,6 +513,39 @@ func main() {
 	apiGroup.PUT("/user-templates/:id", api.UpdateUserTemplate)
 	apiGroup.DELETE("/user-templates/:id", api.DeleteUserTemplate)
 
+	// === ЭНДПОИНТЫ С ПРЕФИКСОМ /auth/ ДЛЯ ФРОНТЕНДА ===
+	log.Println("🔧 Registering /auth/ prefixed endpoints for frontend compatibility...")
+	
+	// Пользователи с префиксом /auth/
+	apiGroup.GET("/auth/users", api.GetUsersFromAxentaCloud)
+	apiGroup.GET("/auth/users/", api.GetUsersFromAxentaCloud)
+	apiGroup.GET("/auth/users/stats", api.GetUsersStatsFromAxentaCloud)
+	apiGroup.GET("/auth/users/stats/", api.GetUsersStatsFromAxentaCloud)
+	apiGroup.GET("/auth/users/:id", api.GetUser)
+	apiGroup.POST("/auth/users", api.CreateUser)
+	apiGroup.PUT("/auth/users/:id", api.UpdateUser)
+	apiGroup.DELETE("/auth/users/:id", api.DeleteUser)
+	apiGroup.POST("/auth/users/bulk-delete", api.BulkDeleteUsers)
+
+	// Роли с префиксом /auth/
+	apiGroup.GET("/auth/roles", api.GetRoles)
+	apiGroup.GET("/auth/roles/:id", api.GetRole)
+	apiGroup.POST("/auth/roles", api.CreateRole)
+	apiGroup.PUT("/auth/roles/:id", api.UpdateRole)
+	apiGroup.DELETE("/auth/roles/:id", api.DeleteRole)
+	apiGroup.PUT("/auth/roles/:id/permissions", api.UpdateRolePermissions)
+
+	// Разрешения с префиксом /auth/
+	apiGroup.GET("/auth/permissions", api.GetPermissions)
+	apiGroup.POST("/auth/permissions", api.CreatePermission)
+
+	// Шаблоны пользователей с префиксом /auth/
+	apiGroup.GET("/auth/user-templates", api.GetUserTemplates)
+	apiGroup.GET("/auth/user-templates/:id", api.GetUserTemplate)
+	apiGroup.POST("/auth/user-templates", api.CreateUserTemplate)
+	apiGroup.PUT("/auth/user-templates/:id", api.UpdateUserTemplate)
+	apiGroup.DELETE("/auth/user-templates/:id", api.DeleteUserTemplate)
+
 	// Договоры
 	apiGroup.GET("/contracts", api.GetContracts)
 	apiGroup.GET("/contracts/:id", api.GetContract)
