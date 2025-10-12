@@ -38,7 +38,7 @@ func NewJWTService(db *gorm.DB) *JWTService {
 	}
 
 	// Настройка TTL из переменных окружения
-	accessTTL := time.Hour // По умолчанию 1 час
+	accessTTL := 24 * time.Hour // По умолчанию 24 часа (увеличено с 1 часа)
 	if ttlStr := os.Getenv("JWT_ACCESS_TTL"); ttlStr != "" {
 		if hours, err := strconv.Atoi(ttlStr); err == nil {
 			accessTTL = time.Duration(hours) * time.Hour
