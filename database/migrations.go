@@ -247,11 +247,11 @@ func GetTableInfo(db *gorm.DB, tableName string) (*TableInfo, error) {
 	// Получаем информацию о колонках
 	rows, err := db.Raw(`
 		SELECT 
-			column_name,
-			data_type,
-			is_nullable,
-			column_default,
-			CASE WHEN constraint_type = 'PRIMARY KEY' THEN true ELSE false END as is_primary_key
+			c.column_name,
+			c.data_type,
+			CASE WHEN c.is_nullable = 'YES' THEN true ELSE false END as is_nullable,
+			c.column_default,
+			CASE WHEN tc.constraint_type = 'PRIMARY KEY' THEN true ELSE false END as is_primary_key
 		FROM information_schema.columns c
 		LEFT JOIN information_schema.key_column_usage kcu ON 
 			c.table_name = kcu.table_name AND c.column_name = kcu.column_name
