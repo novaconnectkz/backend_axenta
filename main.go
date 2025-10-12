@@ -147,28 +147,11 @@ func main() {
 		})
 	})
 
-	// Временное in-memory хранилище для демо-объектов
+	// Временное in-memory хранилище для объектов
 	var mockObjects []gin.H
 	var mockObjectID int = 1
 
-	// Добавляем несколько тестовых объектов для демонстрации
-	mockObjects = append(mockObjects, gin.H{
-		"id":         1,
-		"name":       "Тестовый объект 1",
-		"type":       "server",
-		"status":     "active",
-		"created_at": "2025-09-24T07:40:00Z",
-		"updated_at": "2025-09-24T07:40:00Z",
-	})
-	mockObjects = append(mockObjects, gin.H{
-		"id":         2,
-		"name":       "Тестовый объект 2",
-		"type":       "workstation",
-		"status":     "inactive",
-		"created_at": "2025-09-24T07:40:00Z",
-		"updated_at": "2025-09-24T07:40:00Z",
-	})
-	mockObjectID = 3
+	// Демо данные очищены - теперь список объектов пустой
 
 	// Вспомогательная функция для парсинга ID
 	parseID := func(idStr string) int {
@@ -185,19 +168,15 @@ func main() {
 		c.Header("Pragma", "no-cache")
 		c.Header("Expires", "0")
 
-		// Возвращаем созданные объекты
-		c.JSON(200, gin.H{
-			"status": "success",
-			"data": gin.H{
-				"items":    mockObjects,
-				"total":    len(mockObjects),
-				"page":     1,
-				"per_page": 50,
-			},
-		})
+		// Проксируем к Axenta Cloud API напрямую
+		api.GetObjectsFromAxentaCloud(c)
 	}
 	r.GET("/api/objects", getObjectsHandler)
 	r.GET("/api/objects/", getObjectsHandler)
+
+	// Добавляем публичные CMS эндпоинты для совместимости
+	r.GET("/api/cms/objects", getObjectsHandler)
+	r.GET("/api/cms/objects/", getObjectsHandler)
 
 	// Временный публичный маршрут для получения одного объекта (для тестирования фронтенда)
 	getObjectHandler := func(c *gin.Context) {
@@ -232,46 +211,15 @@ func main() {
 		c.Header("Pragma", "no-cache")
 		c.Header("Expires", "0")
 
-		// Подсчитываем статистику по созданным объектам
-		total := len(mockObjects)
-		active := 0
-		byType := gin.H{}
-		byStatus := gin.H{}
-
-		for _, obj := range mockObjects {
-			if status, ok := obj["status"].(string); ok && status == "active" {
-				active++
-			}
-			if objType, ok := obj["type"].(string); ok {
-				if count, exists := byType[objType]; exists {
-					byType[objType] = count.(int) + 1
-				} else {
-					byType[objType] = 1
-				}
-			}
-			if status, ok := obj["status"].(string); ok {
-				if count, exists := byStatus[status]; exists {
-					byStatus[status] = count.(int) + 1
-				} else {
-					byStatus[status] = 1
-				}
-			}
-		}
-
-		c.JSON(200, gin.H{
-			"status": "success",
-			"data": gin.H{
-				"total":                total,
-				"active":               active,
-				"inactive":             total - active,
-				"scheduled_for_delete": 0,
-				"by_type":              byType,
-				"by_status":            byStatus,
-			},
-		})
+		// Проксируем к Axenta Cloud API для статистики
+		api.GetObjectsStatsFromAxentaCloud(c)
 	}
 	r.GET("/api/objects/stats", getObjectsStatsHandler)
 	r.GET("/api/objects/stats/", getObjectsStatsHandler)
+
+	// Добавляем публичные CMS эндпоинты для статистики
+	r.GET("/api/cms/objects/stats", getObjectsStatsHandler)
+	r.GET("/api/cms/objects/stats/", getObjectsStatsHandler)
 
 	getObjectTemplatesHandler := func(c *gin.Context) {
 		// Добавляем заголовки для предотвращения кеширования
@@ -316,7 +264,7 @@ func main() {
 		c.JSON(200, gin.H{
 			"status":  "success",
 			"data":    newObject,
-			"message": "Объект успешно создан (демо режим)",
+			"message": "Объект успешно создан",
 		})
 	}
 	r.POST("/api/objects", createObjectHandler)
@@ -411,7 +359,7 @@ func main() {
 		c.JSON(200, gin.H{
 			"status":  "success",
 			"data":    updatedObject,
-			"message": "Объект успешно обновлен (демо режим)",
+			"message": "Объект успешно обновлен",
 		})
 	}
 	r.PUT("/api/objects/:id", updateObjectHandler)
@@ -464,15 +412,27 @@ func main() {
 	// Группа API с аутентификацией и мультитенантностью
 	log.Println("🔧 Registering authenticated API endpoints...")
 	apiGroup := r.Group("/api/auth")
-	// Временно отключаем аутентификацию для отладки
-	// apiGroup.Use(authMiddleware.RequireAuth())
+
+	// Создаем middleware для локальной авторизации (используется в других местах)
+	_ = middleware.NewLocalAuthMiddleware(jwtService)
+
+	// Включаем Axenta Cloud авторизацию для auth группы (без мультитенантности)
+	apiGroup.Use(authMiddleware.RequireAuth())
+	// Временно отключаем мультитенантность для объектов
 	// apiGroup.Use(tenantMiddleware.SetTenant())
-	// Объекты (с аутентификацией)
-	log.Println("🔧 Registering objects endpoints...")
-	apiGroup.GET("/objects", api.GetObjects)
-	apiGroup.GET("/objects/", api.GetObjects)
-	apiGroup.GET("/objects/stats", api.GetObjectsStats)
-	apiGroup.GET("/objects/stats/", api.GetObjectsStats)
+	log.Println("✅ Axenta Cloud authentication enabled for /api/auth endpoints (without multitenancy)")
+	// Объекты (с аутентификацией) - проксирование к Axenta Cloud
+	log.Println("🔧 Registering Axenta Cloud proxy endpoints...")
+	apiGroup.GET("/objects", api.GetObjectsFromAxentaCloud)
+	apiGroup.GET("/objects/", api.GetObjectsFromAxentaCloud)
+	apiGroup.GET("/objects/stats", api.GetObjectsStatsFromAxentaCloud)
+	apiGroup.GET("/objects/stats/", api.GetObjectsStatsFromAxentaCloud)
+
+	// Добавляем поддержку CMS эндпоинтов для совместимости с фронтендом
+	apiGroup.GET("/cms/objects", api.GetObjectsFromAxentaCloud)
+	apiGroup.GET("/cms/objects/", api.GetObjectsFromAxentaCloud)
+	apiGroup.GET("/cms/objects/stats", api.GetObjectsStatsFromAxentaCloud)
+	apiGroup.GET("/cms/objects/stats/", api.GetObjectsStatsFromAxentaCloud)
 	apiGroup.GET("/objects/:id", api.GetObject)
 	apiGroup.GET("/objects/:id/", api.GetObject)
 	apiGroup.POST("/objects", api.CreateObject)
