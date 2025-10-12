@@ -466,11 +466,22 @@ func main() {
 	// apiGroup.DELETE("/object-templates/:id", api.DeleteObjectTemplate)
 	// apiGroup.POST("/objects/:id/create-template", api.CreateTemplateFromObject)
 
-	// Пользователи
-	apiGroup.GET("/users", api.GetUsers)
-	apiGroup.GET("/users/stats", api.GetUsersStats)
-	apiGroup.GET("/users/:id", api.GetUser)
-	apiGroup.POST("/users", api.CreateUser)
+	// Пользователи (прокси к Axenta Cloud API)
+	log.Println("🔧 Registering users proxy endpoints...")
+	apiGroup.GET("/users", api.GetUsersFromAxentaCloud)
+	apiGroup.GET("/users/", api.GetUsersFromAxentaCloud)
+	apiGroup.GET("/users/stats", api.GetUsersStatsFromAxentaCloud)
+	apiGroup.GET("/users/stats/", api.GetUsersStatsFromAxentaCloud)
+
+	// CMS endpoints для пользователей
+	apiGroup.GET("/cms/users", api.GetUsersFromAxentaCloud)
+	apiGroup.GET("/cms/users/", api.GetUsersFromAxentaCloud)
+	apiGroup.GET("/cms/users/stats", api.GetUsersStatsFromAxentaCloud)
+	apiGroup.GET("/cms/users/stats/", api.GetUsersStatsFromAxentaCloud)
+
+	// Локальные endpoints для управления пользователями (создание, редактирование)
+	apiGroup.GET("/local/users/:id", api.GetUser)
+	apiGroup.POST("/local/users", api.CreateUser)
 
 	// Учетные записи (прокси к Axenta API)
 	log.Println("🔧 Registering accounts proxy endpoints...")
