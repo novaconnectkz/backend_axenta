@@ -548,6 +548,25 @@ func GetUsersStats(c *gin.Context) {
 	// Подсчет неактивных пользователей
 	inactiveUsers := totalUsers - activeUsers
 
+	// Подсчет администраторов (пользователи с ролью admin)
+	var adminUsers int64
+	if err := db.Table("users").
+		Joins("LEFT JOIN roles ON users.role_id = roles.id").
+		Where("users.deleted_at IS NULL AND users.is_active = ? AND roles.name = ?", true, "admin").
+		Count(&adminUsers).Error; err != nil {
+		// Если ошибка, пробуем альтернативный способ
+		if err := db.Table("users").
+			Joins("LEFT JOIN roles ON users.role_id = roles.id").
+			Where("users.deleted_at IS NULL AND users.is_active = ? AND (roles.display_name LIKE ? OR roles.name LIKE ?)", true, "%админ%", "%admin%").
+			Count(&adminUsers).Error; err != nil {
+			// Если и это не работает, устанавливаем 0
+			adminUsers = 0
+		}
+	}
+
+	// Подсчет обычных пользователей (все активные минус администраторы)
+	regularUsers := activeUsers - adminUsers
+
 	// Подсчет пользователей по ролям
 	type RoleStats struct {
 		RoleName string `json:"role_name"`
@@ -581,11 +600,43 @@ func GetUsersStats(c *gin.Context) {
 		return
 	}
 
+	// Подсчет недавних входов (за последние 7 дней)
+	var recentLogins int64
+	sevenDaysAgo := time.Now().AddDate(0, 0, -7)
+	if err := db.Model(&models.User{}).
+		Where("last_login >= ?", sevenDaysAgo).
+		Count(&recentLogins).Error; err != nil {
+		// Если ошибка, устанавливаем 0
+		recentLogins = 0
+	}
+
+	// Создаем карту статистики по ролям
+	byRole := make(map[string]int64)
+	for _, roleStat := range roleStats {
+		byRole[roleStat.RoleName] = roleStat.Count
+	}
+
+	// Создаем карту статистики по типам
+	byType := map[string]int64{
+		"active":   activeUsers,
+		"inactive": inactiveUsers,
+		"admin":    adminUsers,
+		"regular":  regularUsers,
+	}
+
 	stats := gin.H{
+		"total":          totalUsers,
+		"active":         activeUsers,
+		"inactive":       inactiveUsers,
+		"admins":         adminUsers,
+		"regular_users":  regularUsers,
 		"total_users":    totalUsers,
 		"active_users":   activeUsers,
 		"inactive_users": inactiveUsers,
 		"recent_users":   recentUsers,
+		"recent_logins":  recentLogins,
+		"by_role":        byRole,
+		"by_type":        byType,
 		"role_stats":     roleStats,
 		"last_updated":   time.Now().Format("2006-01-02T15:04:05Z"),
 	}
