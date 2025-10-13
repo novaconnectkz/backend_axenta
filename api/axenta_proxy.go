@@ -42,6 +42,50 @@ func splitFullName(fullName string) (firstName, lastName string) {
 	}
 }
 
+// shouldExcludeUserFromSearch проверяет, нужно ли исключить пользователя из результатов поиска
+// Исключаем пользователя, если поисковый запрос совпадает только с creator_name,
+// но не совпадает с основными полями поиска (username, email, first_name, last_name)
+func shouldExcludeUserFromSearch(searchQuery string, user map[string]interface{}) bool {
+	if searchQuery == "" {
+		return false
+	}
+
+	searchLower := strings.ToLower(searchQuery)
+
+	// Получаем основные поля для поиска
+	username, _ := user["username"].(string)
+	email, _ := user["email"].(string)
+	firstName, _ := user["first_name"].(string)
+	lastName, _ := user["last_name"].(string)
+	name, _ := user["name"].(string)
+	creatorName, _ := user["creatorName"].(string)
+
+	// Проверяем совпадение с основными полями
+	matchesMainFields := false
+
+	if strings.Contains(strings.ToLower(username), searchLower) {
+		matchesMainFields = true
+	}
+	if strings.Contains(strings.ToLower(email), searchLower) {
+		matchesMainFields = true
+	}
+	if strings.Contains(strings.ToLower(firstName), searchLower) {
+		matchesMainFields = true
+	}
+	if strings.Contains(strings.ToLower(lastName), searchLower) {
+		matchesMainFields = true
+	}
+	if strings.Contains(strings.ToLower(name), searchLower) {
+		matchesMainFields = true
+	}
+
+	// Проверяем совпадение с creator_name
+	matchesCreator := strings.Contains(strings.ToLower(creatorName), searchLower)
+
+	// Исключаем пользователя, если поиск совпадает только с creator_name
+	return matchesCreator && !matchesMainFields
+}
+
 // AxentaCloudObject представляет объект из Axenta Cloud API
 type AxentaCloudObject struct {
 	ID                  int      `json:"id"`
@@ -397,6 +441,7 @@ func GetUsersFromAxentaCloud(c *gin.Context) {
 	search := c.Query("search")
 	active := c.Query("active")
 	role := c.Query("role")
+	ordering := c.Query("ordering")
 
 	// Формируем URL для Axenta Cloud API с правильным кодированием параметров
 	baseURL := "https://axenta.cloud/api/cms/users/"
@@ -413,6 +458,13 @@ func GetUsersFromAxentaCloud(c *gin.Context) {
 	}
 	if role != "" {
 		params.Add("role", role)
+	}
+	if ordering != "" {
+		// Преобразуем наш формат ordering в формат Axenta Cloud
+		axentaOrdering := convertOrderingToAxenta(ordering)
+		if axentaOrdering != "" {
+			params.Add("ordering", axentaOrdering)
+		}
 	}
 
 	axentaURL := baseURL + "?" + params.Encode()
@@ -585,6 +637,35 @@ func GetUsersFromAxentaCloud(c *gin.Context) {
 			"axenta_user_id":   fmt.Sprintf("%v", user["id"]),
 			"is_axenta_user":   true,
 			"external_source":  "axenta",
+		}
+	}
+
+	// Фильтруем результаты поиска, исключая пользователей, найденных только по creator_name
+	if search != "" {
+		var filteredUsers []gin.H
+		excludedCount := 0
+
+		for _, user := range users {
+			// Преобразуем gin.H в map[string]interface{} для функции проверки
+			userMap := make(map[string]interface{})
+			for k, v := range user {
+				userMap[k] = v
+			}
+
+			// Проверяем, нужно ли исключить пользователя
+			if shouldExcludeUserFromSearch(search, userMap) {
+				excludedCount++
+				log.Printf("🚫 Исключаем пользователя из поиска (совпадение только по creator_name): %v", userMap["username"])
+			} else {
+				filteredUsers = append(filteredUsers, user)
+			}
+		}
+
+		if excludedCount > 0 {
+			log.Printf("🔍 Исключено %d пользователей из результатов поиска (совпадение только по creator_name)", excludedCount)
+			users = filteredUsers
+			// Обновляем общее количество с учетом исключенных
+			axentaResponse.Count = axentaResponse.Count - excludedCount
 		}
 	}
 
@@ -986,15 +1067,45 @@ func fallbackLocalSearch(c *gin.Context, search, page, perPage, active, role str
 		}
 	}
 
-	// Возвращаем данные в том же формате, что и Axenta Cloud
-	c.JSON(http.StatusOK, gin.H{
-		"status": "success",
-		"data": gin.H{
-			"items": userResponses,
-			"total": total,
-			"page":  pageInt,
-			"limit": limitInt,
-			"pages": (total + int64(limitInt) - 1) / int64(limitInt),
-		},
-	})
+        // Возвращаем данные в том же формате, что и Axenta Cloud
+        c.JSON(http.StatusOK, gin.H{
+                "status": "success",
+                "data": gin.H{
+                        "items": userResponses,
+                        "total": total,
+                        "page":  pageInt,
+                        "limit": limitInt,
+                        "pages": (total + int64(limitInt) - 1) / int64(limitInt),                                                                               
+                },
+        })
+}
+
+// convertOrderingToAxenta преобразует наш формат сортировки в формат Axenta Cloud
+func convertOrderingToAxenta(ordering string) string {
+	// Маппинг наших полей на поля Axenta Cloud
+	fieldMapping := map[string]string{
+		"id":                 "id",
+		"-id":                "-id",
+		"username":           "username",
+		"-username":          "-username",
+		"email":              "email",
+		"-email":             "-email",
+		"name":               "name",
+		"-name":              "-name",
+		"first_name":         "first_name",
+		"-first_name":        "-first_name",
+		"last_name":          "last_name",
+		"-last_name":         "-last_name",
+		"creation_datetime":  "created_at",
+		"-creation_datetime": "-created_at",
+		"creator_name":       "first_name", // В Axenta Cloud сортируем по first_name
+		"-creator_name":      "-first_name",
+	}
+	
+	if axentaField, exists := fieldMapping[ordering]; exists {
+		return axentaField
+	}
+	
+	// Если поле не найдено, возвращаем пустую строку (без сортировки)
+	return ""
 }

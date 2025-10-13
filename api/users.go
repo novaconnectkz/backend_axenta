@@ -83,6 +83,7 @@ func GetUsers(c *gin.Context) {
 	role := c.Query("role")
 	active := c.Query("active")
 	search := c.Query("search")
+	ordering := c.Query("ordering")
 
 	// Построение запроса
 	query := db.Model(&models.User{}).Preload("Role").Preload("Template")
@@ -150,6 +151,39 @@ func GetUsers(c *gin.Context) {
 				searchPatternLower, searchPatternOriginal,
 			)
 		}
+	}
+
+	// Сортировка
+	if ordering != "" {
+		// Поддерживаемые поля для сортировки
+		allowedFields := map[string]string{
+			"id":                 "users.id",
+			"-id":                "users.id DESC",
+			"username":           "users.username",
+			"-username":          "users.username DESC",
+			"email":              "users.email",
+			"-email":             "users.email DESC",
+			"name":               "users.name",
+			"-name":              "users.name DESC",
+			"first_name":         "users.first_name",
+			"-first_name":        "users.first_name DESC",
+			"last_name":          "users.last_name",
+			"-last_name":         "users.last_name DESC",
+			"creation_datetime":  "users.created_at",
+			"-creation_datetime": "users.created_at DESC",
+			"creator_name":       "users.first_name, users.last_name",
+			"-creator_name":      "users.first_name DESC, users.last_name DESC",
+		}
+
+		if orderBy, exists := allowedFields[ordering]; exists {
+			query = query.Order(orderBy)
+		} else {
+			// По умолчанию сортируем по username
+			query = query.Order("users.username")
+		}
+	} else {
+		// Сортировка по умолчанию
+		query = query.Order("users.username")
 	}
 
 	// Подсчет общего количества
