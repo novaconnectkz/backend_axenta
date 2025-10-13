@@ -403,3 +403,78 @@ func DeleteUserTemplate(c *gin.Context) {
 		"message": "User template deleted successfully",
 	})
 }
+
+// GetUserTemplatesPublic возвращает список шаблонов пользователей без аутентификации (публичный эндпоинт)
+func GetUserTemplatesPublic(c *gin.Context) {
+	db := database.GetTenantDB(c)
+	if db == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Database connection not available",
+		})
+		return
+	}
+
+	// Параметры пагинации
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "100"))
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 1000 {
+		limit = 100
+	}
+	offset := (page - 1) * limit
+
+	// Параметры фильтрации
+	active := c.Query("active_only")
+	search := c.Query("search")
+
+	// Построение запроса
+	query := db.Model(&models.UserTemplate{}).Preload("Role")
+
+	// Фильтр по активности
+	if active == "true" {
+		query = query.Where("is_active = ?", true)
+	}
+
+	// Поиск по имени или описанию
+	if search != "" {
+		searchPattern := "%" + strings.ToLower(search) + "%"
+		query = query.Where("LOWER(name) LIKE ? OR LOWER(description) LIKE ?", searchPattern, searchPattern)
+	}
+
+	// Подсчет общего количества
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to count user templates: " + err.Error(),
+		})
+		return
+	}
+
+	// Получение шаблонов с пагинацией
+	var templates []models.UserTemplate
+	if err := query.Order("name ASC").Offset(offset).Limit(limit).Find(&templates).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to fetch user templates: " + err.Error(),
+		})
+		return
+	}
+
+	// Расчет количества страниц
+	pages := int((total + int64(limit) - 1) / int64(limit))
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data": gin.H{
+			"items": templates,
+			"total": total,
+			"page":  page,
+			"limit": limit,
+			"pages": pages,
+		},
+	})
+}

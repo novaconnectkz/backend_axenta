@@ -627,3 +627,78 @@ func CreatePermission(c *gin.Context) {
 		"data":   permission,
 	})
 }
+
+// GetRolesPublic возвращает список ролей без аутентификации (публичный эндпоинт)
+func GetRolesPublic(c *gin.Context) {
+	db := database.GetTenantDB(c)
+	if db == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Database connection not available",
+		})
+		return
+	}
+
+	// Параметры пагинации
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "100"))
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 1000 {
+		limit = 100
+	}
+	offset := (page - 1) * limit
+
+	// Параметры фильтрации
+	active := c.Query("active_only")
+	search := c.Query("search")
+
+	// Построение запроса
+	query := db.Model(&models.Role{})
+
+	// Фильтр по активности
+	if active == "true" {
+		query = query.Where("is_active = ?", true)
+	}
+
+	// Поиск по имени или display_name
+	if search != "" {
+		searchPattern := "%" + strings.ToLower(search) + "%"
+		query = query.Where("LOWER(name) LIKE ? OR LOWER(display_name) LIKE ?", searchPattern, searchPattern)
+	}
+
+	// Подсчет общего количества
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to count roles: " + err.Error(),
+		})
+		return
+	}
+
+	// Получение ролей с пагинацией
+	var roles []models.Role
+	if err := query.Order("priority DESC, name ASC").Offset(offset).Limit(limit).Find(&roles).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to fetch roles: " + err.Error(),
+		})
+		return
+	}
+
+	// Расчет количества страниц
+	pages := int((total + int64(limit) - 1) / int64(limit))
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data": gin.H{
+			"items": roles,
+			"total": total,
+			"page":  page,
+			"limit": limit,
+			"pages": pages,
+		},
+	})
+}

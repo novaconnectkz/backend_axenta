@@ -40,6 +40,45 @@ func main() {
 
 	// Создаем таблицы напрямую через SQL
 	tables := map[string]string{
+		"permissions": `
+			CREATE TABLE IF NOT EXISTS permissions (
+				id SERIAL PRIMARY KEY,
+				created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+				deleted_at TIMESTAMP WITH TIME ZONE,
+				name VARCHAR(100) UNIQUE NOT NULL,
+				display_name VARCHAR(100) NOT NULL,
+				description TEXT,
+				resource VARCHAR(50) NOT NULL,
+				action VARCHAR(50) NOT NULL,
+				category VARCHAR(50),
+				is_active BOOLEAN DEFAULT true
+			)`,
+
+		"roles": `
+			CREATE TABLE IF NOT EXISTS roles (
+				id SERIAL PRIMARY KEY,
+				created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+				deleted_at TIMESTAMP WITH TIME ZONE,
+				name VARCHAR(100) UNIQUE NOT NULL,
+				display_name VARCHAR(100) NOT NULL,
+				description TEXT,
+				color VARCHAR(7),
+				priority INTEGER DEFAULT 0,
+				is_active BOOLEAN DEFAULT true,
+				is_system BOOLEAN DEFAULT false
+			)`,
+
+		"role_permissions": `
+			CREATE TABLE IF NOT EXISTS role_permissions (
+				role_id INTEGER NOT NULL,
+				permission_id INTEGER NOT NULL,
+				PRIMARY KEY (role_id, permission_id),
+				FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
+				FOREIGN KEY (permission_id) REFERENCES permissions(id) ON DELETE CASCADE
+			)`,
+
 		"user_templates": `
 			CREATE TABLE IF NOT EXISTS user_templates (
 				id SERIAL PRIMARY KEY,
@@ -178,7 +217,7 @@ func main() {
 	if err := db.Exec("SET search_path TO tenant_default").Error; err != nil {
 		log.Printf("❌ Не удалось переключиться на tenant_default: %v", err)
 	} else {
-		criticalTables := []string{"roles", "user_templates", "permissions", "users"}
+		criticalTables := []string{"permissions", "roles", "role_permissions", "user_templates", "users"}
 		allExist := true
 
 		for _, tableName := range criticalTables {

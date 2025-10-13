@@ -131,6 +131,10 @@ func main() {
 	r.GET("/api/debug/roles", api.TestRolesCreation)
 	r.GET("/api/debug/user-role", api.TestUserWithRole)
 
+	// Публичные endpoints для ролей и шаблонов пользователей (без аутентификации)
+	r.GET("/api/public/roles", api.GetRolesPublic)
+	r.GET("/api/public/user-templates", api.GetUserTemplatesPublic)
+
 	// === ЛОКАЛЬНАЯ АВТОРИЗАЦИЯ ===
 	localAuthAPI := api.NewLocalAuthAPI(database.DB, jwtService)
 	localAuthAPI.RegisterRoutes(r.Group("/api"))

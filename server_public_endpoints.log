@@ -1,0 +1,1789 @@
+2025/10/13 21:12:39 Starting Axenta Backend Server...
+2025/10/13 21:12:39 🔧 DEBUG: Main function started
+2025/10/13 21:12:39 === Application Configuration ===
+2025/10/13 21:12:39 Environment: development
+2025/10/13 21:12:39 Port: 8080
+2025/10/13 21:12:39 Database Host: localhost:5432
+2025/10/13 21:12:39 Database Name: axenta_db
+2025/10/13 21:12:39 Redis Host: localhost:6379
+2025/10/13 21:12:39 Axenta API URL: https://api.axetna.cloud
+2025/10/13 21:12:39 JWT Issuer: axenta-crm
+2025/10/13 21:12:39 Log Level: info
+2025/10/13 21:12:39 Debug Mode: false
+2025/10/13 21:12:39 ================================
+2025/10/13 21:12:39 ✅ База данных 'axenta_db' уже существует
+2025/10/13 21:12:39 ✅ Успешно подключено к PostgreSQL
+2025/10/13 21:12:39 🚀 Начинаем процесс миграции базы данных
+2025/10/13 21:12:39 📋 Выполняем миграции глобальных таблиц (схема public)
+
+2025/10/13 21:12:39 [32m/Users/com/backend_axenta/database/migrations.go:518
+[0m[33m[1.395ms] [34;1m[rows:0][0m SET search_path TO public
+2025/10/13 21:12:39 🔄 Миграция таблицы: companies (Таблица компаний (мультитенантность))
+
+2025/10/13 21:12:39 [32m/Users/com/backend_axenta/database/migrations.go:242
+[0m[33m[5.733ms] [34;1m[rows:1][0m 
+		SELECT COUNT(*) 
+		FROM information_schema.tables 
+		WHERE table_schema = current_schema() 
+		AND table_name = 'companies'
+	
+
+2025/10/13 21:12:39 [32m/Users/com/backend_axenta/database/migrations.go:482
+[0m[33m[1.843ms] [34;1m[rows:1][0m SELECT count(*) FROM information_schema.tables WHERE table_schema = CURRENT_SCHEMA() AND table_name = 'companies' AND table_type = 'BASE TABLE'
+
+2025/10/13 21:12:39 [32m/Users/com/backend_axenta/database/migrations.go:482
+[0m[33m[0.325ms] [34;1m[rows:1][0m SELECT CURRENT_DATABASE()
+
+2025/10/13 21:12:39 [32m/Users/com/backend_axenta/database/migrations.go:482
+[0m[33m[13.414ms] [34;1m[rows:-][0m SELECT c.column_name, c.is_nullable = 'YES', c.udt_name, c.character_maximum_length, c.numeric_precision, c.numeric_precision_radix, c.numeric_scale, c.datetime_precision, 8 * typlen, c.column_default, pd.description, c.identity_increment FROM information_schema.columns AS c JOIN pg_type AS pgt ON c.udt_name = pgt.typname LEFT JOIN pg_catalog.pg_description as pd ON pd.objsubid = c.ordinal_position AND pd.objoid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = c.table_name AND relnamespace = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = c.table_schema)) where table_catalog = 'axenta_db' AND table_schema = CURRENT_SCHEMA() AND table_name = 'companies'
+
+2025/10/13 21:12:39 [31;1m/Users/com/backend_axenta/database/migrations.go:482 [35;1minsufficient arguments
+[0m[33m[0.034ms] [34;1m[rows:-][0m SELECT * FROM "companies" LIMIT 1
+2025/10/13 21:12:39 ❌ Ошибка миграции companies: insufficient arguments
+2025/10/13 21:12:39 ❌ Ошибка миграции companies: ошибка миграции: insufficient arguments
+2025/10/13 21:12:39 ⚠️ Ошибка выполнения миграций: ошибка миграции глобальной таблицы companies: ошибка миграции: insufficient arguments
+2025/10/13 21:12:39 Продолжаем работу - некоторые функции могут быть недоступны
+2025/10/13 21:12:39 ✅ Успешно подключено к Redis
+2025/10/13 21:12:39 ⚠️ Integration Service temporarily disabled
+2025/10/13 21:12:39 ⚠️ Bitrix24 Integration Service temporarily disabled
+2025/10/13 21:12:39 ✅ 1C Integration Service initialized successfully
+2025/10/13 21:12:39 ⚠️ Notification System temporarily disabled
+2025/10/13 21:12:39 🔧 Initializing default Axenta roles in public schema...
+
+2025/10/13 21:12:39 [32m/Users/com/backend_axenta/services/axenta_user_service.go:298
+[0m[33m[2.072ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:12:39 [32m/Users/com/backend_axenta/services/axenta_user_service.go:298
+[0m[33m[0.235ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:12:39 [32m/Users/com/backend_axenta/services/axenta_user_service.go:298
+[0m[33m[0.195ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'user' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+2025/10/13 21:12:39 ✅ Default Axenta roles initialized successfully in public schema
+[GIN-debug] [WARNING] Creating an Engine instance with the Logger and Recovery middleware already attached.
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] GET    /ping                     --> main.main.func1 (4 handlers)
+[GIN-debug] POST   /api/auth/login           --> backend_axenta/api.Login (4 handlers)
+[GIN-debug] GET    /api/debug/roles          --> backend_axenta/api.TestRolesCreation (4 handlers)
+[GIN-debug] GET    /api/debug/user-role      --> backend_axenta/api.TestUserWithRole (4 handlers)
+[GIN-debug] GET    /api/public/roles         --> backend_axenta/api.GetRolesPublic (4 handlers)
+[GIN-debug] GET    /api/public/user-templates --> backend_axenta/api.GetUserTemplatesPublic (4 handlers)
+[GIN-debug] POST   /api/local/login          --> backend_axenta/api.(*LocalAuthAPI).LocalLogin-fm (4 handlers)
+[GIN-debug] POST   /api/local/refresh        --> backend_axenta/api.(*LocalAuthAPI).RefreshToken-fm (4 handlers)
+[GIN-debug] GET    /api/local/current_user   --> backend_axenta/api.(*LocalAuthAPI).LocalCurrentUser-fm (5 handlers)
+[GIN-debug] POST   /api/local/logout         --> backend_axenta/api.(*LocalAuthAPI).LocalLogout-fm (5 handlers)
+[GIN-debug] POST   /api/local/register       --> backend_axenta/api.(*LocalAuthAPI).RegisterLocalUser-fm (6 handlers)
+[GIN-debug] GET    /ws/live-data/:company_id --> backend_axenta/api.(*WebSocketAuthAPI).LiveData-fm (4 handlers)
+[GIN-debug] GET    /api/test-objects-stats   --> main.main.func2 (4 handlers)
+[GIN-debug] GET    /api/objects              --> main.main.func4 (4 handlers)
+[GIN-debug] GET    /api/objects/             --> main.main.func4 (4 handlers)
+[GIN-debug] GET    /api/objects/:id          --> main.main.func5 (4 handlers)
+[GIN-debug] GET    /api/objects/:id/         --> main.main.func5 (4 handlers)
+[GIN-debug] GET    /api/objects/stats        --> main.main.func6 (4 handlers)
+[GIN-debug] GET    /api/objects/stats/       --> main.main.func6 (4 handlers)
+[GIN-debug] GET    /api/object-templates     --> main.main.func7 (4 handlers)
+[GIN-debug] GET    /api/object-templates/    --> main.main.func7 (4 handlers)
+[GIN-debug] POST   /api/objects              --> main.main.func8 (4 handlers)
+[GIN-debug] POST   /api/objects/             --> main.main.func8 (4 handlers)
+[GIN-debug] POST   /api/objects/:id/create-template --> main.main.func9 (4 handlers)
+[GIN-debug] POST   /api/objects/:id/create-template/ --> main.main.func9 (4 handlers)
+[GIN-debug] PUT    /api/objects/:id          --> main.main.func10 (4 handlers)
+[GIN-debug] PUT    /api/objects/:id/         --> main.main.func10 (4 handlers)
+[GIN-debug] GET    /api/dashboard/stats      --> backend_axenta/api.GetDashboardStatsSimple (4 handlers)
+[GIN-debug] GET    /api/dashboard/activity   --> backend_axenta/api.GetDashboardActivitySimple (4 handlers)
+[GIN-debug] GET    /api/dashboard/layouts    --> backend_axenta/api.GetDashboardLayouts (4 handlers)
+[GIN-debug] GET    /api/dashboard/layouts/default --> backend_axenta/api.GetDefaultDashboardLayout (4 handlers)
+[GIN-debug] GET    /api/notifications        --> backend_axenta/api.GetDashboardNotificationsSimple (4 handlers)
+[GIN-debug] GET    /api/billing-plans-simple --> backend_axenta/api.GetBillingPlansSimple (4 handlers)
+[GIN-debug] GET    /api/subscriptions-simple --> backend_axenta/api.GetSubscriptionsSimple (4 handlers)
+[GIN-debug] GET    /api/admin/accounts       --> backend_axenta/api.(*CompaniesAPI).GetCompanies-fm (5 handlers)
+[GIN-debug] POST   /api/admin/accounts       --> backend_axenta/api.(*CompaniesAPI).CreateCompany-fm (5 handlers)
+[GIN-debug] GET    /api/admin/accounts/filter-options --> backend_axenta/api.(*CompaniesAPI).GetFilterOptions-fm (5 handlers)
+[GIN-debug] GET    /api/admin/accounts/list  --> backend_axenta/api.(*CompaniesAPI).GetCompaniesList-fm (5 handlers)
+[GIN-debug] POST   /api/admin/accounts/bulk-delete --> backend_axenta/api.(*CompaniesAPI).BulkDeleteCompanies-fm (5 handlers)
+[GIN-debug] POST   /api/admin/accounts/bulk-activate --> backend_axenta/api.(*CompaniesAPI).BulkActivateCompanies-fm (5 handlers)
+[GIN-debug] POST   /api/admin/accounts/bulk-deactivate --> backend_axenta/api.(*CompaniesAPI).BulkDeactivateCompanies-fm (5 handlers)
+[GIN-debug] GET    /api/admin/accounts/:id   --> backend_axenta/api.(*CompaniesAPI).GetCompany-fm (5 handlers)
+[GIN-debug] PUT    /api/admin/accounts/:id   --> backend_axenta/api.(*CompaniesAPI).UpdateCompany-fm (5 handlers)
+[GIN-debug] DELETE /api/admin/accounts/:id   --> backend_axenta/api.(*CompaniesAPI).DeleteCompany-fm (5 handlers)
+[GIN-debug] PUT    /api/admin/accounts/:id/activate --> backend_axenta/api.(*CompaniesAPI).ActivateCompany-fm (5 handlers)
+[GIN-debug] PUT    /api/admin/accounts/:id/deactivate --> backend_axenta/api.(*CompaniesAPI).DeactivateCompany-fm (5 handlers)
+[GIN-debug] GET    /api/admin/accounts/:id/usage --> backend_axenta/api.(*CompaniesAPI).GetCompanyUsage-fm (5 handlers)
+[GIN-debug] POST   /api/admin/accounts/:id/test-connection --> backend_axenta/api.(*CompaniesAPI).TestCompanyConnection-fm (5 handlers)
+[GIN-debug] GET    /api/test/installations   --> backend_axenta/api.(*InstallationAPI).GetInstallations-fm (4 handlers)
+[GIN-debug] GET    /api/test/installations/statistics --> main.main.func11 (4 handlers)
+[GIN-debug] GET    /api/test/installers      --> backend_axenta/api.(*InstallerAPI).GetInstallers-fm (4 handlers)
+[GIN-debug] GET    /api/test/locations       --> backend_axenta/api.(*LocationAPI).GetLocations-fm (4 handlers)
+[GIN-debug] GET    /api/test/equipment       --> backend_axenta/api.(*EquipmentAPI).GetEquipment-fm (4 handlers)
+2025/10/13 21:12:39 🔧 Registering authenticated API endpoints...
+2025/10/13 21:12:39 ✅ Axenta Cloud authentication enabled for /api/auth endpoints (without multitenancy)
+2025/10/13 21:12:39 🔧 Registering Axenta Cloud proxy endpoints...
+[GIN-debug] GET    /api/auth/objects         --> backend_axenta/api.GetObjectsFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/objects/        --> backend_axenta/api.GetObjectsFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/objects/stats   --> backend_axenta/api.GetObjectsStatsFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/objects/stats/  --> backend_axenta/api.GetObjectsStatsFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/cms/objects     --> backend_axenta/api.GetObjectsFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/cms/objects/    --> backend_axenta/api.GetObjectsFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/cms/objects/stats --> backend_axenta/api.GetObjectsStatsFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/cms/objects/stats/ --> backend_axenta/api.GetObjectsStatsFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/objects/:id     --> backend_axenta/api.GetObject (5 handlers)
+[GIN-debug] GET    /api/auth/objects/:id/    --> backend_axenta/api.GetObject (5 handlers)
+[GIN-debug] POST   /api/auth/objects         --> backend_axenta/api.CreateObject (5 handlers)
+[GIN-debug] POST   /api/auth/objects/        --> backend_axenta/api.CreateObject (5 handlers)
+[GIN-debug] PUT    /api/auth/objects/:id     --> backend_axenta/api.UpdateObject (5 handlers)
+[GIN-debug] PUT    /api/auth/objects/:id/    --> backend_axenta/api.UpdateObject (5 handlers)
+[GIN-debug] DELETE /api/auth/objects/:id     --> backend_axenta/api.DeleteObject (5 handlers)
+[GIN-debug] DELETE /api/auth/objects/:id/    --> backend_axenta/api.DeleteObject (5 handlers)
+[GIN-debug] PUT    /api/auth/objects/:id/schedule-delete --> backend_axenta/api.ScheduleObjectDelete (5 handlers)
+[GIN-debug] PUT    /api/auth/objects/:id/schedule-delete/ --> backend_axenta/api.ScheduleObjectDelete (5 handlers)
+[GIN-debug] PUT    /api/auth/objects/:id/cancel-delete --> backend_axenta/api.CancelScheduledDelete (5 handlers)
+[GIN-debug] PUT    /api/auth/objects/:id/cancel-delete/ --> backend_axenta/api.CancelScheduledDelete (5 handlers)
+[GIN-debug] GET    /api/auth/objects-trash   --> backend_axenta/api.GetDeletedObjects (5 handlers)
+[GIN-debug] GET    /api/auth/objects-trash/  --> backend_axenta/api.GetDeletedObjects (5 handlers)
+[GIN-debug] PUT    /api/auth/objects/:id/restore --> backend_axenta/api.RestoreObject (5 handlers)
+[GIN-debug] PUT    /api/auth/objects/:id/restore/ --> backend_axenta/api.RestoreObject (5 handlers)
+[GIN-debug] DELETE /api/auth/objects/:id/permanent --> backend_axenta/api.PermanentDeleteObject (5 handlers)
+[GIN-debug] DELETE /api/auth/objects/:id/permanent/ --> backend_axenta/api.PermanentDeleteObject (5 handlers)
+2025/10/13 21:12:39 🔧 Registering users proxy endpoints...
+[GIN-debug] GET    /api/auth/users           --> backend_axenta/api.GetUsersFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/users/          --> backend_axenta/api.GetUsersFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/users/stats     --> backend_axenta/api.GetUsersStatsFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/users/stats/    --> backend_axenta/api.GetUsersStatsFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/cms/users       --> backend_axenta/api.GetUsersFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/cms/users/      --> backend_axenta/api.GetUsersFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/cms/users/stats --> backend_axenta/api.GetUsersStatsFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/cms/users/stats/ --> backend_axenta/api.GetUsersStatsFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/local/users/:id --> backend_axenta/api.GetUser (5 handlers)
+[GIN-debug] POST   /api/auth/local/users     --> backend_axenta/api.CreateUser (5 handlers)
+2025/10/13 21:12:39 🔧 Registering accounts proxy endpoints...
+[GIN-debug] GET    /api/auth/accounts        --> backend_axenta/handlers.(*AccountsHandler).GetAccounts-fm (5 handlers)
+[GIN-debug] GET    /api/auth/accounts/       --> backend_axenta/handlers.(*AccountsHandler).GetAccounts-fm (5 handlers)
+[GIN-debug] GET    /api/auth/accounts/:id    --> backend_axenta/handlers.(*AccountsHandler).GetAccount-fm (5 handlers)
+[GIN-debug] GET    /api/auth/accounts/:id/   --> backend_axenta/handlers.(*AccountsHandler).GetAccount-fm (5 handlers)
+[GIN-debug] PUT    /api/auth/users/:id       --> backend_axenta/api.UpdateUser (5 handlers)
+[GIN-debug] DELETE /api/auth/users/:id       --> backend_axenta/api.DeleteUser (5 handlers)
+[GIN-debug] POST   /api/auth/users/bulk-delete --> backend_axenta/api.BulkDeleteUsers (5 handlers)
+[GIN-debug] GET    /api/auth/roles           --> backend_axenta/api.GetRoles (5 handlers)
+[GIN-debug] GET    /api/auth/roles/:id       --> backend_axenta/api.GetRole (5 handlers)
+[GIN-debug] POST   /api/auth/roles           --> backend_axenta/api.CreateRole (5 handlers)
+[GIN-debug] PUT    /api/auth/roles/:id       --> backend_axenta/api.UpdateRole (5 handlers)
+[GIN-debug] DELETE /api/auth/roles/:id       --> backend_axenta/api.DeleteRole (5 handlers)
+[GIN-debug] PUT    /api/auth/roles/:id/permissions --> backend_axenta/api.UpdateRolePermissions (5 handlers)
+[GIN-debug] GET    /api/auth/permissions     --> backend_axenta/api.GetPermissions (5 handlers)
+[GIN-debug] POST   /api/auth/permissions     --> backend_axenta/api.CreatePermission (5 handlers)
+[GIN-debug] GET    /api/auth/user-templates  --> backend_axenta/api.GetUserTemplates (5 handlers)
+[GIN-debug] GET    /api/auth/user-templates/:id --> backend_axenta/api.GetUserTemplate (5 handlers)
+[GIN-debug] POST   /api/auth/user-templates  --> backend_axenta/api.CreateUserTemplate (5 handlers)
+[GIN-debug] PUT    /api/auth/user-templates/:id --> backend_axenta/api.UpdateUserTemplate (5 handlers)
+[GIN-debug] DELETE /api/auth/user-templates/:id --> backend_axenta/api.DeleteUserTemplate (5 handlers)
+2025/10/13 21:12:39 🔧 Registering /auth/ prefixed endpoints for frontend compatibility...
+[GIN-debug] GET    /api/auth/auth/users      --> backend_axenta/api.GetUsersFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/auth/users/     --> backend_axenta/api.GetUsersFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/auth/users/stats --> backend_axenta/api.GetUsersStatsFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/auth/users/stats/ --> backend_axenta/api.GetUsersStatsFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/auth/users/:id  --> backend_axenta/api.GetUser (5 handlers)
+[GIN-debug] POST   /api/auth/auth/users      --> backend_axenta/api.CreateUser (5 handlers)
+[GIN-debug] PUT    /api/auth/auth/users/:id  --> backend_axenta/api.UpdateUser (5 handlers)
+[GIN-debug] DELETE /api/auth/auth/users/:id  --> backend_axenta/api.DeleteUser (5 handlers)
+[GIN-debug] POST   /api/auth/auth/users/bulk-delete --> backend_axenta/api.BulkDeleteUsers (5 handlers)
+[GIN-debug] GET    /api/auth/auth/roles      --> backend_axenta/api.GetRoles (5 handlers)
+[GIN-debug] GET    /api/auth/auth/roles/:id  --> backend_axenta/api.GetRole (5 handlers)
+[GIN-debug] POST   /api/auth/auth/roles      --> backend_axenta/api.CreateRole (5 handlers)
+[GIN-debug] PUT    /api/auth/auth/roles/:id  --> backend_axenta/api.UpdateRole (5 handlers)
+[GIN-debug] DELETE /api/auth/auth/roles/:id  --> backend_axenta/api.DeleteRole (5 handlers)
+[GIN-debug] PUT    /api/auth/auth/roles/:id/permissions --> backend_axenta/api.UpdateRolePermissions (5 handlers)
+[GIN-debug] GET    /api/auth/auth/permissions --> backend_axenta/api.GetPermissions (5 handlers)
+[GIN-debug] POST   /api/auth/auth/permissions --> backend_axenta/api.CreatePermission (5 handlers)
+[GIN-debug] GET    /api/auth/auth/user-templates --> backend_axenta/api.GetUserTemplates (5 handlers)
+[GIN-debug] GET    /api/auth/auth/user-templates/:id --> backend_axenta/api.GetUserTemplate (5 handlers)
+[GIN-debug] POST   /api/auth/auth/user-templates --> backend_axenta/api.CreateUserTemplate (5 handlers)
+[GIN-debug] PUT    /api/auth/auth/user-templates/:id --> backend_axenta/api.UpdateUserTemplate (5 handlers)
+[GIN-debug] DELETE /api/auth/auth/user-templates/:id --> backend_axenta/api.DeleteUserTemplate (5 handlers)
+2025/10/13 21:12:39 🔧 Registering Axenta users management endpoints...
+[GIN-debug] GET    /api/auth/axenta-users    --> backend_axenta/api.GetAxentaUsers (5 handlers)
+[GIN-debug] GET    /api/auth/axenta-users/stats --> backend_axenta/api.GetUsersByAxentaType (5 handlers)
+[GIN-debug] POST   /api/auth/axenta-users/local --> backend_axenta/api.CreateLocalUser (5 handlers)
+[GIN-debug] PUT    /api/auth/axenta-users/:id/role --> backend_axenta/api.UpdateUserAxentaRole (5 handlers)
+[GIN-debug] POST   /api/auth/axenta-users/sync --> backend_axenta/api.SyncUserWithAxenta (5 handlers)
+[GIN-debug] POST   /api/auth/axenta-users/ensure-roles --> backend_axenta/api.EnsureAxentaRoles (5 handlers)
+[GIN-debug] POST   /api/auth/axenta-users/sync-all --> backend_axenta/api.SyncAllAxentaUsers (5 handlers)
+[GIN-debug] GET    /api/auth/users/synced    --> backend_axenta/api.GetSyncedUsersFromLocal (5 handlers)
+[GIN-debug] GET    /api/auth/test/roles      --> backend_axenta/api.TestRolesCreation (5 handlers)
+[GIN-debug] GET    /api/auth/test/user-role  --> backend_axenta/api.TestUserWithRole (5 handlers)
+[GIN-debug] GET    /api/auth/contracts       --> backend_axenta/api.GetContracts (5 handlers)
+[GIN-debug] GET    /api/auth/contracts/:id   --> backend_axenta/api.GetContract (5 handlers)
+[GIN-debug] POST   /api/auth/contracts       --> backend_axenta/api.CreateContract (5 handlers)
+[GIN-debug] PUT    /api/auth/contracts/:id   --> backend_axenta/api.UpdateContract (5 handlers)
+[GIN-debug] DELETE /api/auth/contracts/:id   --> backend_axenta/api.DeleteContract (5 handlers)
+[GIN-debug] GET    /api/auth/contracts/expiring --> backend_axenta/api.GetExpiringContracts (5 handlers)
+[GIN-debug] GET    /api/auth/billing/plans   --> backend_axenta/api.GetBillingPlans (5 handlers)
+[GIN-debug] GET    /api/auth/billing/plans/:id --> backend_axenta/api.GetBillingPlan (5 handlers)
+[GIN-debug] POST   /api/auth/billing/plans   --> backend_axenta/api.CreateBillingPlan (5 handlers)
+[GIN-debug] PUT    /api/auth/billing/plans/:id --> backend_axenta/api.UpdateBillingPlan (5 handlers)
+[GIN-debug] DELETE /api/auth/billing/plans/:id --> backend_axenta/api.DeleteBillingPlan (5 handlers)
+[GIN-debug] GET    /api/auth/billing/subscriptions --> backend_axenta/api.GetSubscriptions (5 handlers)
+[GIN-debug] POST   /api/auth/billing/subscriptions --> backend_axenta/api.CreateSubscription (5 handlers)
+[GIN-debug] PUT    /api/auth/billing/subscriptions/:id --> backend_axenta/api.UpdateSubscription (5 handlers)
+[GIN-debug] DELETE /api/auth/billing/subscriptions/:id --> backend_axenta/api.DeleteSubscription (5 handlers)
+[GIN-debug] GET    /api/auth/subscriptions   --> backend_axenta/api.GetSubscriptions (5 handlers)
+[GIN-debug] GET    /api/auth/billing-plans   --> backend_axenta/api.GetBillingPlans (5 handlers)
+[GIN-debug] GET    /api/auth/billing/contracts/:contract_id/calculate --> backend_axenta/api.CalculateBilling (5 handlers)
+[GIN-debug] POST   /api/auth/billing/contracts/:contract_id/invoice --> backend_axenta/api.GenerateInvoice (5 handlers)
+[GIN-debug] GET    /api/auth/billing/invoices --> backend_axenta/api.GetInvoices (5 handlers)
+[GIN-debug] GET    /api/auth/billing/invoices/:id --> backend_axenta/api.GetInvoice (5 handlers)
+[GIN-debug] POST   /api/auth/billing/invoices/:id/payment --> backend_axenta/api.ProcessPayment (5 handlers)
+[GIN-debug] POST   /api/auth/billing/invoices/:id/cancel --> backend_axenta/api.CancelInvoice (5 handlers)
+[GIN-debug] GET    /api/auth/billing/history --> backend_axenta/api.GetBillingHistory (5 handlers)
+[GIN-debug] GET    /api/auth/billing/invoices/overdue --> backend_axenta/api.GetOverdueInvoices (5 handlers)
+[GIN-debug] GET    /api/auth/billing/settings --> backend_axenta/api.GetBillingSettings (5 handlers)
+[GIN-debug] PUT    /api/auth/billing/settings --> backend_axenta/api.UpdateBillingSettings (5 handlers)
+[GIN-debug] POST   /api/auth/billing/auto-generate --> backend_axenta/api.AutoGenerateInvoices (5 handlers)
+[GIN-debug] POST   /api/auth/billing/process-deletions --> backend_axenta/api.ProcessScheduledDeletions (5 handlers)
+[GIN-debug] GET    /api/auth/billing/statistics --> backend_axenta/api.GetBillingStatistics (5 handlers)
+[GIN-debug] GET    /api/auth/billing/invoices/period --> backend_axenta/api.GetInvoicesByPeriod (5 handlers)
+[GIN-debug] GET    /test/installations       --> main.main.func12 (4 handlers)
+[GIN-debug] GET    /api/installations/statistics --> main.main.func13 (4 handlers)
+[GIN-debug] GET    /api/installers           --> main.main.func14 (4 handlers)
+[GIN-debug] GET    /api/equipment            --> main.main.func15 (4 handlers)
+[GIN-debug] GET    /api/locations            --> main.main.func16 (4 handlers)
+[GIN-debug] POST   /api/auth/warehouse/operations --> backend_axenta/api.(*WarehouseAPI).CreateWarehouseOperation-fm (5 handlers)
+[GIN-debug] GET    /api/auth/warehouse/operations --> backend_axenta/api.(*WarehouseAPI).GetWarehouseOperations-fm (5 handlers)
+[GIN-debug] POST   /api/auth/warehouse/transfer --> backend_axenta/api.(*WarehouseAPI).TransferEquipment-fm (5 handlers)
+[GIN-debug] GET    /api/auth/warehouse/alerts --> backend_axenta/api.(*WarehouseAPI).GetStockAlerts-fm (5 handlers)
+[GIN-debug] POST   /api/auth/warehouse/alerts --> backend_axenta/api.(*WarehouseAPI).CreateStockAlert-fm (5 handlers)
+[GIN-debug] PUT    /api/auth/warehouse/alerts/:id/acknowledge --> backend_axenta/api.(*WarehouseAPI).AcknowledgeStockAlert-fm (5 handlers)
+[GIN-debug] PUT    /api/auth/warehouse/alerts/:id/resolve --> backend_axenta/api.(*WarehouseAPI).ResolveStockAlert-fm (5 handlers)
+[GIN-debug] GET    /api/auth/warehouse/statistics --> backend_axenta/api.(*WarehouseAPI).GetWarehouseStatistics-fm (5 handlers)
+[GIN-debug] POST   /api/auth/1c/setup        --> backend_axenta/api.(*OneCIntegrationAPI).SetupIntegration-fm (5 handlers)
+[GIN-debug] PUT    /api/auth/1c/setup        --> backend_axenta/api.(*OneCIntegrationAPI).UpdateIntegration-fm (5 handlers)
+[GIN-debug] GET    /api/auth/1c/config       --> backend_axenta/api.(*OneCIntegrationAPI).GetIntegrationConfig-fm (5 handlers)
+[GIN-debug] DELETE /api/auth/1c/setup        --> backend_axenta/api.(*OneCIntegrationAPI).DeleteIntegration-fm (5 handlers)
+[GIN-debug] POST   /api/auth/1c/test-connection --> backend_axenta/api.(*OneCIntegrationAPI).TestConnection-fm (5 handlers)
+[GIN-debug] POST   /api/auth/1c/export/payment-registry --> backend_axenta/api.(*OneCIntegrationAPI).ExportPaymentRegistry-fm (5 handlers)
+[GIN-debug] POST   /api/auth/1c/export/payment-registry/auto --> backend_axenta/api.(*OneCIntegrationAPI).ScheduleAutoExport-fm (5 handlers)
+[GIN-debug] POST   /api/auth/1c/import/counterparties --> backend_axenta/api.(*OneCIntegrationAPI).ImportCounterparties-fm (5 handlers)
+[GIN-debug] POST   /api/auth/1c/sync/payment-statuses --> backend_axenta/api.(*OneCIntegrationAPI).SyncPaymentStatuses-fm (5 handlers)
+[GIN-debug] GET    /api/auth/1c/errors       --> backend_axenta/api.(*OneCIntegrationAPI).GetIntegrationErrors-fm (5 handlers)
+[GIN-debug] PUT    /api/auth/1c/errors/:id/resolve --> backend_axenta/api.(*OneCIntegrationAPI).ResolveError-fm (5 handlers)
+[GIN-debug] GET    /api/auth/1c/status       --> backend_axenta/api.(*OneCIntegrationAPI).GetIntegrationStatus-fm (5 handlers)
+[GIN-debug] GET    /api/auth/reports         --> backend_axenta/api.(*ReportsAPI).GetReports-fm (5 handlers)
+[GIN-debug] POST   /api/auth/reports         --> backend_axenta/api.(*ReportsAPI).CreateReport-fm (5 handlers)
+[GIN-debug] GET    /api/auth/reports/:id     --> backend_axenta/api.(*ReportsAPI).GetReport-fm (5 handlers)
+[GIN-debug] PUT    /api/auth/reports/:id     --> backend_axenta/api.(*ReportsAPI).UpdateReport-fm (5 handlers)
+[GIN-debug] DELETE /api/auth/reports/:id     --> backend_axenta/api.(*ReportsAPI).DeleteReport-fm (5 handlers)
+[GIN-debug] POST   /api/auth/reports/:id/generate --> backend_axenta/api.(*ReportsAPI).GenerateReport-fm (5 handlers)
+[GIN-debug] GET    /api/auth/reports/:id/download --> backend_axenta/api.(*ReportsAPI).DownloadReport-fm (5 handlers)
+[GIN-debug] GET    /api/auth/reports/:id/status --> backend_axenta/api.(*ReportsAPI).GetReportStatus-fm (5 handlers)
+[GIN-debug] GET    /api/auth/reports/templates --> backend_axenta/api.(*ReportsAPI).GetReportTemplates-fm (5 handlers)
+[GIN-debug] POST   /api/auth/reports/templates --> backend_axenta/api.(*ReportsAPI).CreateReportTemplate-fm (5 handlers)
+[GIN-debug] GET    /api/auth/reports/templates/:id --> backend_axenta/api.(*ReportsAPI).GetReportTemplate-fm (5 handlers)
+[GIN-debug] PUT    /api/auth/reports/templates/:id --> backend_axenta/api.(*ReportsAPI).UpdateReportTemplate-fm (5 handlers)
+[GIN-debug] DELETE /api/auth/reports/templates/:id --> backend_axenta/api.(*ReportsAPI).DeleteReportTemplate-fm (5 handlers)
+[GIN-debug] GET    /api/auth/reports/schedules --> backend_axenta/api.(*ReportsAPI).GetReportSchedules-fm (5 handlers)
+[GIN-debug] POST   /api/auth/reports/schedules --> backend_axenta/api.(*ReportsAPI).CreateReportSchedule-fm (5 handlers)
+[GIN-debug] GET    /api/auth/reports/schedules/:id --> backend_axenta/api.(*ReportsAPI).GetReportSchedule-fm (5 handlers)
+[GIN-debug] PUT    /api/auth/reports/schedules/:id --> backend_axenta/api.(*ReportsAPI).UpdateReportSchedule-fm (5 handlers)
+[GIN-debug] DELETE /api/auth/reports/schedules/:id --> backend_axenta/api.(*ReportsAPI).DeleteReportSchedule-fm (5 handlers)
+[GIN-debug] POST   /api/auth/reports/schedules/:id/run --> backend_axenta/api.(*ReportsAPI).RunScheduledReport-fm (5 handlers)
+[GIN-debug] GET    /api/auth/reports/schedules/:id/status --> backend_axenta/api.(*ReportsAPI).GetScheduleStatus-fm (5 handlers)
+[GIN-debug] GET    /api/auth/reports/executions --> backend_axenta/api.(*ReportsAPI).GetReportExecutions-fm (5 handlers)
+[GIN-debug] GET    /api/auth/reports/executions/:id --> backend_axenta/api.(*ReportsAPI).GetReportExecution-fm (5 handlers)
+[GIN-debug] GET    /api/auth/reports/stats   --> backend_axenta/api.(*ReportsAPI).GetReportsStats-fm (5 handlers)
+2025/10/13 21:12:39 Server starting on port 8080...
+[GIN-debug] [WARNING] You trusted all proxies, this is NOT safe. We recommend you to set a value.
+Please check https://pkg.go.dev/github.com/gin-gonic/gin#readme-don-t-trust-all-proxies for details.
+[GIN-debug] Listening and serving HTTP on :8080
+
+2025/10/13 21:12:39 [32m/Users/com/backend_axenta/services/report_scheduler_service.go:55
+[0m[33m[2.265ms] [34;1m[rows:0][0m SELECT * FROM "report_schedules" WHERE is_active = true AND "report_schedules"."deleted_at" IS NULL
+2025/10/13 21:12:39 Loaded 0 active report schedules
+2025/10/13 21:12:39 Report scheduler started
+
+2025/10/13 21:12:52 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[4.012ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:12:52 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[1.464ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:12:52 | 200 |      5.8835ms |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+
+2025/10/13 21:12:53 [32m/Users/com/backend_axenta/api/user_templates.go:449
+[0m[33m[5.415ms] [34;1m[rows:1][0m SELECT count(*) FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL
+
+2025/10/13 21:12:53 [32m/Users/com/backend_axenta/api/user_templates.go:459
+[0m[33m[0.542ms] [34;1m[rows:0][0m SELECT * FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL ORDER BY name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:12:53 | 200 |    6.245375ms |             ::1 | GET      "/api/public/user-templates?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:13:06 | 204 |      30.416µs |             ::1 | OPTIONS  "/api/auth/users/stats"
+[GIN] 2025/10/13 - 21:13:06 | 204 |       125.5µs |             ::1 | OPTIONS  "/api/public/roles?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:13:06 | 204 |      16.542µs |             ::1 | OPTIONS  "/api/public/roles?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:13:06 | 204 |      79.917µs |             ::1 | OPTIONS  "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/13 - 21:13:06 | 204 |      31.083µs |             ::1 | OPTIONS  "/api/auth/user-templates?page=1&limit=100&active_only=true"
+
+2025/10/13 21:13:06 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[2.419ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:13:06 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[0.290ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:13:06 | 200 |      3.8715ms |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+
+2025/10/13 21:13:06 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[2.898ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:13:06 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[1.221ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:13:06 | 200 |    4.983291ms |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+
+2025/10/13 21:13:06 [32m/Users/com/backend_axenta/api/user_templates.go:78
+[0m[33m[0.395ms] [34;1m[rows:1][0m SELECT count(*) FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL
+
+2025/10/13 21:13:06 [32m/Users/com/backend_axenta/api/user_templates.go:91
+[0m[33m[0.247ms] [34;1m[rows:0][0m SELECT * FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL ORDER BY name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:13:06 | 200 |  259.577416ms |             ::1 | GET      "/api/auth/user-templates?page=1&limit=100&active_only=true"
+2025/10/13 21:13:06 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/13 21:13:06 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/13 21:13:06 ✅ Получено 20 пользователей от Axenta Cloud (всего: 539)
+
+2025/10/13 21:13:06 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.981ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:06 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.431ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:06 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.372ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:06 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.147ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:06 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.201ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:06 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.168ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:06 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.129ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:06 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.131ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:06 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.118ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:06 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.124ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:06 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.125ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:06 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.141ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:06 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.197ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:06 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.205ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:06 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.207ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:06 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.206ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:06 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.203ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:06 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.161ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:06 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.184ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:06 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.157ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+2025/10/13 21:13:06 📊 Возвращаем: page=1, limit=20, pages=27, получено=20, total=539
+[GIN] 2025/10/13 - 21:13:06 | 200 |  385.632917ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/13 - 21:13:07 | 200 |  636.379375ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/13 - 21:13:14 | 204 |       18.75µs |             ::1 | OPTIONS  "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/13 - 21:13:14 | 204 |      22.292µs |             ::1 | OPTIONS  "/api/public/roles?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:13:14 | 204 |     795.083µs |             ::1 | OPTIONS  "/api/public/roles?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:13:14 | 204 |      21.375µs |             ::1 | OPTIONS  "/api/auth/users/stats"
+[GIN] 2025/10/13 - 21:13:14 | 204 |      27.542µs |             ::1 | OPTIONS  "/api/public/user-templates?page=1&limit=100&active_only=true"
+
+2025/10/13 21:13:14 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[3.509ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:13:14 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[0.398ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:13:14 | 200 |        4.31ms |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+
+2025/10/13 21:13:14 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[0.180ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:13:14 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[0.211ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:13:14 | 200 |     575.667µs |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+
+2025/10/13 21:13:14 [32m/Users/com/backend_axenta/api/user_templates.go:449
+[0m[33m[9.624ms] [34;1m[rows:1][0m SELECT count(*) FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL
+
+2025/10/13 21:13:14 [32m/Users/com/backend_axenta/api/user_templates.go:459
+[0m[33m[2.021ms] [34;1m[rows:0][0m SELECT * FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL ORDER BY name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:13:14 | 200 |   11.860791ms |             ::1 | GET      "/api/public/user-templates?page=1&limit=100&active_only=true"
+2025/10/13 21:13:14 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/13 21:13:14 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/13 21:13:15 ✅ Получено 20 пользователей от Axenta Cloud (всего: 539)
+
+2025/10/13 21:13:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[4.390ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.343ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.247ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.333ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.253ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.212ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.151ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.159ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.155ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.171ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.218ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.155ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.144ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.148ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.166ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.151ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.149ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.194ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.161ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.170ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+2025/10/13 21:13:15 📊 Возвращаем: page=1, limit=20, pages=27, получено=20, total=539
+[GIN] 2025/10/13 - 21:13:15 | 200 |     276.526ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/13 - 21:13:15 | 200 |  625.013041ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/13 - 21:13:29 | 204 |     158.583µs |             ::1 | OPTIONS  "/api/public/roles?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:13:29 | 204 |     154.875µs |             ::1 | OPTIONS  "/api/public/user-templates?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:13:29 | 204 |      34.291µs |             ::1 | OPTIONS  "/api/auth/users/stats"
+[GIN] 2025/10/13 - 21:13:29 | 204 |      11.584µs |             ::1 | OPTIONS  "/api/public/roles?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:13:29 | 204 |      31.708µs |             ::1 | OPTIONS  "/api/auth/users?page=1&limit=20"
+
+2025/10/13 21:13:29 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[3.901ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:13:29 [32m/Users/com/backend_axenta/api/user_templates.go:449
+[0m[33m[2.971ms] [34;1m[rows:1][0m SELECT count(*) FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL
+
+2025/10/13 21:13:29 [32m/Users/com/backend_axenta/api/user_templates.go:459
+[0m[33m[0.373ms] [34;1m[rows:0][0m SELECT * FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL ORDER BY name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:13:29 | 200 |    4.784375ms |             ::1 | GET      "/api/public/user-templates?page=1&limit=100&active_only=true"
+
+2025/10/13 21:13:29 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[1.774ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:13:29 | 200 |    6.023416ms |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+
+2025/10/13 21:13:29 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[0.295ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:13:29 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[0.258ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:13:29 | 200 |     628.625µs |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+2025/10/13 21:13:29 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/13 21:13:29 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/13 21:13:29 ✅ Получено 20 пользователей от Axenta Cloud (всего: 539)
+
+2025/10/13 21:13:29 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.475ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:29 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.468ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:29 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.255ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:29 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.217ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:29 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.107ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:29 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.107ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:29 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.107ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:29 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.092ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:29 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.102ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:29 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.096ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:29 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.097ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:29 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.089ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:29 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.086ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:29 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.085ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:29 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.082ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:29 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.077ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:29 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.076ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:29 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.072ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:29 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.076ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:29 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.096ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+2025/10/13 21:13:29 📊 Возвращаем: page=1, limit=20, pages=27, получено=20, total=539
+[GIN] 2025/10/13 - 21:13:29 | 200 |  216.899125ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/13 - 21:13:29 | 200 |   420.51175ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/13 - 21:13:34 | 204 |      31.583µs |             ::1 | OPTIONS  "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/13 - 21:13:34 | 204 |      15.167µs |             ::1 | OPTIONS  "/api/public/user-templates?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:13:34 | 204 |          97µs |             ::1 | OPTIONS  "/api/public/roles?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:13:34 | 204 |      14.125µs |             ::1 | OPTIONS  "/api/public/roles?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:13:34 | 204 |      13.875µs |             ::1 | OPTIONS  "/api/auth/users/stats"
+
+2025/10/13 21:13:34 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[1.822ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:13:34 [32m/Users/com/backend_axenta/api/user_templates.go:449
+[0m[33m[1.413ms] [34;1m[rows:1][0m SELECT count(*) FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL
+
+2025/10/13 21:13:34 [32m/Users/com/backend_axenta/api/user_templates.go:459
+[0m[33m[0.202ms] [34;1m[rows:0][0m SELECT * FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL ORDER BY name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:13:34 | 200 |    1.928083ms |             ::1 | GET      "/api/public/user-templates?page=1&limit=100&active_only=true"
+
+2025/10/13 21:13:34 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[0.742ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:13:34 | 200 |    2.710791ms |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+
+2025/10/13 21:13:34 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[0.326ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:13:34 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[0.274ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:13:34 | 200 |     802.791µs |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+2025/10/13 21:13:34 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/13 21:13:34 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/13 21:13:34 ✅ Получено 20 пользователей от Axenta Cloud (всего: 539)
+
+2025/10/13 21:13:34 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.553ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:34 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.311ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:34 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.244ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:34 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.212ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:34 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.201ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:34 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.212ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:34 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.213ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:34 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.199ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:34 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.157ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:34 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.136ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:34 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.116ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:34 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.131ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:34 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.122ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:34 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.130ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:34 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.135ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:34 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.133ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:34 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.136ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:34 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.136ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:34 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.121ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:34 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.122ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+2025/10/13 21:13:34 📊 Возвращаем: page=1, limit=20, pages=27, получено=20, total=539
+[GIN] 2025/10/13 - 21:13:34 | 200 |  203.853833ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/13 - 21:13:34 | 200 |  574.808333ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/13 - 21:13:44 | 204 |     212.792µs |             ::1 | OPTIONS  "/api/auth/users/stats"
+[GIN] 2025/10/13 - 21:13:44 | 204 |      115.25µs |             ::1 | OPTIONS  "/api/public/roles?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:13:44 | 204 |     246.917µs |             ::1 | OPTIONS  "/api/public/roles?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:13:44 | 204 |     145.917µs |             ::1 | OPTIONS  "/api/public/user-templates?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:13:44 | 204 |      45.917µs |             ::1 | OPTIONS  "/api/auth/users?page=1&limit=20"
+
+2025/10/13 21:13:44 [32m/Users/com/backend_axenta/api/user_templates.go:449
+[0m[33m[2.011ms] [34;1m[rows:1][0m SELECT count(*) FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL
+
+2025/10/13 21:13:44 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[2.117ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:13:44 [32m/Users/com/backend_axenta/api/user_templates.go:459
+[0m[33m[0.485ms] [34;1m[rows:0][0m SELECT * FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL ORDER BY name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:13:44 | 200 |    2.612667ms |             ::1 | GET      "/api/public/user-templates?page=1&limit=100&active_only=true"
+
+2025/10/13 21:13:44 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[0.517ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:13:44 | 200 |    2.831667ms |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+
+2025/10/13 21:13:44 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[0.310ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:13:44 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[0.182ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:13:44 | 200 |     545.041µs |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+2025/10/13 21:13:44 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/13 21:13:44 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/13 21:13:44 ✅ Получено 20 пользователей от Axenta Cloud (всего: 539)
+
+2025/10/13 21:13:44 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[11.148ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:44 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[1.404ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:44 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.556ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:44 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.726ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:44 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[4.297ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:44 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[17.659ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:44 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[1.672ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:44 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[31.769ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:44 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[3.100ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:44 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.148ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:44 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.642ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:44 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[1.034ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:44 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.524ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:44 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.876ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:44 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.863ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:44 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.263ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:44 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.149ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:44 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.163ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:44 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.245ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:13:44 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.177ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+2025/10/13 21:13:44 📊 Возвращаем: page=1, limit=20, pages=27, получено=20, total=539
+[GIN] 2025/10/13 - 21:13:44 | 200 |  331.700375ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/13 - 21:13:44 | 200 |  470.104625ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/13 - 21:14:05 | 204 |      67.334µs |             ::1 | OPTIONS  "/api/auth/users/stats"
+[GIN] 2025/10/13 - 21:14:05 | 204 |      29.459µs |             ::1 | OPTIONS  "/api/public/user-templates?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:14:05 | 204 |      88.625µs |             ::1 | OPTIONS  "/api/public/roles?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:14:05 | 204 |        15.5µs |             ::1 | OPTIONS  "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/13 - 21:14:05 | 204 |     542.792µs |             ::1 | OPTIONS  "/api/public/roles?page=1&limit=100&active_only=true"
+
+2025/10/13 21:14:05 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[2.412ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:14:05 [32m/Users/com/backend_axenta/api/user_templates.go:449
+[0m[33m[2.532ms] [34;1m[rows:1][0m SELECT count(*) FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL
+
+2025/10/13 21:14:05 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[0.317ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:14:05 | 200 |      3.2075ms |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+
+2025/10/13 21:14:05 [32m/Users/com/backend_axenta/api/user_templates.go:459
+[0m[33m[0.332ms] [34;1m[rows:0][0m SELECT * FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL ORDER BY name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:14:05 | 200 |    3.116584ms |             ::1 | GET      "/api/public/user-templates?page=1&limit=100&active_only=true"
+
+2025/10/13 21:14:05 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[0.290ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:14:05 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[0.203ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:14:05 | 200 |     596.208µs |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+2025/10/13 21:14:05 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/13 21:14:05 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/13 21:14:05 ✅ Получено 20 пользователей от Axenta Cloud (всего: 539)
+
+2025/10/13 21:14:05 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.505ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:05 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.324ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:05 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.251ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:05 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.217ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:05 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.206ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:05 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.231ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:05 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.196ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:05 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.202ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:05 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.121ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:05 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.111ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:05 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.114ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:05 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.122ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:05 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.125ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:05 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.125ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:05 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.108ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:05 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.112ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:05 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.102ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:05 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.103ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:05 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.136ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:05 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.102ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+2025/10/13 21:14:05 📊 Возвращаем: page=1, limit=20, pages=27, получено=20, total=539
+[GIN] 2025/10/13 - 21:14:05 | 200 |  219.406334ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/13 - 21:14:06 | 200 |  438.704667ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/13 - 21:14:07 | 204 |       8.291µs |             ::1 | OPTIONS  "/api/public/roles?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:14:07 | 204 |           7µs |             ::1 | OPTIONS  "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/13 - 21:14:07 | 204 |       4.167µs |             ::1 | OPTIONS  "/api/auth/users/stats"
+[GIN] 2025/10/13 - 21:14:07 | 204 |      32.041µs |             ::1 | OPTIONS  "/api/public/roles?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:14:07 | 204 |       3.333µs |             ::1 | OPTIONS  "/api/public/user-templates?page=1&limit=100&active_only=true"
+
+2025/10/13 21:14:07 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[1.365ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:14:07 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[0.201ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:14:07 | 200 |    1.725458ms |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+
+2025/10/13 21:14:07 [32m/Users/com/backend_axenta/api/user_templates.go:449
+[0m[33m[1.445ms] [34;1m[rows:1][0m SELECT count(*) FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL
+
+2025/10/13 21:14:07 [32m/Users/com/backend_axenta/api/user_templates.go:459
+[0m[33m[0.416ms] [34;1m[rows:0][0m SELECT * FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL ORDER BY name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:14:07 | 200 |    1.977458ms |             ::1 | GET      "/api/public/user-templates?page=1&limit=100&active_only=true"
+
+2025/10/13 21:14:07 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[0.129ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:14:07 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[0.258ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:14:07 | 200 |     497.625µs |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+2025/10/13 21:14:07 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/13 21:14:07 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/13 21:14:07 ✅ Получено 20 пользователей от Axenta Cloud (всего: 539)
+
+2025/10/13 21:14:07 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.573ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:07 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.327ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:07 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.257ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:07 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.269ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:07 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.311ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:07 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.193ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:07 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.140ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:07 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.141ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:07 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.116ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:07 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.109ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:07 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.108ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:07 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.115ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:07 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.103ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:07 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.110ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:07 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.120ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:07 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.176ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:07 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.102ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:07 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.107ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:07 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.115ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:07 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.128ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+2025/10/13 21:14:07 📊 Возвращаем: page=1, limit=20, pages=27, получено=20, total=539
+[GIN] 2025/10/13 - 21:14:07 | 200 |  222.696917ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/13 - 21:14:07 | 200 |  614.292542ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/13 - 21:14:45 | 204 |      82.375µs |             ::1 | OPTIONS  "/api/public/roles?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:14:45 | 204 |       27.75µs |             ::1 | OPTIONS  "/api/public/user-templates?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:14:45 | 204 |      28.625µs |             ::1 | OPTIONS  "/api/auth/users/stats"
+[GIN] 2025/10/13 - 21:14:45 | 204 |      21.166µs |             ::1 | OPTIONS  "/api/public/roles?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:14:45 | 204 |       4.625µs |             ::1 | OPTIONS  "/api/auth/users?page=1&limit=20"
+
+2025/10/13 21:14:45 [32m/Users/com/backend_axenta/api/user_templates.go:449
+[0m[33m[2.372ms] [34;1m[rows:1][0m SELECT count(*) FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL
+
+2025/10/13 21:14:45 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[2.951ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:14:45 [32m/Users/com/backend_axenta/api/user_templates.go:459
+[0m[33m[0.293ms] [34;1m[rows:0][0m SELECT * FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL ORDER BY name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:14:45 | 200 |    2.883167ms |             ::1 | GET      "/api/public/user-templates?page=1&limit=100&active_only=true"
+
+2025/10/13 21:14:45 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[0.251ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:14:45 | 200 |    4.181958ms |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+
+2025/10/13 21:14:45 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[0.219ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:14:45 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[0.168ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:14:45 | 200 |     518.209µs |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+2025/10/13 21:14:45 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/13 21:14:45 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/13 21:14:45 ✅ Получено 20 пользователей от Axenta Cloud (всего: 539)
+
+2025/10/13 21:14:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.669ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.354ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.446ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.176ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.167ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.206ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.137ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.186ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.180ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.147ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.193ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.137ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.127ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.307ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.139ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.238ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.115ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.244ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.262ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.186ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+2025/10/13 21:14:45 📊 Возвращаем: page=1, limit=20, pages=27, получено=20, total=539
+[GIN] 2025/10/13 - 21:14:45 | 200 |  193.679708ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/13 - 21:14:46 | 200 |  609.064958ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/13 - 21:14:47 | 204 |      65.625µs |             ::1 | OPTIONS  "/api/public/roles?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:14:47 | 204 |      56.625µs |             ::1 | OPTIONS  "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/13 - 21:14:47 | 204 |      16.709µs |             ::1 | OPTIONS  "/api/auth/users/stats"
+[GIN] 2025/10/13 - 21:14:47 | 204 |       3.083µs |             ::1 | OPTIONS  "/api/public/roles?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:14:47 | 204 |      11.125µs |             ::1 | OPTIONS  "/api/public/user-templates?page=1&limit=100&active_only=true"
+
+2025/10/13 21:14:47 [32m/Users/com/backend_axenta/api/user_templates.go:449
+[0m[33m[13.823ms] [34;1m[rows:1][0m SELECT count(*) FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL
+
+2025/10/13 21:14:47 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[15.907ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:14:47 [32m/Users/com/backend_axenta/api/user_templates.go:459
+[0m[33m[7.820ms] [34;1m[rows:0][0m SELECT * FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL ORDER BY name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:14:47 | 200 |   24.319083ms |             ::1 | GET      "/api/public/user-templates?page=1&limit=100&active_only=true"
+
+2025/10/13 21:14:47 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[7.409ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:14:47 | 200 |     25.6955ms |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+
+2025/10/13 21:14:47 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[0.232ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:14:47 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[0.246ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:14:47 | 200 |         556µs |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+2025/10/13 21:14:47 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/13 21:14:47 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/13 21:14:47 ✅ Получено 20 пользователей от Axenta Cloud (всего: 539)
+
+2025/10/13 21:14:47 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.340ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:47 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.148ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:47 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.136ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:47 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.164ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:47 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.121ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:47 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.210ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:47 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.169ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:47 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.146ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:47 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.126ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:47 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.184ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:47 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.161ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:47 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.110ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:47 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.090ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:47 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.080ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:47 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.078ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:47 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.103ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:47 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.084ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:47 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.110ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:47 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.152ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:47 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.107ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+2025/10/13 21:14:47 📊 Возвращаем: page=1, limit=20, pages=27, получено=20, total=539
+[GIN] 2025/10/13 - 21:14:47 | 200 |  258.391334ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/13 - 21:14:48 | 200 |  505.601791ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/13 - 21:14:49 | 204 |    8.826917ms |             ::1 | OPTIONS  "/api/public/roles?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:14:49 | 204 |      29.792µs |             ::1 | OPTIONS  "/api/public/roles?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:14:49 | 204 |      17.959µs |             ::1 | OPTIONS  "/api/auth/users/stats"
+[GIN] 2025/10/13 - 21:14:49 | 204 |       4.542µs |             ::1 | OPTIONS  "/api/public/user-templates?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:14:49 | 204 |      14.792µs |             ::1 | OPTIONS  "/api/auth/users?page=1&limit=20"
+
+2025/10/13 21:14:49 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[5.758ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:14:49 [32m/Users/com/backend_axenta/api/user_templates.go:449
+[0m[33m[5.058ms] [34;1m[rows:1][0m SELECT count(*) FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL
+
+2025/10/13 21:14:49 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[0.486ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:14:49 | 200 |    6.423792ms |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+
+2025/10/13 21:14:49 [32m/Users/com/backend_axenta/api/user_templates.go:459
+[0m[33m[0.615ms] [34;1m[rows:0][0m SELECT * FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL ORDER BY name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:14:49 | 200 |    7.346917ms |             ::1 | GET      "/api/public/user-templates?page=1&limit=100&active_only=true"
+
+2025/10/13 21:14:49 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[0.526ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:14:49 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[3.955ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:14:49 | 200 |    8.101791ms |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+2025/10/13 21:14:50 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/13 21:14:50 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/13 21:14:50 ✅ Получено 20 пользователей от Axenta Cloud (всего: 539)
+
+2025/10/13 21:14:50 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.731ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:50 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.366ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:50 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.277ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:50 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.322ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:50 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.174ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:50 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.183ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:50 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.150ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:50 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.188ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:50 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.162ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:50 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.146ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:50 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.257ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:50 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.222ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:50 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.149ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:50 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.196ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:50 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.440ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:50 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.146ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:50 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.231ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:50 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.194ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:50 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.145ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:50 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.114ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+2025/10/13 21:14:50 📊 Возвращаем: page=1, limit=20, pages=27, получено=20, total=539
+[GIN] 2025/10/13 - 21:14:50 | 200 |  230.519875ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/13 - 21:14:50 | 200 |   530.19525ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/13 - 21:14:52 | 204 |      42.666µs |             ::1 | OPTIONS  "/api/public/roles?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:14:52 | 204 |       7.583µs |             ::1 | OPTIONS  "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/13 - 21:14:52 | 204 |       2.709µs |             ::1 | OPTIONS  "/api/auth/users/stats"
+[GIN] 2025/10/13 - 21:14:52 | 204 |       8.209µs |             ::1 | OPTIONS  "/api/public/user-templates?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:14:52 | 204 |      17.958µs |             ::1 | OPTIONS  "/api/public/roles?page=1&limit=100&active_only=true"
+
+2025/10/13 21:14:52 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[2.180ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:14:52 [32m/Users/com/backend_axenta/api/user_templates.go:449
+[0m[33m[2.034ms] [34;1m[rows:1][0m SELECT count(*) FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL
+
+2025/10/13 21:14:52 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[0.212ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:14:52 | 200 |    2.581458ms |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+
+2025/10/13 21:14:52 [32m/Users/com/backend_axenta/api/user_templates.go:459
+[0m[33m[0.287ms] [34;1m[rows:0][0m SELECT * FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL ORDER BY name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:14:52 | 200 |    2.366625ms |             ::1 | GET      "/api/public/user-templates?page=1&limit=100&active_only=true"
+
+2025/10/13 21:14:52 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[0.267ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:14:52 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[0.251ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:14:52 | 200 |     611.541µs |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+2025/10/13 21:14:52 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/13 21:14:52 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/13 21:14:52 ✅ Получено 20 пользователей от Axenta Cloud (всего: 539)
+
+2025/10/13 21:14:52 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.520ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:52 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.221ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:52 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.235ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:52 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.304ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:52 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.173ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:52 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.232ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:52 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.235ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:52 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.202ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:52 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.843ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:52 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.610ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:52 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.290ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:52 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.178ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:52 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.138ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:52 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.154ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:52 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.165ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:52 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.155ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:52 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.133ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:52 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.151ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:52 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.123ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:52 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.106ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+2025/10/13 21:14:52 📊 Возвращаем: page=1, limit=20, pages=27, получено=20, total=539
+[GIN] 2025/10/13 - 21:14:52 | 200 |  211.092958ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/13 - 21:14:53 | 200 |   630.03625ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/13 - 21:14:55 | 204 |       34.75µs |             ::1 | OPTIONS  "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/13 - 21:14:55 | 204 |      15.542µs |             ::1 | OPTIONS  "/api/public/roles?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:14:55 | 204 |      30.542µs |             ::1 | OPTIONS  "/api/auth/users/stats"
+[GIN] 2025/10/13 - 21:14:55 | 204 |         4.5µs |             ::1 | OPTIONS  "/api/public/roles?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:14:55 | 204 |       6.917µs |             ::1 | OPTIONS  "/api/public/user-templates?page=1&limit=100&active_only=true"
+
+2025/10/13 21:14:55 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[2.288ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:14:55 [32m/Users/com/backend_axenta/api/user_templates.go:449
+[0m[33m[1.912ms] [34;1m[rows:1][0m SELECT count(*) FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL
+
+2025/10/13 21:14:55 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[0.374ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:14:55 | 200 |    3.087083ms |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+
+2025/10/13 21:14:55 [32m/Users/com/backend_axenta/api/user_templates.go:459
+[0m[33m[0.358ms] [34;1m[rows:0][0m SELECT * FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL ORDER BY name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:14:55 | 200 |    2.478167ms |             ::1 | GET      "/api/public/user-templates?page=1&limit=100&active_only=true"
+
+2025/10/13 21:14:55 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[0.150ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:14:55 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[0.134ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:14:55 | 200 |     398.583µs |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+2025/10/13 21:14:55 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/13 21:14:55 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/13 21:14:56 ✅ Получено 20 пользователей от Axenta Cloud (всего: 539)
+
+2025/10/13 21:14:56 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.911ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:56 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.360ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:56 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.194ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:56 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.148ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:56 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.123ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:56 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.112ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:56 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.104ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:56 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.119ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:56 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.161ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:56 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.164ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:56 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.133ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:56 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[49.808ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:56 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[13.600ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:56 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.464ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:56 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[1.023ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:56 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[77.212ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:56 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[9.508ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:56 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.561ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:56 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.573ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:56 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.763ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+2025/10/13 21:14:56 📊 Возвращаем: page=1, limit=20, pages=27, получено=20, total=539
+[GIN] 2025/10/13 - 21:14:56 | 200 |  448.163875ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/13 - 21:14:56 | 200 |  479.317208ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/13 - 21:14:58 | 204 |     131.833µs |             ::1 | OPTIONS  "/api/public/roles?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:14:58 | 204 |      21.041µs |             ::1 | OPTIONS  "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/13 - 21:14:58 | 204 |       3.584µs |             ::1 | OPTIONS  "/api/public/user-templates?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:14:58 | 204 |      18.125µs |             ::1 | OPTIONS  "/api/auth/users/stats"
+[GIN] 2025/10/13 - 21:14:58 | 204 |      21.542µs |             ::1 | OPTIONS  "/api/public/roles?page=1&limit=100&active_only=true"
+
+2025/10/13 21:14:58 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[2.451ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:14:58 [32m/Users/com/backend_axenta/api/user_templates.go:449
+[0m[33m[2.799ms] [34;1m[rows:1][0m SELECT count(*) FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL
+
+2025/10/13 21:14:58 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[0.460ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:14:58 | 200 |    3.239542ms |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+
+2025/10/13 21:14:58 [32m/Users/com/backend_axenta/api/user_templates.go:459
+[0m[33m[0.399ms] [34;1m[rows:0][0m SELECT * FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL ORDER BY name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:14:58 | 200 |    3.504834ms |             ::1 | GET      "/api/public/user-templates?page=1&limit=100&active_only=true"
+
+2025/10/13 21:14:58 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[0.253ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:14:58 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[0.210ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:14:58 | 200 |    1.168084ms |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+2025/10/13 21:14:58 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/13 21:14:58 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/13 21:14:58 ✅ Получено 20 пользователей от Axenta Cloud (всего: 539)
+
+2025/10/13 21:14:58 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[11.397ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:58 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.819ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:58 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.893ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:58 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[1.940ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:58 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[1.939ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:58 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.407ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:58 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.164ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:58 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.154ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:58 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.159ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:58 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.164ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:58 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.183ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:58 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.129ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:58 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.135ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:58 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.146ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:58 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.117ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:58 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.138ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:58 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.110ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:58 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[6.588ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:58 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.572ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:14:58 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[1.161ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+2025/10/13 21:14:58 📊 Возвращаем: page=1, limit=20, pages=27, получено=20, total=539
+[GIN] 2025/10/13 - 21:14:58 | 200 |  259.716125ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/13 - 21:14:58 | 200 |  500.238125ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/13 - 21:15:41 | 204 |      60.916µs |             ::1 | OPTIONS  "/api/public/roles?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:15:41 | 204 |       6.666µs |             ::1 | OPTIONS  "/api/public/user-templates?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:15:41 | 204 |      26.959µs |             ::1 | OPTIONS  "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/13 - 21:15:41 | 204 |      91.667µs |             ::1 | OPTIONS  "/api/auth/users/stats"
+[GIN] 2025/10/13 - 21:15:41 | 204 |      44.917µs |             ::1 | OPTIONS  "/api/public/roles?page=1&limit=100&active_only=true"
+
+2025/10/13 21:15:41 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[1.959ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:15:41 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[0.333ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:15:41 | 200 |    2.413667ms |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+
+2025/10/13 21:15:41 [32m/Users/com/backend_axenta/api/user_templates.go:449
+[0m[33m[2.119ms] [34;1m[rows:1][0m SELECT count(*) FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL
+
+2025/10/13 21:15:41 [32m/Users/com/backend_axenta/api/user_templates.go:459
+[0m[33m[0.227ms] [34;1m[rows:0][0m SELECT * FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL ORDER BY name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:15:41 | 200 |    2.499666ms |             ::1 | GET      "/api/public/user-templates?page=1&limit=100&active_only=true"
+
+2025/10/13 21:15:41 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[3.817ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:15:41 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[2.296ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:15:41 | 200 |    6.249625ms |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+2025/10/13 21:15:41 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/13 21:15:41 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/13 21:15:42 ✅ Получено 20 пользователей от Axenta Cloud (всего: 539)
+
+2025/10/13 21:15:42 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.383ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:42 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.190ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:42 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.189ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:42 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.152ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:42 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.216ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:42 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.161ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:42 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.114ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:42 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.117ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:42 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.114ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:42 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.111ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:42 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.110ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:42 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.096ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:42 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.102ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:42 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.110ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:42 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.109ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:42 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.101ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:42 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.110ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:42 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.117ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:42 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.106ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:42 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.126ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+2025/10/13 21:15:42 📊 Возвращаем: page=1, limit=20, pages=27, получено=20, total=539
+[GIN] 2025/10/13 - 21:15:42 | 200 |  241.624583ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/13 - 21:15:42 | 200 |  431.805041ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/13 - 21:15:44 | 204 |      10.625µs |             ::1 | OPTIONS  "/api/public/roles?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:15:44 | 204 |       5.292µs |             ::1 | OPTIONS  "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/13 - 21:15:44 | 204 |       4.625µs |             ::1 | OPTIONS  "/api/auth/users/stats"
+[GIN] 2025/10/13 - 21:15:44 | 204 |       2.792µs |             ::1 | OPTIONS  "/api/public/roles?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:15:44 | 204 |       19.25µs |             ::1 | OPTIONS  "/api/public/user-templates?page=1&limit=100&active_only=true"
+
+2025/10/13 21:15:44 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[1.375ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:15:44 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[0.148ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:15:44 | 200 |    1.602958ms |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+
+2025/10/13 21:15:44 [32m/Users/com/backend_axenta/api/user_templates.go:449
+[0m[33m[1.508ms] [34;1m[rows:1][0m SELECT count(*) FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL
+
+2025/10/13 21:15:44 [32m/Users/com/backend_axenta/api/user_templates.go:459
+[0m[33m[1.014ms] [34;1m[rows:0][0m SELECT * FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL ORDER BY name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:15:44 | 200 |    2.757959ms |             ::1 | GET      "/api/public/user-templates?page=1&limit=100&active_only=true"
+
+2025/10/13 21:15:44 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[0.113ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:15:44 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[0.221ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:15:44 | 200 |     423.667µs |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+2025/10/13 21:15:45 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/13 21:15:45 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/13 21:15:45 ✅ Получено 20 пользователей от Axenta Cloud (всего: 539)
+
+2025/10/13 21:15:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.561ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.279ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.270ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.173ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.187ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.163ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.213ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.154ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.211ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.141ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.147ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.157ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.149ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.148ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.177ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.139ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.141ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.160ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.190ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:15:45 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.178ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+2025/10/13 21:15:45 📊 Возвращаем: page=1, limit=20, pages=27, получено=20, total=539
+[GIN] 2025/10/13 - 21:15:45 | 200 |  231.999042ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/13 - 21:15:45 | 200 |  557.244375ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/13 - 21:16:15 | 204 |      12.292µs |             ::1 | OPTIONS  "/api/public/roles?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:16:15 | 204 |       2.709µs |             ::1 | OPTIONS  "/api/auth/users/stats"
+[GIN] 2025/10/13 - 21:16:15 | 204 |      216.25µs |             ::1 | OPTIONS  "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/13 - 21:16:15 | 204 |     171.625µs |             ::1 | OPTIONS  "/api/public/roles?page=1&limit=100&active_only=true"
+[GIN] 2025/10/13 - 21:16:15 | 204 |     839.417µs |             ::1 | OPTIONS  "/api/public/user-templates?page=1&limit=100&active_only=true"
+
+2025/10/13 21:16:15 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[29.647ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:16:15 [32m/Users/com/backend_axenta/api/user_templates.go:449
+[0m[33m[33.333ms] [34;1m[rows:1][0m SELECT count(*) FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL
+
+2025/10/13 21:16:15 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[1.252ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:16:15 | 200 |   36.042375ms |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+
+2025/10/13 21:16:15 [32m/Users/com/backend_axenta/api/user_templates.go:459
+[0m[33m[1.682ms] [34;1m[rows:0][0m SELECT * FROM "user_templates" WHERE is_active = true AND "user_templates"."deleted_at" IS NULL ORDER BY name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:16:15 | 200 |     36.2495ms |             ::1 | GET      "/api/public/user-templates?page=1&limit=100&active_only=true"
+
+2025/10/13 21:16:15 [32m/Users/com/backend_axenta/api/roles.go:673
+[0m[33m[0.253ms] [34;1m[rows:1][0m SELECT count(*) FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL
+
+2025/10/13 21:16:15 [32m/Users/com/backend_axenta/api/roles.go:683
+[0m[33m[0.165ms] [34;1m[rows:3][0m SELECT * FROM "roles" WHERE is_active = true AND "roles"."deleted_at" IS NULL ORDER BY priority DESC, name ASC LIMIT 100
+[GIN] 2025/10/13 - 21:16:15 | 200 |     482.125µs |             ::1 | GET      "/api/public/roles?page=1&limit=100&active_only=true"
+2025/10/13 21:16:15 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/13 21:16:15 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/13 21:16:15 ✅ Получено 20 пользователей от Axenta Cloud (всего: 539)
+
+2025/10/13 21:16:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.488ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:16:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.190ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:16:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.135ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:16:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.157ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:16:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.220ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:16:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.129ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:16:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.130ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:16:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.110ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:16:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.101ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:16:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.114ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:16:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.097ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:16:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.102ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:16:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.142ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:16:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.139ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:16:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.174ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:16:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.205ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:16:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.316ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:16:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.142ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:16:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.133ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+
+2025/10/13 21:16:15 [32m/Users/com/backend_axenta/api/axenta_proxy.go:775
+[0m[33m[0.134ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
+2025/10/13 21:16:15 📊 Возвращаем: page=1, limit=20, pages=27, получено=20, total=539
+[GIN] 2025/10/13 - 21:16:15 | 200 |  215.526333ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/13 - 21:16:16 | 200 |     663.041ms |             ::1 | GET      "/api/auth/users/stats"
