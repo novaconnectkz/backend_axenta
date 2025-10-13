@@ -116,18 +116,35 @@ func GetUsers(c *gin.Context) {
 
 				for _, term := range trimmedTerms {
 					lowerTerm := strings.ToLower(term)
-					conditions = append(conditions, "(LOWER(username) = ? OR LOWER(email) = ? OR LOWER(CONCAT(first_name, ' ', last_name)) = ?)")
-					args = append(args, lowerTerm, lowerTerm, lowerTerm)
+					// Используем два варианта поиска: с LOWER для латиницы и без LOWER для кириллицы
+					conditions = append(conditions,
+						"(LOWER(username) = ? OR username = ?) OR "+
+							"(LOWER(email) = ? OR email = ?) OR "+
+							"(LOWER(first_name) = ? OR first_name = ?) OR "+
+							"(LOWER(last_name) = ? OR last_name = ?) OR "+
+							"((LOWER(first_name) || ' ' || LOWER(last_name)) = ? OR (first_name || ' ' || last_name) = ?)")
+					args = append(args, lowerTerm, term, lowerTerm, term, lowerTerm, term, lowerTerm, term, lowerTerm, term)
 				}
 
 				query = query.Where(strings.Join(conditions, " OR "), args...)
 			}
 		} else {
 			// Обычный поиск по частичному совпадению
-			searchPattern := "%" + strings.ToLower(search) + "%"
+			// Используем два варианта поиска: с LOWER для латиницы и без LOWER для кириллицы
+			searchPatternLower := "%" + strings.ToLower(search) + "%"
+			searchPatternOriginal := "%" + search + "%"
+
 			query = query.Where(
-				"LOWER(username) LIKE ? OR LOWER(email) LIKE ? OR LOWER(first_name) LIKE ? OR LOWER(last_name) LIKE ?",
-				searchPattern, searchPattern, searchPattern, searchPattern,
+				"(LOWER(username) LIKE ? OR username LIKE ?) OR "+
+					"(LOWER(email) LIKE ? OR email LIKE ?) OR "+
+					"(LOWER(first_name) LIKE ? OR first_name LIKE ?) OR "+
+					"(LOWER(last_name) LIKE ? OR last_name LIKE ?) OR "+
+					"((LOWER(first_name) || ' ' || LOWER(last_name)) LIKE ? OR (first_name || ' ' || last_name) LIKE ?)",
+				searchPatternLower, searchPatternOriginal,
+				searchPatternLower, searchPatternOriginal,
+				searchPatternLower, searchPatternOriginal,
+				searchPatternLower, searchPatternOriginal,
+				searchPatternLower, searchPatternOriginal,
 			)
 		}
 	}

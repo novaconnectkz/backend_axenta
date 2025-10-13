@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +17,30 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
+
+// splitFullName разделяет полное имя на имя и фамилию
+func splitFullName(fullName string) (firstName, lastName string) {
+	if fullName == "" {
+		return "", ""
+	}
+
+	// Убираем лишние пробелы
+	fullName = strings.TrimSpace(fullName)
+
+	// Разделяем по пробелу
+	parts := strings.Fields(fullName)
+
+	if len(parts) == 0 {
+		return "", ""
+	} else if len(parts) == 1 {
+		return parts[0], ""
+	} else {
+		// Первая часть - имя, остальное - фамилия
+		firstName = parts[0]
+		lastName = strings.Join(parts[1:], " ")
+		return firstName, lastName
+	}
+}
 
 // AxentaCloudObject представляет объект из Axenta Cloud API
 type AxentaCloudObject struct {
@@ -366,24 +391,31 @@ func GetObjectsStatsFromAxentaCloud(c *gin.Context) {
 func GetUsersFromAxentaCloud(c *gin.Context) {
 	// Получаем параметры запроса
 	page := c.DefaultQuery("page", "1")
-	perPage := c.DefaultQuery("per_page", "50")
+	// Фронтенд отправляет 'limit', а Axenta Cloud ожидает 'per_page'
+	limit := c.DefaultQuery("limit", "20")
+	perPage := limit // Используем тот же лимит, что запрашивает фронтенд
 	search := c.Query("search")
 	active := c.Query("active")
 	role := c.Query("role")
 
-	// Формируем URL для Axenta Cloud API
-	axentaURL := fmt.Sprintf("https://axenta.cloud/api/cms/users/?page=%s&per_page=%s", page, perPage)
+	// Формируем URL для Axenta Cloud API с правильным кодированием параметров
+	baseURL := "https://axenta.cloud/api/cms/users/"
+	params := url.Values{}
+	params.Add("page", page)
+	params.Add("per_page", perPage)
 
 	// Добавляем фильтры если есть
 	if search != "" {
-		axentaURL += "&search=" + search
+		params.Add("search", search) // url.Values автоматически кодирует параметры
 	}
 	if active != "" {
-		axentaURL += "&active=" + active
+		params.Add("active", active)
 	}
 	if role != "" {
-		axentaURL += "&role=" + role
+		params.Add("role", role)
 	}
+
+	axentaURL := baseURL + "?" + params.Encode()
 
 	// Получаем токен пользователя из заголовка Authorization
 	authHeader := c.GetHeader("Authorization")
@@ -431,6 +463,7 @@ func GetUsersFromAxentaCloud(c *gin.Context) {
 	req.Header.Set("User-Agent", "AxentaCRM/1.0")
 
 	log.Printf("📡 Проксирование запроса пользователей к Axenta Cloud: %s", axentaURL)
+	log.Printf("🔍 Параметры запроса: page=%s, limit=%s, search=%s", page, limit, search)
 
 	// Выполняем запрос
 	resp, err := client.Do(req)
@@ -458,6 +491,14 @@ func GetUsersFromAxentaCloud(c *gin.Context) {
 	// Проверяем статус ответа
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("❌ Axenta Cloud вернул ошибку: %d - %s", resp.StatusCode, string(body))
+
+		// Если ошибка 400 и есть поисковый запрос с кириллицей, пробуем локальный поиск
+		if resp.StatusCode == http.StatusBadRequest && search != "" && containsCyrillic(search) {
+			log.Printf("🔄 Пробуем локальный поиск для кириллического запроса: %s", search)
+			fallbackLocalSearch(c, search, page, perPage, active, role)
+			return
+		}
+
 		c.JSON(resp.StatusCode, gin.H{
 			"status":  "error",
 			"error":   fmt.Sprintf("Axenta Cloud API error: %d", resp.StatusCode),
@@ -510,12 +551,16 @@ func GetUsersFromAxentaCloud(c *gin.Context) {
 			}
 		}
 
+		// Разделяем полное имя на имя и фамилию
+		fullName, _ := user["name"].(string)
+		firstName, lastName := splitFullName(fullName)
+
 		users[i] = gin.H{
 			"id":          user["id"],
 			"username":    user["username"],
 			"email":       user["email"],
-			"first_name":  user["name"], // В Axenta Cloud имя хранится в поле "name"
-			"last_name":   "",
+			"first_name":  firstName,
+			"last_name":   lastName,
 			"is_active":   user["isActive"],
 			"role_id":     roleID,
 			"role":        roleInfo, // Добавляем информацию о роли
@@ -540,15 +585,27 @@ func GetUsersFromAxentaCloud(c *gin.Context) {
 		}
 	}
 
+	// Преобразуем параметры для правильного ответа
+	pageInt, _ := strconv.Atoi(page)
+	limitInt, _ := strconv.Atoi(limit)
+	if pageInt < 1 {
+		pageInt = 1
+	}
+	if limitInt < 1 {
+		limitInt = 20
+	}
+
+	log.Printf("📊 Возвращаем: page=%d, limit=%d, pages=%d, получено=%d, total=%d", pageInt, limitInt, (axentaResponse.Count+limitInt-1)/limitInt, len(users), axentaResponse.Count)
+
 	// Возвращаем данные в формате, ожидаемом фронтендом
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
 		"data": gin.H{
 			"items": users,
-			"total": axentaResponse.Count, // Общее количество пользователей
-			"page":  1,
-			"limit": len(users),                                           // Количество на текущей странице
-			"pages": (axentaResponse.Count + len(users) - 1) / len(users), // Примерное количество страниц
+			"total": axentaResponse.Count,                             // Общее количество пользователей (530)
+			"page":  pageInt,                                          // Текущая страница
+			"limit": limitInt,                                         // Лимит на страницу
+			"pages": (axentaResponse.Count + limitInt - 1) / limitInt, // Правильное количество страниц
 		},
 	})
 }
@@ -778,4 +835,133 @@ func mapAccountTypeToAxentaType(accountType interface{}) string {
 	default:
 		return "client" // По умолчанию
 	}
+}
+
+// containsCyrillic проверяет, содержит ли строка кириллические символы
+func containsCyrillic(s string) bool {
+	for _, r := range s {
+		if (r >= 'А' && r <= 'я') || (r >= 'Ё' && r <= 'ё') {
+			return true
+		}
+	}
+	return false
+}
+
+// fallbackLocalSearch выполняет локальный поиск пользователей при ошибке Axenta Cloud API
+func fallbackLocalSearch(c *gin.Context, search, page, perPage, active, role string) {
+	log.Printf("🔍 Выполняем локальный поиск пользователей: %s", search)
+
+	// Получаем базу данных
+	db := database.GetDB()
+	if db == nil {
+		log.Printf("❌ База данных недоступна для локального поиска")
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "База данных недоступна",
+		})
+		return
+	}
+
+	// Преобразуем параметры
+	pageInt, _ := strconv.Atoi(page)
+	if pageInt < 1 {
+		pageInt = 1
+	}
+	limitInt, _ := strconv.Atoi(perPage)
+	if limitInt < 1 || limitInt > 100 {
+		limitInt = 20
+	}
+	offset := (pageInt - 1) * limitInt
+
+	// Строим запрос к локальной базе данных
+	query := db.Model(&models.User{}).Preload("Role").Preload("Template")
+
+	// Фильтр по роли
+	if role != "" {
+		query = query.Joins("JOIN roles ON users.role_id = roles.id").
+			Where("roles.name = ?", role)
+	}
+
+	// Фильтр по активности
+	if active != "" {
+		isActive := active == "true"
+		query = query.Where("is_active = ?", isActive)
+	}
+
+	// Поиск по имени, email или username (используем нашу исправленную логику)
+	if search != "" {
+		searchPatternLower := "%" + strings.ToLower(search) + "%"
+		searchPatternOriginal := "%" + search + "%"
+
+		query = query.Where(
+			"(LOWER(username) LIKE ? OR username LIKE ?) OR "+
+				"(LOWER(email) LIKE ? OR email LIKE ?) OR "+
+				"(LOWER(first_name) LIKE ? OR first_name LIKE ?) OR "+
+				"(LOWER(last_name) LIKE ? OR last_name LIKE ?) OR "+
+				"((LOWER(first_name) || ' ' || LOWER(last_name)) LIKE ? OR (first_name || ' ' || last_name) LIKE ?)",
+			searchPatternLower, searchPatternOriginal,
+			searchPatternLower, searchPatternOriginal,
+			searchPatternLower, searchPatternOriginal,
+			searchPatternLower, searchPatternOriginal,
+			searchPatternLower, searchPatternOriginal,
+		)
+	}
+
+	// Подсчет общего количества
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		log.Printf("❌ Ошибка подсчета пользователей: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка подсчета пользователей",
+		})
+		return
+	}
+
+	// Получение данных с пагинацией
+	var users []models.User
+	if err := query.Offset(offset).Limit(limitInt).Find(&users).Error; err != nil {
+		log.Printf("❌ Ошибка получения пользователей: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка получения пользователей",
+		})
+		return
+	}
+
+	log.Printf("✅ Локальный поиск нашел %d пользователей из %d", len(users), total)
+
+	// Преобразование в response format (как в GetUsers)
+	userResponses := make([]gin.H, len(users))
+	for i, user := range users {
+		userResponses[i] = gin.H{
+			"id":          user.ID,
+			"username":    user.Username,
+			"email":       user.Email,
+			"first_name":  user.FirstName,
+			"last_name":   user.LastName,
+			"is_active":   user.IsActive,
+			"role_id":     user.RoleID,
+			"role":        user.Role,
+			"template_id": user.TemplateID,
+			"last_login":  user.LastLogin,
+			"login_count": user.LoginCount,
+			"created_at":  user.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			"updated_at":  user.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+			// Помечаем, что это локальные данные
+			"is_local_search": true,
+		}
+	}
+
+	// Возвращаем данные в том же формате, что и Axenta Cloud
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data": gin.H{
+			"items": userResponses,
+			"total": total,
+			"page":  pageInt,
+			"limit": limitInt,
+			"pages": (total + int64(limitInt) - 1) / int64(limitInt),
+		},
+	})
 }
