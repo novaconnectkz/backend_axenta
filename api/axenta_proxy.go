@@ -556,23 +556,26 @@ func GetUsersFromAxentaCloud(c *gin.Context) {
 		firstName, lastName := splitFullName(fullName)
 
 		users[i] = gin.H{
-			"id":          user["id"],
-			"username":    user["username"],
-			"email":       user["email"],
-			"first_name":  firstName,
-			"last_name":   lastName,
-			"is_active":   user["isActive"],
-			"role_id":     roleID,
-			"role":        roleInfo, // Добавляем информацию о роли
-			"template_id": nil,
-			"last_login":  user["lastLogin"],
-			"login_count": 0,
-			"created_at":  user["creationDatetime"],
-			"updated_at":  user["creationDatetime"],
+			"id":                user["id"],
+			"username":          user["username"],
+			"email":             user["email"],
+			"first_name":        firstName,
+			"last_name":         lastName,
+			"name":              user["name"], // Полное имя из Axenta Cloud
+			"is_active":         user["isActive"],
+			"role_id":           roleID,
+			"role":              roleInfo, // Добавляем информацию о роли
+			"template_id":       nil,
+			"last_login":        user["lastLogin"],
+			"login_count":       0,
+			"created_at":        user["creationDatetime"],
+			"updated_at":        user["creationDatetime"],
+			"creation_datetime": user["creationDatetime"], // Дата создания пользователя из Axenta Cloud
 			// Дополнительные поля из Axenta Cloud
 			"account_name":     user["accountName"],
 			"account_type":     user["accountType"],
 			"creator_name":     user["creatorName"],
+			"creatorName":      user["creatorName"], // Дублируем для совместимости
 			"language":         user["language"],
 			"timezone":         user["timezone"],
 			"is_admin":         user["isAdmin"],
@@ -934,20 +937,50 @@ func fallbackLocalSearch(c *gin.Context, search, page, perPage, active, role str
 	// Преобразование в response format (как в GetUsers)
 	userResponses := make([]gin.H, len(users))
 	for i, user := range users {
+		// Определяем полное имя
+		fullName := user.Name
+		if fullName == "" && (user.FirstName != "" || user.LastName != "") {
+			// Если поле Name пустое, формируем его из FirstName и LastName
+			if user.FirstName != "" && user.LastName != "" {
+				fullName = user.FirstName + " " + user.LastName
+			} else if user.FirstName != "" {
+				fullName = user.FirstName
+			} else if user.LastName != "" {
+				fullName = user.LastName
+			}
+		}
+
+		// Определяем имя создателя
+		creatorName := ""
+		if user.FirstName != "" && user.LastName != "" {
+			creatorName = user.FirstName + " " + user.LastName
+		} else if user.FirstName != "" {
+			creatorName = user.FirstName
+		} else if user.LastName != "" {
+			creatorName = user.LastName
+		} else {
+			creatorName = user.Username // Fallback на username
+		}
+
 		userResponses[i] = gin.H{
-			"id":          user.ID,
-			"username":    user.Username,
-			"email":       user.Email,
-			"first_name":  user.FirstName,
-			"last_name":   user.LastName,
-			"is_active":   user.IsActive,
-			"role_id":     user.RoleID,
-			"role":        user.Role,
-			"template_id": user.TemplateID,
-			"last_login":  user.LastLogin,
-			"login_count": user.LoginCount,
-			"created_at":  user.CreatedAt.Format("2006-01-02T15:04:05Z"),
-			"updated_at":  user.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+			"id":                user.ID,
+			"username":          user.Username,
+			"email":             user.Email,
+			"first_name":        user.FirstName,
+			"last_name":         user.LastName,
+			"name":              fullName, // Полное имя (сформированное или из модели)
+			"is_active":         user.IsActive,
+			"role_id":           user.RoleID,
+			"role":              user.Role,
+			"template_id":       user.TemplateID,
+			"last_login":        user.LastLogin,
+			"login_count":       user.LoginCount,
+			"created_at":        user.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			"updated_at":        user.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+			"creation_datetime": user.CreatedAt.Format("2006-01-02T15:04:05Z"), // Дата создания пользователя
+			// Дополнительные поля для локальных пользователей
+			"creator_name": creatorName, // Имя создателя
+			"creatorName":  creatorName, // Дублируем для совместимости
 			// Помечаем, что это локальные данные
 			"is_local_search": true,
 		}

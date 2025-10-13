@@ -38,20 +38,23 @@ type UpdateUserRequest struct {
 
 // UserResponse представляет ответ с данными пользователя
 type UserResponse struct {
-	ID         uint                 `json:"id"`
-	Username   string               `json:"username"`
-	Email      string               `json:"email"`
-	FirstName  string               `json:"first_name"`
-	LastName   string               `json:"last_name"`
-	IsActive   bool                 `json:"is_active"`
-	RoleID     uint                 `json:"role_id"`
-	Role       *models.Role         `json:"role,omitempty"`
-	TemplateID *uint                `json:"template_id"`
-	Template   *models.UserTemplate `json:"template,omitempty"`
-	LastLogin  *string              `json:"last_login"`
-	LoginCount int                  `json:"login_count"`
-	CreatedAt  string               `json:"created_at"`
-	UpdatedAt  string               `json:"updated_at"`
+	ID               uint                 `json:"id"`
+	Username         string               `json:"username"`
+	Email            string               `json:"email"`
+	FirstName        string               `json:"first_name"`
+	LastName         string               `json:"last_name"`
+	Name             string               `json:"name"`              // Полное имя
+	CreatorName      string               `json:"creator_name"`      // Имя создателя
+	CreationDatetime string               `json:"creation_datetime"` // Дата создания пользователя
+	IsActive         bool                 `json:"is_active"`
+	RoleID           uint                 `json:"role_id"`
+	Role             *models.Role         `json:"role,omitempty"`
+	TemplateID       *uint                `json:"template_id"`
+	Template         *models.UserTemplate `json:"template,omitempty"`
+	LastLogin        *string              `json:"last_login"`
+	LoginCount       int                  `json:"login_count"`
+	CreatedAt        string               `json:"created_at"`
+	UpdatedAt        string               `json:"updated_at"`
 }
 
 // GetUsers возвращает список пользователей с фильтрацией и пагинацией
@@ -172,20 +175,48 @@ func GetUsers(c *gin.Context) {
 	// Преобразование в response format
 	userResponses := make([]UserResponse, len(users))
 	for i, user := range users {
+		// Определяем полное имя
+		fullName := user.Name
+		if fullName == "" && (user.FirstName != "" || user.LastName != "") {
+			// Если поле Name пустое, формируем его из FirstName и LastName
+			if user.FirstName != "" && user.LastName != "" {
+				fullName = user.FirstName + " " + user.LastName
+			} else if user.FirstName != "" {
+				fullName = user.FirstName
+			} else if user.LastName != "" {
+				fullName = user.LastName
+			}
+		}
+
+		// Определяем имя создателя
+		creatorName := ""
+		if user.FirstName != "" && user.LastName != "" {
+			creatorName = user.FirstName + " " + user.LastName
+		} else if user.FirstName != "" {
+			creatorName = user.FirstName
+		} else if user.LastName != "" {
+			creatorName = user.LastName
+		} else {
+			creatorName = user.Username // Fallback на username
+		}
+
 		userResponses[i] = UserResponse{
-			ID:         user.ID,
-			Username:   user.Username,
-			Email:      user.Email,
-			FirstName:  user.FirstName,
-			LastName:   user.LastName,
-			IsActive:   user.IsActive,
-			RoleID:     user.RoleID,
-			Role:       user.Role,
-			TemplateID: user.TemplateID,
-			Template:   user.Template,
-			LoginCount: user.LoginCount,
-			CreatedAt:  user.CreatedAt.Format("2006-01-02T15:04:05Z"),
-			UpdatedAt:  user.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+			ID:               user.ID,
+			Username:         user.Username,
+			Email:            user.Email,
+			FirstName:        user.FirstName,
+			LastName:         user.LastName,
+			Name:             fullName,                                      // Полное имя (сформированное или из модели)
+			CreatorName:      creatorName,                                   // Имя создателя
+			CreationDatetime: user.CreatedAt.Format("2006-01-02T15:04:05Z"), // Дата создания пользователя
+			IsActive:         user.IsActive,
+			RoleID:           user.RoleID,
+			Role:             user.Role,
+			TemplateID:       user.TemplateID,
+			Template:         user.Template,
+			LoginCount:       user.LoginCount,
+			CreatedAt:        user.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			UpdatedAt:        user.UpdatedAt.Format("2006-01-02T15:04:05Z"),
 		}
 		if user.LastLogin != nil {
 			lastLogin := user.LastLogin.Format("2006-01-02T15:04:05Z")
@@ -241,20 +272,48 @@ func GetUser(c *gin.Context) {
 		return
 	}
 
+	// Определяем полное имя
+	fullName := user.Name
+	if fullName == "" && (user.FirstName != "" || user.LastName != "") {
+		// Если поле Name пустое, формируем его из FirstName и LastName
+		if user.FirstName != "" && user.LastName != "" {
+			fullName = user.FirstName + " " + user.LastName
+		} else if user.FirstName != "" {
+			fullName = user.FirstName
+		} else if user.LastName != "" {
+			fullName = user.LastName
+		}
+	}
+
+	// Определяем имя создателя
+	creatorName := ""
+	if user.FirstName != "" && user.LastName != "" {
+		creatorName = user.FirstName + " " + user.LastName
+	} else if user.FirstName != "" {
+		creatorName = user.FirstName
+	} else if user.LastName != "" {
+		creatorName = user.LastName
+	} else {
+		creatorName = user.Username // Fallback на username
+	}
+
 	userResponse := UserResponse{
-		ID:         user.ID,
-		Username:   user.Username,
-		Email:      user.Email,
-		FirstName:  user.FirstName,
-		LastName:   user.LastName,
-		IsActive:   user.IsActive,
-		RoleID:     user.RoleID,
-		Role:       user.Role,
-		TemplateID: user.TemplateID,
-		Template:   user.Template,
-		LoginCount: user.LoginCount,
-		CreatedAt:  user.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:  user.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+		ID:               user.ID,
+		Username:         user.Username,
+		Email:            user.Email,
+		FirstName:        user.FirstName,
+		LastName:         user.LastName,
+		Name:             fullName,
+		CreatorName:      creatorName,
+		CreationDatetime: user.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		IsActive:         user.IsActive,
+		RoleID:           user.RoleID,
+		Role:             user.Role,
+		TemplateID:       user.TemplateID,
+		Template:         user.Template,
+		LoginCount:       user.LoginCount,
+		CreatedAt:        user.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		UpdatedAt:        user.UpdatedAt.Format("2006-01-02T15:04:05Z"),
 	}
 	if user.LastLogin != nil {
 		lastLogin := user.LastLogin.Format("2006-01-02T15:04:05Z")
