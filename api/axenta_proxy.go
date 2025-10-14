@@ -102,6 +102,7 @@ type AxentaCloudObject struct {
 	DeviceTypeName      string   `json:"deviceTypeName"`
 	LastMessageDatetime string   `json:"lastMessageDatetime"`
 	CreatedAt           string   `json:"createdAt"`
+	DeletedAt           string   `json:"deletedAt"`
 	IsActive            bool     `json:"isActive"`
 	CurrentUserAccess   []string `json:"currentUserAccess"`
 }
@@ -1108,4 +1109,165 @@ func convertOrderingToAxenta(ordering string) string {
 	
 	// Если поле не найдено, возвращаем пустую строку (без сортировки)
 	return ""
+}
+
+// GetDeletedObjectsFromAxentaCloud проксирует запрос к корзине Axenta Cloud API
+func GetDeletedObjectsFromAxentaCloud(c *gin.Context) {
+	// Получаем параметры запроса
+	page := c.DefaultQuery("page", "1")
+	perPage := c.DefaultQuery("per_page", "50")
+	search := c.Query("search")
+
+	// Формируем URL для Axenta Cloud API
+	axentaURL := fmt.Sprintf("https://axenta.cloud/api/cms/trash/?page=%s&per_page=%s", page, perPage)
+	if search != "" {
+		axentaURL += fmt.Sprintf("&search=%s", search)
+	}
+
+	// Получаем токен пользователя из заголовка Authorization
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  "Токен авторизации не предоставлен",
+		})
+		return
+	}
+
+	// Извлекаем токен из заголовка "Token <token>" или "Bearer <token>"
+	var userToken string
+	if strings.HasPrefix(authHeader, "Token ") {
+		userToken = strings.TrimPrefix(authHeader, "Token ")
+	} else if strings.HasPrefix(authHeader, "Bearer ") {
+		userToken = strings.TrimPrefix(authHeader, "Bearer ")
+	} else {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  "Неверный формат токена авторизации",
+		})
+		return
+	}
+
+	// Создаем запрос к Axenta Cloud
+	req, err := http.NewRequest("GET", axentaURL, nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка создания запроса к Axenta Cloud: " + err.Error(),
+		})
+		return
+	}
+
+	// Добавляем заголовки авторизации с токеном пользователя
+	req.Header.Set("Authorization", "Token "+userToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	// Выполняем запрос
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка запроса к Axenta Cloud: " + err.Error(),
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	// Читаем ответ
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка чтения ответа от Axenta Cloud: " + err.Error(),
+		})
+		return
+	}
+
+	// Если Axenta Cloud вернул ошибку, передаем её клиенту
+	if resp.StatusCode != http.StatusOK {
+		c.JSON(resp.StatusCode, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("Ошибка Axenta Cloud API: %s", string(body)),
+		})
+		return
+	}
+
+	// Парсим ответ от Axenta Cloud
+	var axentaResponse struct {
+		Count    int                 `json:"count"`
+		Next     *string             `json:"next"`
+		Previous *string             `json:"previous"`
+		Results  []AxentaCloudObject `json:"results"`
+	}
+
+	if err := json.Unmarshal(body, &axentaResponse); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка парсинга ответа от Axenta Cloud: " + err.Error(),
+		})
+		return
+	}
+
+	// Преобразуем объекты Axenta Cloud в локальный формат
+	var localObjects []gin.H
+	for _, obj := range axentaResponse.Results {
+		localObject := gin.H{
+			"id":                  obj.ID,
+			"name":                obj.Name,
+			"type":                "vehicle", // По умолчанию
+			"description":         "",
+			"latitude":            nil,
+			"longitude":           nil,
+			"address":             obj.AccountName,
+			"imei":                obj.UniqueID,
+			"phone_number":        "",
+			"serial_number":       obj.UniqueID,
+			"status":              "deleted", // Помечаем как удаленный
+			"is_active":           false,
+			"scheduled_delete_at": nil,
+			"last_activity_at":    nil,
+			"company_id":          obj.AccountID,
+			"contract_id":         obj.AccountID,
+			"template_id":         nil,
+			"location_id":         obj.AccountID,
+			"created_at":          obj.CreatedAt,
+			"updated_at":          obj.CreatedAt,
+			"deleted_at":          obj.DeletedAt, // Добавляем поле deleted_at
+			"accountName":         obj.AccountName,
+			"creatorName":         obj.CreatorName,
+			"deviceTypeName":      obj.DeviceTypeName,
+			"phoneNumbers":        obj.PhoneNumbers,
+			"createdAt":           obj.CreatedAt,
+			"lastMessageDatetime": obj.LastMessageDatetime,
+			"uniqueId":            obj.UniqueID,
+			"settings":            "{}",
+			"tags":                []string{obj.DeviceTypeName, obj.AccountType},
+			"notes":               fmt.Sprintf("Создатель: %s", obj.CreatorName),
+			"external_id":         obj.UniqueID,
+		}
+
+		if len(obj.PhoneNumbers) > 0 {
+			localObject["phone_number"] = obj.PhoneNumbers[0]
+		}
+
+		localObjects = append(localObjects, localObject)
+	}
+
+	// Парсим параметры пагинации
+	pageNum, _ := strconv.Atoi(page)
+	perPageNum, _ := strconv.Atoi(perPage)
+	totalPages := (axentaResponse.Count + perPageNum - 1) / perPageNum
+
+	// Возвращаем в стандартном формате
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data": gin.H{
+			"items":       localObjects,
+			"total":       axentaResponse.Count,
+			"page":        pageNum,
+			"limit":       perPageNum,
+			"total_pages": totalPages,
+		},
+	})
 }

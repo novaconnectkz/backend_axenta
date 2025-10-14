@@ -535,8 +535,8 @@ func GetDeletedObjects(c *gin.Context) {
 	// Получаем подключение к БД текущей компании
 	tenantDB := middleware.GetTenantDB(c)
 	if tenantDB == nil {
-		c.JSON(500, gin.H{"status": "error", "error": "Ошибка подключения к базе данных компании"})
-		return
+		// Fallback к основной БД если мультитенантность отключена
+		tenantDB = database.GetDB()
 	}
 
 	// Получаем параметры запроса
@@ -591,8 +591,8 @@ func RestoreObject(c *gin.Context) {
 	// Получаем подключение к БД текущей компании
 	tenantDB := middleware.GetTenantDB(c)
 	if tenantDB == nil {
-		c.JSON(500, gin.H{"status": "error", "error": "Ошибка подключения к базе данных компании"})
-		return
+		// Fallback к основной БД если мультитенантность отключена
+		tenantDB = database.GetDB()
 	}
 
 	// Получаем ID объекта
@@ -639,8 +639,8 @@ func PermanentDeleteObject(c *gin.Context) {
 	// Получаем подключение к БД текущей компании
 	tenantDB := middleware.GetTenantDB(c)
 	if tenantDB == nil {
-		c.JSON(500, gin.H{"status": "error", "error": "Ошибка подключения к базе данных компании"})
-		return
+		// Fallback к основной БД если мультитенантность отключена
+		tenantDB = database.GetDB()
 	}
 
 	// Получаем ID объекта

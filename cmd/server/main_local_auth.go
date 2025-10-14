@@ -66,18 +66,30 @@ func main() {
 	r := gin.Default()
 
 	// Настройка CORS
-	corsConfig := cors.DefaultConfig()
-	corsConfig.AllowOrigins = []string{
-		"http://localhost:3000",
-		"http://localhost:5173",
-		"http://localhost:8081",
-		"https://axenta.glonass-saratov.ru",
-		"https://api.axenta.glonass-saratov.ru",
+	corsConfig := cors.Config{
+		AllowOrigins: []string{
+			"http://localhost:3000",
+			"http://localhost:5173",
+			"http://localhost:8081",
+			"https://axenta.glonass-saratov.ru",
+			"https://api.axenta.glonass-saratov.ru",
+		},
+		AllowMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
+		AllowHeaders: []string{
+			"Origin",
+			"Content-Length",
+			"Content-Type",
+			"Authorization",
+			"authorization",
+			"X-Tenant-ID",
+			"x-tenant-id",
+			"Cache-Control",
+			"Pragma",
+			"Accept",
+			"X-Requested-With",
+		},
+		AllowCredentials: true,
 	}
-	corsConfig.AllowHeaders = append(corsConfig.AllowHeaders,
-		"Authorization", "authorization", "X-Tenant-ID", "Cache-Control", "Pragma", "Content-Type", "Accept")
-	corsConfig.AllowCredentials = true
-	corsConfig.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"}
 	r.Use(cors.New(corsConfig))
 
 	// Публичные маршруты

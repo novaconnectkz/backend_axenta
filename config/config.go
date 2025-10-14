@@ -190,7 +190,7 @@ func LoadConfig() (*Config, error) {
 		CORS: CORSConfig{
 			AllowedOrigins:   getEnvSlice("CORS_ALLOWED_ORIGINS", []string{"*"}),
 			AllowedMethods:   getEnvSlice("CORS_ALLOWED_METHODS", []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}),
-			AllowedHeaders:   getEnvSlice("CORS_ALLOWED_HEADERS", []string{"Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"}),
+			AllowedHeaders:   getEnvSlice("CORS_ALLOWED_HEADERS", []string{"Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin", "X-Tenant-ID", "x-tenant-id"}),
 			AllowCredentials: getEnvBool("CORS_ALLOW_CREDENTIALS", true),
 			MaxAge:           getEnvInt("CORS_MAX_AGE", 86400),
 		},

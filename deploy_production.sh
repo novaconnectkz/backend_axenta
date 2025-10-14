@@ -203,7 +203,7 @@ LOG_FORMAT=json
 # CORS настройки
 CORS_ALLOWED_ORIGINS=https://$DOMAIN_NAME,https://www.$DOMAIN_NAME
 CORS_ALLOWED_METHODS=GET,POST,PUT,DELETE,OPTIONS
-CORS_ALLOWED_HEADERS=Content-Type,Authorization
+CORS_ALLOWED_HEADERS=Content-Type,Authorization,X-Tenant-ID,x-tenant-id
 
 # Безопасность
 RATE_LIMIT_REQUESTS=100

@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Тест авторизации Axenta CRM</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .token-input {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+        .btn {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        .btn:hover {
+            background-color: #0056b3;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .success {
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .error {
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        .info {
+            background-color: #d1ecf1;
+            border: 1px solid #bee5eb;
+            color: #0c5460;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔐 Тест авторизации Axenta CRM</h1>
+        
+        <div>
+            <label for="token">Токен авторизации:</label>
+            <input type="text" id="token" class="token-input" 
+                   value="5e515a8f2874fc78f31c74af45260333f2c84c35" 
+                   placeholder="Введите токен авторизации">
+        </div>
+        
+        <div>
+            <button class="btn" onclick="saveToken()">💾 Сохранить токен в localStorage</button>
+            <button class="btn" onclick="testObjects()">📋 Тест объектов</button>
+            <button class="btn" onclick="testTrash()">🗑️ Тест корзины</button>
+            <button class="btn" onclick="testTemplates()">📄 Тест шаблонов</button>
+            <button class="btn" onclick="testCompanies()">🏢 Тест компаний</button>
+            <button class="btn" onclick="testStats()">📊 Тест статистики</button>
+        </div>
+        
+        <div id="result"></div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8080/api/auth';
+        
+        function log(message, type = 'info') {
+            const result = document.getElementById('result');
+            result.className = `result ${type}`;
+            result.textContent = message;
+        }
+        
+        function saveToken() {
+            const token = document.getElementById('token').value.trim();
+            if (!token) {
+                log('❌ Токен не может быть пустым', 'error');
+                return;
+            }
+            
+            localStorage.setItem('axenta_token', token);
+            log(`✅ Токен сохранен в localStorage: ${token.substring(0, 20)}...`, 'success');
+        }
+        
+        async function makeRequest(url, description) {
+            const token = localStorage.getItem('axenta_token');
+            if (!token) {
+                log('❌ Токен не найден в localStorage. Сначала сохраните токен.', 'error');
+                return;
+            }
+            
+            try {
+                log(`🔄 ${description}...`, 'info');
+                const response = await fetch(url, {
+                    headers: {
+                        'Authorization': `Token ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    log(`✅ ${description}\n\nОтвет:\n${JSON.stringify(data, null, 2)}`, 'success');
+                } else {
+                    log(`❌ ${description}\n\nОшибка ${response.status}:\n${JSON.stringify(data, null, 2)}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ ${description}\n\nОшибка сети: ${error.message}`, 'error');
+            }
+        }
+        
+        function testObjects() {
+            makeRequest(`${API_BASE}/cms/objects/?page=1&per_page=5&ordering=name`, 'Загрузка объектов');
+        }
+        
+        function testTrash() {
+            makeRequest(`${API_BASE}/cms/trash/?page=1&per_page=10`, 'Загрузка корзины (с fallback к Axenta Cloud)');
+        }
+        
+        function testTemplates() {
+            makeRequest(`${API_BASE}/object-templates/?page=1&per_page=10`, 'Загрузка шаблонов');
+        }
+        
+        function testCompanies() {
+            makeRequest(`${API_BASE}/admin/accounts/list`, 'Загрузка компаний');
+        }
+        
+        function testStats() {
+            makeRequest(`${API_BASE}/cms/objects/stats/`, 'Загрузка статистики');
+        }
+        
+        // Автоматически сохраняем токен при загрузке страницы
+        window.onload = function() {
+            const token = document.getElementById('token').value;
+            if (token) {
+                localStorage.setItem('axenta_token', token);
+                log('✅ Токен автоматически сохранен в localStorage', 'success');
+            }
+        };
+    </script>
+</body>
+</html>

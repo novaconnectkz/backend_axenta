@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
 
@@ -99,27 +98,49 @@ func main() {
 	r.RedirectFixedPath = false
 
 	// Настройка CORS
-	corsConfig := cors.DefaultConfig()
-	corsConfig.AllowOrigins = []string{
-		"http://localhost:3000",
-		"http://127.0.0.1:3000",
-		"http://localhost:3001",
-		"http://127.0.0.1:3001",
-		"http://localhost:3002",
-		"http://127.0.0.1:3002",
-		"http://localhost:3003",
-		"http://127.0.0.1:3003",
-		"https://axenta.glonass-saratov.ru",
-		"http://axenta.glonass-saratov.ru",
-		"https://api.axenta.glonass-saratov.ru",
-		"http://api.axenta.glonass-saratov.ru",
+	corsConfig := middleware.CustomCORSConfig{
+		AllowOrigins: []string{
+			"http://localhost:3000",
+			"http://127.0.0.1:3000",
+			"http://localhost:3001",
+			"http://127.0.0.1:3001",
+			"http://localhost:3002",
+			"http://127.0.0.1:3002",
+			"http://localhost:3003",
+			"http://127.0.0.1:3003",
+			"https://axenta.glonass-saratov.ru",
+			"http://axenta.glonass-saratov.ru",
+			"https://api.axenta.glonass-saratov.ru",
+			"http://api.axenta.glonass-saratov.ru",
+		},
+		AllowMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
+		AllowHeaders: []string{
+			"Origin",
+			"Content-Length",
+			"Content-Type",
+			"Authorization",
+			"authorization",
+			"X-Tenant-ID",
+			"Cache-Control",
+			"Pragma",
+			"Accept",
+			"X-Requested-With",
+		},
+		ExposeHeaders: []string{
+			"Content-Length",
+			"Access-Control-Allow-Origin",
+			"Access-Control-Allow-Headers",
+			"Cache-Control",
+			"Content-Language",
+			"Content-Type",
+			"Expires",
+			"Last-Modified",
+			"Pragma",
+		},
+		AllowCredentials: true,
+		MaxAge:           12 * 3600, // 12 часов кеширования preflight запросов
 	}
-	corsConfig.AllowHeaders = append(corsConfig.AllowHeaders, "Authorization", "authorization", "X-Tenant-ID", "Cache-Control", "Pragma", "Content-Type", "Accept")
-	corsConfig.AllowCredentials = true
-	corsConfig.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"}
-	corsConfig.ExposeHeaders = []string{"Content-Length", "Access-Control-Allow-Origin", "Access-Control-Allow-Headers", "Cache-Control", "Content-Language", "Content-Type", "Expires", "Last-Modified", "Pragma"}
-	corsConfig.MaxAge = 12 * 3600 // 12 часов кеширования preflight запросов
-	r.Use(cors.New(corsConfig))
+	r.Use(middleware.CustomCORS(corsConfig))
 
 	// Публичные маршруты (без проверки tenant)
 	r.GET("/ping", func(c *gin.Context) {
@@ -468,6 +489,10 @@ func main() {
 	apiGroup.DELETE("/objects/:id/permanent", api.PermanentDeleteObject)
 	apiGroup.DELETE("/objects/:id/permanent/", api.PermanentDeleteObject)
 
+	// CMS эндпоинты для корзины (совместимость с фронтендом) - проксирование к Axenta Cloud
+	apiGroup.GET("/cms/trash", api.GetDeletedObjectsFromAxentaCloud)
+	apiGroup.GET("/cms/trash/", api.GetDeletedObjectsFromAxentaCloud)
+
 	// Шаблоны объектов - временно отключено
 	// apiGroup.GET("/object-templates", api.GetObjectTemplates)
 	// apiGroup.GET("/object-templates/:id", api.GetObjectTemplate)
@@ -475,6 +500,32 @@ func main() {
 	// apiGroup.PUT("/object-templates/:id", api.UpdateObjectTemplate)
 	// apiGroup.DELETE("/object-templates/:id", api.DeleteObjectTemplate)
 	// apiGroup.POST("/objects/:id/create-template", api.CreateTemplateFromObject)
+
+	// Временный эндпоинт для шаблонов объектов (возвращает пустой список)
+	apiGroup.GET("/object-templates", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"status": "success",
+			"data": gin.H{
+				"items":       []gin.H{},
+				"total":       0,
+				"page":        1,
+				"per_page":    50,
+				"total_pages": 0,
+			},
+		})
+	})
+	apiGroup.GET("/object-templates/", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"status": "success",
+			"data": gin.H{
+				"items":       []gin.H{},
+				"total":       0,
+				"page":        1,
+				"per_page":    50,
+				"total_pages": 0,
+			},
+		})
+	})
 
 	// Пользователи (прокси к Axenta Cloud API)
 	log.Println("🔧 Registering users proxy endpoints...")
@@ -500,6 +551,20 @@ func main() {
 	apiGroup.GET("/accounts/", accountsHandler.GetAccounts)
 	apiGroup.GET("/accounts/:id", accountsHandler.GetAccount)
 	apiGroup.GET("/accounts/:id/", accountsHandler.GetAccount)
+
+	// Административные эндпоинты для аккаунтов (совместимость с фронтендом)
+	apiGroup.GET("/admin/accounts/list", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"status": "success",
+			"data": []gin.H{
+				{
+					"id":        1,
+					"name":      "Демо компания",
+					"is_active": true,
+				},
+			},
+		})
+	})
 	apiGroup.PUT("/users/:id", api.UpdateUser)
 	apiGroup.DELETE("/users/:id", api.DeleteUser)
 	apiGroup.POST("/users/bulk-delete", api.BulkDeleteUsers)
