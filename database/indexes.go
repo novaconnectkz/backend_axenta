@@ -267,6 +267,124 @@ var PerformanceIndexes = []DatabaseIndex{
 		Columns: []string{"first_name", "last_name", "email"},
 		Type:    "gin",
 	},
+
+	// === КРИТИЧЕСКИ ВАЖНЫЕ ИНДЕКСЫ ДЛЯ ПРОИЗВОДИТЕЛЬНОСТИ ===
+
+	// Индексы для объектов по датам
+	{
+		Name:    "idx_objects_tenant_created",
+		Table:   "objects",
+		Columns: []string{"tenant_id", "created_at"},
+		Type:    "btree",
+	},
+	{
+		Name:    "idx_objects_tenant_updated",
+		Table:   "objects",
+		Columns: []string{"tenant_id", "updated_at"},
+		Type:    "btree",
+	},
+
+	// Индексы для пользователей по активности
+	{
+		Name:    "idx_users_tenant_last_activity",
+		Table:   "users",
+		Columns: []string{"tenant_id", "last_activity_at"},
+		Type:    "btree",
+	},
+	{
+		Name:    "idx_users_tenant_created",
+		Table:   "users",
+		Columns: []string{"tenant_id", "created_at"},
+		Type:    "btree",
+	},
+
+	// Индексы для договоров по датам
+	{
+		Name:    "idx_contracts_tenant_created",
+		Table:   "contracts",
+		Columns: []string{"tenant_id", "created_at"},
+		Type:    "btree",
+	},
+	{
+		Name:    "idx_contracts_tenant_end_date",
+		Table:   "contracts",
+		Columns: []string{"tenant_id", "end_date"},
+		Type:    "btree",
+	},
+	{
+		Name:    "idx_contracts_expiring",
+		Table:   "contracts",
+		Columns: []string{"end_date"},
+		Type:    "btree",
+	},
+
+	// Индексы для оборудования
+	{
+		Name:    "idx_equipment_tenant_status",
+		Table:   "equipment",
+		Columns: []string{"tenant_id", "status"},
+		Type:    "btree",
+	},
+	{
+		Name:    "idx_equipment_tenant_condition",
+		Table:   "equipment",
+		Columns: []string{"tenant_id", "condition"},
+		Type:    "btree",
+	},
+	{
+		Name:    "idx_equipment_maintenance",
+		Table:   "equipment",
+		Columns: []string{"next_maintenance"},
+		Type:    "btree",
+	},
+
+	// Индексы для установок
+	{
+		Name:    "idx_installations_tenant_status",
+		Table:   "installations",
+		Columns: []string{"tenant_id", "status"},
+		Type:    "btree",
+	},
+	{
+		Name:    "idx_installations_tenant_date",
+		Table:   "installations",
+		Columns: []string{"tenant_id", "scheduled_date"},
+		Type:    "btree",
+	},
+	{
+		Name:    "idx_installations_installer",
+		Table:   "installations",
+		Columns: []string{"installer_id"},
+		Type:    "btree",
+	},
+
+	// Индексы для счетов
+	{
+		Name:    "idx_invoices_tenant_due_date",
+		Table:   "invoices",
+		Columns: []string{"tenant_id", "due_date"},
+		Type:    "btree",
+	},
+	{
+		Name:    "idx_invoices_overdue",
+		Table:   "invoices",
+		Columns: []string{"due_date", "status"},
+		Type:    "btree",
+	},
+
+	// Индексы для отчетов
+	{
+		Name:    "idx_reports_tenant_created",
+		Table:   "reports",
+		Columns: []string{"tenant_id", "created_at"},
+		Type:    "btree",
+	},
+	{
+		Name:    "idx_reports_status_created",
+		Table:   "reports",
+		Columns: []string{"status", "created_at"},
+		Type:    "btree",
+	},
 }
 
 // CreatePerformanceIndexes создает индексы для оптимизации производительности
@@ -305,7 +423,7 @@ func CreateIndex(db *gorm.DB, index DatabaseIndex) error {
 			)
 		}
 	default:
-		// Обычные B-tree индексы
+		// Обычные B-tree индексы с CONCURRENTLY для избежания блокировок
 		uniqueStr := ""
 		if index.Unique {
 			uniqueStr = "UNIQUE "
@@ -320,7 +438,7 @@ func CreateIndex(db *gorm.DB, index DatabaseIndex) error {
 		}
 
 		sql = fmt.Sprintf(
-			"CREATE %sINDEX IF NOT EXISTS %s ON %s (%s)",
+			"CREATE %sINDEX CONCURRENTLY IF NOT EXISTS %s ON %s (%s)",
 			uniqueStr, index.Name, index.Table, columns,
 		)
 	}

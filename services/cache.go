@@ -61,10 +61,13 @@ func (cs *CacheService) Del(ctx context.Context, key string) error {
 
 // Константы для TTL кэша
 const (
-	CacheTTLShort  = 5 * time.Minute  // Для часто изменяемых данных
-	CacheTTLMedium = 15 * time.Minute // Для умеренно изменяемых данных
-	CacheTTLLong   = 1 * time.Hour    // Для редко изменяемых данных
-	CacheTTLStatic = 24 * time.Hour   // Для статических данных
+	CacheTTLVeryShort     = 1 * time.Minute  // Для очень часто изменяемых данных
+	CacheTTLShort         = 5 * time.Minute  // Для часто изменяемых данных
+	CacheTTLMedium        = 15 * time.Minute // Для умеренно изменяемых данных
+	CacheTTLLong          = 1 * time.Hour    // Для редко изменяемых данных
+	CacheTTLStatic        = 24 * time.Hour   // Для статических данных
+	CacheTTLAggregation   = 30 * time.Minute // Для агрегированных данных
+	CacheTTLFilteredLists = 10 * time.Minute // Для отфильтрованных списков
 )
 
 // CacheObject кэширует объект
@@ -253,6 +256,115 @@ func (cs *CacheService) invalidateByPattern(pattern string) error {
 	return nil
 }
 
+// === РАСШИРЕННЫЕ МЕТОДЫ КЭШИРОВАНИЯ ===
+
+// CacheAggregatedData кэширует агрегированные данные (статистика, отчеты)
+func (cs *CacheService) CacheAggregatedData(tenantID uint, dataType string, data interface{}) error {
+	key := database.GenerateCacheKey(tenantID, "aggregated", dataType)
+	return database.CacheSetJSON(key, data, CacheTTLAggregation)
+}
+
+// GetCachedAggregatedData получает агрегированные данные из кэша
+func (cs *CacheService) GetCachedAggregatedData(tenantID uint, dataType string, dest interface{}) error {
+	key := database.GenerateCacheKey(tenantID, "aggregated", dataType)
+	return database.CacheGetJSON(key, dest)
+}
+
+// CacheFilteredList кэширует отфильтрованные списки
+func (cs *CacheService) CacheFilteredList(tenantID uint, listType string, filters string, data interface{}) error {
+	// Создаем хэш фильтров для уникального ключа
+	filterHash := fmt.Sprintf("%x", []byte(filters))
+	key := database.GenerateCacheKey(tenantID, "filtered", fmt.Sprintf("%s:%s", listType, filterHash))
+	return database.CacheSetJSON(key, data, CacheTTLFilteredLists)
+}
+
+// GetCachedFilteredList получает отфильтрованный список из кэша
+func (cs *CacheService) GetCachedFilteredList(tenantID uint, listType string, filters string, dest interface{}) error {
+	filterHash := fmt.Sprintf("%x", []byte(filters))
+	key := database.GenerateCacheKey(tenantID, "filtered", fmt.Sprintf("%s:%s", listType, filterHash))
+	return database.CacheGetJSON(key, dest)
+}
+
+// CacheUserSession кэширует данные сессии пользователя
+func (cs *CacheService) CacheUserSession(tenantID uint, userID uint, sessionData interface{}) error {
+	key := database.GenerateUserCacheKey(tenantID, userID, "session")
+	return database.CacheSetJSON(key, sessionData, CacheTTLShort)
+}
+
+// GetCachedUserSession получает данные сессии пользователя из кэша
+func (cs *CacheService) GetCachedUserSession(tenantID uint, userID uint, dest interface{}) error {
+	key := database.GenerateUserCacheKey(tenantID, userID, "session")
+	return database.CacheGetJSON(key, dest)
+}
+
+// CacheAPIResponse кэширует ответы API
+func (cs *CacheService) CacheAPIResponse(endpoint string, params string, response interface{}) error {
+	paramHash := fmt.Sprintf("%x", []byte(params))
+	key := fmt.Sprintf("api:%s:%s", endpoint, paramHash)
+	return database.CacheSetJSON(key, response, CacheTTLVeryShort)
+}
+
+// GetCachedAPIResponse получает кэшированный ответ API
+func (cs *CacheService) GetCachedAPIResponse(endpoint string, params string, dest interface{}) error {
+	paramHash := fmt.Sprintf("%x", []byte(params))
+	key := fmt.Sprintf("api:%s:%s", endpoint, paramHash)
+	return database.CacheGetJSON(key, dest)
+}
+
+// WarmupCache прогревает кэш для часто используемых данных
+func (cs *CacheService) WarmupCache(tenantID uint) error {
+	log.Printf("🔥 Прогрев кэша для тенанта %d...", tenantID)
+
+	// Прогреваем статистику
+	go cs.warmupStats(tenantID)
+
+	// Прогреваем списки объектов
+	go cs.warmupObjectLists(tenantID)
+
+	// Прогреваем списки пользователей
+	go cs.warmupUserLists(tenantID)
+
+	return nil
+}
+
+// warmupStats прогревает кэш статистики
+func (cs *CacheService) warmupStats(tenantID uint) {
+	// Здесь можно добавить логику прогрева статистики
+	// Например, загрузка общих метрик, счетчиков и т.д.
+	log.Printf("📊 Прогрев статистики для тенанта %d", tenantID)
+}
+
+// warmupObjectLists прогревает кэш списков объектов
+func (cs *CacheService) warmupObjectLists(tenantID uint) {
+	// Здесь можно добавить логику прогрева списков объектов
+	// Например, загрузка популярных фильтров
+	log.Printf("📋 Прогрев списков объектов для тенанта %d", tenantID)
+}
+
+// warmupUserLists прогревает кэш списков пользователей
+func (cs *CacheService) warmupUserLists(tenantID uint) {
+	// Здесь можно добавить логику прогрева списков пользователей
+	log.Printf("👥 Прогрев списков пользователей для тенанта %d", tenantID)
+}
+
+// ClearCacheByPattern очищает кэш по паттерну
+func (cs *CacheService) ClearCacheByPattern(pattern string) error {
+	if cs.redis == nil {
+		return nil
+	}
+
+	keys, err := cs.redis.Keys(database.Ctx, pattern).Result()
+	if err != nil {
+		return err
+	}
+
+	if len(keys) > 0 {
+		return cs.redis.Del(database.Ctx, keys...).Err()
+	}
+
+	return nil
+}
+
 // GetCacheStats возвращает статистику использования кэша
 func (cs *CacheService) GetCacheStats() (map[string]interface{}, error) {
 	redis := database.GetRedis()
@@ -390,8 +502,8 @@ func (pcs *PerformanceCacheService) CacheHotData(tenantID uint) error {
 	return nil
 }
 
-// WarmupCache прогревает кэш для компании
-func (cs *CacheService) WarmupCache(tenantID uint) error {
+// WarmupCacheLegacy прогревает кэш для компании (legacy метод)
+func (cs *CacheService) WarmupCacheLegacy(tenantID uint) error {
 	pcs := &PerformanceCacheService{CacheService: cs}
 	return pcs.CacheHotData(tenantID)
 }

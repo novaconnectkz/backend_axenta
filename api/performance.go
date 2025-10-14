@@ -6,6 +6,7 @@ import (
 	"backend_axenta/services"
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -18,6 +19,7 @@ type PerformanceAPI struct {
 	cacheService    *services.PerformanceCacheService
 	auditService    *services.AuditService
 	loadTestService *services.LoadTestService
+	monitor         *services.PerformanceMonitor
 }
 
 // NewPerformanceAPI создает новый API для управления производительностью
@@ -26,11 +28,13 @@ func NewPerformanceAPI() *PerformanceAPI {
 	cacheService := services.NewPerformanceCacheService(redis, nil)
 	auditService := services.NewAuditService(database.DB, nil)
 	loadTestService := services.NewLoadTestService("http://localhost:8080", nil)
+	monitor := services.NewPerformanceMonitor(database.DB, redis)
 
 	return &PerformanceAPI{
 		cacheService:    cacheService,
 		auditService:    auditService,
 		loadTestService: loadTestService,
+		monitor:         monitor,
 	}
 }
 
@@ -43,6 +47,8 @@ func (api *PerformanceAPI) RegisterRoutes(router *gin.RouterGroup) {
 		performance.POST("/cache/warmup", api.warmupCache)
 		performance.DELETE("/cache/clear", api.clearCache)
 		performance.GET("/cache/stats", api.getCacheStats)
+		performance.POST("/cache/warmup-tenant", api.warmupTenantCache)
+		performance.DELETE("/cache/clear-pattern", api.clearCacheByPattern)
 
 		// Индексы БД
 		performance.GET("/database/indexes", api.getDatabaseIndexes)
@@ -50,6 +56,22 @@ func (api *PerformanceAPI) RegisterRoutes(router *gin.RouterGroup) {
 		performance.GET("/database/indexes/usage", api.getIndexUsage)
 		performance.POST("/database/optimize", api.optimizeDatabase)
 		performance.GET("/database/stats", api.getDatabaseStats)
+
+		// Мониторинг медленных запросов
+		performance.GET("/database/slow-queries", api.getSlowQueries)
+		performance.GET("/database/query-stats", api.getQueryStats)
+		performance.POST("/database/analyze", api.analyzeDatabase)
+
+		// Конфигурация PostgreSQL
+		performance.GET("/database/config", api.getDatabaseConfig)
+		performance.POST("/database/config/apply", api.applyDatabaseConfig)
+		performance.GET("/database/performance-stats", api.getPerformanceStats)
+
+		// Мониторинг производительности
+		performance.GET("/monitoring/metrics", api.getPerformanceMetrics)
+		performance.GET("/monitoring/alerts", api.getPerformanceAlerts)
+		performance.POST("/monitoring/alerts/:id/resolve", api.resolveAlert)
+		performance.GET("/monitoring/report", api.generatePerformanceReport)
 
 		// Rate Limiting
 		performance.GET("/rate-limit/info", api.getRateLimitInfo)
@@ -698,4 +720,246 @@ func getTenantID(c *gin.Context) uint {
 		}
 	}
 	return 1 // Дефолтный тенант для демо
+}
+
+// getSlowQueries получает статистику медленных запросов
+func (api *PerformanceAPI) getSlowQueries(c *gin.Context) {
+	limit := 50
+	if l := c.Query("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 100 {
+			limit = parsed
+		}
+	}
+
+	queries, err := database.GetSlowQueries(database.DB, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    queries,
+	})
+}
+
+// getQueryStats получает общую статистику запросов
+func (api *PerformanceAPI) getQueryStats(c *gin.Context) {
+	// Получаем статистику использования индексов
+	indexStats, err := database.GetIndexUsageStats(database.DB)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	// Получаем статистику таблиц
+	tableStats, err := database.GetTableStats(database.DB)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"index_usage": indexStats,
+			"table_stats": tableStats,
+		},
+	})
+}
+
+// analyzeDatabase выполняет анализ базы данных
+func (api *PerformanceAPI) analyzeDatabase(c *gin.Context) {
+	if err := database.DB.Exec("ANALYZE").Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Database analysis completed successfully",
+	})
+}
+
+// getDatabaseConfig получает текущую конфигурацию PostgreSQL
+func (api *PerformanceAPI) getDatabaseConfig(c *gin.Context) {
+	config, err := database.GetCurrentConfig(database.DB)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	recommended := database.GetRecommendedConfig()
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"current":     config,
+			"recommended": recommended,
+		},
+	})
+}
+
+// applyDatabaseConfig применяет рекомендуемую конфигурацию PostgreSQL
+func (api *PerformanceAPI) applyDatabaseConfig(c *gin.Context) {
+	if err := database.ApplyRecommendedConfig(database.DB); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Database configuration applied successfully",
+	})
+}
+
+// getPerformanceStats получает статистику производительности PostgreSQL
+func (api *PerformanceAPI) getPerformanceStats(c *gin.Context) {
+	stats, err := database.GetPerformanceStats(database.DB)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    stats,
+	})
+}
+
+// warmupTenantCache прогревает кэш для конкретного тенанта
+func (api *PerformanceAPI) warmupTenantCache(c *gin.Context) {
+	tenantID := getTenantID(c)
+
+	// Создаем сервис кэширования
+	cacheService := services.NewCacheService(database.GetRedis(), log.New(log.Writer(), "CACHE: ", log.LstdFlags))
+
+	if err := cacheService.WarmupCache(tenantID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": fmt.Sprintf("Cache warmup started for tenant %d", tenantID),
+	})
+}
+
+// clearCacheByPattern очищает кэш по паттерну
+func (api *PerformanceAPI) clearCacheByPattern(c *gin.Context) {
+	var request struct {
+		Pattern string `json:"pattern" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Invalid request: " + err.Error(),
+		})
+		return
+	}
+
+	// Создаем сервис кэширования
+	cacheService := services.NewCacheService(database.GetRedis(), log.New(log.Writer(), "CACHE: ", log.LstdFlags))
+
+	if err := cacheService.ClearCacheByPattern(request.Pattern); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": fmt.Sprintf("Cache cleared for pattern: %s", request.Pattern),
+	})
+}
+
+// getPerformanceMetrics получает метрики производительности
+func (api *PerformanceAPI) getPerformanceMetrics(c *gin.Context) {
+	metrics := api.monitor.GetMetrics()
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    metrics,
+	})
+}
+
+// getPerformanceAlerts получает активные алерты
+func (api *PerformanceAPI) getPerformanceAlerts(c *gin.Context) {
+	alerts, err := api.monitor.GetAlerts()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    alerts,
+	})
+}
+
+// resolveAlert разрешает алерт
+func (api *PerformanceAPI) resolveAlert(c *gin.Context) {
+	alertID := c.Param("id")
+
+	if err := api.monitor.ResolveAlert(alertID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Alert resolved successfully",
+	})
+}
+
+// generatePerformanceReport генерирует отчет о производительности
+func (api *PerformanceAPI) generatePerformanceReport(c *gin.Context) {
+	period := c.DefaultQuery("period", "1h")
+
+	report, err := api.monitor.GenerateReport(period)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    report,
+	})
 }

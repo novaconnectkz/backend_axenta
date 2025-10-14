@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"time"
 
 	"backend_axenta/config"
 	"backend_axenta/models"
@@ -76,10 +77,11 @@ func ConnectDatabase() error {
 	// Формируем DSN (Data Source Name)
 	dsn := cfg.GetDatabaseDSN()
 
-	// Подключаемся к базе данных
+	// Подключаемся к базе данных с настройкой логирования медленных запросов
 	var err error
+	slowLogger := NewSlowQueryLogger(1000 * time.Millisecond) // Логируем запросы > 1 секунды
 	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info),
+		Logger: slowLogger,
 	})
 
 	if err != nil {
@@ -107,6 +109,16 @@ func ConnectDatabase() error {
 	} else {
 		log.Println("✅ Миграции выполнены успешно")
 	}
+
+	// Создаем индексы производительности в фоновом режиме
+	go func() {
+		log.Println("🔧 Создание индексов производительности в фоновом режиме...")
+		if err := CreatePerformanceIndexes(DB); err != nil {
+			log.Printf("⚠️ Ошибка создания индексов: %v", err)
+		} else {
+			log.Println("✅ Индексы производительности созданы успешно")
+		}
+	}()
 
 	return nil
 }
