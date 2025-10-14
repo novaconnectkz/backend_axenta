@@ -86,7 +86,19 @@ func ConnectDatabase() error {
 		return fmt.Errorf("не удалось подключиться к базе данных: %w", err)
 	}
 
-	log.Println("✅ Успешно подключено к PostgreSQL")
+	// Настраиваем пул соединений
+	sqlDB, err := DB.DB()
+	if err != nil {
+		return fmt.Errorf("не удалось получить sql.DB: %w", err)
+	}
+
+	// Применяем настройки пула соединений
+	sqlDB.SetMaxOpenConns(cfg.Database.MaxOpenConns)
+	sqlDB.SetMaxIdleConns(cfg.Database.MaxIdleConns)
+	sqlDB.SetConnMaxLifetime(cfg.Database.ConnMaxLifetime)
+
+	log.Printf("✅ Успешно подключено к PostgreSQL (пул: %d/%d соединений)",
+		cfg.Database.MaxIdleConns, cfg.Database.MaxOpenConns)
 
 	// Выполняем миграции с проверкой структуры
 	if err := RunAllMigrations(false); err != nil {

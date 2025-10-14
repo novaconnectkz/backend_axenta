@@ -84,62 +84,70 @@ func (api *EquipmentAPI) CreateEquipment(c *gin.Context) {
 // GetEquipment возвращает список оборудования с фильтрацией
 func (api *EquipmentAPI) GetEquipment(c *gin.Context) {
 	var equipment []models.Equipment
-	query := api.DB.Preload("Object").Preload("Installations").Preload("Category")
+
+	// Базовый запрос для фильтрации (без Preload для подсчета)
+	baseQuery := api.DB.Model(&models.Equipment{})
 
 	// Фильтры
 	if equipmentType := c.Query("type"); equipmentType != "" {
-		query = query.Where("type = ?", equipmentType)
+		baseQuery = baseQuery.Where("type = ?", equipmentType)
 	}
 	if status := c.Query("status"); status != "" {
-		query = query.Where("status = ?", status)
+		baseQuery = baseQuery.Where("status = ?", status)
 	}
 	if condition := c.Query("condition"); condition != "" {
-		query = query.Where("condition = ?", condition)
+		baseQuery = baseQuery.Where("condition = ?", condition)
 	}
 	if manufacturer := c.Query("manufacturer"); manufacturer != "" {
-		query = query.Where("manufacturer ILIKE ?", "%"+manufacturer+"%")
+		baseQuery = baseQuery.Where("manufacturer ILIKE ?", "%"+manufacturer+"%")
 	}
 	if model := c.Query("model"); model != "" {
-		query = query.Where("model ILIKE ?", "%"+model+"%")
+		baseQuery = baseQuery.Where("model ILIKE ?", "%"+model+"%")
 	}
 
 	// Поиск по различным полям
 	if search := c.Query("search"); search != "" {
-		query = query.Where("serial_number ILIKE ? OR imei ILIKE ? OR phone_number ILIKE ? OR model ILIKE ? OR qr_code ILIKE ?",
+		baseQuery = baseQuery.Where("serial_number ILIKE ? OR imei ILIKE ? OR phone_number ILIKE ? OR model ILIKE ? OR qr_code ILIKE ?",
 			"%"+search+"%", "%"+search+"%", "%"+search+"%", "%"+search+"%", "%"+search+"%")
 	}
 
 	// Фильтр по доступности
 	if available := c.Query("available"); available == "true" {
-		query = query.Where("status = 'in_stock' AND condition != 'broken'")
+		baseQuery = baseQuery.Where("status = 'in_stock' AND condition != 'broken'")
 	}
 
 	// Фильтр по необходимости обслуживания
 	if needsMaintenance := c.Query("needs_maintenance"); needsMaintenance == "true" {
-		query = query.Where("next_maintenance < NOW()")
+		baseQuery = baseQuery.Where("next_maintenance < NOW()")
 	}
-
-	// Сортировка
-	sortBy := c.DefaultQuery("sort_by", "created_at")
-	sortOrder := c.DefaultQuery("sort_order", "desc")
-	query = query.Order(sortBy + " " + sortOrder)
 
 	// Пагинация
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
 	offset := (page - 1) * limit
 
-	// Подсчет общего количества
+	// Подсчет общего количества (без Preload)
 	var total int64
-	countQuery := api.DB.Model(&models.Equipment{})
-	if equipmentType := c.Query("type"); equipmentType != "" {
-		countQuery = countQuery.Where("type = ?", equipmentType)
+	if err := baseQuery.Count(&total).Error; err != nil {
+		c.JSON(500, gin.H{"status": "error", "error": "Ошибка подсчета оборудования: " + err.Error()})
+		return
 	}
-	if status := c.Query("status"); status != "" {
-		countQuery = countQuery.Where("status = ?", status)
-	}
-	countQuery.Count(&total)
 
+	// Оптимизированный запрос с Preload только для отображаемых данных
+	query := baseQuery.Preload("Object", func(db *gorm.DB) *gorm.DB {
+		return db.Select("id, name, imei") // Загружаем только нужные поля
+	}).Preload("Installations", func(db *gorm.DB) *gorm.DB {
+		return db.Select("id, status, scheduled_date") // Загружаем только нужные поля
+	}).Preload("Category", func(db *gorm.DB) *gorm.DB {
+		return db.Select("id, name") // Загружаем только нужные поля
+	})
+
+	// Сортировка
+	sortBy := c.DefaultQuery("sort_by", "created_at")
+	sortOrder := c.DefaultQuery("sort_order", "desc")
+	query = query.Order(sortBy + " " + sortOrder)
+
+	// Получаем оборудование с пагинацией
 	if err := query.Limit(limit).Offset(offset).Find(&equipment).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при получении списка оборудования"})
 		return

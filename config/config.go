@@ -162,9 +162,9 @@ func LoadConfig() (*Config, error) {
 			Password:        getEnv("DB_PASSWORD", ""),
 			Name:            getEnv("DB_NAME", "axenta_db"),
 			SSLMode:         getEnv("DB_SSLMODE", "disable"),
-			MaxOpenConns:    getEnvInt("DB_MAX_OPEN_CONNS", 25),
-			MaxIdleConns:    getEnvInt("DB_MAX_IDLE_CONNS", 5),
-			ConnMaxLifetime: getEnvDuration("DB_CONN_MAX_LIFETIME", 300*time.Second),
+			MaxOpenConns:    getEnvInt("DB_MAX_OPEN_CONNS", 100),                     // Увеличено с 25 до 100
+			MaxIdleConns:    getEnvInt("DB_MAX_IDLE_CONNS", 20),                      // Увеличено с 5 до 20
+			ConnMaxLifetime: getEnvDuration("DB_CONN_MAX_LIFETIME", 600*time.Second), // Увеличено с 300 до 600 секунд
 		},
 		Redis: RedisConfig{
 			Host:     getEnv("REDIS_HOST", "localhost"),

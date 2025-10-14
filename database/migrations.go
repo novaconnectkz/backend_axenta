@@ -479,7 +479,14 @@ func RunMigration(db *gorm.DB, migration MigrationInfo) MigrationResult {
 	}
 
 	// Выполняем AutoMigrate (создаст таблицу или обновит структуру)
-	err = db.AutoMigrate(migration.Model)
+	if migration.Model != nil {
+		err = db.AutoMigrate(migration.Model)
+	} else {
+		result.Error = fmt.Errorf("модель для таблицы %s не определена", migration.TableName)
+		result.Action = "error"
+		log.Printf("❌ Модель для таблицы %s не определена", migration.TableName)
+		return result
+	}
 	if err != nil {
 		result.Error = fmt.Errorf("ошибка миграции: %v", err)
 		result.Action = "error"

@@ -30,34 +30,41 @@ func GetObjects(c *gin.Context) {
 	objectType := c.Query("type")
 	search := c.Query("search")
 
-	// Базовый запрос
-	query := tenantDB.Model(&models.Object{}).
-		Preload("Contract").
-		Preload("Template").
-		Preload("Location")
+	// Базовый запрос для фильтрации (без Preload для подсчета)
+	baseQuery := tenantDB.Model(&models.Object{})
 
 	// Фильтры
 	if status != "" {
-		query = query.Where("status = ?", status)
+		baseQuery = baseQuery.Where("status = ?", status)
 	}
 	if objectType != "" {
-		query = query.Where("type = ?", objectType)
+		baseQuery = baseQuery.Where("type = ?", objectType)
 	}
 	if search != "" {
-		query = query.Where("name ILIKE ? OR imei ILIKE ? OR phone_number ILIKE ?",
+		baseQuery = baseQuery.Where("name ILIKE ? OR imei ILIKE ? OR phone_number ILIKE ?",
 			"%"+search+"%", "%"+search+"%", "%"+search+"%")
 	}
 
-	// Подсчет общего количества
+	// Подсчет общего количества (без Preload)
 	var total int64
-	if err := query.Count(&total).Error; err != nil {
+	if err := baseQuery.Count(&total).Error; err != nil {
 		c.JSON(500, gin.H{"status": "error", "error": "Ошибка подсчета объектов: " + err.Error()})
 		return
 	}
 
-	// Получение объектов с пагинацией
+	// Получение объектов с пагинацией и Preload только для нужных данных
 	var objects []models.Object
 	offset := (page - 1) * limit
+
+	// Оптимизированный запрос с Preload только для отображаемых данных
+	query := baseQuery.Preload("Contract", func(db *gorm.DB) *gorm.DB {
+		return db.Select("id, number, title") // Загружаем только нужные поля
+	}).Preload("Template", func(db *gorm.DB) *gorm.DB {
+		return db.Select("id, name, category") // Загружаем только нужные поля
+	}).Preload("Location", func(db *gorm.DB) *gorm.DB {
+		return db.Select("id, name, address") // Загружаем только нужные поля
+	})
+
 	if err := query.Offset(offset).Limit(limit).Find(&objects).Error; err != nil {
 		c.JSON(500, gin.H{"status": "error", "error": "Ошибка получения объектов: " + err.Error()})
 		return

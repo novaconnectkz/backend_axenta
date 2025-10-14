@@ -10,37 +10,39 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
+	"gorm.io/gorm"
 )
 
 // GetContracts получает список всех договоров
 func GetContracts(c *gin.Context) {
 	var contracts []models.Contract
 
-	query := database.DB.Preload("TariffPlan").Preload("Appendices").Preload("Objects")
+	// Базовый запрос для фильтрации (без Preload для подсчета)
+	baseQuery := database.DB.Model(&models.Contract{})
 
 	// Фильтрация по статусу
 	if status := c.Query("status"); status != "" {
-		query = query.Where("status = ?", status)
+		baseQuery = baseQuery.Where("status = ?", status)
 	}
 
 	// Фильтрация по активности
 	if isActive := c.Query("is_active"); isActive != "" {
 		switch isActive {
 		case "true":
-			query = query.Where("is_active = ?", true)
+			baseQuery = baseQuery.Where("is_active = ?", true)
 		case "false":
-			query = query.Where("is_active = ?", false)
+			baseQuery = baseQuery.Where("is_active = ?", false)
 		}
 	}
 
 	// Фильтрация по истекающим договорам
 	if expiring := c.Query("expiring"); expiring == "true" {
-		query = query.Where("end_date <= ?", time.Now().AddDate(0, 0, 30))
+		baseQuery = baseQuery.Where("end_date <= ?", time.Now().AddDate(0, 0, 30))
 	}
 
 	// Поиск по номеру или названию
 	if search := c.Query("search"); search != "" {
-		query = query.Where("number ILIKE ? OR title ILIKE ? OR client_name ILIKE ?",
+		baseQuery = baseQuery.Where("number ILIKE ? OR title ILIKE ? OR client_name ILIKE ?",
 			"%"+search+"%", "%"+search+"%", "%"+search+"%")
 	}
 
@@ -59,9 +61,24 @@ func GetContracts(c *gin.Context) {
 	}
 	offset := (page - 1) * limit
 
-	// Получаем общее количество
+	// Получаем общее количество (без Preload)
 	var total int64
-	database.DB.Model(&models.Contract{}).Count(&total)
+	if err := baseQuery.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка при подсчете договоров",
+		})
+		return
+	}
+
+	// Оптимизированный запрос с Preload только для отображаемых данных
+	query := baseQuery.Preload("TariffPlan", func(db *gorm.DB) *gorm.DB {
+		return db.Select("id, name, price_per_month") // Загружаем только нужные поля
+	}).Preload("Appendices", func(db *gorm.DB) *gorm.DB {
+		return db.Select("id, title, created_at") // Загружаем только нужные поля
+	}).Preload("Objects", func(db *gorm.DB) *gorm.DB {
+		return db.Select("id, name, status") // Загружаем только нужные поля
+	})
 
 	// Получаем договоры с пагинацией
 	if err := query.Offset(offset).Limit(limit).Find(&contracts).Error; err != nil {

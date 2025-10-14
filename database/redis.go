@@ -26,13 +26,13 @@ func InitRedis() error {
 	password := cfg.Redis.Password
 	db := cfg.Redis.DB
 
-	// Создаем клиент Redis
+	// Создаем клиент Redis с оптимизированными настройками
 	Redis = redis.NewClient(&redis.Options{
 		Addr:         fmt.Sprintf("%s:%s", host, port),
 		Password:     password,
 		DB:           db,
-		PoolSize:     10,
-		MinIdleConns: 5,
+		PoolSize:     20, // Увеличено с 10 до 20
+		MinIdleConns: 10, // Увеличено с 5 до 10
 		DialTimeout:  5 * time.Second,
 		ReadTimeout:  3 * time.Second,
 		WriteTimeout: 3 * time.Second,
@@ -48,7 +48,7 @@ func InitRedis() error {
 		return fmt.Errorf("не удалось подключиться к Redis: %w", err)
 	}
 
-	log.Println("✅ Успешно подключено к Redis")
+	log.Printf("✅ Успешно подключено к Redis (пул: %d/%d соединений)", 10, 20)
 	return nil
 }
 
