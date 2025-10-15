@@ -3,6 +3,7 @@ package models
 import (
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
@@ -93,4 +94,20 @@ func (u *User) ClearAxentaRole() {
 		u.ExternalSource = ""
 		u.ExternalID = ""
 	}
+}
+
+// SetPassword хеширует и устанавливает пароль
+func (u *User) SetPassword(password string) error {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	u.Password = string(hash)
+	return nil
+}
+
+// CheckPassword проверяет пароль
+func (u *User) CheckPassword(password string) bool {
+	err := bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(password))
+	return err == nil
 }

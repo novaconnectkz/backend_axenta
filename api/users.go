@@ -933,3 +933,119 @@ func BulkDeleteUsers(c *gin.Context) {
 		"deleted": result.RowsAffected,
 	})
 }
+
+// UpdateUserPasswordRequest представляет запрос на смену пароля пользователя
+type UpdateUserPasswordRequest struct {
+	AdminPassword      string `json:"adminPassword" binding:"required,min=6,max=255"`
+	UserID             int    `json:"userId" binding:"required,min=1"`
+	NewPassword        string `json:"newPassword" binding:"required,min=6,max=255"`
+	ConfirmNewPassword string `json:"confirmNewPassword" binding:"required,min=6,max=255"`
+}
+
+// UpdateUserPassword изменяет пароль пользователя (только для администраторов)
+func UpdateUserPassword(c *gin.Context) {
+	db := database.GetTenantDB(c)
+	if db == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Database connection not available",
+		})
+		return
+	}
+
+	var req UpdateUserPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Invalid request data: " + err.Error(),
+		})
+		return
+	}
+
+	// Проверяем, что новый пароль и подтверждение совпадают
+	if req.NewPassword != req.ConfirmNewPassword {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "New password and confirmation do not match",
+		})
+		return
+	}
+
+	// Получаем информацию о текущем пользователе из токена
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  "User not authenticated",
+		})
+		return
+	}
+
+	// Получаем текущего пользователя (администратора)
+	var currentUser models.User
+	if err := db.Preload("Role").First(&currentUser, userID).Error; err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  "Current user not found",
+		})
+		return
+	}
+
+	// Проверяем, что текущий пользователь - администратор
+	if currentUser.Role == nil || (currentUser.Role.Name != "admin" && currentUser.Role.Name != "administrator") {
+		c.JSON(http.StatusForbidden, gin.H{
+			"status": "error",
+			"error":  "Only administrators can change user passwords",
+		})
+		return
+	}
+
+	// Проверяем пароль администратора
+	if !currentUser.CheckPassword(req.AdminPassword) {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  "Invalid admin password",
+		})
+		return
+	}
+
+	// Находим пользователя, для которого меняем пароль
+	var targetUser models.User
+	if err := db.First(&targetUser, req.UserID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{
+				"status": "error",
+				"error":  "User not found",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to fetch user: " + err.Error(),
+		})
+		return
+	}
+
+	// Устанавливаем новый пароль
+	if err := targetUser.SetPassword(req.NewPassword); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to hash password: " + err.Error(),
+		})
+		return
+	}
+
+	// Сохраняем изменения
+	if err := db.Save(&targetUser).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to update password: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"status":  "success",
+		"message": "Пароль изменён",
+	})
+}
