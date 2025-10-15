@@ -539,6 +539,8 @@ func main() {
 	apiGroup.GET("/cms/users/", api.GetUsersFromAxentaCloud)
 	apiGroup.GET("/cms/users/stats", api.GetUsersStatsFromAxentaCloud)
 	apiGroup.GET("/cms/users/stats/", api.GetUsersStatsFromAxentaCloud)
+	apiGroup.GET("/cms/users/:id", api.GetUser)
+	apiGroup.GET("/cms/users/:id/", api.GetUser)
 
 	// Локальные endpoints для управления пользователями (создание, редактирование)
 	apiGroup.GET("/local/users/:id", api.GetUser)

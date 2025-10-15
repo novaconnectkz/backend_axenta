@@ -20,6 +20,10 @@ type CreateUserRequest struct {
 	Password   string `json:"password" binding:"required,min=6,max=100"`
 	FirstName  string `json:"first_name" binding:"max=50"`
 	LastName   string `json:"last_name" binding:"max=50"`
+	Name       string `json:"name" binding:"max=200"`       // Полное имя для контрагентов
+	Phone      string `json:"phone" binding:"max=50"`       // Телефон
+	TelegramID string `json:"telegram_id" binding:"max=50"` // Telegram ID
+	UserType   string `json:"user_type" binding:"max=50"`   // Тип пользователя
 	RoleID     uint   `json:"role_id" binding:"required,min=1"`
 	TemplateID *uint  `json:"template_id"`
 	IsActive   *bool  `json:"is_active"`
@@ -31,6 +35,10 @@ type UpdateUserRequest struct {
 	Email      string `json:"email" binding:"omitempty,email"`
 	FirstName  string `json:"first_name" binding:"max=50"`
 	LastName   string `json:"last_name" binding:"max=50"`
+	Name       string `json:"name" binding:"max=200"`       // Полное имя для контрагентов
+	Phone      string `json:"phone" binding:"max=50"`       // Телефон
+	TelegramID string `json:"telegram_id" binding:"max=50"` // Telegram ID
+	UserType   string `json:"user_type" binding:"max=50"`   // Тип пользователя
 	RoleID     *uint  `json:"role_id" binding:"omitempty,min=1"`
 	TemplateID *uint  `json:"template_id"`
 	IsActive   *bool  `json:"is_active"`
@@ -44,14 +52,17 @@ type UserResponse struct {
 	FirstName        string               `json:"first_name"`
 	LastName         string               `json:"last_name"`
 	Name             string               `json:"name"`              // Полное имя
+	Phone            string               `json:"phone"`             // Телефон
+	TelegramID       string               `json:"telegram_id"`       // Telegram ID
+	UserType         string               `json:"user_type"`         // Тип пользователя
 	CreatorName      string               `json:"creator_name"`      // Имя создателя
+	LastLogin        *string              `json:"lastLogin"`         // Последний вход
 	CreationDatetime string               `json:"creation_datetime"` // Дата создания пользователя
 	IsActive         bool                 `json:"is_active"`
 	RoleID           uint                 `json:"role_id"`
 	Role             *models.Role         `json:"role,omitempty"`
 	TemplateID       *uint                `json:"template_id"`
 	Template         *models.UserTemplate `json:"template,omitempty"`
-	LastLogin        *string              `json:"last_login"`
 	LoginCount       int                  `json:"login_count"`
 	CreatedAt        string               `json:"created_at"`
 	UpdatedAt        string               `json:"updated_at"`
@@ -234,14 +245,25 @@ func GetUsers(c *gin.Context) {
 			creatorName = user.Username // Fallback на username
 		}
 
+		// Форматируем дату последнего входа
+		var lastLoginFormatted *string
+		if user.LastLogin != nil {
+			formatted := user.LastLogin.Format("2006-01-02T15:04:05Z")
+			lastLoginFormatted = &formatted
+		}
+
 		userResponses[i] = UserResponse{
 			ID:               user.ID,
 			Username:         user.Username,
 			Email:            user.Email,
 			FirstName:        user.FirstName,
 			LastName:         user.LastName,
-			Name:             fullName,                                      // Полное имя (сформированное или из модели)
-			CreatorName:      creatorName,                                   // Имя создателя
+			Name:             fullName,        // Полное имя (сформированное или из модели)
+			Phone:            user.Phone,      // Телефон
+			TelegramID:       user.TelegramID, // Telegram ID
+			UserType:         user.UserType,   // Тип пользователя
+			CreatorName:      creatorName,     // Имя создателя
+			LastLogin:        lastLoginFormatted,
 			CreationDatetime: user.CreatedAt.Format("2006-01-02T15:04:05Z"), // Дата создания пользователя
 			IsActive:         user.IsActive,
 			RoleID:           user.RoleID,
@@ -331,6 +353,13 @@ func GetUser(c *gin.Context) {
 		creatorName = user.Username // Fallback на username
 	}
 
+	// Форматируем дату последнего входа
+	var lastLoginFormatted *string
+	if user.LastLogin != nil {
+		formatted := user.LastLogin.Format("2006-01-02T15:04:05Z")
+		lastLoginFormatted = &formatted
+	}
+
 	userResponse := UserResponse{
 		ID:               user.ID,
 		Username:         user.Username,
@@ -338,7 +367,11 @@ func GetUser(c *gin.Context) {
 		FirstName:        user.FirstName,
 		LastName:         user.LastName,
 		Name:             fullName,
+		Phone:            user.Phone,
+		TelegramID:       user.TelegramID,
+		UserType:         user.UserType,
 		CreatorName:      creatorName,
+		LastLogin:        lastLoginFormatted,
 		CreationDatetime: user.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		IsActive:         user.IsActive,
 		RoleID:           user.RoleID,
@@ -348,10 +381,6 @@ func GetUser(c *gin.Context) {
 		LoginCount:       user.LoginCount,
 		CreatedAt:        user.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		UpdatedAt:        user.UpdatedAt.Format("2006-01-02T15:04:05Z"),
-	}
-	if user.LastLogin != nil {
-		lastLogin := user.LastLogin.Format("2006-01-02T15:04:05Z")
-		userResponse.LastLogin = &lastLogin
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -424,6 +453,10 @@ func CreateUser(c *gin.Context) {
 		Password:   string(hashedPassword),
 		FirstName:  req.FirstName,
 		LastName:   req.LastName,
+		Name:       req.Name,
+		Phone:      req.Phone,
+		TelegramID: req.TelegramID,
+		UserType:   req.UserType,
 		IsActive:   isActive,
 		RoleID:     req.RoleID,
 		TemplateID: req.TemplateID,
@@ -562,6 +595,18 @@ func UpdateUser(c *gin.Context) {
 	if req.LastName != "" {
 		updates["last_name"] = req.LastName
 	}
+	if req.Name != "" {
+		updates["name"] = req.Name
+	}
+	if req.Phone != "" {
+		updates["phone"] = req.Phone
+	}
+	if req.TelegramID != "" {
+		updates["telegram_id"] = req.TelegramID
+	}
+	if req.UserType != "" {
+		updates["user_type"] = req.UserType
+	}
 	if req.RoleID != nil {
 		updates["role_id"] = *req.RoleID
 	}
@@ -612,10 +657,6 @@ func UpdateUser(c *gin.Context) {
 		LoginCount: user.LoginCount,
 		CreatedAt:  user.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		UpdatedAt:  user.UpdatedAt.Format("2006-01-02T15:04:05Z"),
-	}
-	if user.LastLogin != nil {
-		lastLogin := user.LastLogin.Format("2006-01-02T15:04:05Z")
-		userResponse.LastLogin = &lastLogin
 	}
 
 	c.JSON(http.StatusOK, gin.H{
