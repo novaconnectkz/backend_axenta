@@ -2,6 +2,7 @@ package services
 
 import (
 	"backend_axenta/models"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -132,7 +133,7 @@ func (s *AxentaUserService) SyncUserWithAxenta(token string, username string) (*
 		// Используем роль по умолчанию
 		roleID = s.getDefaultRoleID()
 	}
-	user.RoleID = roleID
+	user.RoleID = &roleID
 
 	// Сохраняем пользователя
 	if user.ID == 0 {
@@ -224,7 +225,7 @@ func (s *AxentaUserService) CreateLocalUser(username, email, password string, ro
 		Username:       username,
 		Email:          email,
 		Password:       password, // Должен быть захеширован вызывающим кодом
-		RoleID:         roleID,
+		RoleID:         &roleID,
 		IsActive:       true,
 		AxentaUserType: "local",
 		IsAxentaUser:   false,
@@ -236,6 +237,60 @@ func (s *AxentaUserService) CreateLocalUser(username, email, password string, ro
 
 	log.Printf("Created new local user: %s", user.Username)
 	return &user, nil
+}
+
+// CreateUserInAxenta создает пользователя в Axenta Cloud
+func (s *AxentaUserService) CreateUserInAxenta(token string, userData *models.User, visibleTabs []string, accesses map[string][]string) (*AxentaUserResponse, error) {
+	// Подготавливаем данные для отправки в Axenta
+	axentaUserData := map[string]interface{}{
+		"username":           userData.Username,
+		"email":              userData.Email,
+		"name":               userData.Name,
+		"password":           userData.Password, // Пароль уже захеширован
+		"hasAdminAccess":     false,             // По умолчанию false
+		"visibleTabsNames":   visibleTabs,
+		"accesses":           accesses,
+	}
+
+	jsonData, err := json.Marshal(axentaUserData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal user data: %w", err)
+	}
+
+	// Создаем HTTP запрос
+	req, err := http.NewRequest("POST", s.baseURL+"/cms/users/", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Token "+token)
+
+	// Выполняем запрос
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Читаем ответ
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to create user in Axenta, status: %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	// Парсим ответ
+	var axentaUser AxentaUserResponse
+	if err := json.Unmarshal(body, &axentaUser); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	log.Printf("Successfully created user %s in Axenta Cloud with ID: %d", userData.Username, axentaUser.ID)
+	return &axentaUser, nil
 }
 
 // GetUsersByType возвращает пользователей по типу (partner, client, local)
@@ -346,7 +401,7 @@ func (s *AxentaUserService) SyncUserFromAxentaData(axentaUser *AxentaUserRespons
 		// Используем роль по умолчанию
 		roleID = s.getDefaultRoleID()
 	}
-	user.RoleID = roleID
+	user.RoleID = &roleID
 
 	// Сохраняем пользователя
 	if user.ID == 0 {

@@ -110,7 +110,7 @@ func TestWarehouseService_ProcessEquipmentInstallation(t *testing.T) {
 		Email:     "installer@example.com",
 		FirstName: "Иван",
 		LastName:  "Монтажник",
-		RoleID:    role.ID,
+		RoleID:    &role.ID,
 	}
 	db.Create(&user)
 
@@ -164,7 +164,7 @@ func TestWarehouseService_ProcessEquipmentReturn(t *testing.T) {
 		Email:     "installer@example.com",
 		FirstName: "Иван",
 		LastName:  "Монтажник",
-		RoleID:    role.ID,
+		RoleID:    &role.ID,
 	}
 	db.Create(&user)
 
@@ -250,7 +250,7 @@ func TestWarehouseService_ReserveEquipment(t *testing.T) {
 		Email:     "installer@example.com",
 		FirstName: "Иван",
 		LastName:  "Монтажник",
-		RoleID:    role.ID,
+		RoleID:    &role.ID,
 	}
 	db.Create(&user)
 
@@ -298,7 +298,7 @@ func TestWarehouseService_UnreserveEquipment(t *testing.T) {
 		Email:     "installer@example.com",
 		FirstName: "Иван",
 		LastName:  "Монтажник",
-		RoleID:    role.ID,
+		RoleID:    &role.ID,
 	}
 	db.Create(&user)
 
@@ -341,7 +341,7 @@ func TestWarehouseService_GetEquipmentHistory(t *testing.T) {
 		Email:     "installer@example.com",
 		FirstName: "Иван",
 		LastName:  "Монтажник",
-		RoleID:    role.ID,
+		RoleID:    &role.ID,
 	}
 	db.Create(&user)
 

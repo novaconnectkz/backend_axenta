@@ -41,7 +41,7 @@ type User struct {
 	CompanyID uint `json:"company_id" gorm:"index"`
 
 	// Роль и права доступа
-	RoleID uint  `json:"role_id" gorm:"index"`
+	RoleID *uint `json:"role_id" gorm:"index"`
 	Role   *Role `json:"role,omitempty" gorm:"foreignKey:RoleID"`
 
 	// Шаблон пользователя

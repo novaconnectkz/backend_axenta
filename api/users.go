@@ -59,7 +59,7 @@ type UserResponse struct {
 	LastLogin        *string              `json:"lastLogin"`         // Последний вход
 	CreationDatetime string               `json:"creation_datetime"` // Дата создания пользователя
 	IsActive         bool                 `json:"is_active"`
-	RoleID           uint                 `json:"role_id"`
+	RoleID           *uint                `json:"role_id"`
 	Role             *models.Role         `json:"role,omitempty"`
 	TemplateID       *uint                `json:"template_id"`
 	Template         *models.UserTemplate `json:"template,omitempty"`
@@ -458,7 +458,7 @@ func CreateUser(c *gin.Context) {
 		TelegramID: req.TelegramID,
 		UserType:   req.UserType,
 		IsActive:   isActive,
-		RoleID:     req.RoleID,
+		RoleID:     &req.RoleID,
 		TemplateID: req.TemplateID,
 		LoginCount: 0,
 	}

@@ -1,64 +1,70 @@
-2025/10/14 17:27:57 Starting Axenta Backend Server...
-2025/10/14 17:27:57 🔧 DEBUG: Main function started
-2025/10/14 17:27:57 === Application Configuration ===
-2025/10/14 17:27:57 Environment: development
-2025/10/14 17:27:57 Port: 8080
-2025/10/14 17:27:57 Database Host: localhost:5432
-2025/10/14 17:27:57 Database Name: axenta_db
-2025/10/14 17:27:57 Redis Host: localhost:6379
-2025/10/14 17:27:57 Axenta API URL: https://api.axetna.cloud
-2025/10/14 17:27:57 JWT Issuer: axenta-crm
-2025/10/14 17:27:57 Log Level: info
-2025/10/14 17:27:57 Debug Mode: false
-2025/10/14 17:27:57 ================================
-2025/10/14 17:27:57 ✅ База данных 'axenta_db' уже существует
-2025/10/14 17:27:57 ✅ Успешно подключено к PostgreSQL
-2025/10/14 17:27:57 🚀 Начинаем процесс миграции базы данных
-2025/10/14 17:27:57 📋 Выполняем миграции глобальных таблиц (схема public)
-
-2025/10/14 17:27:57 [32m/Users/com/backend_axenta/database/migrations.go:518
-[0m[33m[1.858ms] [34;1m[rows:0][0m SET search_path TO public
-2025/10/14 17:27:57 🔄 Миграция таблицы: companies (Таблица компаний (мультитенантность))
-
-2025/10/14 17:27:57 [32m/Users/com/backend_axenta/database/migrations.go:242
-[0m[33m[7.149ms] [34;1m[rows:1][0m 
-		SELECT COUNT(*) 
-		FROM information_schema.tables 
-		WHERE table_schema = current_schema() 
-		AND table_name = 'companies'
-	
-
-2025/10/14 17:27:57 [32m/Users/com/backend_axenta/database/migrations.go:482
-[0m[33m[1.045ms] [34;1m[rows:1][0m SELECT count(*) FROM information_schema.tables WHERE table_schema = CURRENT_SCHEMA() AND table_name = 'companies' AND table_type = 'BASE TABLE'
-
-2025/10/14 17:27:57 [32m/Users/com/backend_axenta/database/migrations.go:482
-[0m[33m[0.486ms] [34;1m[rows:1][0m SELECT CURRENT_DATABASE()
-
-2025/10/14 17:27:57 [32m/Users/com/backend_axenta/database/migrations.go:482
-[0m[33m[15.539ms] [34;1m[rows:-][0m SELECT c.column_name, c.is_nullable = 'YES', c.udt_name, c.character_maximum_length, c.numeric_precision, c.numeric_precision_radix, c.numeric_scale, c.datetime_precision, 8 * typlen, c.column_default, pd.description, c.identity_increment FROM information_schema.columns AS c JOIN pg_type AS pgt ON c.udt_name = pgt.typname LEFT JOIN pg_catalog.pg_description as pd ON pd.objsubid = c.ordinal_position AND pd.objoid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = c.table_name AND relnamespace = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = c.table_schema)) where table_catalog = 'axenta_db' AND table_schema = CURRENT_SCHEMA() AND table_name = 'companies'
-
-2025/10/14 17:27:57 [31;1m/Users/com/backend_axenta/database/migrations.go:482 [35;1minsufficient arguments
-[0m[33m[0.057ms] [34;1m[rows:-][0m SELECT * FROM "companies" LIMIT 1
-2025/10/14 17:27:57 ❌ Ошибка миграции companies: insufficient arguments
-2025/10/14 17:27:57 ❌ Ошибка миграции companies: ошибка миграции: insufficient arguments
-2025/10/14 17:27:57 ⚠️ Ошибка выполнения миграций: ошибка миграции глобальной таблицы companies: ошибка миграции: insufficient arguments
-2025/10/14 17:27:57 Продолжаем работу - некоторые функции могут быть недоступны
-2025/10/14 17:27:57 ✅ Успешно подключено к Redis
-2025/10/14 17:27:57 ⚠️ Integration Service temporarily disabled
-2025/10/14 17:27:57 ⚠️ Bitrix24 Integration Service temporarily disabled
-2025/10/14 17:27:57 ✅ 1C Integration Service initialized successfully
-2025/10/14 17:27:57 ⚠️ Notification System temporarily disabled
-2025/10/14 17:27:57 🔧 Initializing default Axenta roles in public schema...
-
-2025/10/14 17:27:57 [32m/Users/com/backend_axenta/services/axenta_user_service.go:298
-[0m[33m[3.616ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'partner' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
-
-2025/10/14 17:27:57 [32m/Users/com/backend_axenta/services/axenta_user_service.go:298
-[0m[33m[0.260ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'client' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
-
-2025/10/14 17:27:57 [32m/Users/com/backend_axenta/services/axenta_user_service.go:298
-[0m[33m[0.264ms] [34;1m[rows:1][0m SELECT * FROM "roles" WHERE name = 'user' AND "roles"."deleted_at" IS NULL ORDER BY "roles"."id" LIMIT 1
-2025/10/14 17:27:57 ✅ Default Axenta roles initialized successfully in public schema
+2025/10/16 08:42:46 Starting Axenta Backend Server...
+2025/10/16 08:42:46 🔧 DEBUG: Main function started
+2025/10/16 08:42:46 === Application Configuration ===
+2025/10/16 08:42:46 Environment: development
+2025/10/16 08:42:46 Port: 8080
+2025/10/16 08:42:46 Database Host: localhost:5432
+2025/10/16 08:42:46 Database Name: axenta_db
+2025/10/16 08:42:46 Redis Host: localhost:6379
+2025/10/16 08:42:46 Axenta API URL: https://api.axetna.cloud
+2025/10/16 08:42:46 JWT Issuer: axenta-crm
+2025/10/16 08:42:46 Log Level: info
+2025/10/16 08:42:46 Debug Mode: false
+2025/10/16 08:42:46 ================================
+2025/10/16 08:42:46 ✅ База данных 'axenta_db' уже существует
+2025/10/16 08:42:46 ✅ Успешно подключено к PostgreSQL (пул: 20/100 соединений)
+2025/10/16 08:42:46 🚀 Начинаем процесс миграции базы данных
+2025/10/16 08:42:46 📋 Выполняем миграции глобальных таблиц (схема public)
+2025/10/16 08:42:46 🔄 Миграция таблицы: companies (Таблица компаний (мультитенантность))
+2025/10/16 08:42:46 ❌ Ошибка миграции companies: insufficient arguments
+2025/10/16 08:42:46 ❌ Ошибка миграции companies: ошибка миграции: insufficient arguments
+2025/10/16 08:42:46 ⚠️ Ошибка выполнения миграций: ошибка миграции глобальной таблицы companies: ошибка миграции: insufficient arguments
+2025/10/16 08:42:46 Продолжаем работу - некоторые функции могут быть недоступны
+2025/10/16 08:42:46 🔧 Создание индексов производительности в фоновом режиме...
+2025/10/16 08:42:46 Creating performance indexes...
+2025/10/16 08:42:46 ✅ Успешно подключено к Redis (пул: 10/20 соединений)
+2025/10/16 08:42:46 ⚠️ Integration Service temporarily disabled
+2025/10/16 08:42:46 ⚠️ Bitrix24 Integration Service temporarily disabled
+2025/10/16 08:42:46 ✅ 1C Integration Service initialized successfully
+2025/10/16 08:42:46 ⚠️ Notification System temporarily disabled
+2025/10/16 08:42:46 🔧 Initializing default Axenta roles in public schema...
+2025/10/16 08:42:46 Failed to create index idx_objects_tenant_status: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:42:46 Failed to create index idx_objects_tenant_type: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:42:46 Failed to create index idx_objects_tenant_active: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:42:46 Failed to create index idx_objects_tenant_deleted: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:42:46 Created index: idx_objects_imei
+2025/10/16 08:42:46 Created index: idx_objects_phone
+2025/10/16 08:42:46 Created index: idx_objects_contract
+2025/10/16 08:42:46 Created index: idx_objects_scheduled_delete
+2025/10/16 08:42:46 Failed to create index idx_users_tenant_active: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:42:46 Failed to create index idx_users_tenant_role: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:42:46 Created index: idx_users_email
+2025/10/16 08:42:46 Failed to create index idx_users_login: ERROR: column "login" does not exist (SQLSTATE 42703)
+2025/10/16 08:42:46 Failed to create index idx_users_last_activity: ERROR: column "last_activity_at" does not exist (SQLSTATE 42703)
+2025/10/16 08:42:46 Failed to create index idx_contracts_tenant_status: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:42:46 Failed to create index idx_contracts_tenant_active: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:42:46 Created index: idx_contracts_end_date
+2025/10/16 08:42:46 Created index: idx_contracts_client_inn
+2025/10/16 08:42:46 Failed to create index idx_installations_tenant_status: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:42:46 Failed to create index idx_installations_tenant_date: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:42:46 Created index: idx_installations_installer
+2025/10/16 08:42:46 Created index: idx_installations_object
+2025/10/16 08:42:46 Failed to create index idx_equipment_tenant_status: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:42:46 Failed to create index idx_equipment_tenant_type: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:42:46 Created index: idx_equipment_serial
+2025/10/16 08:42:46 Created index: idx_equipment_qr_code
+2025/10/16 08:42:46 Failed to create index idx_equipment_location: ERROR: column "location_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:42:46 Failed to create index idx_invoices_tenant_status: ERROR: relation "invoices" does not exist (SQLSTATE 42P01)
+2025/10/16 08:42:46 Failed to create index idx_invoices_tenant_date: ERROR: relation "invoices" does not exist (SQLSTATE 42P01)
+2025/10/16 08:42:46 Failed to create index idx_invoices_due_date: ERROR: relation "invoices" does not exist (SQLSTATE 42P01)
+2025/10/16 08:42:46 Failed to create index idx_invoices_contract: ERROR: relation "invoices" does not exist (SQLSTATE 42P01)
+2025/10/16 08:42:46 Failed to create index idx_reports_tenant_type: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:42:46 Failed to create index idx_reports_tenant_created: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:42:46 Created index: idx_reports_status
+2025/10/16 08:42:46 Failed to create index idx_objects_complex_search: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:42:46 Failed to create index idx_users_complex_search: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:42:46 Failed to create index idx_installations_complex_search: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:42:46 ✅ Default Axenta roles initialized successfully in public schema
 [GIN-debug] [WARNING] Creating an Engine instance with the Logger and Recovery middleware already attached.
 
 [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
@@ -71,27 +77,35 @@
 [GIN-debug] GET    /api/debug/user-role      --> backend_axenta/api.TestUserWithRole (4 handlers)
 [GIN-debug] GET    /api/public/roles         --> backend_axenta/api.GetRolesPublic (4 handlers)
 [GIN-debug] GET    /api/public/user-templates --> backend_axenta/api.GetUserTemplatesPublic (4 handlers)
+[GIN-debug] POST   /api/test/cms/users       --> backend_axenta/api.TestCreateUserInAxenta (4 handlers)
+[GIN-debug] POST   /api/create/user          --> backend_axenta/api.CreateUserDirectly (4 handlers)
+[GIN-debug] GET    /api/test                 --> backend_axenta/api.TestEndpoint (4 handlers)
+[GIN-debug] GET    /api/test2                --> main.main.func2 (4 handlers)
+[GIN-debug] POST   /api/test-cms-users       --> backend_axenta/api.CreateCmsUserWithCurrentToken (4 handlers)
+[GIN-debug] POST   /api/create-cms-user      --> backend_axenta/api.CreateCmsUserWithCurrentToken (4 handlers)
+[GIN-debug] POST   /api/cms/create-user      --> backend_axenta/api.CreateCmsUserWithCurrentToken (4 handlers)
+[GIN-debug] POST   /api/cms/create-user-with-saved-token --> backend_axenta/api.CreateCmsUserWithCurrentToken (4 handlers)
 [GIN-debug] POST   /api/local/login          --> backend_axenta/api.(*LocalAuthAPI).LocalLogin-fm (4 handlers)
 [GIN-debug] POST   /api/local/refresh        --> backend_axenta/api.(*LocalAuthAPI).RefreshToken-fm (4 handlers)
 [GIN-debug] GET    /api/local/current_user   --> backend_axenta/api.(*LocalAuthAPI).LocalCurrentUser-fm (5 handlers)
 [GIN-debug] POST   /api/local/logout         --> backend_axenta/api.(*LocalAuthAPI).LocalLogout-fm (5 handlers)
 [GIN-debug] POST   /api/local/register       --> backend_axenta/api.(*LocalAuthAPI).RegisterLocalUser-fm (6 handlers)
 [GIN-debug] GET    /ws/live-data/:company_id --> backend_axenta/api.(*WebSocketAuthAPI).LiveData-fm (4 handlers)
-[GIN-debug] GET    /api/test-objects-stats   --> main.main.func2 (4 handlers)
-[GIN-debug] GET    /api/objects              --> main.main.func4 (4 handlers)
-[GIN-debug] GET    /api/objects/             --> main.main.func4 (4 handlers)
-[GIN-debug] GET    /api/objects/:id          --> main.main.func5 (4 handlers)
-[GIN-debug] GET    /api/objects/:id/         --> main.main.func5 (4 handlers)
-[GIN-debug] GET    /api/objects/stats        --> main.main.func6 (4 handlers)
-[GIN-debug] GET    /api/objects/stats/       --> main.main.func6 (4 handlers)
-[GIN-debug] GET    /api/object-templates     --> main.main.func7 (4 handlers)
-[GIN-debug] GET    /api/object-templates/    --> main.main.func7 (4 handlers)
-[GIN-debug] POST   /api/objects              --> main.main.func8 (4 handlers)
-[GIN-debug] POST   /api/objects/             --> main.main.func8 (4 handlers)
-[GIN-debug] POST   /api/objects/:id/create-template --> main.main.func9 (4 handlers)
-[GIN-debug] POST   /api/objects/:id/create-template/ --> main.main.func9 (4 handlers)
-[GIN-debug] PUT    /api/objects/:id          --> main.main.func10 (4 handlers)
-[GIN-debug] PUT    /api/objects/:id/         --> main.main.func10 (4 handlers)
+[GIN-debug] GET    /api/test-objects-stats   --> main.main.func3 (4 handlers)
+[GIN-debug] GET    /api/objects              --> main.main.func5 (4 handlers)
+[GIN-debug] GET    /api/objects/             --> main.main.func5 (4 handlers)
+[GIN-debug] GET    /api/objects/:id          --> main.main.func6 (4 handlers)
+[GIN-debug] GET    /api/objects/:id/         --> main.main.func6 (4 handlers)
+[GIN-debug] GET    /api/objects/stats        --> main.main.func7 (4 handlers)
+[GIN-debug] GET    /api/objects/stats/       --> main.main.func7 (4 handlers)
+[GIN-debug] GET    /api/object-templates     --> main.main.func8 (4 handlers)
+[GIN-debug] GET    /api/object-templates/    --> main.main.func8 (4 handlers)
+[GIN-debug] POST   /api/objects              --> main.main.func9 (4 handlers)
+[GIN-debug] POST   /api/objects/             --> main.main.func9 (4 handlers)
+[GIN-debug] POST   /api/objects/:id/create-template --> main.main.func10 (4 handlers)
+[GIN-debug] POST   /api/objects/:id/create-template/ --> main.main.func10 (4 handlers)
+[GIN-debug] PUT    /api/objects/:id          --> main.main.func11 (4 handlers)
+[GIN-debug] PUT    /api/objects/:id/         --> main.main.func11 (4 handlers)
 [GIN-debug] GET    /api/dashboard/stats      --> backend_axenta/api.GetDashboardStatsSimple (4 handlers)
 [GIN-debug] GET    /api/dashboard/activity   --> backend_axenta/api.GetDashboardActivitySimple (4 handlers)
 [GIN-debug] GET    /api/dashboard/layouts    --> backend_axenta/api.GetDashboardLayouts (4 handlers)
@@ -114,13 +128,18 @@
 [GIN-debug] GET    /api/admin/accounts/:id/usage --> backend_axenta/api.(*CompaniesAPI).GetCompanyUsage-fm (5 handlers)
 [GIN-debug] POST   /api/admin/accounts/:id/test-connection --> backend_axenta/api.(*CompaniesAPI).TestCompanyConnection-fm (5 handlers)
 [GIN-debug] GET    /api/test/installations   --> backend_axenta/api.(*InstallationAPI).GetInstallations-fm (4 handlers)
-[GIN-debug] GET    /api/test/installations/statistics --> main.main.func11 (4 handlers)
+[GIN-debug] GET    /api/test/installations/statistics --> main.main.func12 (4 handlers)
 [GIN-debug] GET    /api/test/installers      --> backend_axenta/api.(*InstallerAPI).GetInstallers-fm (4 handlers)
 [GIN-debug] GET    /api/test/locations       --> backend_axenta/api.(*LocationAPI).GetLocations-fm (4 handlers)
 [GIN-debug] GET    /api/test/equipment       --> backend_axenta/api.(*EquipmentAPI).GetEquipment-fm (4 handlers)
-2025/10/14 17:27:57 🔧 Registering authenticated API endpoints...
-2025/10/14 17:27:57 ✅ Axenta Cloud authentication enabled for /api/auth endpoints (without multitenancy)
-2025/10/14 17:27:57 🔧 Registering Axenta Cloud proxy endpoints...
+2025/10/16 08:42:46 🔧 Registering authenticated API endpoints...
+2025/10/16 08:42:46 🔧 Registering CMS endpoints without Axenta authentication...
+[GIN-debug] POST   /api/cms/users            --> backend_axenta/api.CreateCmsUserWithCurrentToken (4 handlers)
+[GIN-debug] POST   /api/cms/users/           --> backend_axenta/api.CreateCmsUserWithCurrentToken (4 handlers)
+[GIN-debug] GET    /api/cms/test             --> backend_axenta/api.TestEndpoint (4 handlers)
+2025/10/16 08:42:46 ✅ CMS endpoints registered without Axenta authentication
+2025/10/16 08:42:46 ✅ Axenta Cloud authentication enabled for /api/auth endpoints (without multitenancy)
+2025/10/16 08:42:46 🔧 Registering Axenta Cloud proxy endpoints...
 [GIN-debug] GET    /api/auth/objects         --> backend_axenta/api.GetObjectsFromAxentaCloud (5 handlers)
 [GIN-debug] GET    /api/auth/objects/        --> backend_axenta/api.GetObjectsFromAxentaCloud (5 handlers)
 [GIN-debug] GET    /api/auth/objects/stats   --> backend_axenta/api.GetObjectsStatsFromAxentaCloud (5 handlers)
@@ -149,9 +168,9 @@
 [GIN-debug] DELETE /api/auth/objects/:id/permanent/ --> backend_axenta/api.PermanentDeleteObject (5 handlers)
 [GIN-debug] GET    /api/auth/cms/trash       --> backend_axenta/api.GetDeletedObjectsFromAxentaCloud (5 handlers)
 [GIN-debug] GET    /api/auth/cms/trash/      --> backend_axenta/api.GetDeletedObjectsFromAxentaCloud (5 handlers)
-[GIN-debug] GET    /api/auth/object-templates --> main.main.func12 (5 handlers)
-[GIN-debug] GET    /api/auth/object-templates/ --> main.main.func13 (5 handlers)
-2025/10/14 17:27:57 🔧 Registering users proxy endpoints...
+[GIN-debug] GET    /api/auth/object-templates --> main.main.func13 (5 handlers)
+[GIN-debug] GET    /api/auth/object-templates/ --> main.main.func14 (5 handlers)
+2025/10/16 08:42:46 🔧 Registering users proxy endpoints...
 [GIN-debug] GET    /api/auth/users           --> backend_axenta/api.GetUsersFromAxentaCloud (5 handlers)
 [GIN-debug] GET    /api/auth/users/          --> backend_axenta/api.GetUsersFromAxentaCloud (5 handlers)
 [GIN-debug] GET    /api/auth/users/stats     --> backend_axenta/api.GetUsersStatsFromAxentaCloud (5 handlers)
@@ -160,14 +179,19 @@
 [GIN-debug] GET    /api/auth/cms/users/      --> backend_axenta/api.GetUsersFromAxentaCloud (5 handlers)
 [GIN-debug] GET    /api/auth/cms/users/stats --> backend_axenta/api.GetUsersStatsFromAxentaCloud (5 handlers)
 [GIN-debug] GET    /api/auth/cms/users/stats/ --> backend_axenta/api.GetUsersStatsFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/cms/users/:id   --> backend_axenta/api.GetUser (5 handlers)
+[GIN-debug] GET    /api/auth/cms/users/:id/  --> backend_axenta/api.GetUser (5 handlers)
+[GIN-debug] POST   /api/auth/cms/update_user_password/ --> backend_axenta/api.UpdateUserPassword (5 handlers)
+[GIN-debug] POST   /api/auth/cms/users       --> backend_axenta/api.CreateCmsUserWithCurrentToken (5 handlers)
+[GIN-debug] POST   /api/auth/cms/users/      --> backend_axenta/api.CreateCmsUserWithCurrentToken (5 handlers)
 [GIN-debug] GET    /api/auth/local/users/:id --> backend_axenta/api.GetUser (5 handlers)
 [GIN-debug] POST   /api/auth/local/users     --> backend_axenta/api.CreateUser (5 handlers)
-2025/10/14 17:27:57 🔧 Registering accounts proxy endpoints...
+2025/10/16 08:42:46 🔧 Registering accounts proxy endpoints...
 [GIN-debug] GET    /api/auth/accounts        --> backend_axenta/handlers.(*AccountsHandler).GetAccounts-fm (5 handlers)
 [GIN-debug] GET    /api/auth/accounts/       --> backend_axenta/handlers.(*AccountsHandler).GetAccounts-fm (5 handlers)
 [GIN-debug] GET    /api/auth/accounts/:id    --> backend_axenta/handlers.(*AccountsHandler).GetAccount-fm (5 handlers)
 [GIN-debug] GET    /api/auth/accounts/:id/   --> backend_axenta/handlers.(*AccountsHandler).GetAccount-fm (5 handlers)
-[GIN-debug] GET    /api/auth/admin/accounts/list --> main.main.func14 (5 handlers)
+[GIN-debug] GET    /api/auth/admin/accounts/list --> main.main.func15 (5 handlers)
 [GIN-debug] PUT    /api/auth/users/:id       --> backend_axenta/api.UpdateUser (5 handlers)
 [GIN-debug] DELETE /api/auth/users/:id       --> backend_axenta/api.DeleteUser (5 handlers)
 [GIN-debug] POST   /api/auth/users/bulk-delete --> backend_axenta/api.BulkDeleteUsers (5 handlers)
@@ -184,7 +208,7 @@
 [GIN-debug] POST   /api/auth/user-templates  --> backend_axenta/api.CreateUserTemplate (5 handlers)
 [GIN-debug] PUT    /api/auth/user-templates/:id --> backend_axenta/api.UpdateUserTemplate (5 handlers)
 [GIN-debug] DELETE /api/auth/user-templates/:id --> backend_axenta/api.DeleteUserTemplate (5 handlers)
-2025/10/14 17:27:57 🔧 Registering /auth/ prefixed endpoints for frontend compatibility...
+2025/10/16 08:42:46 🔧 Registering /auth/ prefixed endpoints for frontend compatibility...
 [GIN-debug] GET    /api/auth/auth/users      --> backend_axenta/api.GetUsersFromAxentaCloud (5 handlers)
 [GIN-debug] GET    /api/auth/auth/users/     --> backend_axenta/api.GetUsersFromAxentaCloud (5 handlers)
 [GIN-debug] GET    /api/auth/auth/users/stats --> backend_axenta/api.GetUsersStatsFromAxentaCloud (5 handlers)
@@ -207,7 +231,7 @@
 [GIN-debug] POST   /api/auth/auth/user-templates --> backend_axenta/api.CreateUserTemplate (5 handlers)
 [GIN-debug] PUT    /api/auth/auth/user-templates/:id --> backend_axenta/api.UpdateUserTemplate (5 handlers)
 [GIN-debug] DELETE /api/auth/auth/user-templates/:id --> backend_axenta/api.DeleteUserTemplate (5 handlers)
-2025/10/14 17:27:57 🔧 Registering Axenta users management endpoints...
+2025/10/16 08:42:46 🔧 Registering Axenta users management endpoints...
 [GIN-debug] GET    /api/auth/axenta-users    --> backend_axenta/api.GetAxentaUsers (5 handlers)
 [GIN-debug] GET    /api/auth/axenta-users/stats --> backend_axenta/api.GetUsersByAxentaType (5 handlers)
 [GIN-debug] POST   /api/auth/axenta-users/local --> backend_axenta/api.CreateLocalUser (5 handlers)
@@ -249,11 +273,11 @@
 [GIN-debug] POST   /api/auth/billing/process-deletions --> backend_axenta/api.ProcessScheduledDeletions (5 handlers)
 [GIN-debug] GET    /api/auth/billing/statistics --> backend_axenta/api.GetBillingStatistics (5 handlers)
 [GIN-debug] GET    /api/auth/billing/invoices/period --> backend_axenta/api.GetInvoicesByPeriod (5 handlers)
-[GIN-debug] GET    /test/installations       --> main.main.func15 (4 handlers)
-[GIN-debug] GET    /api/installations/statistics --> main.main.func16 (4 handlers)
-[GIN-debug] GET    /api/installers           --> main.main.func17 (4 handlers)
-[GIN-debug] GET    /api/equipment            --> main.main.func18 (4 handlers)
-[GIN-debug] GET    /api/locations            --> main.main.func19 (4 handlers)
+[GIN-debug] GET    /test/installations       --> main.main.func16 (4 handlers)
+[GIN-debug] GET    /api/installations/statistics --> main.main.func17 (4 handlers)
+[GIN-debug] GET    /api/installers           --> main.main.func18 (4 handlers)
+[GIN-debug] GET    /api/equipment            --> main.main.func19 (4 handlers)
+[GIN-debug] GET    /api/locations            --> main.main.func20 (4 handlers)
 [GIN-debug] POST   /api/auth/warehouse/operations --> backend_axenta/api.(*WarehouseAPI).CreateWarehouseOperation-fm (5 handlers)
 [GIN-debug] GET    /api/auth/warehouse/operations --> backend_axenta/api.(*WarehouseAPI).GetWarehouseOperations-fm (5 handlers)
 [GIN-debug] POST   /api/auth/warehouse/transfer --> backend_axenta/api.(*WarehouseAPI).TransferEquipment-fm (5 handlers)
@@ -297,895 +321,8 @@
 [GIN-debug] GET    /api/auth/reports/executions --> backend_axenta/api.(*ReportsAPI).GetReportExecutions-fm (5 handlers)
 [GIN-debug] GET    /api/auth/reports/executions/:id --> backend_axenta/api.(*ReportsAPI).GetReportExecution-fm (5 handlers)
 [GIN-debug] GET    /api/auth/reports/stats   --> backend_axenta/api.(*ReportsAPI).GetReportsStats-fm (5 handlers)
-2025/10/14 17:27:57 Server starting on port 8080...
+2025/10/16 08:42:46 Server starting on port 8080...
 [GIN-debug] [WARNING] You trusted all proxies, this is NOT safe. We recommend you to set a value.
 Please check https://pkg.go.dev/github.com/gin-gonic/gin#readme-don-t-trust-all-proxies for details.
 [GIN-debug] Listening and serving HTTP on :8080
-
-2025/10/14 17:27:57 [32m/Users/com/backend_axenta/services/report_scheduler_service.go:55
-[0m[33m[1.872ms] [34;1m[rows:0][0m SELECT * FROM "report_schedules" WHERE is_active = true AND "report_schedules"."deleted_at" IS NULL
-2025/10/14 17:27:57 Loaded 0 active report schedules
-2025/10/14 17:27:57 Report scheduler started
-[GIN] 2025/10/14 - 17:27:58 | 204 |     454.959µs |             ::1 | OPTIONS  "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:27:58 | 204 |     328.333µs |             ::1 | OPTIONS  "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:27:58 | 204 |      20.166µs |             ::1 | OPTIONS  "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 17:27:58 | 200 |      375.25µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:27:58 | 200 |  246.973584ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 17:27:58 | 200 |  571.437041ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:27:58 | 204 |          26µs |             ::1 | OPTIONS  "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:27:58 | 200 |  225.483417ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:28:00 | 204 |      114.75µs |             ::1 | OPTIONS  "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:28:00 | 200 |  275.119709ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:28:01 | 200 |  467.896458ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:28:02 | 200 |  189.615167ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:28:02 | 200 |      54.584µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:28:02 | 200 |   84.706791ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 17:28:03 | 200 |  1.326262458s |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:28:04 | 200 |  692.614833ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:28:05 | 200 |  183.093167ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:28:08 | 200 |  280.720792ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:28:08 | 200 |  418.163125ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:28:09 | 200 |  210.556791ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:28:09 | 200 |      67.875µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:28:09 | 200 |   92.485542ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 17:28:09 | 200 |  483.048125ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:28:10 | 200 |  193.092291ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:28:10 | 200 |  186.927667ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=5"
-[GIN] 2025/10/14 - 17:28:11 | 200 |  244.920792ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:28:12 | 200 |  429.907417ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:28:13 | 200 |  202.638209ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:28:13 | 200 |      171.75µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:28:13 | 200 |   82.667417ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 17:28:13 | 200 |  475.700875ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:28:14 | 200 |  184.078792ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:28:15 | 200 |    288.6075ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:28:16 | 200 |  805.493917ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:28:17 | 200 |  249.515833ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:28:17 | 200 |      75.042µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:28:17 | 200 |  232.274041ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 17:28:18 | 200 |   1.00631775s |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:28:18 | 200 |  177.384041ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:29:06 | 200 |  308.729375ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:29:07 | 200 |  544.030625ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:29:08 | 200 |  232.842959ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:29:08 | 200 |    1.297792ms |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:29:08 | 200 |   83.744583ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 17:29:08 | 200 |   437.21325ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:29:08 | 200 |  187.716875ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:29:10 | 200 |  228.891833ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:29:11 | 200 |  544.483792ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:29:11 | 200 |  182.331708ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:29:11 | 200 |      59.625µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:29:11 | 200 |   76.115791ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 17:29:12 | 200 |  437.338166ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:29:12 | 200 |  200.583042ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:29:13 | 200 |  277.953583ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:29:14 | 200 |  460.192542ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:29:14 | 200 |     221.619ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:29:14 | 200 |          22µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:29:14 | 200 |   88.840833ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 17:29:15 | 200 |  439.515459ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:29:15 | 200 |  188.563959ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:29:17 | 200 |  265.700625ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:29:19 | 200 |  479.402334ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:29:19 | 200 |  209.373042ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:29:19 | 200 |       41.75µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:29:19 | 200 |  107.527042ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 17:29:19 | 200 |  460.724834ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:29:19 | 200 |  233.788333ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:29:23 | 200 |  296.749125ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:29:25 | 200 |   562.80075ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:29:25 | 200 |  228.132708ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:29:25 | 200 |      65.542µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:29:25 | 200 |   96.609125ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 17:29:25 | 200 |     487.388ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:29:26 | 200 |  207.213792ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:29:27 | 200 |  291.802208ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:29:29 | 200 |  564.505333ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:29:29 | 200 |  211.501208ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:29:29 | 200 |          20µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:29:29 | 200 |   92.100334ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 17:29:29 | 200 |  401.447459ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:29:29 | 200 |      200.26ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:29:34 | 200 |  503.199042ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:29:35 | 200 |   460.60425ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:29:35 | 200 |  211.824292ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:29:35 | 200 |     107.709µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:29:35 | 200 |   73.798083ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 17:29:35 | 200 |  427.010625ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:29:36 | 200 |  199.944292ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:29:43 | 200 |  257.952709ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:29:44 | 200 |  444.687625ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:29:44 | 200 |   218.80025ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:29:44 | 200 |      57.458µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:29:44 | 200 |   79.760375ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 17:29:45 | 200 |  553.499083ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:29:45 | 200 |  174.081875ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:29:47 | 200 |  292.965584ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:29:48 | 200 |  649.733334ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:29:48 | 200 |  202.558833ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:29:48 | 200 |      49.125µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:29:48 | 200 |   89.203333ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 17:29:49 | 200 |  479.654375ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:29:49 | 200 |  200.596625ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:29:53 | 200 |  271.038417ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:29:54 | 200 |  439.089041ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:29:54 | 200 |  326.603417ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:29:54 | 200 |      68.166µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:29:55 | 200 |  133.186166ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 17:29:55 | 200 |  533.060417ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:29:55 | 200 |  176.944333ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:33:18 | 200 |  2.132078333s |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:33:20 | 200 |  394.207625ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:33:20 | 200 |  198.048375ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:33:20 | 200 |       429.5µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:33:20 | 200 |  164.910084ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 17:33:21 | 200 |  398.225334ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:33:21 | 200 |   185.53175ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:33:43 | 200 |  312.893542ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:33:44 | 200 |  428.228625ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:33:44 | 200 |  212.511208ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 17:33:44 | 200 |     941.917µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 17:33:44 | 200 |  102.592833ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 17:33:45 | 200 |  466.506166ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 17:33:45 | 200 |  205.285416ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:34:27 | 200 |  513.648792ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:34:28 | 200 |    475.4065ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:34:29 | 200 |  332.037167ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:34:29 | 200 |    1.293292ms |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:34:29 | 200 |  109.712083ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 19:34:29 | 200 |  490.302583ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:34:30 | 200 |   1.01734025s |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:34:31 | 200 |  252.857958ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:34:32 | 200 |  441.937292ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:34:32 | 200 |  233.209167ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:34:32 | 200 |      38.125µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:34:32 | 200 |     93.5895ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 19:34:33 | 200 |  353.013875ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:34:33 | 200 |  239.265041ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:35:24 | 200 |  545.372958ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:35:25 | 200 |  463.869041ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:35:25 | 200 |  427.963459ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:35:25 | 200 |    1.177542ms |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:35:25 | 200 |     77.0035ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 19:35:26 | 200 |  439.510709ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:35:26 | 200 |  257.065083ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:49:15 | 200 |  611.769958ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:49:16 | 200 |   465.61725ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:49:16 | 200 |  313.171792ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:49:16 | 200 |     593.125µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:49:16 | 200 |  160.876125ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 19:49:16 | 200 |  381.997917ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:49:17 | 200 |  244.689166ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:49:52 | 200 |  363.819709ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:49:53 | 200 |    602.2895ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:49:53 | 200 |     232.486ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:49:53 | 204 |      13.584µs |             ::1 | OPTIONS  "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:49:53 | 204 |     689.625µs |             ::1 | OPTIONS  "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 19:49:53 | 204 |      10.833µs |             ::1 | OPTIONS  "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:49:53 | 200 |      77.667µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:49:53 | 200 |   97.420625ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 19:49:54 | 200 |   395.46225ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:49:54 | 204 |      11.042µs |             ::1 | OPTIONS  "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:49:54 | 200 |   272.10325ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:50:38 | 204 |     712.625µs |             ::1 | OPTIONS  "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:50:38 | 200 |  402.513792ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:50:39 | 200 |  737.106375ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:50:40 | 200 |  189.653042ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:50:40 | 200 |     320.375µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:50:40 | 200 |   95.869792ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 19:50:40 | 200 |    526.7165ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:50:40 | 200 |  239.670791ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:51:12 | 200 |  1.243994042s |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:51:14 | 200 |  774.172833ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:51:14 | 200 |     244.037ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:51:14 | 200 |      98.375µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:51:14 | 200 |  108.396958ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 19:51:14 | 200 |  513.954583ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:51:15 | 200 |  311.963875ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:51:39 | 200 |  579.579917ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:51:39 | 204 |     466.542µs |             ::1 | OPTIONS  "/api/auth/users/stats"
-[GIN] 2025/10/14 - 19:51:40 | 200 |  717.856209ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:51:40 | 200 |  1.257426375s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 19:51:40 | 200 |    695.4585ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:51:41 | 200 |  716.682375ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 19:51:41 | 200 |  569.849416ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:51:42 | 200 |  698.717792ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:51:42 | 200 |  833.891916ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 19:51:42 | 200 |  545.711375ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:51:43 | 200 |  812.027875ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 19:51:43 | 204 |      12.833µs |             ::1 | OPTIONS  "/api/auth/cms/trash/?page=1&per_page=20&ordering=name"
-[GIN] 2025/10/14 - 19:51:44 | 200 |  841.950208ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 19:51:44 | 200 |  1.110422459s |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=20&ordering=name"
-[GIN] 2025/10/14 - 19:51:45 | 200 |  1.284583167s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 19:52:40 | 200 |  310.136709ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:52:41 | 200 |  447.245917ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:52:41 | 200 |  248.907208ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:52:41 | 200 |      69.166µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:52:41 | 200 |   88.479458ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 19:52:42 | 200 |  556.011417ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:52:42 | 200 |  286.856666ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:53:28 | 200 |  736.441792ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:53:29 | 200 |    463.7625ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:53:29 | 200 |  742.023958ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 19:53:29 | 200 |  795.552167ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:53:30 | 200 |  574.457542ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:53:30 | 200 |  1.252866709s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 19:53:31 | 200 |  671.571375ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:53:31 | 200 |  711.667667ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 19:53:31 | 200 |   455.00025ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:53:31 | 200 |  553.027791ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 19:53:32 | 200 |     1.101271s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 19:53:34 | 200 |  1.953234208s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 19:53:44 | 200 |   316.10175ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:53:45 | 200 |  511.329833ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:53:45 | 200 |  236.471917ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:53:45 | 200 |       44.75µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:53:46 | 200 |   85.253334ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 19:53:46 | 200 |  509.946041ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:53:46 | 200 |  205.468083ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:53:50 | 200 |  853.929708ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:53:52 | 200 |   1.38767925s |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:53:52 | 200 |  1.745571041s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 19:53:52 | 200 |  510.399083ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:53:52 | 200 |  428.766166ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:53:53 | 200 |   890.14525ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 19:53:53 | 200 |  512.165959ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:53:54 | 200 |     558.029ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:53:54 | 200 |   1.12714475s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 19:53:55 | 200 |  1.313396834s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 19:53:56 | 200 |  833.477208ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 19:53:57 | 200 |  1.155970417s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 19:54:02 | 200 |  469.744458ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:54:04 | 200 |  956.511583ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:54:04 | 200 |  217.415791ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:54:04 | 200 |     560.375µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:54:04 | 200 |  113.907083ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 19:54:05 | 200 |  673.622834ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:54:05 | 200 |  228.768292ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:54:10 | 200 |  286.717916ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:54:11 | 200 |    594.8035ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:54:12 | 200 |  476.905416ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:54:12 | 200 |      57.292µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:54:12 | 200 |   92.582708ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 19:54:12 | 200 |  546.566292ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:54:13 | 200 |  210.454375ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:54:17 | 200 |  513.708166ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:54:18 | 200 |  542.666041ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:54:19 | 200 |  228.363125ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:54:19 | 200 |      48.666µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:54:19 | 200 |     93.0345ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 19:54:20 | 200 |  983.075583ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:54:20 | 200 |  244.540375ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:54:29 | 200 |  275.820209ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:54:30 | 200 |  482.274834ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:54:31 | 200 |  238.098084ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:54:31 | 200 |          74µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:54:31 | 200 |     107.302ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 19:54:31 | 200 |  835.467125ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:54:32 | 200 |  296.698417ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:54:34 | 200 |  460.378708ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:54:35 | 200 |    522.5695ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:54:35 | 200 |  216.711625ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:54:35 | 200 |          65µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:54:35 | 200 |   91.267708ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 19:54:36 | 200 |  701.975958ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:54:36 | 200 |  234.612375ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:55:27 | 200 |  326.802375ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:55:28 | 200 |  462.696375ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:55:28 | 200 |   179.64975ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:55:28 | 200 |       90.75µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:55:28 | 200 |   93.558917ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 19:55:29 | 200 |  703.325417ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:55:29 | 200 |  199.940875ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:55:31 | 200 |  258.634458ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:55:32 | 200 |  769.147667ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:55:32 | 200 |  198.584125ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:55:32 | 200 |      83.875µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:55:33 | 200 |  112.342625ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 19:55:33 | 200 |  511.414208ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:55:33 | 200 |  201.225292ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:55:53 | 200 |  249.027333ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:55:54 | 200 |   490.75275ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:55:54 | 200 |  201.324833ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:55:54 | 200 |      77.041µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:55:55 | 200 |   70.269708ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 19:55:55 | 200 |  532.168958ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:55:55 | 200 |  222.280875ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:56:20 | 200 |   328.10225ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:56:22 | 200 |  786.435959ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:56:22 | 200 |  226.124667ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:56:22 | 200 |        90.5µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:56:22 | 200 |   73.200583ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 19:56:22 | 200 |  378.506625ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:56:23 | 200 |     210.776ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:59:09 | 200 |  536.609917ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:59:10 | 200 |  469.003292ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:59:11 | 200 |     336.057ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 19:59:11 | 200 |     110.583µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 19:59:11 | 200 |  185.124542ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 19:59:11 | 200 |  482.710084ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 19:59:11 | 200 |  210.979583ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:03:09 | 200 |  1.788026083s |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 20:03:10 | 200 |  697.031709ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:03:11 | 200 |    233.8695ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:03:11 | 200 |    1.028167ms |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 20:03:11 | 200 |   375.90825ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 20:03:12 | 200 |     1.071295s |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:03:12 | 200 |   225.13425ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=20&ordering=name"
-[GIN] 2025/10/14 - 20:03:12 | 200 |  292.401292ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:03:47 | 204 |      51.291µs |             ::1 | OPTIONS  "/api/auth/cms/trash/?page=1&per_page=20&ordering=name&search=%D1%82%D0%B5"
-[GIN] 2025/10/14 - 20:03:48 | 400 |  149.943375ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=20&ordering=name&search=%D1%82%D0%B5"
-[GIN] 2025/10/14 - 20:03:48 | 204 |      24.583µs |             ::1 | OPTIONS  "/api/auth/objects-trash?page=1&per_page=20&ordering=name&search=%D1%82%D0%B5"
-
-2025/10/14 20:03:48 [32m/Users/com/backend_axenta/api/objects.go:561
-[0m[33m[77.547ms] [34;1m[rows:1][0m SELECT count(*) FROM "objects" WHERE deleted_at IS NOT NULL AND (name ILIKE '%те%' OR imei ILIKE '%те%' OR phone_number ILIKE '%те%')
-
-2025/10/14 20:03:48 [32m/Users/com/backend_axenta/api/objects.go:569
-[0m[33m[2.978ms] [34;1m[rows:0][0m SELECT * FROM "objects" WHERE deleted_at IS NOT NULL AND (name ILIKE '%те%' OR imei ILIKE '%те%' OR phone_number ILIKE '%те%') LIMIT 50
-[GIN] 2025/10/14 - 20:03:48 | 200 |  176.049333ms |             ::1 | GET      "/api/auth/objects-trash?page=1&per_page=20&ordering=name&search=%D1%82%D0%B5"
-[GIN] 2025/10/14 - 20:03:48 | 204 |      20.875µs |             ::1 | OPTIONS  "/api/auth/cms/trash/?page=1&per_page=20&ordering=name&search=%D1%82%D0%B5%D1%8B"
-[GIN] 2025/10/14 - 20:03:48 | 400 |  122.305459ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=20&ordering=name&search=%D1%82%D0%B5%D1%8B"
-[GIN] 2025/10/14 - 20:03:48 | 204 |         5.5µs |             ::1 | OPTIONS  "/api/auth/objects-trash?page=1&per_page=20&ordering=name&search=%D1%82%D0%B5%D1%8B"
-
-2025/10/14 20:03:48 [32m/Users/com/backend_axenta/api/objects.go:561
-[0m[33m[0.759ms] [34;1m[rows:1][0m SELECT count(*) FROM "objects" WHERE deleted_at IS NOT NULL AND (name ILIKE '%теы%' OR imei ILIKE '%теы%' OR phone_number ILIKE '%теы%')
-
-2025/10/14 20:03:48 [32m/Users/com/backend_axenta/api/objects.go:569
-[0m[33m[0.606ms] [34;1m[rows:0][0m SELECT * FROM "objects" WHERE deleted_at IS NOT NULL AND (name ILIKE '%теы%' OR imei ILIKE '%теы%' OR phone_number ILIKE '%теы%') LIMIT 50
-[GIN] 2025/10/14 - 20:03:48 | 200 |   77.013542ms |             ::1 | GET      "/api/auth/objects-trash?page=1&per_page=20&ordering=name&search=%D1%82%D0%B5%D1%8B"
-[GIN] 2025/10/14 - 20:03:50 | 200 |  224.173458ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=20&ordering=name"
-[GIN] 2025/10/14 - 20:03:51 | 204 |      20.042µs |             ::1 | OPTIONS  "/api/auth/cms/trash/?page=1&per_page=20&ordering=name&search=tw"
-[GIN] 2025/10/14 - 20:03:51 | 200 |  205.847458ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=20&ordering=name&search=tw"
-[GIN] 2025/10/14 - 20:03:52 | 204 |       103.5µs |             ::1 | OPTIONS  "/api/auth/cms/trash/?page=1&per_page=20&ordering=name&search=tes"
-[GIN] 2025/10/14 - 20:03:53 | 200 |   198.85275ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=20&ordering=name&search=tes"
-[GIN] 2025/10/14 - 20:03:53 | 204 |      38.125µs |             ::1 | OPTIONS  "/api/auth/cms/trash/?page=1&per_page=20&ordering=name&search=test"
-[GIN] 2025/10/14 - 20:03:53 | 200 |  213.028041ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=20&ordering=name&search=test"
-[GIN] 2025/10/14 - 20:03:58 | 204 |      12.125µs |             ::1 | OPTIONS  "/api/auth/objects/24868/restore"
-
-2025/10/14 20:03:58 [31;1m/Users/com/backend_axenta/api/objects.go:607 [35;1mrecord not found
-[0m[33m[4.137ms] [34;1m[rows:0][0m SELECT * FROM "objects" WHERE id = 24868 AND deleted_at IS NOT NULL ORDER BY "objects"."id" LIMIT 1
-[GIN] 2025/10/14 - 20:03:58 | 404 |  100.443334ms |             ::1 | PUT      "/api/auth/objects/24868/restore"
-[GIN] 2025/10/14 - 20:04:01 | 204 |      14.833µs |             ::1 | OPTIONS  "/api/auth/objects/24869/restore"
-
-2025/10/14 20:04:01 [31;1m/Users/com/backend_axenta/api/objects.go:607 [35;1mrecord not found
-[0m[33m[2.141ms] [34;1m[rows:0][0m SELECT * FROM "objects" WHERE id = 24869 AND deleted_at IS NOT NULL ORDER BY "objects"."id" LIMIT 1
-[GIN] 2025/10/14 - 20:04:01 | 404 |  118.234125ms |             ::1 | PUT      "/api/auth/objects/24869/restore"
-[GIN] 2025/10/14 - 20:04:22 | 204 |      29.791µs |             ::1 | OPTIONS  "/api/auth/cms/trash/?page=1&per_page=20&ordering=name&search=AWCRM_001"
-[GIN] 2025/10/14 - 20:04:22 | 200 |  187.108791ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=20&ordering=name&search=AWCRM_001"
-[GIN] 2025/10/14 - 20:04:25 | 204 |      45.708µs |             ::1 | OPTIONS  "/api/auth/cms/trash/?page=1&per_page=20&ordering=name&search=AWCRM_00"
-[GIN] 2025/10/14 - 20:04:25 | 200 |  181.414583ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=20&ordering=name&search=AWCRM_00"
-[GIN] 2025/10/14 - 20:04:50 | 200 |  729.031375ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:04:50 | 200 |  625.671125ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:04:50 | 200 |  715.352541ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:04:51 | 200 |  491.824083ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:04:51 | 200 |  630.020458ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:04:52 | 200 |  1.323841167s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:04:52 | 200 |  571.240125ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:04:52 | 200 |  658.228958ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:04:53 | 200 |  472.313625ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:04:53 | 200 |  965.619875ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:04:54 | 200 |  736.906666ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:04:55 | 200 |  633.222417ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:06:24 | 200 |  608.536167ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 20:06:26 | 200 |  1.048872875s |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:06:26 | 200 |  228.000583ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:06:26 | 200 |     159.084µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 20:06:26 | 200 |  169.700875ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 20:06:27 | 200 |  1.274979792s |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:06:27 | 200 |   196.22875ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:06:29 | 200 |  203.157333ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=20&ordering=name"
-[GIN] 2025/10/14 - 20:08:36 | 200 |  1.107668792s |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:36 | 200 |  502.620542ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:36 | 200 |  675.690875ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:08:37 | 200 |  458.845583ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:37 | 200 |  716.781583ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:37 | 200 |  1.052082375s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:08:38 | 200 |  554.818292ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:38 | 200 |  634.160834ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:08:38 | 200 |  466.251208ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:39 | 200 |  599.170541ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:08:39 | 200 |  686.577167ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:40 | 200 |    542.6655ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:40 | 200 |   1.04063725s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:08:40 | 200 |  492.071625ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:41 | 200 |     768.963ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:08:41 | 200 |  474.499667ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:41 | 200 |  558.329709ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:42 | 200 |  1.077132333s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:08:42 | 200 |  704.914167ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:42 | 200 |  422.777667ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:42 | 200 |  786.152084ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:08:43 | 200 |  528.709334ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:43 | 200 |     617.961ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:43 | 200 |  693.739791ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:44 | 200 |  490.642042ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:44 | 200 |  718.985166ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:08:44 | 200 |  635.861166ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:44 | 200 |  1.805215916s |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:44 | 200 |  547.974458ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:08:45 | 200 |  529.484458ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:45 | 200 |    752.9905ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:08:46 | 200 |  709.729125ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:08:47 | 200 |   607.95175ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:08:47 | 200 |  953.531667ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:08:51 | 200 |  455.954917ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:51 | 200 |  468.818417ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:51 | 200 |  844.064417ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:08:52 | 200 |  442.461375ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:52 | 200 |  595.667209ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:52 | 200 |   675.08725ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:08:53 | 200 |  463.591791ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:53 | 200 |  713.757375ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:08:53 | 200 |   482.31875ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:54 | 200 |   1.21562525s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:08:54 | 200 |     1.030914s |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:55 | 200 |  454.176417ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:55 | 200 |  701.555333ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:08:55 | 200 |  424.078875ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:55 | 200 |  468.831958ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:56 | 200 |  986.528084ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:08:56 | 200 |    513.4835ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:56 | 200 |  651.559959ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:08:56 | 200 |  455.051375ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:57 | 200 |  476.580292ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:57 | 200 |   518.68125ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:08:57 | 200 |  454.410375ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:58 | 200 |  446.301666ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:58 | 200 |    884.4465ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:08:58 | 200 |  504.185166ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:08:58 | 200 |  598.137125ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:08:59 | 200 |   652.97225ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:01 | 200 |  1.735908667s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:02 | 200 |  1.008137791s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:02 | 200 |  665.611792ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:04 | 200 |  1.305171833s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:05 | 200 |   727.30575ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:13 | 200 |  613.989375ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:13 | 200 |  448.409583ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:14 | 200 |  958.915292ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:14 | 200 |  711.065666ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:15 | 200 |  627.364917ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:15 | 200 |  476.490459ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:15 | 200 |  465.046458ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:15 | 200 |  751.479375ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:16 | 200 |  465.836916ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:16 | 200 |  712.905917ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:17 | 200 |  590.307166ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:17 | 200 |  690.320209ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:30 | 200 |    439.1415ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:30 | 200 |  438.094875ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:31 | 200 |  773.680041ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:31 | 200 |   527.53575ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:32 | 200 |  862.330042ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:32 | 200 |  1.093889916s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:32 | 200 |  447.138584ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:32 | 200 |  593.160875ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:33 | 200 |  451.277375ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:33 | 200 |  463.097667ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:34 | 200 |    409.6095ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:34 | 200 |  1.571191708s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:34 | 200 |  499.103875ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:35 | 200 |  461.117084ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:35 | 200 |  709.996875ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:35 | 200 |   422.46125ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:35 | 200 |  547.830959ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:36 | 200 |  1.136485625s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:36 | 200 |  423.339333ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:36 | 200 |  651.814166ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:37 | 200 |  698.377125ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:37 | 200 |  442.427333ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:37 | 200 |  722.709333ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:38 | 200 |  517.995167ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:38 | 200 |    708.8275ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:38 | 200 |  556.007042ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:39 | 200 |  634.724416ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:40 | 200 |  999.385416ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:41 | 200 |    645.2605ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:42 | 200 |  1.111834708s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:42 | 200 |  443.697583ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:42 | 200 |  435.247666ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:43 | 200 |  825.793042ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:43 | 200 |  462.166084ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:43 | 200 |  389.995875ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:44 | 200 |  410.121333ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:44 | 200 |  1.078442208s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:44 | 200 |  452.466667ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:44 | 200 |  537.526542ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:45 | 200 |  529.917667ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:45 | 200 |  512.497792ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:45 | 200 |  494.810541ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:46 | 200 |  622.920833ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:46 | 200 |  891.841875ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:46 | 200 |  406.503166ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:47 | 200 |  770.715333ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:47 | 200 |  590.758458ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:47 | 200 |   517.00275ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:48 | 200 |   486.66925ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:48 | 200 |  950.480459ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:48 | 200 |  456.943833ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:48 | 200 |  515.703458ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:48 | 200 |  417.376458ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:49 | 200 |  438.985583ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:49 | 200 |  381.835167ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:49 | 200 |   673.97425ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:49 | 200 |  384.446666ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:50 | 200 |     469.215ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:50 | 200 |   591.24975ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:50 | 200 |   542.46625ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:51 | 200 |  289.380042ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 20:09:51 | 200 |      569.18ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:52 | 200 |  657.593584ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:52 | 200 |  244.755458ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:09:52 | 200 |     121.834µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
-[GIN] 2025/10/14 - 20:09:52 | 200 |   91.873584ms |             ::1 | GET      "/api/admin/accounts/list"
-[GIN] 2025/10/14 - 20:09:52 | 200 |  426.969042ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:53 | 200 |  230.089042ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:09:56 | 200 |  859.321125ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:56 | 200 |  420.410667ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:56 | 200 |  547.422959ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:57 | 200 |  424.177125ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:57 | 200 |  649.552167ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:57 | 200 |  424.484583ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:58 | 200 |  574.557583ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:09:58 | 200 |  652.734666ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:09:58 | 200 |  456.149083ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:10:00 | 200 |  2.301389458s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:10:01 | 200 |  659.411583ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:10:01 | 200 |  565.702625ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:10:08 | 200 |   881.03675ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:10:08 | 200 |  457.783583ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:10:09 | 200 |   641.87825ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:10:09 | 200 |  445.941917ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:10:09 | 200 |  732.013667ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:10:09 | 200 |  491.172166ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:10:10 | 200 |   463.97475ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:10:10 | 200 |  713.122042ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:10:10 | 200 |   534.69075ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:10:11 | 200 |  784.002125ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:10:12 | 200 |  958.079958ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:10:12 | 200 |  723.621542ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:10:23 | 200 |  555.882333ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:10:24 | 200 |  964.853584ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:10:24 | 200 |    1.1902575s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:10:24 | 200 |  467.575083ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:10:25 | 200 |  467.943625ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:10:25 | 200 |  746.273917ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:10:25 | 200 |  431.231666ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:10:25 | 200 |  551.586708ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:10:26 | 200 |  615.122208ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:10:26 | 200 |  805.524333ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:10:26 | 200 |  429.989583ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:10:27 | 200 |  526.698042ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:10:27 | 200 |  620.491917ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:10:27 | 200 |  442.315667ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:10:27 | 200 |  578.982417ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:10:28 | 200 |  557.043791ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:10:28 | 200 |  797.093833ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:10:28 | 200 |  430.917667ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:10:28 | 200 |  711.012208ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:10:29 | 200 |  419.038334ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:10:29 | 200 |  641.015541ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:10:29 | 200 |   484.18275ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:10:30 | 200 |  580.704833ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:10:30 | 200 |  953.012041ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:10:30 | 200 |  407.729417ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:10:30 | 200 |     516.786ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:10:31 | 200 |  431.455125ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:10:31 | 200 |  555.695084ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:10:32 | 200 |  785.881833ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:10:32 | 200 |   733.95025ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:10:56 | 200 |  574.255584ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:10:57 | 200 |  577.205958ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:10:57 | 200 |     721.591ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:10:58 | 200 |  535.701084ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:10:58 | 200 |  452.826833ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:10:58 | 200 |  506.666417ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:10:58 | 200 |  605.252875ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:10:59 | 200 |  524.889667ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:10:59 | 200 |  435.175917ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:10:59 | 200 |  519.190166ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:10:59 | 200 |  581.427875ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:11:01 | 200 |  1.346472084s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:12:09 | 200 |  741.297417ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:09 | 200 |  282.063917ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:12:09 | 200 |  450.412042ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:09 | 200 |  213.307584ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:12:10 | 200 |  591.403459ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:10 | 200 |  912.293125ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:12:10 | 200 |  470.453542ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:11 | 200 |  875.464208ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:12:11 | 200 |  846.570333ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:12:11 | 200 |  288.697458ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:12:11 | 200 |     820.156ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:11 | 200 |  235.522791ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:12:11 | 200 |  530.617916ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:12:12 | 200 |  513.875875ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:12 | 200 |    506.3085ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:12:12 | 200 |  473.849792ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:12 | 200 |  229.820542ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:12:12 | 200 |  471.287834ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:12:13 | 200 |    484.9895ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:12:13 | 200 |  1.153489042s |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:13 | 200 |  431.548833ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:12:13 | 200 |  197.085875ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:12:14 | 200 |   517.90875ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:14 | 200 |  199.931458ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:12:14 | 200 |  528.480042ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:15 | 200 |  229.919333ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:12:15 | 200 |     1.197712s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:12:15 | 200 |  511.710167ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:15 | 200 |  224.342959ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:12:15 | 200 |  528.685291ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:15 | 200 |  747.490084ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:12:16 | 200 |  511.085041ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:16 | 200 |  459.544542ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:12:16 | 200 |  251.906417ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:12:16 | 200 |  485.169625ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:16 | 200 |  590.050458ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:12:17 | 200 |  272.204333ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:12:17 | 200 |  984.688583ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:12:18 | 200 |  1.239401958s |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:18 | 200 |  217.911125ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:12:18 | 200 |      613.82ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:12:19 | 200 |  662.310541ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:12:19 | 200 |  1.164187542s |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:19 | 200 |  202.320083ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:12:19 | 200 |  572.418708ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:20 | 200 |  195.289667ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:12:20 | 200 |  993.767583ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:12:20 | 200 |  571.608917ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:20 | 200 |  198.788666ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:12:20 | 200 |     728.491ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:12:21 | 200 |   534.22925ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:21 | 200 |  188.397917ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:12:21 | 200 |  493.581041ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:12:21 | 200 |     915.069ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:22 | 200 |   214.87075ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:12:22 | 200 |  764.464334ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:12:22 | 200 |  555.649041ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:22 | 200 |  200.009958ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:12:22 | 200 |  536.328417ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:12:22 | 200 |  499.400334ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:23 | 200 |  775.334458ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:12:23 | 200 |  983.225125ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:24 | 200 |  197.518959ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:12:24 | 200 |   652.87375ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:12:24 | 200 |  454.755375ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:24 | 200 |  289.057125ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:12:24 | 200 |     634.687ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:12:25 | 200 |    1.0938375s |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:25 | 200 |  672.443125ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:12:25 | 200 |  267.880208ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:12:26 | 200 |  809.796458ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:12:26 | 200 |  1.009467292s |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:26 | 200 |  871.319959ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:26 | 200 |  907.987125ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:26 | 200 |  491.486292ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:27 | 200 |  199.946875ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:12:27 | 200 |  471.854833ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:27 | 200 |  277.469708ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:12:28 | 200 |  899.862667ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:12:28 | 200 |       902.5ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:28 | 200 |   205.25675ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:12:28 | 200 |  670.170959ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:12:29 | 200 |   739.20725ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:29 | 200 |     207.537ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:12:29 | 200 |  887.434791ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:12:29 | 200 |  710.897542ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:30 | 200 |  234.865875ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:12:30 | 200 |  600.533042ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:12:30 | 200 |  494.185375ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:30 | 200 |  224.219708ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:12:30 | 200 |  600.396958ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:12:31 | 200 |  952.865291ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:12:39 | 200 |  540.691041ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:12:40 | 200 |  653.876458ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:12:41 | 200 |  706.800166ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:13:15 | 200 |  563.366083ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:13:15 | 200 |  200.927542ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:13:15 | 200 |  781.864708ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:13:16 | 200 |  526.192833ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:13:16 | 200 |  568.307083ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:13:16 | 200 |  1.135664542s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:13:16 | 200 |  211.511417ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:13:16 | 200 |  476.236417ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:13:17 | 200 |  203.047459ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:13:17 | 200 |  735.981167ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:13:17 | 200 |  954.674958ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:13:17 | 200 |   213.78525ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:13:18 | 200 |  1.061011792s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:13:18 | 200 |  472.927208ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:13:18 | 200 |  546.906166ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=20&ordering=name"
-[GIN] 2025/10/14 - 20:13:18 | 200 |  218.626084ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:13:18 | 200 |     448.727ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:13:18 | 200 |  575.753708ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:13:18 | 200 |  190.261375ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:13:19 | 200 |  470.943708ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:13:19 | 200 |   520.39825ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:13:19 | 200 |  482.874042ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:13:19 | 200 |   639.78625ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:13:19 | 200 |  693.498167ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:13:20 | 200 |  294.104458ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:13:20 | 200 |  839.414709ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:13:20 | 200 |  706.970667ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:13:20 | 200 |  319.090791ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:13:21 | 200 |  595.711958ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:13:21 | 200 |    175.4145ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:13:21 | 200 |    803.0545ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:13:21 | 200 |  1.198229333s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:13:22 | 200 |  253.371708ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:13:22 | 200 |  529.225292ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:13:22 | 200 |  693.364916ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:13:22 | 200 |  239.880916ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:13:23 | 200 |    567.1505ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:13:24 | 200 |  1.603777875s |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:13:24 | 200 |  1.047848084s |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:13:24 | 200 |  1.625323625s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:13:24 | 200 |  470.374917ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:13:25 | 200 |  724.405791ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:13:25 | 200 |  526.172084ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:13:25 | 200 |  300.444125ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:13:25 | 200 |  487.091458ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:13:26 | 200 |  1.150771917s |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:13:27 | 200 |  224.309041ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:13:27 | 200 |  430.025709ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:13:27 | 200 |  309.669583ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:13:28 | 200 |  938.362042ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:13:28 | 200 |  205.712917ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:13:28 | 200 |   1.37972025s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:13:28 | 200 |  487.920584ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:13:28 | 200 |  199.000542ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:13:29 | 200 |  531.505125ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:13:29 | 200 |  259.015375ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:13:29 | 200 |  1.219044167s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:13:29 | 200 |  673.250166ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:13:30 | 200 |  192.771416ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:13:30 | 200 |  799.890333ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:13:30 | 200 |  532.266708ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:13:31 | 200 |  733.735875ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:13:32 | 200 |   857.49725ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:13:33 | 200 |  165.836958ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:13:33 | 200 |  907.451916ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:13:34 | 200 |  585.636375ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:13:34 | 200 |  1.389150833s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:13:34 | 200 |  668.918209ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:13:34 | 200 |   195.97825ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:13:34 | 200 |  459.954291ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:13:35 | 200 |  692.904083ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:13:35 | 200 |   248.95525ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:13:35 | 200 |  680.849709ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:13:35 | 200 |  790.564417ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:13:35 | 200 |  330.792041ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:13:36 | 200 |  499.335167ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:13:36 | 200 |  192.736625ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:13:36 | 200 |  626.037375ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:13:36 | 200 |    197.1675ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=20&ordering=name"
-[GIN] 2025/10/14 - 20:13:37 | 200 |  1.122341958s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:13:38 | 200 |  747.356833ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:13:50 | 204 |     533.958µs |             ::1 | OPTIONS  "/api/auth/cms/trash/?page=1&per_page=20&ordering=name&search=%D0%B2%D0%BA%D1%83"
-[GIN] 2025/10/14 - 20:13:50 | 400 |   136.07625ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=20&ordering=name&search=%D0%B2%D0%BA%D1%83"
-[GIN] 2025/10/14 - 20:13:50 | 204 |       8.958µs |             ::1 | OPTIONS  "/api/auth/objects-trash?page=1&per_page=20&ordering=name&search=%D0%B2%D0%BA%D1%83"
-
-2025/10/14 20:13:51 [32m/Users/com/backend_axenta/api/objects.go:561
-[0m[33m[26.886ms] [34;1m[rows:1][0m SELECT count(*) FROM "objects" WHERE deleted_at IS NOT NULL AND (name ILIKE '%вку%' OR imei ILIKE '%вку%' OR phone_number ILIKE '%вку%')
-
-2025/10/14 20:13:51 [32m/Users/com/backend_axenta/api/objects.go:569
-[0m[33m[2.572ms] [34;1m[rows:0][0m SELECT * FROM "objects" WHERE deleted_at IS NOT NULL AND (name ILIKE '%вку%' OR imei ILIKE '%вку%' OR phone_number ILIKE '%вку%') LIMIT 50
-[GIN] 2025/10/14 - 20:13:51 | 200 |  140.039208ms |             ::1 | GET      "/api/auth/objects-trash?page=1&per_page=20&ordering=name&search=%D0%B2%D0%BA%D1%83"
-[GIN] 2025/10/14 - 20:13:52 | 200 |  179.370416ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=20&ordering=name"
-[GIN] 2025/10/14 - 20:14:20 | 200 |    857.8305ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:14:21 | 200 |  226.145125ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:14:21 | 200 |  584.328541ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:14:21 | 200 |  488.194875ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:14:22 | 200 |  765.869625ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:14:22 | 200 |   1.29112525s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:14:22 | 200 |     199.407ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:14:22 | 200 |  517.047917ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:14:22 | 200 |  189.054333ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:14:22 | 200 |  640.207833ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:14:23 | 200 |   593.32575ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:14:23 | 200 |  228.844042ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:14:23 | 200 |  541.737667ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:14:24 | 200 |  381.381875ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:14:24 | 200 |   1.99135075s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:14:25 | 200 |  701.199208ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:14:26 | 200 |  678.131541ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:14:27 | 200 |  758.646833ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:14:56 | 200 |  221.758083ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=20&ordering=name"
-[GIN] 2025/10/14 - 20:19:21 | 200 |     768.946ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:19:21 | 200 |  286.390709ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:19:22 | 200 |  597.902083ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:19:22 | 200 |  1.505117833s |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:19:23 | 200 |   203.46475ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:19:23 | 200 |  478.376375ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:19:23 | 200 |  517.904208ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:19:24 | 200 |   191.62625ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:19:24 | 200 |  482.075417ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:24:21 | 200 |  958.432958ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:24:22 | 200 |  671.483625ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:24:22 | 200 |  926.716292ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:24:22 | 200 |  174.738042ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:24:22 | 200 |  658.902042ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:24:22 | 200 |  593.286917ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:24:23 | 200 |  195.160833ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:24:23 | 200 |  574.695333ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:24:23 | 200 |  541.418208ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:24:23 | 200 |  274.029792ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:24:24 | 200 |   647.81925ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:24:24 | 200 |  977.999958ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:24:24 | 200 |  227.644083ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:24:26 | 200 |  1.933977792s |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:24:26 | 200 |  569.960042ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:29:21 | 200 |  821.195459ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:29:21 | 200 |  559.769875ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:29:21 | 200 |  664.777166ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:29:22 | 200 |  211.854584ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:29:22 | 200 |  464.730584ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:29:23 | 200 |  582.812875ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:29:24 | 200 |  592.477459ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:29:24 | 200 |  208.102542ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:29:24 | 200 |  472.934583ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:34:21 | 200 |  1.160018208s |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:34:21 | 200 |    332.4925ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:34:22 | 200 |  678.296166ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:34:22 | 200 |  492.306958ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:34:22 | 200 |  226.586375ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:34:22 | 200 |  607.499584ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:34:23 | 200 |  552.518792ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:34:23 | 200 |  197.194875ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:34:23 | 200 |  670.337125ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:34:23 | 200 |  631.933666ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:34:24 | 200 |  468.074542ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:34:24 | 200 |  654.765667ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:34:24 | 200 |  211.050291ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:34:24 | 200 |  510.562625ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:34:25 | 200 |  498.067709ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:39:21 | 200 |  889.851458ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:39:21 | 200 |  300.057833ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:39:22 | 200 |  533.520208ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:39:22 | 200 |  968.700833ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:39:22 | 200 |     194.987ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:39:23 | 200 |  626.951708ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:39:24 | 200 |  624.822875ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:39:24 | 200 |  217.888083ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:39:24 | 200 |  657.466417ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:44:21 | 200 |  882.222916ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:44:21 | 200 |  272.561333ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:44:22 | 200 |  649.943875ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:44:22 | 200 |  189.953417ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:44:22 | 200 |  683.795417ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:44:22 | 200 |    735.0225ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:44:22 | 200 |  550.530208ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:44:22 | 200 |  204.332584ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:44:23 | 200 |  477.883708ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:44:24 | 200 |  1.263875625s |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:44:24 | 200 |  227.643917ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:44:24 | 200 |  720.718292ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:44:24 | 200 |  218.871625ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:44:25 | 200 |    950.5555ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:44:25 | 200 |  579.754833ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:49:27 | 200 |  1.956755291s |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:49:27 | 200 |  334.962833ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:49:28 | 200 |  582.027125ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:49:28 | 200 |  968.423167ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:49:28 | 200 |    185.7615ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:49:29 | 200 |  659.120542ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:49:29 | 200 |  495.196334ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:49:29 | 200 |  200.983208ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:49:30 | 200 |  724.012709ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:54:21 | 200 |  1.100226042s |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:54:22 | 200 |  432.819041ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:54:22 | 200 |  838.289875ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:54:22 | 200 |  211.561167ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:54:22 | 200 |  682.335833ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:54:23 | 200 |  497.732709ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:54:26 | 200 |    708.2185ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:54:26 | 200 |  190.062125ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:54:26 | 200 |  478.460834ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:54:26 | 200 |  808.900875ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:54:27 | 200 |  226.280875ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:54:27 | 200 |   771.57125ms |             ::1 | GET      "/api/auth/cms/objects/stats"
-[GIN] 2025/10/14 - 20:54:27 | 200 |  659.025083ms |             ::1 | GET      "/api/auth/users/stats"
-[GIN] 2025/10/14 - 20:54:28 | 200 |  417.779709ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
-[GIN] 2025/10/14 - 20:54:28 | 200 |  677.815833ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN-debug] [ERROR] listen tcp :8080: bind: address already in use

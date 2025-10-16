@@ -1,37 +1,91 @@
-2025/10/11 07:21:21 Starting Axenta Backend Server...
-2025/10/11 07:21:21 🔧 DEBUG: Main function started
-2025/10/11 07:21:21 === Application Configuration ===
-2025/10/11 07:21:21 Environment: development
-2025/10/11 07:21:21 Port: 8080
-2025/10/11 07:21:21 Database Host: localhost:5432
-2025/10/11 07:21:21 Database Name: axenta_db
-2025/10/11 07:21:21 Redis Host: localhost:6379
-2025/10/11 07:21:21 Axenta API URL: https://api.axetna.cloud
-2025/10/11 07:21:21 JWT Issuer: axenta-crm
-2025/10/11 07:21:21 Log Level: info
-2025/10/11 07:21:21 Debug Mode: false
-2025/10/11 07:21:21 ================================
-2025/10/11 07:21:21 ✅ База данных 'axenta_db' уже существует
-2025/10/11 07:21:21 ✅ Успешно подключено к PostgreSQL
-2025/10/11 07:21:21 ⚠️ Автомиграция отключена - используем существующие таблицы
-2025/10/11 07:21:21 ✅ Успешно подключено к Redis
-2025/10/11 07:21:21 ⚠️ Integration Service temporarily disabled
-2025/10/11 07:21:21 ⚠️ Bitrix24 Integration Service temporarily disabled
-2025/10/11 07:21:21 ✅ 1C Integration Service initialized successfully
-2025/10/11 07:21:21 ⚠️ Notification System temporarily disabled
-
-2025/10/11 07:21:21 [32m/Users/com/backend_axenta/main.go:75
-[0m[33m[8.866ms] [34;1m[rows:1][0m SELECT count(*) FROM information_schema.tables WHERE table_schema = CURRENT_SCHEMA() AND table_name = 'companies' AND table_type = 'BASE TABLE'
-
-2025/10/11 07:21:21 [32m/Users/com/backend_axenta/main.go:75
-[0m[33m[1.387ms] [34;1m[rows:1][0m SELECT CURRENT_DATABASE()
-
-2025/10/11 07:21:21 [32m/Users/com/backend_axenta/main.go:75
-[0m[33m[25.742ms] [34;1m[rows:-][0m SELECT c.column_name, c.is_nullable = 'YES', c.udt_name, c.character_maximum_length, c.numeric_precision, c.numeric_precision_radix, c.numeric_scale, c.datetime_precision, 8 * typlen, c.column_default, pd.description, c.identity_increment FROM information_schema.columns AS c JOIN pg_type AS pgt ON c.udt_name = pgt.typname LEFT JOIN pg_catalog.pg_description as pd ON pd.objsubid = c.ordinal_position AND pd.objoid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = c.table_name AND relnamespace = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = c.table_schema)) where table_catalog = 'postgres' AND table_schema = CURRENT_SCHEMA() AND table_name = 'companies'
-
-2025/10/11 07:21:21 [31;1m/Users/com/backend_axenta/main.go:75 [35;1minsufficient arguments
-[0m[33m[0.169ms] [34;1m[rows:-][0m SELECT * FROM "companies" LIMIT 1
-2025/10/11 07:21:21 Warning: Failed to migrate local auth models: insufficient arguments
+2025/10/16 08:45:26 Starting Axenta Backend Server...
+2025/10/16 08:45:26 🔧 DEBUG: Main function started
+2025/10/16 08:45:26 === Application Configuration ===
+2025/10/16 08:45:26 Environment: development
+2025/10/16 08:45:26 Port: 8080
+2025/10/16 08:45:26 Database Host: localhost:5432
+2025/10/16 08:45:26 Database Name: axenta_db
+2025/10/16 08:45:26 Redis Host: localhost:6379
+2025/10/16 08:45:26 Axenta API URL: https://api.axetna.cloud
+2025/10/16 08:45:26 JWT Issuer: axenta-crm
+2025/10/16 08:45:26 Log Level: info
+2025/10/16 08:45:26 Debug Mode: false
+2025/10/16 08:45:26 ================================
+2025/10/16 08:45:26 ✅ База данных 'axenta_db' уже существует
+2025/10/16 08:45:26 ✅ Успешно подключено к PostgreSQL (пул: 20/100 соединений)
+2025/10/16 08:45:26 🚀 Начинаем процесс миграции базы данных
+2025/10/16 08:45:26 📋 Выполняем миграции глобальных таблиц (схема public)
+2025/10/16 08:45:26 🔄 Миграция таблицы: companies (Таблица компаний (мультитенантность))
+2025/10/16 08:45:26 ❌ Ошибка миграции companies: insufficient arguments
+2025/10/16 08:45:26 ❌ Ошибка миграции companies: ошибка миграции: insufficient arguments
+2025/10/16 08:45:26 ⚠️ Ошибка выполнения миграций: ошибка миграции глобальной таблицы companies: ошибка миграции: insufficient arguments
+2025/10/16 08:45:26 Продолжаем работу - некоторые функции могут быть недоступны
+2025/10/16 08:45:26 🔧 Создание индексов производительности в фоновом режиме...
+2025/10/16 08:45:26 Creating performance indexes...
+2025/10/16 08:45:26 ✅ Успешно подключено к Redis (пул: 10/20 соединений)
+2025/10/16 08:45:26 ⚠️ Integration Service temporarily disabled
+2025/10/16 08:45:26 ⚠️ Bitrix24 Integration Service temporarily disabled
+2025/10/16 08:45:26 ✅ 1C Integration Service initialized successfully
+2025/10/16 08:45:26 ⚠️ Notification System temporarily disabled
+2025/10/16 08:45:26 Failed to create index idx_objects_tenant_status: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:45:26 🔧 Initializing default Axenta roles in public schema...
+2025/10/16 08:45:26 Failed to create index idx_objects_tenant_type: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:45:26 Failed to create index idx_objects_tenant_active: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:45:26 Failed to create index idx_objects_tenant_deleted: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:45:26 Created index: idx_objects_imei
+2025/10/16 08:45:26 Created index: idx_objects_phone
+2025/10/16 08:45:26 Created index: idx_objects_contract
+2025/10/16 08:45:26 Created index: idx_objects_scheduled_delete
+2025/10/16 08:45:26 Failed to create index idx_users_tenant_active: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:45:26 Failed to create index idx_users_tenant_role: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:45:26 Created index: idx_users_email
+2025/10/16 08:45:26 Failed to create index idx_users_login: ERROR: column "login" does not exist (SQLSTATE 42703)
+2025/10/16 08:45:26 Failed to create index idx_users_last_activity: ERROR: column "last_activity_at" does not exist (SQLSTATE 42703)
+2025/10/16 08:45:26 Failed to create index idx_contracts_tenant_status: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:45:26 Failed to create index idx_contracts_tenant_active: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:45:26 Created index: idx_contracts_end_date
+2025/10/16 08:45:26 Created index: idx_contracts_client_inn
+2025/10/16 08:45:26 Failed to create index idx_installations_tenant_status: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:45:26 Failed to create index idx_installations_tenant_date: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:45:26 Created index: idx_installations_installer
+2025/10/16 08:45:26 Created index: idx_installations_object
+2025/10/16 08:45:26 Failed to create index idx_equipment_tenant_status: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:45:26 Failed to create index idx_equipment_tenant_type: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:45:26 Created index: idx_equipment_serial
+2025/10/16 08:45:26 Created index: idx_equipment_qr_code
+2025/10/16 08:45:26 Failed to create index idx_equipment_location: ERROR: column "location_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:45:26 Failed to create index idx_invoices_tenant_status: ERROR: relation "invoices" does not exist (SQLSTATE 42P01)
+2025/10/16 08:45:26 Failed to create index idx_invoices_tenant_date: ERROR: relation "invoices" does not exist (SQLSTATE 42P01)
+2025/10/16 08:45:26 Failed to create index idx_invoices_due_date: ERROR: relation "invoices" does not exist (SQLSTATE 42P01)
+2025/10/16 08:45:26 Failed to create index idx_invoices_contract: ERROR: relation "invoices" does not exist (SQLSTATE 42P01)
+2025/10/16 08:45:26 Failed to create index idx_reports_tenant_type: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:45:26 Failed to create index idx_reports_tenant_created: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:45:26 Created index: idx_reports_status
+2025/10/16 08:45:26 Failed to create index idx_objects_complex_search: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:45:26 Failed to create index idx_users_complex_search: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:45:26 Failed to create index idx_installations_complex_search: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:45:26 Created index: idx_objects_fulltext
+2025/10/16 08:45:26 Created index: idx_users_fulltext
+2025/10/16 08:45:26 Failed to create index idx_objects_tenant_created: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:45:26 Failed to create index idx_objects_tenant_updated: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:45:26 Failed to create index idx_users_tenant_last_activity: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:45:26 Failed to create index idx_users_tenant_created: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:45:26 Failed to create index idx_contracts_tenant_created: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:45:26 Failed to create index idx_contracts_tenant_end_date: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:45:26 Created index: idx_contracts_expiring
+2025/10/16 08:45:26 Failed to create index idx_equipment_tenant_status: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:45:26 Failed to create index idx_equipment_tenant_condition: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:45:26 Failed to create index idx_equipment_maintenance: ERROR: column "next_maintenance" does not exist (SQLSTATE 42703)
+2025/10/16 08:45:26 Failed to create index idx_installations_tenant_status: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:45:26 Failed to create index idx_installations_tenant_date: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:45:26 Created index: idx_installations_installer
+2025/10/16 08:45:26 Failed to create index idx_invoices_tenant_due_date: ERROR: relation "invoices" does not exist (SQLSTATE 42P01)
+2025/10/16 08:45:26 Failed to create index idx_invoices_overdue: ERROR: relation "invoices" does not exist (SQLSTATE 42P01)
+2025/10/16 08:45:26 Failed to create index idx_reports_tenant_created: ERROR: column "tenant_id" does not exist (SQLSTATE 42703)
+2025/10/16 08:45:26 Created index: idx_reports_status_created
+2025/10/16 08:45:26 Performance indexes creation completed
+2025/10/16 08:45:26 ✅ Индексы производительности созданы успешно
+2025/10/16 08:45:26 ✅ Default Axenta roles initialized successfully in public schema
 [GIN-debug] [WARNING] Creating an Engine instance with the Logger and Recovery middleware already attached.
 
 [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
@@ -40,27 +94,39 @@
 
 [GIN-debug] GET    /ping                     --> main.main.func1 (4 handlers)
 [GIN-debug] POST   /api/auth/login           --> backend_axenta/api.Login (4 handlers)
+[GIN-debug] GET    /api/debug/roles          --> backend_axenta/api.TestRolesCreation (4 handlers)
+[GIN-debug] GET    /api/debug/user-role      --> backend_axenta/api.TestUserWithRole (4 handlers)
+[GIN-debug] GET    /api/public/roles         --> backend_axenta/api.GetRolesPublic (4 handlers)
+[GIN-debug] GET    /api/public/user-templates --> backend_axenta/api.GetUserTemplatesPublic (4 handlers)
+[GIN-debug] POST   /api/test/cms/users       --> backend_axenta/api.TestCreateUserInAxenta (4 handlers)
+[GIN-debug] POST   /api/create/user          --> backend_axenta/api.CreateUserDirectly (4 handlers)
+[GIN-debug] GET    /api/test                 --> backend_axenta/api.TestEndpoint (4 handlers)
+[GIN-debug] GET    /api/test2                --> main.main.func2 (4 handlers)
+[GIN-debug] POST   /api/test-cms-users       --> backend_axenta/api.CreateCmsUserWithCurrentToken (4 handlers)
+[GIN-debug] POST   /api/create-cms-user      --> backend_axenta/api.CreateCmsUserWithCurrentToken (4 handlers)
+[GIN-debug] POST   /api/cms/create-user      --> backend_axenta/api.CreateCmsUserWithCurrentToken (4 handlers)
+[GIN-debug] POST   /api/cms/create-user-with-saved-token --> backend_axenta/api.CreateCmsUserWithCurrentToken (4 handlers)
 [GIN-debug] POST   /api/local/login          --> backend_axenta/api.(*LocalAuthAPI).LocalLogin-fm (4 handlers)
 [GIN-debug] POST   /api/local/refresh        --> backend_axenta/api.(*LocalAuthAPI).RefreshToken-fm (4 handlers)
 [GIN-debug] GET    /api/local/current_user   --> backend_axenta/api.(*LocalAuthAPI).LocalCurrentUser-fm (5 handlers)
 [GIN-debug] POST   /api/local/logout         --> backend_axenta/api.(*LocalAuthAPI).LocalLogout-fm (5 handlers)
 [GIN-debug] POST   /api/local/register       --> backend_axenta/api.(*LocalAuthAPI).RegisterLocalUser-fm (6 handlers)
 [GIN-debug] GET    /ws/live-data/:company_id --> backend_axenta/api.(*WebSocketAuthAPI).LiveData-fm (4 handlers)
-[GIN-debug] GET    /api/test-objects-stats   --> main.main.func2 (4 handlers)
-[GIN-debug] GET    /api/objects              --> main.main.func4 (4 handlers)
-[GIN-debug] GET    /api/objects/             --> main.main.func4 (4 handlers)
-[GIN-debug] GET    /api/objects/:id          --> main.main.func5 (4 handlers)
-[GIN-debug] GET    /api/objects/:id/         --> main.main.func5 (4 handlers)
-[GIN-debug] GET    /api/objects/stats        --> main.main.func6 (4 handlers)
-[GIN-debug] GET    /api/objects/stats/       --> main.main.func6 (4 handlers)
-[GIN-debug] GET    /api/object-templates     --> main.main.func7 (4 handlers)
-[GIN-debug] GET    /api/object-templates/    --> main.main.func7 (4 handlers)
-[GIN-debug] POST   /api/objects              --> main.main.func8 (4 handlers)
-[GIN-debug] POST   /api/objects/             --> main.main.func8 (4 handlers)
-[GIN-debug] POST   /api/objects/:id/create-template --> main.main.func9 (4 handlers)
-[GIN-debug] POST   /api/objects/:id/create-template/ --> main.main.func9 (4 handlers)
-[GIN-debug] PUT    /api/objects/:id          --> main.main.func10 (4 handlers)
-[GIN-debug] PUT    /api/objects/:id/         --> main.main.func10 (4 handlers)
+[GIN-debug] GET    /api/test-objects-stats   --> main.main.func3 (4 handlers)
+[GIN-debug] GET    /api/objects              --> main.main.func5 (4 handlers)
+[GIN-debug] GET    /api/objects/             --> main.main.func5 (4 handlers)
+[GIN-debug] GET    /api/objects/:id          --> main.main.func6 (4 handlers)
+[GIN-debug] GET    /api/objects/:id/         --> main.main.func6 (4 handlers)
+[GIN-debug] GET    /api/objects/stats        --> main.main.func7 (4 handlers)
+[GIN-debug] GET    /api/objects/stats/       --> main.main.func7 (4 handlers)
+[GIN-debug] GET    /api/object-templates     --> main.main.func8 (4 handlers)
+[GIN-debug] GET    /api/object-templates/    --> main.main.func8 (4 handlers)
+[GIN-debug] POST   /api/objects              --> main.main.func9 (4 handlers)
+[GIN-debug] POST   /api/objects/             --> main.main.func9 (4 handlers)
+[GIN-debug] POST   /api/objects/:id/create-template --> main.main.func10 (4 handlers)
+[GIN-debug] POST   /api/objects/:id/create-template/ --> main.main.func10 (4 handlers)
+[GIN-debug] PUT    /api/objects/:id          --> main.main.func11 (4 handlers)
+[GIN-debug] PUT    /api/objects/:id/         --> main.main.func11 (4 handlers)
 [GIN-debug] GET    /api/dashboard/stats      --> backend_axenta/api.GetDashboardStatsSimple (4 handlers)
 [GIN-debug] GET    /api/dashboard/activity   --> backend_axenta/api.GetDashboardActivitySimple (4 handlers)
 [GIN-debug] GET    /api/dashboard/layouts    --> backend_axenta/api.GetDashboardLayouts (4 handlers)
@@ -68,289 +134,630 @@
 [GIN-debug] GET    /api/notifications        --> backend_axenta/api.GetDashboardNotificationsSimple (4 handlers)
 [GIN-debug] GET    /api/billing-plans-simple --> backend_axenta/api.GetBillingPlansSimple (4 handlers)
 [GIN-debug] GET    /api/subscriptions-simple --> backend_axenta/api.GetSubscriptionsSimple (4 handlers)
-[GIN-debug] GET    /api/admin/accounts       --> backend_axenta/api.(*CompaniesAPI).GetCompanies-fm (4 handlers)
-[GIN-debug] POST   /api/admin/accounts       --> backend_axenta/api.(*CompaniesAPI).CreateCompany-fm (4 handlers)
-[GIN-debug] GET    /api/admin/accounts/filter-options --> backend_axenta/api.(*CompaniesAPI).GetFilterOptions-fm (4 handlers)
-[GIN-debug] GET    /api/admin/accounts/list  --> backend_axenta/api.(*CompaniesAPI).GetCompaniesList-fm (4 handlers)
-[GIN-debug] POST   /api/admin/accounts/bulk-delete --> backend_axenta/api.(*CompaniesAPI).BulkDeleteCompanies-fm (4 handlers)
-[GIN-debug] POST   /api/admin/accounts/bulk-activate --> backend_axenta/api.(*CompaniesAPI).BulkActivateCompanies-fm (4 handlers)
-[GIN-debug] POST   /api/admin/accounts/bulk-deactivate --> backend_axenta/api.(*CompaniesAPI).BulkDeactivateCompanies-fm (4 handlers)
-[GIN-debug] GET    /api/admin/accounts/:id   --> backend_axenta/api.(*CompaniesAPI).GetCompany-fm (4 handlers)
-[GIN-debug] PUT    /api/admin/accounts/:id   --> backend_axenta/api.(*CompaniesAPI).UpdateCompany-fm (4 handlers)
-[GIN-debug] DELETE /api/admin/accounts/:id   --> backend_axenta/api.(*CompaniesAPI).DeleteCompany-fm (4 handlers)
-[GIN-debug] PUT    /api/admin/accounts/:id/activate --> backend_axenta/api.(*CompaniesAPI).ActivateCompany-fm (4 handlers)
-[GIN-debug] PUT    /api/admin/accounts/:id/deactivate --> backend_axenta/api.(*CompaniesAPI).DeactivateCompany-fm (4 handlers)
-[GIN-debug] GET    /api/admin/accounts/:id/usage --> backend_axenta/api.(*CompaniesAPI).GetCompanyUsage-fm (4 handlers)
-[GIN-debug] POST   /api/admin/accounts/:id/test-connection --> backend_axenta/api.(*CompaniesAPI).TestCompanyConnection-fm (4 handlers)
+[GIN-debug] GET    /api/admin/accounts       --> backend_axenta/api.(*CompaniesAPI).GetCompanies-fm (5 handlers)
+[GIN-debug] POST   /api/admin/accounts       --> backend_axenta/api.(*CompaniesAPI).CreateCompany-fm (5 handlers)
+[GIN-debug] GET    /api/admin/accounts/filter-options --> backend_axenta/api.(*CompaniesAPI).GetFilterOptions-fm (5 handlers)
+[GIN-debug] GET    /api/admin/accounts/list  --> backend_axenta/api.(*CompaniesAPI).GetCompaniesList-fm (5 handlers)
+[GIN-debug] POST   /api/admin/accounts/bulk-delete --> backend_axenta/api.(*CompaniesAPI).BulkDeleteCompanies-fm (5 handlers)
+[GIN-debug] POST   /api/admin/accounts/bulk-activate --> backend_axenta/api.(*CompaniesAPI).BulkActivateCompanies-fm (5 handlers)
+[GIN-debug] POST   /api/admin/accounts/bulk-deactivate --> backend_axenta/api.(*CompaniesAPI).BulkDeactivateCompanies-fm (5 handlers)
+[GIN-debug] GET    /api/admin/accounts/:id   --> backend_axenta/api.(*CompaniesAPI).GetCompany-fm (5 handlers)
+[GIN-debug] PUT    /api/admin/accounts/:id   --> backend_axenta/api.(*CompaniesAPI).UpdateCompany-fm (5 handlers)
+[GIN-debug] DELETE /api/admin/accounts/:id   --> backend_axenta/api.(*CompaniesAPI).DeleteCompany-fm (5 handlers)
+[GIN-debug] PUT    /api/admin/accounts/:id/activate --> backend_axenta/api.(*CompaniesAPI).ActivateCompany-fm (5 handlers)
+[GIN-debug] PUT    /api/admin/accounts/:id/deactivate --> backend_axenta/api.(*CompaniesAPI).DeactivateCompany-fm (5 handlers)
+[GIN-debug] GET    /api/admin/accounts/:id/usage --> backend_axenta/api.(*CompaniesAPI).GetCompanyUsage-fm (5 handlers)
+[GIN-debug] POST   /api/admin/accounts/:id/test-connection --> backend_axenta/api.(*CompaniesAPI).TestCompanyConnection-fm (5 handlers)
 [GIN-debug] GET    /api/test/installations   --> backend_axenta/api.(*InstallationAPI).GetInstallations-fm (4 handlers)
-[GIN-debug] GET    /api/test/installations/statistics --> main.main.func11 (4 handlers)
+[GIN-debug] GET    /api/test/installations/statistics --> main.main.func12 (4 handlers)
 [GIN-debug] GET    /api/test/installers      --> backend_axenta/api.(*InstallerAPI).GetInstallers-fm (4 handlers)
 [GIN-debug] GET    /api/test/locations       --> backend_axenta/api.(*LocationAPI).GetLocations-fm (4 handlers)
 [GIN-debug] GET    /api/test/equipment       --> backend_axenta/api.(*EquipmentAPI).GetEquipment-fm (4 handlers)
-2025/10/11 07:21:21 🔧 Registering authenticated API endpoints...
-2025/10/11 07:21:21 🔧 Registering objects endpoints...
-[GIN-debug] GET    /api/auth/objects         --> backend_axenta/api.GetObjects (4 handlers)
-[GIN-debug] GET    /api/auth/objects/        --> backend_axenta/api.GetObjects (4 handlers)
-[GIN-debug] GET    /api/auth/objects/stats   --> backend_axenta/api.GetObjectsStats (4 handlers)
-[GIN-debug] GET    /api/auth/objects/stats/  --> backend_axenta/api.GetObjectsStats (4 handlers)
-[GIN-debug] GET    /api/auth/objects/:id     --> backend_axenta/api.GetObject (4 handlers)
-[GIN-debug] GET    /api/auth/objects/:id/    --> backend_axenta/api.GetObject (4 handlers)
-[GIN-debug] POST   /api/auth/objects         --> backend_axenta/api.CreateObject (4 handlers)
-[GIN-debug] POST   /api/auth/objects/        --> backend_axenta/api.CreateObject (4 handlers)
-[GIN-debug] PUT    /api/auth/objects/:id     --> backend_axenta/api.UpdateObject (4 handlers)
-[GIN-debug] PUT    /api/auth/objects/:id/    --> backend_axenta/api.UpdateObject (4 handlers)
-[GIN-debug] DELETE /api/auth/objects/:id     --> backend_axenta/api.DeleteObject (4 handlers)
-[GIN-debug] DELETE /api/auth/objects/:id/    --> backend_axenta/api.DeleteObject (4 handlers)
-[GIN-debug] PUT    /api/auth/objects/:id/schedule-delete --> backend_axenta/api.ScheduleObjectDelete (4 handlers)
-[GIN-debug] PUT    /api/auth/objects/:id/schedule-delete/ --> backend_axenta/api.ScheduleObjectDelete (4 handlers)
-[GIN-debug] PUT    /api/auth/objects/:id/cancel-delete --> backend_axenta/api.CancelScheduledDelete (4 handlers)
-[GIN-debug] PUT    /api/auth/objects/:id/cancel-delete/ --> backend_axenta/api.CancelScheduledDelete (4 handlers)
-[GIN-debug] GET    /api/auth/objects-trash   --> backend_axenta/api.GetDeletedObjects (4 handlers)
-[GIN-debug] GET    /api/auth/objects-trash/  --> backend_axenta/api.GetDeletedObjects (4 handlers)
-[GIN-debug] PUT    /api/auth/objects/:id/restore --> backend_axenta/api.RestoreObject (4 handlers)
-[GIN-debug] PUT    /api/auth/objects/:id/restore/ --> backend_axenta/api.RestoreObject (4 handlers)
-[GIN-debug] DELETE /api/auth/objects/:id/permanent --> backend_axenta/api.PermanentDeleteObject (4 handlers)
-[GIN-debug] DELETE /api/auth/objects/:id/permanent/ --> backend_axenta/api.PermanentDeleteObject (4 handlers)
-[GIN-debug] GET    /api/auth/users           --> backend_axenta/api.GetUsers (4 handlers)
-[GIN-debug] GET    /api/auth/users/stats     --> backend_axenta/api.GetUsersStats (4 handlers)
-[GIN-debug] GET    /api/auth/users/:id       --> backend_axenta/api.GetUser (4 handlers)
-[GIN-debug] POST   /api/auth/users           --> backend_axenta/api.CreateUser (4 handlers)
-[GIN-debug] PUT    /api/auth/users/:id       --> backend_axenta/api.UpdateUser (4 handlers)
-[GIN-debug] DELETE /api/auth/users/:id       --> backend_axenta/api.DeleteUser (4 handlers)
-[GIN-debug] POST   /api/auth/users/bulk-delete --> backend_axenta/api.BulkDeleteUsers (4 handlers)
-[GIN-debug] GET    /api/auth/roles           --> backend_axenta/api.GetRoles (4 handlers)
-[GIN-debug] GET    /api/auth/roles/:id       --> backend_axenta/api.GetRole (4 handlers)
-[GIN-debug] POST   /api/auth/roles           --> backend_axenta/api.CreateRole (4 handlers)
-[GIN-debug] PUT    /api/auth/roles/:id       --> backend_axenta/api.UpdateRole (4 handlers)
-[GIN-debug] DELETE /api/auth/roles/:id       --> backend_axenta/api.DeleteRole (4 handlers)
-[GIN-debug] PUT    /api/auth/roles/:id/permissions --> backend_axenta/api.UpdateRolePermissions (4 handlers)
-[GIN-debug] GET    /api/auth/permissions     --> backend_axenta/api.GetPermissions (4 handlers)
-[GIN-debug] POST   /api/auth/permissions     --> backend_axenta/api.CreatePermission (4 handlers)
-[GIN-debug] GET    /api/auth/user-templates  --> backend_axenta/api.GetUserTemplates (4 handlers)
-[GIN-debug] GET    /api/auth/user-templates/:id --> backend_axenta/api.GetUserTemplate (4 handlers)
-[GIN-debug] POST   /api/auth/user-templates  --> backend_axenta/api.CreateUserTemplate (4 handlers)
-[GIN-debug] PUT    /api/auth/user-templates/:id --> backend_axenta/api.UpdateUserTemplate (4 handlers)
-[GIN-debug] DELETE /api/auth/user-templates/:id --> backend_axenta/api.DeleteUserTemplate (4 handlers)
-[GIN-debug] GET    /api/auth/contracts       --> backend_axenta/api.GetContracts (4 handlers)
-[GIN-debug] GET    /api/auth/contracts/:id   --> backend_axenta/api.GetContract (4 handlers)
-[GIN-debug] POST   /api/auth/contracts       --> backend_axenta/api.CreateContract (4 handlers)
-[GIN-debug] PUT    /api/auth/contracts/:id   --> backend_axenta/api.UpdateContract (4 handlers)
-[GIN-debug] DELETE /api/auth/contracts/:id   --> backend_axenta/api.DeleteContract (4 handlers)
-[GIN-debug] GET    /api/auth/contracts/expiring --> backend_axenta/api.GetExpiringContracts (4 handlers)
-[GIN-debug] GET    /api/auth/billing/plans   --> backend_axenta/api.GetBillingPlans (4 handlers)
-[GIN-debug] GET    /api/auth/billing/plans/:id --> backend_axenta/api.GetBillingPlan (4 handlers)
-[GIN-debug] POST   /api/auth/billing/plans   --> backend_axenta/api.CreateBillingPlan (4 handlers)
-[GIN-debug] PUT    /api/auth/billing/plans/:id --> backend_axenta/api.UpdateBillingPlan (4 handlers)
-[GIN-debug] DELETE /api/auth/billing/plans/:id --> backend_axenta/api.DeleteBillingPlan (4 handlers)
-[GIN-debug] GET    /api/auth/billing/subscriptions --> backend_axenta/api.GetSubscriptions (4 handlers)
-[GIN-debug] POST   /api/auth/billing/subscriptions --> backend_axenta/api.CreateSubscription (4 handlers)
-[GIN-debug] PUT    /api/auth/billing/subscriptions/:id --> backend_axenta/api.UpdateSubscription (4 handlers)
-[GIN-debug] DELETE /api/auth/billing/subscriptions/:id --> backend_axenta/api.DeleteSubscription (4 handlers)
-[GIN-debug] GET    /api/auth/subscriptions   --> backend_axenta/api.GetSubscriptions (4 handlers)
-[GIN-debug] GET    /api/auth/billing-plans   --> backend_axenta/api.GetBillingPlans (4 handlers)
-[GIN-debug] GET    /api/auth/billing/contracts/:contract_id/calculate --> backend_axenta/api.CalculateBilling (4 handlers)
-[GIN-debug] POST   /api/auth/billing/contracts/:contract_id/invoice --> backend_axenta/api.GenerateInvoice (4 handlers)
-[GIN-debug] GET    /api/auth/billing/invoices --> backend_axenta/api.GetInvoices (4 handlers)
-[GIN-debug] GET    /api/auth/billing/invoices/:id --> backend_axenta/api.GetInvoice (4 handlers)
-[GIN-debug] POST   /api/auth/billing/invoices/:id/payment --> backend_axenta/api.ProcessPayment (4 handlers)
-[GIN-debug] POST   /api/auth/billing/invoices/:id/cancel --> backend_axenta/api.CancelInvoice (4 handlers)
-[GIN-debug] GET    /api/auth/billing/history --> backend_axenta/api.GetBillingHistory (4 handlers)
-[GIN-debug] GET    /api/auth/billing/invoices/overdue --> backend_axenta/api.GetOverdueInvoices (4 handlers)
-[GIN-debug] GET    /api/auth/billing/settings --> backend_axenta/api.GetBillingSettings (4 handlers)
-[GIN-debug] PUT    /api/auth/billing/settings --> backend_axenta/api.UpdateBillingSettings (4 handlers)
-[GIN-debug] POST   /api/auth/billing/auto-generate --> backend_axenta/api.AutoGenerateInvoices (4 handlers)
-[GIN-debug] POST   /api/auth/billing/process-deletions --> backend_axenta/api.ProcessScheduledDeletions (4 handlers)
-[GIN-debug] GET    /api/auth/billing/statistics --> backend_axenta/api.GetBillingStatistics (4 handlers)
-[GIN-debug] GET    /api/auth/billing/invoices/period --> backend_axenta/api.GetInvoicesByPeriod (4 handlers)
-[GIN-debug] GET    /test/installations       --> main.main.func12 (4 handlers)
-[GIN-debug] GET    /api/installations/statistics --> main.main.func13 (4 handlers)
-[GIN-debug] GET    /api/installers           --> main.main.func14 (4 handlers)
-[GIN-debug] GET    /api/equipment            --> main.main.func15 (4 handlers)
-[GIN-debug] GET    /api/locations            --> main.main.func16 (4 handlers)
-[GIN-debug] POST   /api/auth/warehouse/operations --> backend_axenta/api.(*WarehouseAPI).CreateWarehouseOperation-fm (4 handlers)
-[GIN-debug] GET    /api/auth/warehouse/operations --> backend_axenta/api.(*WarehouseAPI).GetWarehouseOperations-fm (4 handlers)
-[GIN-debug] POST   /api/auth/warehouse/transfer --> backend_axenta/api.(*WarehouseAPI).TransferEquipment-fm (4 handlers)
-[GIN-debug] GET    /api/auth/warehouse/alerts --> backend_axenta/api.(*WarehouseAPI).GetStockAlerts-fm (4 handlers)
-[GIN-debug] POST   /api/auth/warehouse/alerts --> backend_axenta/api.(*WarehouseAPI).CreateStockAlert-fm (4 handlers)
-[GIN-debug] PUT    /api/auth/warehouse/alerts/:id/acknowledge --> backend_axenta/api.(*WarehouseAPI).AcknowledgeStockAlert-fm (4 handlers)
-[GIN-debug] PUT    /api/auth/warehouse/alerts/:id/resolve --> backend_axenta/api.(*WarehouseAPI).ResolveStockAlert-fm (4 handlers)
-[GIN-debug] GET    /api/auth/warehouse/statistics --> backend_axenta/api.(*WarehouseAPI).GetWarehouseStatistics-fm (4 handlers)
-[GIN-debug] POST   /api/auth/1c/setup        --> backend_axenta/api.(*OneCIntegrationAPI).SetupIntegration-fm (4 handlers)
-[GIN-debug] PUT    /api/auth/1c/setup        --> backend_axenta/api.(*OneCIntegrationAPI).UpdateIntegration-fm (4 handlers)
-[GIN-debug] GET    /api/auth/1c/config       --> backend_axenta/api.(*OneCIntegrationAPI).GetIntegrationConfig-fm (4 handlers)
-[GIN-debug] DELETE /api/auth/1c/setup        --> backend_axenta/api.(*OneCIntegrationAPI).DeleteIntegration-fm (4 handlers)
-[GIN-debug] POST   /api/auth/1c/test-connection --> backend_axenta/api.(*OneCIntegrationAPI).TestConnection-fm (4 handlers)
-[GIN-debug] POST   /api/auth/1c/export/payment-registry --> backend_axenta/api.(*OneCIntegrationAPI).ExportPaymentRegistry-fm (4 handlers)
-[GIN-debug] POST   /api/auth/1c/export/payment-registry/auto --> backend_axenta/api.(*OneCIntegrationAPI).ScheduleAutoExport-fm (4 handlers)
-[GIN-debug] POST   /api/auth/1c/import/counterparties --> backend_axenta/api.(*OneCIntegrationAPI).ImportCounterparties-fm (4 handlers)
-[GIN-debug] POST   /api/auth/1c/sync/payment-statuses --> backend_axenta/api.(*OneCIntegrationAPI).SyncPaymentStatuses-fm (4 handlers)
-[GIN-debug] GET    /api/auth/1c/errors       --> backend_axenta/api.(*OneCIntegrationAPI).GetIntegrationErrors-fm (4 handlers)
-[GIN-debug] PUT    /api/auth/1c/errors/:id/resolve --> backend_axenta/api.(*OneCIntegrationAPI).ResolveError-fm (4 handlers)
-[GIN-debug] GET    /api/auth/1c/status       --> backend_axenta/api.(*OneCIntegrationAPI).GetIntegrationStatus-fm (4 handlers)
-[GIN-debug] GET    /api/auth/reports         --> backend_axenta/api.(*ReportsAPI).GetReports-fm (4 handlers)
-[GIN-debug] POST   /api/auth/reports         --> backend_axenta/api.(*ReportsAPI).CreateReport-fm (4 handlers)
-[GIN-debug] GET    /api/auth/reports/:id     --> backend_axenta/api.(*ReportsAPI).GetReport-fm (4 handlers)
-[GIN-debug] PUT    /api/auth/reports/:id     --> backend_axenta/api.(*ReportsAPI).UpdateReport-fm (4 handlers)
-[GIN-debug] DELETE /api/auth/reports/:id     --> backend_axenta/api.(*ReportsAPI).DeleteReport-fm (4 handlers)
-[GIN-debug] POST   /api/auth/reports/:id/generate --> backend_axenta/api.(*ReportsAPI).GenerateReport-fm (4 handlers)
-[GIN-debug] GET    /api/auth/reports/:id/download --> backend_axenta/api.(*ReportsAPI).DownloadReport-fm (4 handlers)
-[GIN-debug] GET    /api/auth/reports/:id/status --> backend_axenta/api.(*ReportsAPI).GetReportStatus-fm (4 handlers)
-[GIN-debug] GET    /api/auth/reports/templates --> backend_axenta/api.(*ReportsAPI).GetReportTemplates-fm (4 handlers)
-[GIN-debug] POST   /api/auth/reports/templates --> backend_axenta/api.(*ReportsAPI).CreateReportTemplate-fm (4 handlers)
-[GIN-debug] GET    /api/auth/reports/templates/:id --> backend_axenta/api.(*ReportsAPI).GetReportTemplate-fm (4 handlers)
-[GIN-debug] PUT    /api/auth/reports/templates/:id --> backend_axenta/api.(*ReportsAPI).UpdateReportTemplate-fm (4 handlers)
-[GIN-debug] DELETE /api/auth/reports/templates/:id --> backend_axenta/api.(*ReportsAPI).DeleteReportTemplate-fm (4 handlers)
-[GIN-debug] GET    /api/auth/reports/schedules --> backend_axenta/api.(*ReportsAPI).GetReportSchedules-fm (4 handlers)
-[GIN-debug] POST   /api/auth/reports/schedules --> backend_axenta/api.(*ReportsAPI).CreateReportSchedule-fm (4 handlers)
-[GIN-debug] GET    /api/auth/reports/schedules/:id --> backend_axenta/api.(*ReportsAPI).GetReportSchedule-fm (4 handlers)
-[GIN-debug] PUT    /api/auth/reports/schedules/:id --> backend_axenta/api.(*ReportsAPI).UpdateReportSchedule-fm (4 handlers)
-[GIN-debug] DELETE /api/auth/reports/schedules/:id --> backend_axenta/api.(*ReportsAPI).DeleteReportSchedule-fm (4 handlers)
-[GIN-debug] POST   /api/auth/reports/schedules/:id/run --> backend_axenta/api.(*ReportsAPI).RunScheduledReport-fm (4 handlers)
-[GIN-debug] GET    /api/auth/reports/schedules/:id/status --> backend_axenta/api.(*ReportsAPI).GetScheduleStatus-fm (4 handlers)
-[GIN-debug] GET    /api/auth/reports/executions --> backend_axenta/api.(*ReportsAPI).GetReportExecutions-fm (4 handlers)
-[GIN-debug] GET    /api/auth/reports/executions/:id --> backend_axenta/api.(*ReportsAPI).GetReportExecution-fm (4 handlers)
-[GIN-debug] GET    /api/auth/reports/stats   --> backend_axenta/api.(*ReportsAPI).GetReportsStats-fm (4 handlers)
-2025/10/11 07:21:21 Server starting on port 8080...
+2025/10/16 08:45:26 🔧 Registering authenticated API endpoints...
+2025/10/16 08:45:26 🔧 Registering CMS endpoints without Axenta authentication...
+[GIN-debug] POST   /api/cms/users            --> backend_axenta/api.CreateCmsUserWithCurrentToken (4 handlers)
+[GIN-debug] POST   /api/cms/users/           --> backend_axenta/api.CreateCmsUserWithCurrentToken (4 handlers)
+[GIN-debug] GET    /api/cms/test             --> backend_axenta/api.TestEndpoint (4 handlers)
+2025/10/16 08:45:26 ✅ CMS endpoints registered without Axenta authentication
+2025/10/16 08:45:26 ✅ Axenta Cloud authentication enabled for /api/auth endpoints (without multitenancy)
+2025/10/16 08:45:26 🔧 Registering Axenta Cloud proxy endpoints...
+[GIN-debug] GET    /api/auth/objects         --> backend_axenta/api.GetObjectsFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/objects/        --> backend_axenta/api.GetObjectsFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/objects/stats   --> backend_axenta/api.GetObjectsStatsFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/objects/stats/  --> backend_axenta/api.GetObjectsStatsFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/cms/objects     --> backend_axenta/api.GetObjectsFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/cms/objects/    --> backend_axenta/api.GetObjectsFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/cms/objects/stats --> backend_axenta/api.GetObjectsStatsFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/cms/objects/stats/ --> backend_axenta/api.GetObjectsStatsFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/objects/:id     --> backend_axenta/api.GetObject (5 handlers)
+[GIN-debug] GET    /api/auth/objects/:id/    --> backend_axenta/api.GetObject (5 handlers)
+[GIN-debug] POST   /api/auth/objects         --> backend_axenta/api.CreateObject (5 handlers)
+[GIN-debug] POST   /api/auth/objects/        --> backend_axenta/api.CreateObject (5 handlers)
+[GIN-debug] PUT    /api/auth/objects/:id     --> backend_axenta/api.UpdateObject (5 handlers)
+[GIN-debug] PUT    /api/auth/objects/:id/    --> backend_axenta/api.UpdateObject (5 handlers)
+[GIN-debug] DELETE /api/auth/objects/:id     --> backend_axenta/api.DeleteObject (5 handlers)
+[GIN-debug] DELETE /api/auth/objects/:id/    --> backend_axenta/api.DeleteObject (5 handlers)
+[GIN-debug] PUT    /api/auth/objects/:id/schedule-delete --> backend_axenta/api.ScheduleObjectDelete (5 handlers)
+[GIN-debug] PUT    /api/auth/objects/:id/schedule-delete/ --> backend_axenta/api.ScheduleObjectDelete (5 handlers)
+[GIN-debug] PUT    /api/auth/objects/:id/cancel-delete --> backend_axenta/api.CancelScheduledDelete (5 handlers)
+[GIN-debug] PUT    /api/auth/objects/:id/cancel-delete/ --> backend_axenta/api.CancelScheduledDelete (5 handlers)
+[GIN-debug] GET    /api/auth/objects-trash   --> backend_axenta/api.GetDeletedObjects (5 handlers)
+[GIN-debug] GET    /api/auth/objects-trash/  --> backend_axenta/api.GetDeletedObjects (5 handlers)
+[GIN-debug] PUT    /api/auth/objects/:id/restore --> backend_axenta/api.RestoreObject (5 handlers)
+[GIN-debug] PUT    /api/auth/objects/:id/restore/ --> backend_axenta/api.RestoreObject (5 handlers)
+[GIN-debug] DELETE /api/auth/objects/:id/permanent --> backend_axenta/api.PermanentDeleteObject (5 handlers)
+[GIN-debug] DELETE /api/auth/objects/:id/permanent/ --> backend_axenta/api.PermanentDeleteObject (5 handlers)
+[GIN-debug] GET    /api/auth/cms/trash       --> backend_axenta/api.GetDeletedObjectsFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/cms/trash/      --> backend_axenta/api.GetDeletedObjectsFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/object-templates --> main.main.func13 (5 handlers)
+[GIN-debug] GET    /api/auth/object-templates/ --> main.main.func14 (5 handlers)
+2025/10/16 08:45:26 🔧 Registering users proxy endpoints...
+[GIN-debug] GET    /api/auth/users           --> backend_axenta/api.GetUsersFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/users/          --> backend_axenta/api.GetUsersFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/users/stats     --> backend_axenta/api.GetUsersStatsFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/users/stats/    --> backend_axenta/api.GetUsersStatsFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/cms/users       --> backend_axenta/api.GetUsersFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/cms/users/      --> backend_axenta/api.GetUsersFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/cms/users/stats --> backend_axenta/api.GetUsersStatsFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/cms/users/stats/ --> backend_axenta/api.GetUsersStatsFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/cms/users/:id   --> backend_axenta/api.GetUser (5 handlers)
+[GIN-debug] GET    /api/auth/cms/users/:id/  --> backend_axenta/api.GetUser (5 handlers)
+[GIN-debug] POST   /api/auth/cms/update_user_password/ --> backend_axenta/api.UpdateUserPassword (5 handlers)
+[GIN-debug] GET    /api/auth/local/users/:id --> backend_axenta/api.GetUser (5 handlers)
+[GIN-debug] POST   /api/auth/local/users     --> backend_axenta/api.CreateUser (5 handlers)
+2025/10/16 08:45:26 🔧 Registering accounts proxy endpoints...
+[GIN-debug] GET    /api/auth/accounts        --> backend_axenta/handlers.(*AccountsHandler).GetAccounts-fm (5 handlers)
+[GIN-debug] GET    /api/auth/accounts/       --> backend_axenta/handlers.(*AccountsHandler).GetAccounts-fm (5 handlers)
+[GIN-debug] GET    /api/auth/accounts/:id    --> backend_axenta/handlers.(*AccountsHandler).GetAccount-fm (5 handlers)
+[GIN-debug] GET    /api/auth/accounts/:id/   --> backend_axenta/handlers.(*AccountsHandler).GetAccount-fm (5 handlers)
+[GIN-debug] GET    /api/auth/admin/accounts/list --> main.main.func15 (5 handlers)
+[GIN-debug] PUT    /api/auth/users/:id       --> backend_axenta/api.UpdateUser (5 handlers)
+[GIN-debug] DELETE /api/auth/users/:id       --> backend_axenta/api.DeleteUser (5 handlers)
+[GIN-debug] POST   /api/auth/users/bulk-delete --> backend_axenta/api.BulkDeleteUsers (5 handlers)
+[GIN-debug] GET    /api/auth/roles           --> backend_axenta/api.GetRoles (5 handlers)
+[GIN-debug] GET    /api/auth/roles/:id       --> backend_axenta/api.GetRole (5 handlers)
+[GIN-debug] POST   /api/auth/roles           --> backend_axenta/api.CreateRole (5 handlers)
+[GIN-debug] PUT    /api/auth/roles/:id       --> backend_axenta/api.UpdateRole (5 handlers)
+[GIN-debug] DELETE /api/auth/roles/:id       --> backend_axenta/api.DeleteRole (5 handlers)
+[GIN-debug] PUT    /api/auth/roles/:id/permissions --> backend_axenta/api.UpdateRolePermissions (5 handlers)
+[GIN-debug] GET    /api/auth/permissions     --> backend_axenta/api.GetPermissions (5 handlers)
+[GIN-debug] POST   /api/auth/permissions     --> backend_axenta/api.CreatePermission (5 handlers)
+[GIN-debug] GET    /api/auth/user-templates  --> backend_axenta/api.GetUserTemplates (5 handlers)
+[GIN-debug] GET    /api/auth/user-templates/:id --> backend_axenta/api.GetUserTemplate (5 handlers)
+[GIN-debug] POST   /api/auth/user-templates  --> backend_axenta/api.CreateUserTemplate (5 handlers)
+[GIN-debug] PUT    /api/auth/user-templates/:id --> backend_axenta/api.UpdateUserTemplate (5 handlers)
+[GIN-debug] DELETE /api/auth/user-templates/:id --> backend_axenta/api.DeleteUserTemplate (5 handlers)
+2025/10/16 08:45:26 🔧 Registering /auth/ prefixed endpoints for frontend compatibility...
+[GIN-debug] GET    /api/auth/auth/users      --> backend_axenta/api.GetUsersFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/auth/users/     --> backend_axenta/api.GetUsersFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/auth/users/stats --> backend_axenta/api.GetUsersStatsFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/auth/users/stats/ --> backend_axenta/api.GetUsersStatsFromAxentaCloud (5 handlers)
+[GIN-debug] GET    /api/auth/auth/users/:id  --> backend_axenta/api.GetUser (5 handlers)
+[GIN-debug] POST   /api/auth/auth/users      --> backend_axenta/api.CreateUser (5 handlers)
+[GIN-debug] PUT    /api/auth/auth/users/:id  --> backend_axenta/api.UpdateUser (5 handlers)
+[GIN-debug] DELETE /api/auth/auth/users/:id  --> backend_axenta/api.DeleteUser (5 handlers)
+[GIN-debug] POST   /api/auth/auth/users/bulk-delete --> backend_axenta/api.BulkDeleteUsers (5 handlers)
+[GIN-debug] GET    /api/auth/auth/roles      --> backend_axenta/api.GetRoles (5 handlers)
+[GIN-debug] GET    /api/auth/auth/roles/:id  --> backend_axenta/api.GetRole (5 handlers)
+[GIN-debug] POST   /api/auth/auth/roles      --> backend_axenta/api.CreateRole (5 handlers)
+[GIN-debug] PUT    /api/auth/auth/roles/:id  --> backend_axenta/api.UpdateRole (5 handlers)
+[GIN-debug] DELETE /api/auth/auth/roles/:id  --> backend_axenta/api.DeleteRole (5 handlers)
+[GIN-debug] PUT    /api/auth/auth/roles/:id/permissions --> backend_axenta/api.UpdateRolePermissions (5 handlers)
+[GIN-debug] GET    /api/auth/auth/permissions --> backend_axenta/api.GetPermissions (5 handlers)
+[GIN-debug] POST   /api/auth/auth/permissions --> backend_axenta/api.CreatePermission (5 handlers)
+[GIN-debug] GET    /api/auth/auth/user-templates --> backend_axenta/api.GetUserTemplates (5 handlers)
+[GIN-debug] GET    /api/auth/auth/user-templates/:id --> backend_axenta/api.GetUserTemplate (5 handlers)
+[GIN-debug] POST   /api/auth/auth/user-templates --> backend_axenta/api.CreateUserTemplate (5 handlers)
+[GIN-debug] PUT    /api/auth/auth/user-templates/:id --> backend_axenta/api.UpdateUserTemplate (5 handlers)
+[GIN-debug] DELETE /api/auth/auth/user-templates/:id --> backend_axenta/api.DeleteUserTemplate (5 handlers)
+2025/10/16 08:45:26 🔧 Registering Axenta users management endpoints...
+[GIN-debug] GET    /api/auth/axenta-users    --> backend_axenta/api.GetAxentaUsers (5 handlers)
+[GIN-debug] GET    /api/auth/axenta-users/stats --> backend_axenta/api.GetUsersByAxentaType (5 handlers)
+[GIN-debug] POST   /api/auth/axenta-users/local --> backend_axenta/api.CreateLocalUser (5 handlers)
+[GIN-debug] PUT    /api/auth/axenta-users/:id/role --> backend_axenta/api.UpdateUserAxentaRole (5 handlers)
+[GIN-debug] POST   /api/auth/axenta-users/sync --> backend_axenta/api.SyncUserWithAxenta (5 handlers)
+[GIN-debug] POST   /api/auth/axenta-users/ensure-roles --> backend_axenta/api.EnsureAxentaRoles (5 handlers)
+[GIN-debug] POST   /api/auth/axenta-users/sync-all --> backend_axenta/api.SyncAllAxentaUsers (5 handlers)
+[GIN-debug] GET    /api/auth/users/synced    --> backend_axenta/api.GetSyncedUsersFromLocal (5 handlers)
+[GIN-debug] GET    /api/auth/test/roles      --> backend_axenta/api.TestRolesCreation (5 handlers)
+[GIN-debug] GET    /api/auth/test/user-role  --> backend_axenta/api.TestUserWithRole (5 handlers)
+[GIN-debug] GET    /api/auth/contracts       --> backend_axenta/api.GetContracts (5 handlers)
+[GIN-debug] GET    /api/auth/contracts/:id   --> backend_axenta/api.GetContract (5 handlers)
+[GIN-debug] POST   /api/auth/contracts       --> backend_axenta/api.CreateContract (5 handlers)
+[GIN-debug] PUT    /api/auth/contracts/:id   --> backend_axenta/api.UpdateContract (5 handlers)
+[GIN-debug] DELETE /api/auth/contracts/:id   --> backend_axenta/api.DeleteContract (5 handlers)
+[GIN-debug] GET    /api/auth/contracts/expiring --> backend_axenta/api.GetExpiringContracts (5 handlers)
+[GIN-debug] GET    /api/auth/billing/plans   --> backend_axenta/api.GetBillingPlans (5 handlers)
+[GIN-debug] GET    /api/auth/billing/plans/:id --> backend_axenta/api.GetBillingPlan (5 handlers)
+[GIN-debug] POST   /api/auth/billing/plans   --> backend_axenta/api.CreateBillingPlan (5 handlers)
+[GIN-debug] PUT    /api/auth/billing/plans/:id --> backend_axenta/api.UpdateBillingPlan (5 handlers)
+[GIN-debug] DELETE /api/auth/billing/plans/:id --> backend_axenta/api.DeleteBillingPlan (5 handlers)
+[GIN-debug] GET    /api/auth/billing/subscriptions --> backend_axenta/api.GetSubscriptions (5 handlers)
+[GIN-debug] POST   /api/auth/billing/subscriptions --> backend_axenta/api.CreateSubscription (5 handlers)
+[GIN-debug] PUT    /api/auth/billing/subscriptions/:id --> backend_axenta/api.UpdateSubscription (5 handlers)
+[GIN-debug] DELETE /api/auth/billing/subscriptions/:id --> backend_axenta/api.DeleteSubscription (5 handlers)
+[GIN-debug] GET    /api/auth/subscriptions   --> backend_axenta/api.GetSubscriptions (5 handlers)
+[GIN-debug] GET    /api/auth/billing-plans   --> backend_axenta/api.GetBillingPlans (5 handlers)
+[GIN-debug] GET    /api/auth/billing/contracts/:contract_id/calculate --> backend_axenta/api.CalculateBilling (5 handlers)
+[GIN-debug] POST   /api/auth/billing/contracts/:contract_id/invoice --> backend_axenta/api.GenerateInvoice (5 handlers)
+[GIN-debug] GET    /api/auth/billing/invoices --> backend_axenta/api.GetInvoices (5 handlers)
+[GIN-debug] GET    /api/auth/billing/invoices/:id --> backend_axenta/api.GetInvoice (5 handlers)
+[GIN-debug] POST   /api/auth/billing/invoices/:id/payment --> backend_axenta/api.ProcessPayment (5 handlers)
+[GIN-debug] POST   /api/auth/billing/invoices/:id/cancel --> backend_axenta/api.CancelInvoice (5 handlers)
+[GIN-debug] GET    /api/auth/billing/history --> backend_axenta/api.GetBillingHistory (5 handlers)
+[GIN-debug] GET    /api/auth/billing/invoices/overdue --> backend_axenta/api.GetOverdueInvoices (5 handlers)
+[GIN-debug] GET    /api/auth/billing/settings --> backend_axenta/api.GetBillingSettings (5 handlers)
+[GIN-debug] PUT    /api/auth/billing/settings --> backend_axenta/api.UpdateBillingSettings (5 handlers)
+[GIN-debug] POST   /api/auth/billing/auto-generate --> backend_axenta/api.AutoGenerateInvoices (5 handlers)
+[GIN-debug] POST   /api/auth/billing/process-deletions --> backend_axenta/api.ProcessScheduledDeletions (5 handlers)
+[GIN-debug] GET    /api/auth/billing/statistics --> backend_axenta/api.GetBillingStatistics (5 handlers)
+[GIN-debug] GET    /api/auth/billing/invoices/period --> backend_axenta/api.GetInvoicesByPeriod (5 handlers)
+[GIN-debug] GET    /test/installations       --> main.main.func16 (4 handlers)
+[GIN-debug] GET    /api/installations/statistics --> main.main.func17 (4 handlers)
+[GIN-debug] GET    /api/installers           --> main.main.func18 (4 handlers)
+[GIN-debug] GET    /api/equipment            --> main.main.func19 (4 handlers)
+[GIN-debug] GET    /api/locations            --> main.main.func20 (4 handlers)
+[GIN-debug] POST   /api/auth/warehouse/operations --> backend_axenta/api.(*WarehouseAPI).CreateWarehouseOperation-fm (5 handlers)
+[GIN-debug] GET    /api/auth/warehouse/operations --> backend_axenta/api.(*WarehouseAPI).GetWarehouseOperations-fm (5 handlers)
+[GIN-debug] POST   /api/auth/warehouse/transfer --> backend_axenta/api.(*WarehouseAPI).TransferEquipment-fm (5 handlers)
+[GIN-debug] GET    /api/auth/warehouse/alerts --> backend_axenta/api.(*WarehouseAPI).GetStockAlerts-fm (5 handlers)
+[GIN-debug] POST   /api/auth/warehouse/alerts --> backend_axenta/api.(*WarehouseAPI).CreateStockAlert-fm (5 handlers)
+[GIN-debug] PUT    /api/auth/warehouse/alerts/:id/acknowledge --> backend_axenta/api.(*WarehouseAPI).AcknowledgeStockAlert-fm (5 handlers)
+[GIN-debug] PUT    /api/auth/warehouse/alerts/:id/resolve --> backend_axenta/api.(*WarehouseAPI).ResolveStockAlert-fm (5 handlers)
+[GIN-debug] GET    /api/auth/warehouse/statistics --> backend_axenta/api.(*WarehouseAPI).GetWarehouseStatistics-fm (5 handlers)
+[GIN-debug] POST   /api/auth/1c/setup        --> backend_axenta/api.(*OneCIntegrationAPI).SetupIntegration-fm (5 handlers)
+[GIN-debug] PUT    /api/auth/1c/setup        --> backend_axenta/api.(*OneCIntegrationAPI).UpdateIntegration-fm (5 handlers)
+[GIN-debug] GET    /api/auth/1c/config       --> backend_axenta/api.(*OneCIntegrationAPI).GetIntegrationConfig-fm (5 handlers)
+[GIN-debug] DELETE /api/auth/1c/setup        --> backend_axenta/api.(*OneCIntegrationAPI).DeleteIntegration-fm (5 handlers)
+[GIN-debug] POST   /api/auth/1c/test-connection --> backend_axenta/api.(*OneCIntegrationAPI).TestConnection-fm (5 handlers)
+[GIN-debug] POST   /api/auth/1c/export/payment-registry --> backend_axenta/api.(*OneCIntegrationAPI).ExportPaymentRegistry-fm (5 handlers)
+[GIN-debug] POST   /api/auth/1c/export/payment-registry/auto --> backend_axenta/api.(*OneCIntegrationAPI).ScheduleAutoExport-fm (5 handlers)
+[GIN-debug] POST   /api/auth/1c/import/counterparties --> backend_axenta/api.(*OneCIntegrationAPI).ImportCounterparties-fm (5 handlers)
+[GIN-debug] POST   /api/auth/1c/sync/payment-statuses --> backend_axenta/api.(*OneCIntegrationAPI).SyncPaymentStatuses-fm (5 handlers)
+[GIN-debug] GET    /api/auth/1c/errors       --> backend_axenta/api.(*OneCIntegrationAPI).GetIntegrationErrors-fm (5 handlers)
+[GIN-debug] PUT    /api/auth/1c/errors/:id/resolve --> backend_axenta/api.(*OneCIntegrationAPI).ResolveError-fm (5 handlers)
+[GIN-debug] GET    /api/auth/1c/status       --> backend_axenta/api.(*OneCIntegrationAPI).GetIntegrationStatus-fm (5 handlers)
+[GIN-debug] GET    /api/auth/reports         --> backend_axenta/api.(*ReportsAPI).GetReports-fm (5 handlers)
+[GIN-debug] POST   /api/auth/reports         --> backend_axenta/api.(*ReportsAPI).CreateReport-fm (5 handlers)
+[GIN-debug] GET    /api/auth/reports/:id     --> backend_axenta/api.(*ReportsAPI).GetReport-fm (5 handlers)
+[GIN-debug] PUT    /api/auth/reports/:id     --> backend_axenta/api.(*ReportsAPI).UpdateReport-fm (5 handlers)
+[GIN-debug] DELETE /api/auth/reports/:id     --> backend_axenta/api.(*ReportsAPI).DeleteReport-fm (5 handlers)
+[GIN-debug] POST   /api/auth/reports/:id/generate --> backend_axenta/api.(*ReportsAPI).GenerateReport-fm (5 handlers)
+[GIN-debug] GET    /api/auth/reports/:id/download --> backend_axenta/api.(*ReportsAPI).DownloadReport-fm (5 handlers)
+[GIN-debug] GET    /api/auth/reports/:id/status --> backend_axenta/api.(*ReportsAPI).GetReportStatus-fm (5 handlers)
+[GIN-debug] GET    /api/auth/reports/templates --> backend_axenta/api.(*ReportsAPI).GetReportTemplates-fm (5 handlers)
+[GIN-debug] POST   /api/auth/reports/templates --> backend_axenta/api.(*ReportsAPI).CreateReportTemplate-fm (5 handlers)
+[GIN-debug] GET    /api/auth/reports/templates/:id --> backend_axenta/api.(*ReportsAPI).GetReportTemplate-fm (5 handlers)
+[GIN-debug] PUT    /api/auth/reports/templates/:id --> backend_axenta/api.(*ReportsAPI).UpdateReportTemplate-fm (5 handlers)
+[GIN-debug] DELETE /api/auth/reports/templates/:id --> backend_axenta/api.(*ReportsAPI).DeleteReportTemplate-fm (5 handlers)
+[GIN-debug] GET    /api/auth/reports/schedules --> backend_axenta/api.(*ReportsAPI).GetReportSchedules-fm (5 handlers)
+[GIN-debug] POST   /api/auth/reports/schedules --> backend_axenta/api.(*ReportsAPI).CreateReportSchedule-fm (5 handlers)
+[GIN-debug] GET    /api/auth/reports/schedules/:id --> backend_axenta/api.(*ReportsAPI).GetReportSchedule-fm (5 handlers)
+[GIN-debug] PUT    /api/auth/reports/schedules/:id --> backend_axenta/api.(*ReportsAPI).UpdateReportSchedule-fm (5 handlers)
+[GIN-debug] DELETE /api/auth/reports/schedules/:id --> backend_axenta/api.(*ReportsAPI).DeleteReportSchedule-fm (5 handlers)
+[GIN-debug] POST   /api/auth/reports/schedules/:id/run --> backend_axenta/api.(*ReportsAPI).RunScheduledReport-fm (5 handlers)
+[GIN-debug] GET    /api/auth/reports/schedules/:id/status --> backend_axenta/api.(*ReportsAPI).GetScheduleStatus-fm (5 handlers)
+[GIN-debug] GET    /api/auth/reports/executions --> backend_axenta/api.(*ReportsAPI).GetReportExecutions-fm (5 handlers)
+[GIN-debug] GET    /api/auth/reports/executions/:id --> backend_axenta/api.(*ReportsAPI).GetReportExecution-fm (5 handlers)
+[GIN-debug] GET    /api/auth/reports/stats   --> backend_axenta/api.(*ReportsAPI).GetReportsStats-fm (5 handlers)
+2025/10/16 08:45:26 Server starting on port 8080...
 [GIN-debug] [WARNING] You trusted all proxies, this is NOT safe. We recommend you to set a value.
 Please check https://pkg.go.dev/github.com/gin-gonic/gin#readme-don-t-trust-all-proxies for details.
 [GIN-debug] Listening and serving HTTP on :8080
+2025/10/16 08:45:26 Loaded 0 active report schedules
+2025/10/16 08:45:26 Report scheduler started
+[GIN] 2025/10/16 - 08:45:41 | 401 |   82.399333ms |             ::1 | POST     "/api/cms/users/"
+2025/10/16 08:45:49 AUTH_LOG: {"company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-16T08:45:49+03:00","user_agent":"curl/8.7.1","user_id":"","username":"glomos"}
+2025/10/16 08:45:49 AUTH_LOG: {"company_id":"","content_type":"application/json","operation":"axenta_login_response","response_code":200,"response_size":52,"timestamp":"2025-10-16T08:45:49+03:00","user_id":"","username":"glomos"}
+2025/10/16 08:45:49 AUTH_LOG: {"company_id":"","operation":"axenta_login_success","status":"success","timestamp":"2025-10-16T08:45:49+03:00","token_length":40,"user_id":"","username":"glomos"}
+2025/10/16 08:45:49 AUTH_LOG: {"auth_header":"Token 5e515a8f2874fc...","company_id":"","operation":"axenta_user_request_headers","timestamp":"2025-10-16T08:45:49+03:00","url":"https://axenta.cloud/api/current_user/","user_id":"","username":"glomos"}
+2025/10/16 08:45:50 AUTH_LOG: {"company_id":"","content_type":"application/json","operation":"axenta_user_response","response_code":200,"response_size":1600,"timestamp":"2025-10-16T08:45:50+03:00","user_id":"","username":"glomos"}
+2025/10/16 08:45:50 Updated Axenta user: glomos (type: partner)
+2025/10/16 08:45:50 ⚠️ Failed to save user token: failed to deactivate existing tokens: ERROR: relation "user_tokens" does not exist (SQLSTATE 42P01)
+2025/10/16 08:45:50 AUTH_LOG: {"account_id":186,"account_name":"GLOMOS","account_type":"partner","axenta_user_type":"partner","company_id":"","email":"chudin@glomos.ru","full_data":true,"is_admin":true,"is_axenta_user":true,"operation":"login_success_full","role_id":1,"status":"success","timestamp":"2025-10-16T08:45:50+03:00","user_id":"23","username":"glomos"}
+[GIN] 2025/10/16 - 08:45:50 | 200 |  990.839125ms |             ::1 | POST     "/api/auth/login"
+[GIN] 2025/10/16 - 08:45:57 | 200 |  433.618959ms |             ::1 | GET      "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 08:45:57 | 200 |  445.603791ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 08:45:57 | 204 |       6.583µs |             ::1 | OPTIONS  "/api/auth/users/stats"
+[GIN] 2025/10/16 - 08:45:57 | 200 |  458.213791ms |             ::1 | GET      "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 08:45:57 | 401 |   63.151834ms |             ::1 | POST     "/api/cms/users/"
+[GIN] 2025/10/16 - 08:45:57 | 200 |  210.720083ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 08:45:58 | 200 |   1.36740675s |             ::1 | GET      "/api/auth/users/stats"
+2025/10/16 08:46:18 AUTH_LOG: {"company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-16T08:46:18+03:00","user_agent":"curl/8.7.1","user_id":"","username":"glomos"}
+2025/10/16 08:46:18 AUTH_LOG: {"company_id":"","content_type":"application/json","operation":"axenta_login_response","response_code":200,"response_size":52,"timestamp":"2025-10-16T08:46:18+03:00","user_id":"","username":"glomos"}
+2025/10/16 08:46:18 AUTH_LOG: {"company_id":"","operation":"axenta_login_success","status":"success","timestamp":"2025-10-16T08:46:18+03:00","token_length":40,"user_id":"","username":"glomos"}
+2025/10/16 08:46:18 AUTH_LOG: {"auth_header":"Token 5e515a8f2874fc...","company_id":"","operation":"axenta_user_request_headers","timestamp":"2025-10-16T08:46:18+03:00","url":"https://axenta.cloud/api/current_user/","user_id":"","username":"glomos"}
+2025/10/16 08:46:18 AUTH_LOG: {"company_id":"","content_type":"application/json","operation":"axenta_user_response","response_code":200,"response_size":1600,"timestamp":"2025-10-16T08:46:18+03:00","user_id":"","username":"glomos"}
+2025/10/16 08:46:18 Updated Axenta user: glomos (type: partner)
+2025/10/16 08:46:18 AUTH_LOG: {"account_id":186,"account_name":"GLOMOS","account_type":"partner","axenta_user_type":"partner","company_id":"","email":"chudin@glomos.ru","full_data":true,"is_admin":true,"is_axenta_user":true,"operation":"login_success_full","role_id":1,"status":"success","timestamp":"2025-10-16T08:46:18+03:00","user_id":"23","username":"glomos"}
+[GIN] 2025/10/16 - 08:46:18 | 200 |   610.41675ms |             ::1 | POST     "/api/auth/login"
+[GIN] 2025/10/16 - 08:46:34 | 201 |   88.713583ms |             ::1 | POST     "/api/cms/users/"
+Failed to create user test_user_final_success_real_161025 in Axenta Cloud: failed to create user in Axenta, status: 500, body: 
+<!doctype html>
+<html lang="en">
+<head>
+  <title>Server Error (500)</title>
+</head>
+<body>
+  <h1>Server Error (500)</h1><p></p>
+</body>
+</html>
 
-2025/10/11 07:21:21 [31;1m/Users/com/backend_axenta/services/report_scheduler_service.go:55 [35;1mERROR: relation "report_schedules" does not exist (SQLSTATE 42P01)
-[0m[33m[3.453ms] [34;1m[rows:0][0m SELECT * FROM "report_schedules" WHERE is_active = true AND "report_schedules"."deleted_at" IS NULL
-2025/10/11 07:21:21 Failed to start report scheduler: failed to load schedules: ERROR: relation "report_schedules" does not exist (SQLSTATE 42P01)
-[GIN] 2025/10/11 - 07:21:32 | 200 |    1.983042ms |             ::1 | GET      "/ping"
-2025/10/11 07:22:03 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:22:03+03:00","user_agent":"curl/8.7.1","user_id":"","username":"test"}
-
-2025/10/11 07:22:03 [31;1m/Users/com/backend_axenta/api/local_auth.go:106 [35;1mrecord not found
-[0m[33m[5.526ms] [34;1m[rows:0][0m SELECT * FROM "local_users" WHERE (username = 'test' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
-2025/10/11 07:22:03 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","error":"record not found","operation":"login_user_not_found","status":"failed","timestamp":"2025-10-11T07:22:03+03:00","user_id":"","username":"test"}
-[GIN] 2025/10/11 - 07:22:03 | 401 |     8.64925ms |             ::1 | POST     "/api/local/login"
-2025/10/11 07:22:09 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:22:09+03:00","user_agent":"curl/8.7.1","user_id":"","username":"test"}
-
-2025/10/11 07:22:09 [31;1m/Users/com/backend_axenta/api/local_auth.go:106 [35;1mrecord not found
-[0m[33m[2.056ms] [34;1m[rows:0][0m SELECT * FROM "local_users" WHERE (username = 'test' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
-2025/10/11 07:22:09 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","error":"record not found","operation":"login_user_not_found","status":"failed","timestamp":"2025-10-11T07:22:09+03:00","user_id":"","username":"test"}
-[GIN] 2025/10/11 - 07:22:09 | 401 |    2.183167ms |             ::1 | POST     "/api/local/login"
-2025/10/11 07:22:22 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:22:22+03:00","user_agent":"curl/8.7.1","user_id":"","username":"test"}
-
-2025/10/11 07:22:22 [31;1m/Users/com/backend_axenta/api/local_auth.go:106 [35;1mrecord not found
-[0m[33m[2.123ms] [34;1m[rows:0][0m SELECT * FROM "local_users" WHERE (username = 'test' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
-2025/10/11 07:22:22 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","error":"record not found","operation":"login_user_not_found","status":"failed","timestamp":"2025-10-11T07:22:22+03:00","user_id":"","username":"test"}
-[GIN] 2025/10/11 - 07:22:22 | 401 |    2.393292ms |             ::1 | POST     "/api/local/login"
-2025/10/11 07:22:44 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:22:44+03:00","user_agent":"curl/8.7.1","user_id":"","username":"test"}
-
-2025/10/11 07:22:44 [31;1m/Users/com/backend_axenta/api/local_auth.go:106 [35;1mrecord not found
-[0m[33m[2.859ms] [34;1m[rows:0][0m SELECT * FROM "local_users" WHERE (username = 'test' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
-2025/10/11 07:22:44 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","error":"record not found","operation":"login_user_not_found","status":"failed","timestamp":"2025-10-11T07:22:44+03:00","user_id":"","username":"test"}
-[GIN] 2025/10/11 - 07:22:44 | 401 |    3.119208ms |             ::1 | POST     "/api/local/login"
-2025/10/11 07:22:50 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:22:50+03:00","user_agent":"curl/8.7.1","user_id":"","username":"test"}
-
-2025/10/11 07:22:50 [31;1m/Users/com/backend_axenta/api/local_auth.go:106 [35;1mrecord not found
-[0m[33m[1.742ms] [34;1m[rows:0][0m SELECT * FROM "local_users" WHERE (username = 'test' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
-2025/10/11 07:22:50 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","error":"record not found","operation":"login_user_not_found","status":"failed","timestamp":"2025-10-11T07:22:50+03:00","user_id":"","username":"test"}
-[GIN] 2025/10/11 - 07:22:50 | 401 |     1.91175ms |             ::1 | POST     "/api/local/login"
-[GIN] 2025/10/11 - 07:23:07 | 200 |      88.791µs |             ::1 | GET      "/ping"
-2025/10/11 07:23:11 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:23:11+03:00","user_agent":"curl/8.7.1","user_id":"","username":"test"}
-
-2025/10/11 07:23:11 [31;1m/Users/com/backend_axenta/api/local_auth.go:106 [35;1mrecord not found
-[0m[33m[6.862ms] [34;1m[rows:0][0m SELECT * FROM "local_users" WHERE (username = 'test' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
-2025/10/11 07:23:11 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","error":"record not found","operation":"login_user_not_found","status":"failed","timestamp":"2025-10-11T07:23:11+03:00","user_id":"","username":"test"}
-[GIN] 2025/10/11 - 07:23:11 | 401 |    7.322458ms |             ::1 | POST     "/api/local/login"
-2025/10/11 07:23:35 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:23:35+03:00","user_agent":"curl/8.7.1","user_id":"","username":"testuser"}
-
-2025/10/11 07:23:35 [32m/Users/com/backend_axenta/api/local_auth.go:106
-[0m[33m[6.930ms] [34;1m[rows:1][0m SELECT * FROM "local_users" WHERE (username = 'testuser' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
-
-2025/10/11 07:23:35 [32m/Users/com/backend_axenta/services/jwt_service.go:117
-[0m[33m[12.446ms] [34;1m[rows:1][0m INSERT INTO "refresh_tokens" ("user_id","token","expires_at","created_at","is_revoked") VALUES (4,'1826ea6a470171e29bd6b2344391334471f55bcdae8ea661b50114d80f2629c8','2025-10-18 07:23:35.445','2025-10-11 07:23:35.447',false) RETURNING "id"
-
-2025/10/11 07:23:35 [32m/Users/com/backend_axenta/models/local_user.go:56
-[0m[33m[2.735ms] [34;1m[rows:1][0m UPDATE "local_users" SET "last_login"='2025-10-11 07:23:35.458',"login_count"=1,"updated_at"='2025-10-11 07:23:35.459' WHERE "local_users"."deleted_at" IS NULL AND "id" = 4
-2025/10/11 07:23:35 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"test-company-id","operation":"login_success","role":"admin","status":"success","timestamp":"2025-10-11T07:23:35+03:00","user_id":"4","username":"testuser"}
-[GIN] 2025/10/11 - 07:23:35 | 200 |    93.32975ms |             ::1 | POST     "/api/local/login"
-[GIN] 2025/10/11 - 07:24:41 | 404 |     572.917µs |             ::1 | GET      "/api/local/login"
-[GIN] 2025/10/11 - 07:24:41 | 404 |       1.042µs |             ::1 | GET      "/favicon.ico"
-[GIN] 2025/10/11 - 07:24:56 | 204 |    3.305708ms |             ::1 | OPTIONS  "/api/local/login"
-2025/10/11 07:24:56 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:24:56+03:00","user_agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 YaBrowser/25.8.0.0 Safari/537.36","user_id":"","username":"glomos"}
-
-2025/10/11 07:24:56 [31;1m/Users/com/backend_axenta/api/local_auth.go:106 [35;1mrecord not found
-[0m[33m[19.897ms] [34;1m[rows:0][0m SELECT * FROM "local_users" WHERE (username = 'glomos' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
-2025/10/11 07:24:56 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","error":"record not found","operation":"login_user_not_found","status":"failed","timestamp":"2025-10-11T07:24:56+03:00","user_id":"","username":"glomos"}
-[GIN] 2025/10/11 - 07:24:56 | 401 |   37.788375ms |             ::1 | POST     "/api/local/login"
-[GIN] 2025/10/11 - 07:25:14 | 200 |    1.765292ms |             ::1 | GET      "/ping"
-2025/10/11 07:25:15 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:25:15+03:00","user_agent":"curl/8.7.1","user_id":"","username":"testuser"}
-
-2025/10/11 07:25:15 [32m/Users/com/backend_axenta/api/local_auth.go:106
-[0m[33m[7.670ms] [34;1m[rows:1][0m SELECT * FROM "local_users" WHERE (username = 'testuser' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
-
-2025/10/11 07:25:15 [32m/Users/com/backend_axenta/services/jwt_service.go:117
-[0m[33m[21.651ms] [34;1m[rows:1][0m INSERT INTO "refresh_tokens" ("user_id","token","expires_at","created_at","is_revoked") VALUES (4,'17e2dcb636c8f936ff0dd2d13296607dd2d916e815a75edff44dfbc6e32aaa70','2025-10-18 07:25:15.818','2025-10-11 07:25:15.823',false) RETURNING "id"
-
-2025/10/11 07:25:15 [32m/Users/com/backend_axenta/models/local_user.go:56
-[0m[33m[3.228ms] [34;1m[rows:1][0m UPDATE "local_users" SET "last_login"='2025-10-11 07:25:15.84',"login_count"=2,"updated_at"='2025-10-11 07:25:15.841' WHERE "local_users"."deleted_at" IS NULL AND "id" = 4
-2025/10/11 07:25:15 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"test-company-id","operation":"login_success","role":"admin","status":"success","timestamp":"2025-10-11T07:25:15+03:00","user_id":"4","username":"testuser"}
-[GIN] 2025/10/11 - 07:25:15 | 200 |  102.577625ms |             ::1 | POST     "/api/local/login"
-2025/10/11 07:25:36 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:25:36+03:00","user_agent":"curl/8.7.1","user_id":"","username":"test"}
-
-2025/10/11 07:25:36 [32m/Users/com/backend_axenta/api/local_auth.go:106
-[0m[33m[6.106ms] [34;1m[rows:1][0m SELECT * FROM "local_users" WHERE (username = 'test' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
-
-2025/10/11 07:25:36 [32m/Users/com/backend_axenta/services/jwt_service.go:117
-[0m[33m[16.828ms] [34;1m[rows:1][0m INSERT INTO "refresh_tokens" ("user_id","token","expires_at","created_at","is_revoked") VALUES (5,'eea6c61190bd5afff39567e0a05b5c70809c499c2760e5c58306dc3f2ca68b55','2025-10-18 07:25:36.676','2025-10-11 07:25:36.678',false) RETURNING "id"
-
-2025/10/11 07:25:36 [32m/Users/com/backend_axenta/models/local_user.go:56
-[0m[33m[0.911ms] [34;1m[rows:1][0m UPDATE "local_users" SET "last_login"='2025-10-11 07:25:36.694',"login_count"=1,"updated_at"='2025-10-11 07:25:36.694' WHERE "local_users"."deleted_at" IS NULL AND "id" = 5
-2025/10/11 07:25:36 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"test-company-id","operation":"login_success","role":"admin","status":"success","timestamp":"2025-10-11T07:25:36+03:00","user_id":"5","username":"test"}
-[GIN] 2025/10/11 - 07:25:36 | 200 |   95.039375ms |             ::1 | POST     "/api/local/login"
-[GIN] 2025/10/11 - 07:26:09 | 204 |    6.206958ms |             ::1 | OPTIONS  "/api/local/login"
-2025/10/11 07:26:09 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:26:09+03:00","user_agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 YaBrowser/25.8.0.0 Safari/537.36","user_id":"","username":"glomos"}
-
-2025/10/11 07:26:09 [31;1m/Users/com/backend_axenta/api/local_auth.go:106 [35;1mrecord not found
-[0m[33m[2.412ms] [34;1m[rows:0][0m SELECT * FROM "local_users" WHERE (username = 'glomos' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
-2025/10/11 07:26:09 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","error":"record not found","operation":"login_user_not_found","status":"failed","timestamp":"2025-10-11T07:26:09+03:00","user_id":"","username":"glomos"}
-[GIN] 2025/10/11 - 07:26:09 | 401 |    2.686792ms |             ::1 | POST     "/api/local/login"
-[GIN] 2025/10/11 - 07:28:07 | 200 |    3.048458ms |             ::1 | GET      "/ping"
-2025/10/11 07:28:08 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:28:08+03:00","user_agent":"curl/8.7.1","user_id":"","username":"test"}
-
-2025/10/11 07:28:08 [32m/Users/com/backend_axenta/api/local_auth.go:106
-[0m[33m[6.289ms] [34;1m[rows:1][0m SELECT * FROM "local_users" WHERE (username = 'test' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
-
-2025/10/11 07:28:08 [32m/Users/com/backend_axenta/services/jwt_service.go:117
-[0m[33m[14.622ms] [34;1m[rows:1][0m INSERT INTO "refresh_tokens" ("user_id","token","expires_at","created_at","is_revoked") VALUES (5,'93cdeb85a0b5c9bf9ddb1aad870e7f9007c836ee128df5c037dc0e390c5cd282','2025-10-18 07:28:08.46','2025-10-11 07:28:08.465',false) RETURNING "id"
-
-2025/10/11 07:28:08 [32m/Users/com/backend_axenta/models/local_user.go:56
-[0m[33m[1.824ms] [34;1m[rows:1][0m UPDATE "local_users" SET "last_login"='2025-10-11 07:28:08.475',"login_count"=2,"updated_at"='2025-10-11 07:28:08.476' WHERE "local_users"."deleted_at" IS NULL AND "id" = 5
-2025/10/11 07:28:08 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"test-company-id","operation":"login_success","role":"admin","status":"success","timestamp":"2025-10-11T07:28:08+03:00","user_id":"5","username":"test"}
-[GIN] 2025/10/11 - 07:28:08 | 200 |   88.922709ms |             ::1 | POST     "/api/local/login"
-[GIN] 2025/10/11 - 07:28:57 | 204 |    5.459417ms |             ::1 | OPTIONS  "/api/local/login"
-2025/10/11 07:28:57 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:28:57+03:00","user_agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 YaBrowser/25.8.0.0 Safari/537.36","user_id":"","username":"glomos"}
-
-2025/10/11 07:28:57 [31;1m/Users/com/backend_axenta/api/local_auth.go:106 [35;1mrecord not found
-[0m[33m[18.802ms] [34;1m[rows:0][0m SELECT * FROM "local_users" WHERE (username = 'glomos' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
-2025/10/11 07:28:57 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","error":"record not found","operation":"login_user_not_found","status":"failed","timestamp":"2025-10-11T07:28:57+03:00","user_id":"","username":"glomos"}
-[GIN] 2025/10/11 - 07:28:57 | 401 |   26.991125ms |             ::1 | POST     "/api/local/login"
-[GIN] 2025/10/11 - 07:31:25 | 204 |    3.460625ms |             ::1 | OPTIONS  "/api/local/login"
-2025/10/11 07:31:25 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:31:25+03:00","user_agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 YaBrowser/25.8.0.0 Safari/537.36","user_id":"","username":"glomos"}
-
-2025/10/11 07:31:25 [31;1m/Users/com/backend_axenta/api/local_auth.go:106 [35;1mrecord not found
-[0m[33m[19.587ms] [34;1m[rows:0][0m SELECT * FROM "local_users" WHERE (username = 'glomos' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
-2025/10/11 07:31:25 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","error":"record not found","operation":"login_user_not_found","status":"failed","timestamp":"2025-10-11T07:31:25+03:00","user_id":"","username":"glomos"}
-[GIN] 2025/10/11 - 07:31:25 | 401 |   28.674209ms |             ::1 | POST     "/api/local/login"
-2025/10/11 07:32:05 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:32:05+03:00","user_agent":"curl/8.7.1","user_id":"","username":"admin"}
-
-2025/10/11 07:32:05 [32m/Users/com/backend_axenta/api/local_auth.go:106
-[0m[33m[5.679ms] [34;1m[rows:1][0m SELECT * FROM "local_users" WHERE (username = 'admin' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
-2025/10/11 07:32:05 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"4e12b3c9-529c-4fe7-98e1-025eed8cb258","operation":"login_invalid_password","status":"failed","timestamp":"2025-10-11T07:32:05+03:00","user_id":"1","username":"admin"}
-[GIN] 2025/10/11 - 07:32:05 | 401 |   66.780083ms |             ::1 | POST     "/api/local/login"
-2025/10/11 07:32:05 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:32:05+03:00","user_agent":"curl/8.7.1","user_id":"","username":"demo"}
-
-2025/10/11 07:32:05 [31;1m/Users/com/backend_axenta/api/local_auth.go:106 [35;1mrecord not found
-[0m[33m[0.309ms] [34;1m[rows:0][0m SELECT * FROM "local_users" WHERE (username = 'demo' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
-2025/10/11 07:32:05 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","error":"record not found","operation":"login_user_not_found","status":"failed","timestamp":"2025-10-11T07:32:05+03:00","user_id":"","username":"demo"}
-[GIN] 2025/10/11 - 07:32:05 | 401 |     545.291µs |             ::1 | POST     "/api/local/login"
-2025/10/11 07:32:12 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-11T07:32:12+03:00","user_agent":"curl/8.7.1","user_id":"","username":"admin"}
-
-2025/10/11 07:32:12 [32m/Users/com/backend_axenta/api/local_auth.go:106
-[0m[33m[1.964ms] [34;1m[rows:1][0m SELECT * FROM "local_users" WHERE (username = 'admin' AND is_active = true) AND "local_users"."deleted_at" IS NULL ORDER BY "local_users"."id" LIMIT 1
-2025/10/11 07:32:12 LOCAL_AUTH_LOG: {"auth_type":"local","company_id":"4e12b3c9-529c-4fe7-98e1-025eed8cb258","operation":"login_invalid_password","status":"failed","timestamp":"2025-10-11T07:32:12+03:00","user_id":"1","username":"admin"}
-[GIN] 2025/10/11 - 07:32:12 | 401 |   62.044875ms |             ::1 | POST     "/api/local/login"
+[GIN] 2025/10/16 - 08:48:27 | 204 |       2.243ms |             ::1 | OPTIONS  "/api/cms/users/"
+[GIN] 2025/10/16 - 08:48:27 | 401 |  417.496667ms |             ::1 | POST     "/api/cms/users/"
+[GIN] 2025/10/16 - 08:48:42 | 204 |    2.969708ms |             ::1 | OPTIONS  "/api/auth/login"
+2025/10/16 08:48:42 AUTH_LOG: {"company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-16T08:48:42+03:00","user_agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 YaBrowser/25.8.0.0 Safari/537.36","user_id":"","username":"glomos"}
+2025/10/16 08:48:43 AUTH_LOG: {"company_id":"","content_type":"application/json","operation":"axenta_login_response","response_code":200,"response_size":52,"timestamp":"2025-10-16T08:48:43+03:00","user_id":"","username":"glomos"}
+2025/10/16 08:48:43 AUTH_LOG: {"company_id":"","operation":"axenta_login_success","status":"success","timestamp":"2025-10-16T08:48:43+03:00","token_length":40,"user_id":"","username":"glomos"}
+2025/10/16 08:48:43 AUTH_LOG: {"auth_header":"Token 5e515a8f2874fc...","company_id":"","operation":"axenta_user_request_headers","timestamp":"2025-10-16T08:48:43+03:00","url":"https://axenta.cloud/api/current_user/","user_id":"","username":"glomos"}
+2025/10/16 08:48:43 AUTH_LOG: {"company_id":"","content_type":"application/json","operation":"axenta_user_response","response_code":200,"response_size":1600,"timestamp":"2025-10-16T08:48:43+03:00","user_id":"","username":"glomos"}
+2025/10/16 08:48:44 Updated Axenta user: glomos (type: partner)
+2025/10/16 08:48:44 AUTH_LOG: {"account_id":186,"account_name":"GLOMOS","account_type":"partner","axenta_user_type":"partner","company_id":"","email":"chudin@glomos.ru","full_data":true,"is_admin":true,"is_axenta_user":true,"operation":"login_success_full","role_id":1,"status":"success","timestamp":"2025-10-16T08:48:44+03:00","user_id":"23","username":"glomos"}
+[GIN] 2025/10/16 - 08:48:44 | 200 |  1.972316584s |             ::1 | POST     "/api/auth/login"
+[GIN] 2025/10/16 - 08:48:44 | 200 |   465.64375ms |             ::1 | GET      "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 08:48:45 | 200 |     632.982ms |             ::1 | GET      "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 08:48:45 | 200 |  915.666416ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 08:48:45 | 200 |  388.294583ms |             ::1 | GET      "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 08:48:46 | 200 |    217.0195ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 08:48:46 | 200 |  200.837375ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 08:48:46 | 200 |  434.535208ms |             ::1 | GET      "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 08:48:46 | 200 |  180.108208ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 08:48:46 | 200 |  847.511917ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/16 - 08:48:46 | 200 |  393.852542ms |             ::1 | GET      "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 08:48:47 | 200 |  184.941875ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 08:48:47 | 200 |  365.049792ms |             ::1 | GET      "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 08:48:47 | 200 |  637.967125ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/16 - 08:48:47 | 200 |  313.882458ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 08:48:48 | 200 |  674.135708ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/16 - 08:48:49 | 200 |  1.031958166s |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/16 - 08:48:49 | 200 |  498.696209ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/16 - 08:48:50 | 200 |  746.547125ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/16 - 08:48:58 | 201 |  106.268542ms |             ::1 | POST     "/api/cms/users/"
+2025/10/16 08:48:59 Successfully created user success_real_161025@example.com in Axenta Cloud with ID: 16483
+Successfully created user success_real_161025@example.com in Axenta Cloud with ID: 16483
+[GIN] 2025/10/16 - 08:49:00 | 204 |       8.083µs |             ::1 | OPTIONS  "/api/auth/users?page=1&limit=20"
+2025/10/16 08:49:00 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/16 08:49:00 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/16 08:49:00 ✅ Получено 20 пользователей от Axenta Cloud (всего: 566)
+2025/10/16 08:49:00 📊 Возвращаем: page=1, limit=20, pages=29, получено=20, total=566
+[GIN] 2025/10/16 - 08:49:00 | 200 |  245.567917ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/16 - 08:49:01 | 200 |  646.974083ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/16 - 08:49:04 | 204 |     957.083µs |             ::1 | OPTIONS  "/api/auth/users?page=1&limit=20&search=success_real_161025%40example.com"
+2025/10/16 08:49:04 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20&search=success_real_161025%40example.com
+2025/10/16 08:49:04 🔍 Параметры запроса: page=1, limit=20, search=success_real_161025@example.com
+2025/10/16 08:49:04 ✅ Получено 1 пользователей от Axenta Cloud (всего: 1)
+2025/10/16 08:49:04 📊 Возвращаем: page=1, limit=20, pages=1, получено=1, total=1
+[GIN] 2025/10/16 - 08:49:04 | 200 |  227.291917ms |             ::1 | GET      "/api/auth/users?page=1&limit=20&search=success_real_161025%40example.com"
+2025/10/16 08:49:04 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20&search=success_real_161025%40example.com
+2025/10/16 08:49:04 🔍 Параметры запроса: page=1, limit=20, search=success_real_161025@example.com
+2025/10/16 08:49:04 ✅ Получено 1 пользователей от Axenta Cloud (всего: 1)
+2025/10/16 08:49:04 📊 Возвращаем: page=1, limit=20, pages=1, получено=1, total=1
+[GIN] 2025/10/16 - 08:49:04 | 200 |  230.594875ms |             ::1 | GET      "/api/auth/users?page=1&limit=20&search=success_real_161025%40example.com"
+2025/10/16 08:49:57 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/16 08:49:57 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/16 08:49:57 ✅ Получено 20 пользователей от Axenta Cloud (всего: 566)
+2025/10/16 08:49:57 📊 Возвращаем: page=1, limit=20, pages=29, получено=20, total=566
+[GIN] 2025/10/16 - 08:49:57 | 200 |  506.491542ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/16 - 08:49:58 | 200 |  1.026990375s |             ::1 | GET      "/api/auth/users/stats"
+2025/10/16 08:50:00 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20&search=success_real_161025%40example.com
+2025/10/16 08:50:00 🔍 Параметры запроса: page=1, limit=20, search=success_real_161025@example.com
+2025/10/16 08:50:00 ✅ Получено 1 пользователей от Axenta Cloud (всего: 1)
+2025/10/16 08:50:00 📊 Возвращаем: page=1, limit=20, pages=1, получено=1, total=1
+[GIN] 2025/10/16 - 08:50:00 | 200 |   244.18725ms |             ::1 | GET      "/api/auth/users?page=1&limit=20&search=success_real_161025%40example.com"
+2025/10/16 08:50:01 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20&search=success_real_161025%40example.com
+2025/10/16 08:50:01 🔍 Параметры запроса: page=1, limit=20, search=success_real_161025@example.com
+2025/10/16 08:50:01 ✅ Получено 1 пользователей от Axenta Cloud (всего: 1)
+2025/10/16 08:50:01 📊 Возвращаем: page=1, limit=20, pages=1, получено=1, total=1
+[GIN] 2025/10/16 - 08:50:01 | 200 |     233.794ms |             ::1 | GET      "/api/auth/users?page=1&limit=20&search=success_real_161025%40example.com"
+2025/10/16 08:50:28 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20&search=success_real_161025%40example.com
+2025/10/16 08:50:28 🔍 Параметры запроса: page=1, limit=20, search=success_real_161025@example.com
+2025/10/16 08:50:28 ✅ Получено 1 пользователей от Axenta Cloud (всего: 1)
+2025/10/16 08:50:28 📊 Возвращаем: page=1, limit=20, pages=1, получено=1, total=1
+[GIN] 2025/10/16 - 08:50:28 | 200 |  312.283333ms |             ::1 | GET      "/api/auth/users?page=1&limit=20&search=success_real_161025%40example.com"
+[GIN] 2025/10/16 - 08:50:30 | 200 |  1.147897792s |             ::1 | GET      "/api/auth/users/stats"
+2025/10/16 08:50:46 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/16 08:50:46 🔍 Параметры запроса: page=1, limit=20, search=
+[GIN] 2025/10/16 - 08:50:47 | 200 |  651.280625ms |             ::1 | GET      "/api/auth/users/stats"
+2025/10/16 08:50:47 ✅ Получено 20 пользователей от Axenta Cloud (всего: 566)
+2025/10/16 08:50:47 📊 Возвращаем: page=1, limit=20, pages=29, получено=20, total=566
+[GIN] 2025/10/16 - 08:50:47 | 200 |  670.085916ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+2025/10/16 08:50:48 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20&search=success_real_161025%40example.com
+2025/10/16 08:50:48 🔍 Параметры запроса: page=1, limit=20, search=success_real_161025@example.com
+2025/10/16 08:50:48 ✅ Получено 1 пользователей от Axenta Cloud (всего: 1)
+2025/10/16 08:50:48 📊 Возвращаем: page=1, limit=20, pages=1, получено=1, total=1
+[GIN] 2025/10/16 - 08:50:48 | 200 |  239.059625ms |             ::1 | GET      "/api/auth/users?page=1&limit=20&search=success_real_161025%40example.com"
+2025/10/16 08:50:48 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20&search=success_real_161025%40example.com
+2025/10/16 08:50:48 🔍 Параметры запроса: page=1, limit=20, search=success_real_161025@example.com
+2025/10/16 08:50:48 ✅ Получено 1 пользователей от Axenta Cloud (всего: 1)
+2025/10/16 08:50:48 📊 Возвращаем: page=1, limit=20, pages=1, получено=1, total=1
+[GIN] 2025/10/16 - 08:50:48 | 200 |  222.950291ms |             ::1 | GET      "/api/auth/users?page=1&limit=20&search=success_real_161025%40example.com"
+[GIN] 2025/10/16 - 08:50:57 | 200 |  367.195541ms |             ::1 | GET      "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 08:50:57 | 200 |  235.114916ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 08:50:58 | 200 |  658.100417ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/16 - 08:52:46 | 204 |    7.445417ms |             ::1 | OPTIONS  "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
+[GIN] 2025/10/16 - 08:52:47 | 200 |  594.557833ms |             ::1 | GET      "/api/auth/cms/objects/?page=1&per_page=50&ordering=name"
+[GIN] 2025/10/16 - 08:52:48 | 200 |   364.19825ms |             ::1 | GET      "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 08:52:48 | 200 |  200.271875ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 08:52:48 | 200 |  199.352208ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 08:52:48 | 204 |      51.667µs |             ::1 | OPTIONS  "/api/admin/accounts/list"
+[GIN] 2025/10/16 - 08:52:48 | 204 |      13.625µs |             ::1 | OPTIONS  "/api/object-templates?page=1&per_page=50&ordering=name"
+[GIN] 2025/10/16 - 08:52:48 | 200 |      14.542µs |             ::1 | GET      "/api/object-templates?page=1&per_page=50&ordering=name"
+[GIN] 2025/10/16 - 08:52:48 | 200 |  151.919625ms |             ::1 | GET      "/api/admin/accounts/list"
+[GIN] 2025/10/16 - 08:52:48 | 200 |  369.454167ms |             ::1 | GET      "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 08:52:49 | 200 |  214.107583ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 08:52:49 | 200 |   179.41625ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+2025/10/16 08:52:50 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/16 08:52:50 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/16 08:52:50 ✅ Получено 20 пользователей от Axenta Cloud (всего: 566)
+2025/10/16 08:52:50 📊 Возвращаем: page=1, limit=20, pages=29, получено=20, total=566
+[GIN] 2025/10/16 - 08:52:50 | 200 |  249.026459ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/16 - 08:52:52 | 200 |  1.476784666s |             ::1 | GET      "/api/auth/users/stats"
+2025/10/16 08:55:12 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/16 08:55:12 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/16 08:55:12 ✅ Получено 20 пользователей от Axenta Cloud (всего: 566)
+2025/10/16 08:55:13 📊 Возвращаем: page=1, limit=20, pages=29, получено=20, total=566
+[GIN] 2025/10/16 - 08:55:13 | 200 |  514.478625ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/16 - 08:55:13 | 200 |  1.052268792s |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/16 - 08:55:56 | 204 |    2.085209ms |             ::1 | OPTIONS  "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 08:55:56 | 200 |  448.774833ms |             ::1 | GET      "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 08:55:57 | 204 |      12.459µs |             ::1 | OPTIONS  "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 08:55:57 | 200 |  167.954959ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 08:55:57 | 200 |  367.610041ms |             ::1 | GET      "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 08:55:57 | 200 |  184.183375ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 08:55:57 | 200 |  486.786166ms |             ::1 | GET      "/api/auth/users/stats"
+2025/10/16 08:56:45 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/16 08:56:45 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/16 08:56:45 ✅ Получено 20 пользователей от Axenta Cloud (всего: 566)
+2025/10/16 08:56:45 📊 Возвращаем: page=1, limit=20, pages=29, получено=20, total=566
+[GIN] 2025/10/16 - 08:56:45 | 200 |   351.75375ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/16 - 08:56:46 | 200 |  1.037232958s |             ::1 | GET      "/api/auth/users/stats"
+2025/10/16 08:56:50 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/16 08:56:50 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/16 08:56:51 ✅ Получено 20 пользователей от Axenta Cloud (всего: 566)
+2025/10/16 08:56:51 📊 Возвращаем: page=1, limit=20, pages=29, получено=20, total=566
+[GIN] 2025/10/16 - 08:56:51 | 200 |  216.823792ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/16 - 08:56:51 | 200 |  724.260542ms |             ::1 | GET      "/api/auth/users/stats"
+2025/10/16 08:56:57 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/16 08:56:57 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/16 08:56:57 ✅ Получено 20 пользователей от Axenta Cloud (всего: 566)
+2025/10/16 08:56:57 📊 Возвращаем: page=1, limit=20, pages=29, получено=20, total=566
+[GIN] 2025/10/16 - 08:56:57 | 200 |  232.969375ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+2025/10/16 08:56:58 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/16 08:56:58 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/16 08:56:58 ✅ Получено 20 пользователей от Axenta Cloud (всего: 566)
+2025/10/16 08:56:58 📊 Возвращаем: page=1, limit=20, pages=29, получено=20, total=566
+[GIN] 2025/10/16 - 08:56:58 | 200 |  239.730917ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/16 - 08:57:01 | 204 |     229.709µs |             ::1 | OPTIONS  "/api/auth/users?page=1&limit=20&search=%D0%B3"
+2025/10/16 08:57:01 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20&search=%D0%B3
+2025/10/16 08:57:01 🔍 Параметры запроса: page=1, limit=20, search=г
+2025/10/16 08:57:02 ✅ Получено 20 пользователей от Axenta Cloud (всего: 312)
+2025/10/16 08:57:02 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): ООО_ТАУ
+2025/10/16 08:57:02 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): glomos_st
+2025/10/16 08:57:02 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): Швецов
+2025/10/16 08:57:02 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): apex
+2025/10/16 08:57:02 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): АЛЕКС-1 ООО
+2025/10/16 08:57:02 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): Axenta
+2025/10/16 08:57:02 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): Братановский Виктор
+2025/10/16 08:57:02 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): Маслов Алексей Александрович
+2025/10/16 08:57:02 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): ast_leon
+2025/10/16 08:57:02 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): NEWACRM
+2025/10/16 08:57:02 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): glonass-34
+2025/10/16 08:57:02 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): ТРАНСНАВИ
+2025/10/16 08:57:02 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): emelyanov-ru
+2025/10/16 08:57:02 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): Редвуд
+2025/10/16 08:57:02 🔍 Исключено 14 пользователей из результатов поиска (совпадение только по creator_name)
+2025/10/16 08:57:02 📊 Возвращаем: page=1, limit=20, pages=15, получено=6, total=298
+[GIN] 2025/10/16 - 08:57:02 | 200 |  530.835208ms |             ::1 | GET      "/api/auth/users?page=1&limit=20&search=%D0%B3"
+2025/10/16 08:57:02 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20&search=%D0%B3
+2025/10/16 08:57:02 🔍 Параметры запроса: page=1, limit=20, search=г
+2025/10/16 08:57:02 ✅ Получено 20 пользователей от Axenta Cloud (всего: 312)
+2025/10/16 08:57:02 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): ООО_ТАУ
+2025/10/16 08:57:02 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): glomos_st
+2025/10/16 08:57:02 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): Швецов
+2025/10/16 08:57:02 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): apex
+2025/10/16 08:57:02 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): АЛЕКС-1 ООО
+2025/10/16 08:57:02 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): Axenta
+2025/10/16 08:57:02 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): Братановский Виктор
+2025/10/16 08:57:02 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): Маслов Алексей Александрович
+2025/10/16 08:57:02 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): ast_leon
+2025/10/16 08:57:02 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): NEWACRM
+2025/10/16 08:57:02 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): glonass-34
+2025/10/16 08:57:02 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): ТРАНСНАВИ
+2025/10/16 08:57:02 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): emelyanov-ru
+2025/10/16 08:57:02 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): Редвуд
+2025/10/16 08:57:02 🔍 Исключено 14 пользователей из результатов поиска (совпадение только по creator_name)
+2025/10/16 08:57:02 📊 Возвращаем: page=1, limit=20, pages=15, получено=6, total=298
+[GIN] 2025/10/16 - 08:57:02 | 200 |  438.483625ms |             ::1 | GET      "/api/auth/users?page=1&limit=20&search=%D0%B3"
+[GIN] 2025/10/16 - 08:57:02 | 204 |     411.709µs |             ::1 | OPTIONS  "/api/auth/users?page=1&limit=20&search=%D0%B3%D1%8B"
+2025/10/16 08:57:02 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20&search=%D0%B3%D1%8B
+2025/10/16 08:57:02 🔍 Параметры запроса: page=1, limit=20, search=гы
+[GIN] 2025/10/16 - 08:57:02 | 204 |       9.792µs |             ::1 | OPTIONS  "/api/auth/users?page=1&limit=20&search=%D0%B3%D1%8B%D1%83"
+2025/10/16 08:57:02 ✅ Получено 0 пользователей от Axenta Cloud (всего: 0)
+2025/10/16 08:57:02 📊 Возвращаем: page=1, limit=20, pages=0, получено=0, total=0
+[GIN] 2025/10/16 - 08:57:02 | 200 |  273.902209ms |             ::1 | GET      "/api/auth/users?page=1&limit=20&search=%D0%B3%D1%8B"
+2025/10/16 08:57:02 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20&search=%D0%B3%D1%8B%D1%83
+2025/10/16 08:57:02 🔍 Параметры запроса: page=1, limit=20, search=гыу
+2025/10/16 08:57:03 ✅ Получено 0 пользователей от Axenta Cloud (всего: 0)
+2025/10/16 08:57:03 📊 Возвращаем: page=1, limit=20, pages=0, получено=0, total=0
+[GIN] 2025/10/16 - 08:57:03 | 200 |  192.557041ms |             ::1 | GET      "/api/auth/users?page=1&limit=20&search=%D0%B3%D1%8B%D1%83"
+2025/10/16 08:57:03 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20&search=%D0%B3%D1%8B%D1%83
+2025/10/16 08:57:03 🔍 Параметры запроса: page=1, limit=20, search=гыу
+2025/10/16 08:57:03 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20&search=%D0%B3%D1%8B
+2025/10/16 08:57:03 🔍 Параметры запроса: page=1, limit=20, search=гы
+2025/10/16 08:57:03 ✅ Получено 0 пользователей от Axenta Cloud (всего: 0)
+2025/10/16 08:57:03 📊 Возвращаем: page=1, limit=20, pages=0, получено=0, total=0
+[GIN] 2025/10/16 - 08:57:03 | 200 |  195.777084ms |             ::1 | GET      "/api/auth/users?page=1&limit=20&search=%D0%B3%D1%8B%D1%83"
+2025/10/16 08:57:03 ✅ Получено 0 пользователей от Axenta Cloud (всего: 0)
+2025/10/16 08:57:03 📊 Возвращаем: page=1, limit=20, pages=0, получено=0, total=0
+[GIN] 2025/10/16 - 08:57:03 | 200 |   202.44975ms |             ::1 | GET      "/api/auth/users?page=1&limit=20&search=%D0%B3%D1%8B"
+2025/10/16 08:57:03 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20&search=%D0%B3
+2025/10/16 08:57:03 🔍 Параметры запроса: page=1, limit=20, search=г
+2025/10/16 08:57:03 ✅ Получено 20 пользователей от Axenta Cloud (всего: 312)
+2025/10/16 08:57:03 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): ООО_ТАУ
+2025/10/16 08:57:03 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): glomos_st
+2025/10/16 08:57:03 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): Швецов
+2025/10/16 08:57:03 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): apex
+2025/10/16 08:57:03 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): АЛЕКС-1 ООО
+2025/10/16 08:57:03 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): Axenta
+2025/10/16 08:57:03 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): Братановский Виктор
+2025/10/16 08:57:03 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): Маслов Алексей Александрович
+2025/10/16 08:57:03 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): ast_leon
+2025/10/16 08:57:03 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): NEWACRM
+2025/10/16 08:57:03 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): glonass-34
+2025/10/16 08:57:03 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): ТРАНСНАВИ
+2025/10/16 08:57:03 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): emelyanov-ru
+2025/10/16 08:57:03 🚫 Исключаем пользователя из поиска (совпадение только по creator_name): Редвуд
+2025/10/16 08:57:03 🔍 Исключено 14 пользователей из результатов поиска (совпадение только по creator_name)
+2025/10/16 08:57:03 📊 Возвращаем: page=1, limit=20, pages=15, получено=6, total=298
+[GIN] 2025/10/16 - 08:57:03 | 200 |  264.701083ms |             ::1 | GET      "/api/auth/users?page=1&limit=20&search=%D0%B3"
+2025/10/16 08:57:03 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/16 08:57:03 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/16 08:57:04 ✅ Получено 20 пользователей от Axenta Cloud (всего: 566)
+2025/10/16 08:57:04 📊 Возвращаем: page=1, limit=20, pages=29, получено=20, total=566
+[GIN] 2025/10/16 - 08:57:04 | 200 |  452.501083ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+2025/10/16 08:57:04 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/16 08:57:04 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/16 08:57:05 ✅ Получено 20 пользователей от Axenta Cloud (всего: 566)
+2025/10/16 08:57:05 📊 Возвращаем: page=1, limit=20, pages=29, получено=20, total=566
+[GIN] 2025/10/16 - 08:57:05 | 200 |     251.709ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+2025/10/16 08:57:14 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20&search=success_real_161025%40example.com
+2025/10/16 08:57:14 🔍 Параметры запроса: page=1, limit=20, search=success_real_161025@example.com
+2025/10/16 08:57:14 ✅ Получено 1 пользователей от Axenta Cloud (всего: 1)
+2025/10/16 08:57:14 📊 Возвращаем: page=1, limit=20, pages=1, получено=1, total=1
+[GIN] 2025/10/16 - 08:57:14 | 200 |   238.40825ms |             ::1 | GET      "/api/auth/users?page=1&limit=20&search=success_real_161025%40example.com"
+2025/10/16 08:57:14 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20&search=success_real_161025%40example.com
+2025/10/16 08:57:14 🔍 Параметры запроса: page=1, limit=20, search=success_real_161025@example.com
+2025/10/16 08:57:14 ✅ Получено 1 пользователей от Axenta Cloud (всего: 1)
+2025/10/16 08:57:14 📊 Возвращаем: page=1, limit=20, pages=1, получено=1, total=1
+[GIN] 2025/10/16 - 08:57:14 | 200 |   224.11525ms |             ::1 | GET      "/api/auth/users?page=1&limit=20&search=success_real_161025%40example.com"
+2025/10/16 08:57:56 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/16 08:57:56 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/16 08:57:56 ✅ Получено 20 пользователей от Axenta Cloud (всего: 566)
+2025/10/16 08:57:56 📊 Возвращаем: page=1, limit=20, pages=29, получено=20, total=566
+[GIN] 2025/10/16 - 08:57:56 | 200 |  770.565292ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/16 - 08:57:57 | 200 |  1.692068041s |             ::1 | GET      "/api/auth/users/stats"
+2025/10/16 08:58:00 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/16 08:58:00 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/16 08:58:00 ✅ Получено 20 пользователей от Axenta Cloud (всего: 566)
+2025/10/16 08:58:00 📊 Возвращаем: page=1, limit=20, pages=29, получено=20, total=566
+[GIN] 2025/10/16 - 08:58:00 | 200 |  369.914375ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/16 - 08:58:01 | 200 |  884.207125ms |             ::1 | GET      "/api/auth/users/stats"
+2025/10/16 08:58:11 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/16 08:58:11 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/16 08:58:12 ✅ Получено 20 пользователей от Axenta Cloud (всего: 566)
+2025/10/16 08:58:12 📊 Возвращаем: page=1, limit=20, pages=29, получено=20, total=566
+[GIN] 2025/10/16 - 08:58:12 | 200 |  313.612917ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/16 - 08:58:13 | 200 |  1.362326167s |             ::1 | GET      "/api/auth/users/stats"
+2025/10/16 08:58:51 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/16 08:58:51 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/16 08:58:51 ✅ Получено 20 пользователей от Axenta Cloud (всего: 566)
+2025/10/16 08:58:51 📊 Возвращаем: page=1, limit=20, pages=29, получено=20, total=566
+[GIN] 2025/10/16 - 08:58:51 | 200 |  298.482125ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/16 - 08:58:51 | 200 |  698.631083ms |             ::1 | GET      "/api/auth/users/stats"
+2025/10/16 08:58:53 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/16 08:58:53 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/16 08:58:53 ✅ Получено 20 пользователей от Axenta Cloud (всего: 566)
+2025/10/16 08:58:53 📊 Возвращаем: page=1, limit=20, pages=29, получено=20, total=566
+[GIN] 2025/10/16 - 08:58:53 | 200 |  420.430167ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/16 - 08:58:54 | 200 |  1.310174875s |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/16 - 08:59:30 | 201 |  177.534666ms |             ::1 | POST     "/api/cms/users/"
+2025/10/16 08:59:31 Successfully created user 1success_real_161025@example.com in Axenta Cloud with ID: 16486
+Successfully created user 1success_real_161025@example.com in Axenta Cloud with ID: 16486
+2025/10/16 08:59:33 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/16 08:59:33 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/16 08:59:33 ✅ Получено 20 пользователей от Axenta Cloud (всего: 567)
+2025/10/16 08:59:33 📊 Возвращаем: page=1, limit=20, pages=29, получено=20, total=567
+[GIN] 2025/10/16 - 08:59:33 | 200 |  195.023292ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/16 - 08:59:33 | 200 |  533.188875ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/16 - 08:59:36 | 204 |      18.292µs |             ::1 | OPTIONS  "/api/auth/users?page=1&limit=20&search=1success_real_161025%40example.com"
+2025/10/16 08:59:36 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20&search=1success_real_161025%40example.com
+2025/10/16 08:59:36 🔍 Параметры запроса: page=1, limit=20, search=1success_real_161025@example.com
+2025/10/16 08:59:36 ✅ Получено 1 пользователей от Axenta Cloud (всего: 1)
+2025/10/16 08:59:36 📊 Возвращаем: page=1, limit=20, pages=1, получено=1, total=1
+[GIN] 2025/10/16 - 08:59:36 | 200 |  242.207459ms |             ::1 | GET      "/api/auth/users?page=1&limit=20&search=1success_real_161025%40example.com"
+2025/10/16 08:59:37 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20&search=1success_real_161025%40example.com
+2025/10/16 08:59:37 🔍 Параметры запроса: page=1, limit=20, search=1success_real_161025@example.com
+2025/10/16 08:59:37 ✅ Получено 1 пользователей от Axenta Cloud (всего: 1)
+2025/10/16 08:59:37 📊 Возвращаем: page=1, limit=20, pages=1, получено=1, total=1
+[GIN] 2025/10/16 - 08:59:37 | 200 |  216.153417ms |             ::1 | GET      "/api/auth/users?page=1&limit=20&search=1success_real_161025%40example.com"
+[GIN] 2025/10/16 - 09:00:42 | 201 |  124.819875ms |             ::1 | POST     "/api/cms/users/"
+2025/10/16 09:00:43 Successfully created user 2success_real_161025@example.com in Axenta Cloud with ID: 16487
+Successfully created user 2success_real_161025@example.com in Axenta Cloud with ID: 16487
+2025/10/16 09:00:45 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/16 09:00:45 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/16 09:00:45 ✅ Получено 20 пользователей от Axenta Cloud (всего: 568)
+2025/10/16 09:00:45 📊 Возвращаем: page=1, limit=20, pages=29, получено=20, total=568
+[GIN] 2025/10/16 - 09:00:45 | 200 |   511.16125ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/16 - 09:00:45 | 200 |  1.039092375s |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/16 - 09:00:57 | 200 |  655.603333ms |             ::1 | GET      "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 09:00:58 | 200 |  257.277625ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 09:00:58 | 204 |          23µs |             ::1 | OPTIONS  "/api/auth/users/stats"
+[GIN] 2025/10/16 - 09:00:58 | 200 |  639.831542ms |             ::1 | GET      "/api/auth/users/stats"
+2025/10/16 09:01:48 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/16 09:01:48 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/16 09:01:49 ✅ Получено 20 пользователей от Axenta Cloud (всего: 568)
+2025/10/16 09:01:49 📊 Возвращаем: page=1, limit=20, pages=29, получено=20, total=568
+[GIN] 2025/10/16 - 09:01:49 | 200 |  381.046834ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+2025/10/16 09:02:04 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20&search=success_real_161025%40example.com
+2025/10/16 09:02:04 🔍 Параметры запроса: page=1, limit=20, search=success_real_161025@example.com
+2025/10/16 09:02:04 ✅ Получено 3 пользователей от Axenta Cloud (всего: 3)
+2025/10/16 09:02:04 📊 Возвращаем: page=1, limit=20, pages=1, получено=3, total=3
+[GIN] 2025/10/16 - 09:02:04 | 200 |  395.768042ms |             ::1 | GET      "/api/auth/users?page=1&limit=20&search=success_real_161025%40example.com"
+2025/10/16 09:02:04 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20&search=success_real_161025%40example.com
+2025/10/16 09:02:04 🔍 Параметры запроса: page=1, limit=20, search=success_real_161025@example.com
+2025/10/16 09:02:05 ✅ Получено 3 пользователей от Axenta Cloud (всего: 3)
+2025/10/16 09:02:05 📊 Возвращаем: page=1, limit=20, pages=1, получено=3, total=3
+[GIN] 2025/10/16 - 09:02:05 | 200 |  420.808708ms |             ::1 | GET      "/api/auth/users?page=1&limit=20&search=success_real_161025%40example.com"
+[GIN] 2025/10/16 - 09:05:57 | 200 |  945.258416ms |             ::1 | GET      "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 09:05:57 | 204 |      328.25µs |             ::1 | OPTIONS  "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 09:05:57 | 200 |  261.639042ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 09:05:58 | 200 |  620.775833ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/16 - 09:10:57 | 204 |       2.825ms |             ::1 | OPTIONS  "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 09:10:57 | 200 |  790.311625ms |             ::1 | GET      "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 09:10:58 | 200 |  216.738208ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 09:10:58 | 204 |      13.458µs |             ::1 | OPTIONS  "/api/auth/users/stats"
+[GIN] 2025/10/16 - 09:10:59 | 200 |  878.930834ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/16 - 09:15:57 | 200 |  694.867542ms |             ::1 | GET      "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 09:15:57 | 200 |  229.320959ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 09:15:58 | 200 |  576.685792ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/16 - 09:20:57 | 200 |  774.723083ms |             ::1 | GET      "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 09:20:57 | 204 |      98.166µs |             ::1 | OPTIONS  "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 09:20:58 | 200 |  210.827583ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 09:20:58 | 200 |  710.834625ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/16 - 09:25:56 | 204 |     5.04175ms |             ::1 | OPTIONS  "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 09:25:57 | 200 |  1.226285416s |             ::1 | GET      "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 09:25:58 | 200 |  251.364042ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 09:25:58 | 204 |      20.709µs |             ::1 | OPTIONS  "/api/auth/users/stats"
+[GIN] 2025/10/16 - 09:25:58 | 200 |  652.400708ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/16 - 09:30:57 | 200 |  767.785875ms |             ::1 | GET      "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 09:30:58 | 200 |  243.569333ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 09:30:58 | 200 |  680.607958ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/16 - 09:35:57 | 200 |  707.627959ms |             ::1 | GET      "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 09:35:57 | 204 |     364.084µs |             ::1 | OPTIONS  "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 09:35:57 | 200 |  247.212709ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 09:35:58 | 200 |  650.017292ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/16 - 09:40:57 | 204 |    2.969833ms |             ::1 | OPTIONS  "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 09:40:58 | 200 |  908.879292ms |             ::1 | GET      "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 09:40:58 | 200 |  234.479541ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 09:40:58 | 204 |      23.458µs |             ::1 | OPTIONS  "/api/auth/users/stats"
+[GIN] 2025/10/16 - 09:40:58 | 200 |    629.1905ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/16 - 09:45:57 | 200 |  687.369042ms |             ::1 | GET      "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 09:45:57 | 200 |  233.596583ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 09:45:58 | 200 |  682.668375ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/16 - 09:50:57 | 200 |  765.367958ms |             ::1 | GET      "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 09:50:57 | 204 |       54.25µs |             ::1 | OPTIONS  "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 09:50:58 | 200 |  217.030875ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 09:50:58 | 200 |   737.75925ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/16 - 09:55:56 | 204 |    1.010625ms |             ::1 | OPTIONS  "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 09:55:57 | 200 |  917.578875ms |             ::1 | GET      "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 09:55:57 | 200 |  232.614375ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 09:55:57 | 204 |      20.417µs |             ::1 | OPTIONS  "/api/auth/users/stats"
+[GIN] 2025/10/16 - 09:55:58 | 200 |  617.414625ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/16 - 10:00:58 | 200 |  965.793833ms |             ::1 | GET      "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 10:00:58 | 204 |      60.375µs |             ::1 | OPTIONS  "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 10:00:58 | 200 |  281.013125ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 10:00:59 | 200 |  993.051417ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/16 - 10:05:57 | 200 |  1.153625625s |             ::1 | GET      "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 10:05:57 | 200 |  218.869666ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 10:05:57 | 204 |      21.208µs |             ::1 | OPTIONS  "/api/auth/users/stats"
+[GIN] 2025/10/16 - 10:05:58 | 200 |   994.79825ms |             ::1 | GET      "/api/auth/users/stats"

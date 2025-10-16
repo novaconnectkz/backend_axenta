@@ -1,0 +1,6448 @@
+openapi: 3.1.3
+info:
+  title: AXENTA API
+  version: v1
+  description: |
+    Русскоязычная документация API системы мониторинга Axenta.
+servers:
+  - url: https://axenta.cloud/
+tags:
+  - name: Аутентификация
+    description: Вход в систему и управление токенами
+  - name: Пользователи
+    description: Управление пользователями в интерфейсе мониторинга
+  - name: Геокодирование
+    description: Преобразование координат в адреса
+  - name: Водители
+    description: Управление водителями и их привязка к объектам
+  - name: Устройства
+    description: Управление устройствами (терминалы, трекеры) и их модели
+  - name: Геозоны
+    description: Управление геозонами (зонами на карте) и их группами
+  - name: Прицепы
+    description: Управление прицепами и их привязка к объектам
+  - name: Сообщения
+    description: Получение сообщений от объектов и построение треков
+  - name: Уведомления
+    description: Настройка уведомлений и журнал событий
+  # - name: Отчёты
+  #   description: Создание и управление отчётами, шаблонами и рассылками
+  - name: Треки
+    description: Построение треков движения объектов
+  - name: Локаторы
+    description: Публичные ссылки для отслеживания объектов
+  - name: Помещения
+    description: Управление зданиями и помещениями
+  # - name: Пользовательские устройства
+  #   description: Управление мобильными устройствами пользователей
+  # - name: Права доступа
+  #   description: Управление правами доступа к ресурсам
+  - name: Объекты
+    description: Работа с объектами мониторинга
+  - name: Учетные записи
+    description: Работа с учетной записью и профилем пользователя
+  - name: CMS
+    description: CMS (панель администратора/партнёра)
+paths:
+  # ==================== АУТЕНТИФИКАЦИЯ ====================
+  /api/auth/login/:
+    post:
+      tags: [Аутентификация]
+      summary: Вход в систему мониторинга
+      description: |
+        Аутентификация пользователя в системе мониторинга Axenta.
+        При успешной авторизации возвращается токен, который необходимо использовать
+        в заголовке Authorization для всех последующих запросов в формате: `Token <ваш_токен>`
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                  description: Имя пользователя или email
+                  example: "user@example.com"
+                password:
+                  type: string
+                  format: password
+                  description: Пароль пользователя
+                  minLength: 6
+                  example: "password123"
+      responses:
+        '200':
+          description: Успешная авторизация
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    description: Токен авторизации для использования в API
+                    example: "1234567890abcdef"
+              examples:
+                success:
+                  value:
+                    token: "1234567890abcdef"
+        '400':
+          description: Неверные учетные данные
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  nonFieldErrors:
+                    type: array
+                    items:
+                      type: string
+              examples:
+                invalid_credentials:
+                  value:
+                    nonFieldErrors: ["Невозможно войти с предоставленными учетными данными"]
+
+  # ==================== ТЕКУЩИЙ ПОЛЬЗОВАТЕЛЬ ====================
+  /api/current_user/:
+    get:
+      tags: [Пользователи]
+      summary: Получить данные текущего пользователя
+      description: |
+        Возвращает полную информацию о текущем авторизованном пользователе,
+        включая настройки профиля, права доступа и информацию об аккаунте.
+      security:
+        - TokenAuth: []
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CurrentUser'
+              examples:
+                example:
+                  value:
+                    id: 1
+                    username: "user@example.com"
+                    email: "user@example.com"
+                    firstName: "Иван"
+                    lastName: "Петров"
+                    isActive: true
+                    language: "ru"
+                    timezone: 3
+                    dateJoined: "2024-01-15T10:30:00Z"
+                    lastLogin: "2025-10-06T08:15:00Z"
+                    accountId: 10
+                    accountName: "ООО Транспорт"
+                    accountType: "client"
+                    isAdmin: false
+                    hasAdminAccess: false
+                    addressFormat: ["country", "city", "street", "house"]
+                    objectCardSettings: { general: 1, sensors: 2, commands: 3 }
+                    monitoringItemSetup: { configListItem: { address: true, speed: true } }
+        '401':
+          description: Не авторизован
+
+  # ==================== УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ ====================
+  /api/users/:
+    get:
+      tags: [Пользователи]
+      summary: Список пользователей
+      description: |
+        Возвращает список пользователей текущего аккаунта (кроме администраторов и текущего пользователя).
+        Поддерживает фильтрацию, поиск и пагинацию.
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Поиск по имени, username или email
+        - name: is_active
+          in: query
+          schema:
+            type: boolean
+          description: Фильтр по активности пользователя
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+          description: Номер страницы
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+          description: Количество элементов на странице
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                    description: Общее количество пользователей
+                  next:
+                    type: string
+                    nullable: true
+                    description: URL следующей страницы
+                  previous:
+                    type: string
+                    nullable: true
+                    description: URL предыдущей страницы
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/UserListItem'
+    post:
+      tags: [Пользователи]
+      summary: Создать пользователя
+      description: |
+        Создание нового пользователя в текущем аккаунте.
+        Требуются права на создание пользователей.
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserCreateRequest'
+            examples:
+              create:
+                value:
+                  name: "Иван Петров"
+                  username: "ivanov"
+                  email: "ivanov@example.com"
+                  password: "SecureP@ss123"
+                  confirmPassword: "SecureP@ss123"
+                  hasAdminAccess: false
+                  language: "ru"
+                  timezone: 3
+                  visibleTabsNames: ["monitoring", "reports", "objects"]
+                  accesses:
+                    common: ["view", "export"]
+      responses:
+        '201':
+          description: Пользователь успешно создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserDetail'
+        '400':
+          description: Ошибка валидации данных
+        '403':
+          description: Недостаточно прав для создания пользователя
+
+  /api/users/{id}/:
+    get:
+      tags: [Пользователи]
+      summary: Детали пользователя
+      description: Получить полную информацию о конкретном пользователе
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: ID пользователя
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserDetail'
+        '404':
+          description: Пользователь не найден
+    put:
+      tags: [Пользователи]
+      summary: Обновить пользователя
+      description: |
+        Полное обновление данных пользователя.
+        Требуются права на редактирование пользователя.
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdateRequest'
+      responses:
+        '200':
+          description: Пользователь успешно обновлен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserDetail'
+        '403':
+          description: Недостаточно прав для редактирования
+        '404':
+          description: Пользователь не найден
+    patch:
+      tags: [Пользователи]
+      summary: Частично обновить пользователя
+      description: Частичное обновление данных пользователя (можно передать только изменяемые поля)
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdateRequest'
+      responses:
+        '200':
+          description: Пользователь успешно обновлен
+        '403':
+          description: Недостаточно прав
+        '404':
+          description: Пользователь не найден
+    delete:
+      tags: [Пользователи]
+      summary: Удалить пользователя
+      description: |
+        Удаление пользователя из системы.
+        Требуются права на удаление пользователя.
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Пользователь успешно удален
+        '403':
+          description: Недостаточно прав для удаления
+        '404':
+          description: Пользователь не найден
+
+  # ==================== ГЕОКОДИРОВАНИЕ ====================
+  /api/geocoding/reverse/:
+    post:
+      tags: [Геокодирование]
+      summary: Обратное геокодирование
+      description: |
+        Преобразование географических координат в читаемые адреса.
+        Поддерживает как единичные запросы, так и пакетную обработку множества координат.
+        Результаты кэшируются на 1 час для оптимизации производительности.
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [coordinates]
+              properties:
+                coordinates:
+                  type: array
+                  description: Массив координат для геокодирования
+                  items:
+                    type: object
+                    required: [lat, lng]
+                    properties:
+                      lat:
+                        type: number
+                        format: double
+                        description: Широта
+                        minimum: -90
+                        maximum: 90
+                      lng:
+                        type: number
+                        format: double
+                        description: Долгота
+                        minimum: -180
+                        maximum: 180
+            examples:
+              single:
+                summary: Одна координата
+                value:
+                  coordinates:
+                    - lat: 55.751244
+                      lng: 37.618423
+              multiple:
+                summary: Несколько координат
+                value:
+                  coordinates:
+                    - lat: 55.751244
+                      lng: 37.618423
+                    - lat: 59.934280
+                      lng: 30.335099
+                    - lat: 56.838607
+                      lng: 60.605514
+      responses:
+        '200':
+          description: Успешное преобразование координат в адреса
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: object
+                  properties:
+                    address:
+                      type: string
+                      description: Форматированный адрес согласно настройкам пользователя
+              examples:
+                result:
+                  value:
+                    "37.618423_55.751244":
+                      address: "Россия, Москва, Красная площадь, 1"
+                    "30.335099_59.934280":
+                      address: "Россия, Санкт-Петербург, Невский проспект, 1"
+        '400':
+          description: Ошибка валидации координат
+        '401':
+          description: Не авторизован
+
+  # ==================== ВОДИТЕЛИ ====================
+  /api/drivers/:
+    get:
+      tags: [Водители]
+      summary: Список водителей
+      description: |
+        Возвращает список всех водителей в текущем аккаунте.
+        Включает информацию о привязке водителя к объекту (если привязан).
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+          description: Номер страницы
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+          description: Количество элементов на странице
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  next:
+                    type: string
+                    nullable: true
+                  previous:
+                    type: string
+                    nullable: true
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Driver'
+              examples:
+                success:
+                  value:
+                    count: 2
+                    next: null
+                    previous: null
+                    results:
+                      - id: 1
+                        name: "Иванов Иван Иванович"
+                        code: "DRV001"
+                        description: "Опытный водитель"
+                        phoneNumber: "+79001234567"
+                        mobileKey: "1234567890ABCDEF"
+                        isExcluding: false
+                        customFields: { licenseNumber: "1234 567890" }
+                        object:
+                          id: 101
+                          name: "Камаз-001"
+    post:
+      tags: [Водители]
+      summary: Создать водителя
+      description: Создание нового водителя в системе
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DriverCreateRequest'
+            examples:
+              create:
+                value:
+                  name: "Петров Петр Петрович"
+                  code: "DRV002"
+                  description: "Водитель с большим стажем"
+                  phoneNumber: "+79009876543"
+                  mobileKey: "FEDCBA0987654321"
+                  isExcluding: false
+                  customFields:
+                    licenseNumber: "9876 543210"
+                    experience: "15 лет"
+      responses:
+        '201':
+          description: Водитель успешно создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Driver'
+        '400':
+          description: Ошибка валидации данных
+
+  /api/drivers/{id}/:
+    get:
+      tags: [Водители]
+      summary: Детали водителя
+      description: Получить полную информацию о конкретном водителе
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Driver'
+        '404':
+          description: Водитель не найден
+    put:
+      tags: [Водители]
+      summary: Обновить водителя
+      description: Полное обновление данных водителя
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DriverUpdateRequest'
+      responses:
+        '200':
+          description: Водитель успешно обновлен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Driver'
+        '404':
+          description: Водитель не найден
+    patch:
+      tags: [Водители]
+      summary: Частично обновить водителя
+      description: Частичное обновление данных водителя
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DriverUpdateRequest'
+      responses:
+        '200':
+          description: Водитель успешно обновлен
+        '404':
+          description: Водитель не найден
+    delete:
+      tags: [Водители]
+      summary: Удалить водителя
+      description: Удаление водителя из системы
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Водитель успешно удален
+        '404':
+          description: Водитель не найден
+
+  /api/driver/attach/:
+    post:
+      tags: [Водители]
+      summary: Прикрепить водителя к объекту
+      description: |
+        Привязка водителя к конкретному объекту мониторинга.
+        Если водитель является "исключающим", все остальные водители будут автоматически откреплены от объекта.
+        Если водитель уже привязан к другому объекту, он будет откреплен от предыдущего.
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [driverId, objectId]
+              properties:
+                driverId:
+                  type: integer
+                  description: ID водителя
+                  minimum: 1
+                objectId:
+                  type: integer
+                  description: ID объекта
+                  minimum: 1
+            examples:
+              attach:
+                value:
+                  driverId: 1
+                  objectId: 101
+      responses:
+        '204':
+          description: Водитель успешно прикреплен к объекту
+        '400':
+          description: Ошибка при прикреплении
+        '404':
+          description: Водитель или объект не найден
+
+  /api/driver/deattach/:
+    post:
+      tags: [Водители]
+      summary: Открепить водителя от объекта
+      description: |
+        Отвязка водителя от объекта мониторинга.
+        Завершает текущую сессию привязки водителя.
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [driverId]
+              properties:
+                driverId:
+                  type: integer
+                  description: ID водителя
+                  minimum: 1
+            examples:
+              deattach:
+                value:
+                  driverId: 1
+      responses:
+        '204':
+          description: Водитель успешно откреплен от объекта
+        '400':
+          description: Ошибка при откреплении
+        '404':
+          description: Водитель не найден
+
+  /api/driver/history/{driver_id}/:
+    get:
+      tags: [Водители]
+      summary: История привязок водителя
+      description: |
+        Получить историю всех привязок водителя к объектам.
+        Включает даты начала и окончания каждой привязки.
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: driver_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: ID водителя
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                      description: ID записи в истории
+                    driverId:
+                      type: integer
+                      description: ID водителя
+                    driverName:
+                      type: string
+                      description: Имя водителя
+                    objectId:
+                      type: integer
+                      description: ID объекта
+                    objectName:
+                      type: string
+                      description: Название объекта
+                    datetimeStart:
+                      type: string
+                      format: date-time
+                      description: Дата и время начала привязки
+                    datetimeEnd:
+                      type: string
+                      format: date-time
+                      nullable: true
+                      description: Дата и время окончания привязки (null если еще привязан)
+                    assignMode:
+                      type: string
+                      description: Режим привязки (manual, auto)
+              examples:
+                history:
+                  value:
+                    - id: 1
+                      driverId: 1
+                      driverName: "Иванов И.И."
+                      objectId: 101
+                      objectName: "Камаз-001"
+                      datetimeStart: "2025-10-01T08:00:00Z"
+                      datetimeEnd: "2025-10-05T18:00:00Z"
+                      assignMode: "manual"
+                    - id: 2
+                      driverId: 1
+                      driverName: "Иванов И.И."
+                      objectId: 102
+                      objectName: "Камаз-002"
+                      datetimeStart: "2025-10-06T08:00:00Z"
+                      datetimeEnd: null
+                      assignMode: "manual"
+        '404':
+          description: Водитель не найден
+
+  /api/drivers/groups/:
+    get:
+      tags: [Водители]
+      summary: Список групп водителей
+      description: Возвращает список всех групп водителей в текущем аккаунте
+      security:
+        - TokenAuth: []
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DriverGroup'
+    post:
+      tags: [Водители]
+      summary: Создать группу водителей
+      description: Создание новой группы для организации водителей
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  description: Название группы
+                  minLength: 1
+                  maxLength: 255
+                description:
+                  type: string
+                  description: Описание группы
+                  nullable: true
+      responses:
+        '201':
+          description: Группа успешно создана
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DriverGroup'
+
+  /api/drivers/groups/{id}/:
+    get:
+      tags: [Водители]
+      summary: Детали группы водителей
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DriverGroup'
+    put:
+      tags: [Водители]
+      summary: Обновить группу водителей
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+      responses:
+        '200':
+          description: Группа обновлена
+    delete:
+      tags: [Водители]
+      summary: Удалить группу водителей
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Группа удалена
+
+  # ==================== УСТРОЙСТВА ====================
+  /api/devices/:
+    get:
+      tags: [Устройства]
+      summary: Список устройств
+      description: |
+        Возвращает список всех моделей устройств (bluetooth\wifi меток) в текущей учетной записи.
+        Устройства представляют собой физические bluetooth\wifi метки, подключенные к системе.
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  next:
+                    type: string
+                    nullable: true
+                  previous:
+                    type: string
+                    nullable: true
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Device'
+    post:
+      tags: [Устройства]
+      summary: Создать устройство
+      description: Регистрация нового устройства в системе
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceCreateRequest'
+            examples:
+              create:
+                value:
+                  name: "Терминал-001"
+                  uniqueId: "123456789012345"
+                  deviceModelId: 1
+                  description: "Bluetooth-метка Vega"
+      responses:
+        '201':
+          description: Устройство успешно создано
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Device'
+        '400':
+          description: Ошибка валидации данных
+
+  /api/devices/{id}/:
+    get:
+      tags: [Устройства]
+      summary: Детали устройства
+      description: Получить полную информацию о конкретном устройстве
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Device'
+        '404':
+          description: Устройство не найдено
+    put:
+      tags: [Устройства]
+      summary: Обновить устройство
+      description: Полное обновление данных устройства
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceUpdateRequest'
+      responses:
+        '200':
+          description: Устройство обновлено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Device'
+        '404':
+          description: Устройство не найдено
+    patch:
+      tags: [Устройства]
+      summary: Частично обновить устройство
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceUpdateRequest'
+      responses:
+        '200':
+          description: Устройство обновлено
+        '404':
+          description: Устройство не найдено
+    delete:
+      tags: [Устройства]
+      summary: Удалить устройство
+      description: Удаление устройства из системы
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Устройство удалено
+        '404':
+          description: Устройство не найдено
+
+  /api/devices/mass_delete/:
+    post:
+      tags: [Устройства]
+      summary: Массовое удаление устройств
+      description: Удаление нескольких устройств одновременно
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [deviceIds]
+              properties:
+                deviceIds:
+                  type: array
+                  items:
+                    type: integer
+                    minimum: 1
+                  description: Массив ID устройств для удаления
+            examples:
+              mass_delete:
+                value:
+                  deviceIds: [1, 2, 3, 4, 5]
+      responses:
+        '200':
+          description: Устройства успешно удалены
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    description: Сообщение о результате операции
+              examples:
+                success:
+                  value:
+                    message: "5 устройств удалено"
+        '400':
+          description: Ошибка при удалении
+
+  /api/device/models/:
+    get:
+      tags: [Устройства]
+      summary: Список моделей устройств
+      description: |
+        Справочник моделей bluetooth/wifi меток.
+        Содержит информацию о поддерживаемых моделях устройств.
+        Это справочный endpoint только для чтения.
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  next:
+                    type: string
+                    nullable: true
+                  previous:
+                    type: string
+                    nullable: true
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DeviceModel'
+              examples:
+                models:
+                  value:
+                    count: 2
+                    next: null
+                    previous: null
+                    results:
+                      - id: 1
+                        name: "BLE Beacon v1"
+                      - id: 2
+                        name: "WiFi Tracker Pro"
+
+  /api/device/models/{id}/:
+    get:
+      tags: [Устройства]
+      summary: Детали модели устройства
+      description: Получить подробную информацию о конкретной модели устройства
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceModel'
+        '404':
+          description: Модель устройства не найдена
+
+  # ==================== ГЕОЗОНЫ ====================
+  /api/geozone/:
+    get:
+      tags: [Геозоны]
+      summary: Список геозон
+      description: |
+        Возвращает список всех геозон в текущем аккаунте.
+        Геозоны - это области на карте (круг, полигон, маршрут) для контроля нахождения объектов.
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Geozone'
+    post:
+      tags: [Геозоны]
+      summary: Создать геозону
+      description: Создание новой геозоны на карте
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GeozoneCreateRequest'
+      responses:
+        '201':
+          description: Геозона создана
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Geozone'
+
+  /api/geozone/{geozone_id}/:
+    get:
+      tags: [Геозоны]
+      summary: Детали геозоны
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: geozone_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Geozone'
+    put:
+      tags: [Геозоны]
+      summary: Обновить геозону
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: geozone_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GeozoneUpdateRequest'
+      responses:
+        '200':
+          description: Геозона обновлена
+    delete:
+      tags: [Геозоны]
+      summary: Удалить геозону
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: geozone_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Геозона удалена
+
+  /api/geozone/display/:
+    post:
+      tags: [Геозоны]
+      summary: Настроить видимость геозон
+      description: Установить список геозон, отображаемых на карте для пользователя
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [visibleGeozoneIds]
+              properties:
+                visibleGeozoneIds:
+                  type: array
+                  description: Массив ID геозон для отображения
+                  items:
+                    type: integer
+                    minimum: 1
+      responses:
+        '201':
+          description: Настройки сохранены
+
+  /api/geozones/groups/:
+    get:
+      tags: [Геозоны]
+      summary: Список групп геозон
+      security:
+        - TokenAuth: []
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/GeozoneGroup'
+    post:
+      tags: [Геозоны]
+      summary: Создать группу геозон
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+      responses:
+        '201':
+          description: Группа создана
+
+  /api/geozones/groups/{id}/:
+    get:
+      tags: [Геозоны]
+      summary: Детали группы геозон
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Успешный ответ
+    put:
+      tags: [Геозоны]
+      summary: Обновить группу геозон
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Группа обновлена
+    delete:
+      tags: [Геозоны]
+      summary: Удалить группу геозон
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Группа удалена
+
+  # ==================== ПРИЦЕПЫ ====================
+  /api/trailers/:
+    get:
+      tags: [Прицепы]
+      summary: Список прицепов
+      description: Возвращает список всех прицепов в текущем аккаунте с информацией о привязке
+      security:
+        - TokenAuth: []
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Trailer'
+    post:
+      tags: [Прицепы]
+      summary: Создать прицеп
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TrailerCreateRequest'
+      responses:
+        '201':
+          description: Прицеп создан
+
+  /api/trailers/{id}/:
+    get:
+      tags: [Прицепы]
+      summary: Детали прицепа
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Trailer'
+    put:
+      tags: [Прицепы]
+      summary: Обновить прицеп
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Прицеп обновлен
+    delete:
+      tags: [Прицепы]
+      summary: Удалить прицеп
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Прицеп удален
+
+  /api/trailer/attach/:
+    post:
+      tags: [Прицепы]
+      summary: Прикрепить прицеп к объекту
+      description: Привязка прицепа к объекту мониторинга
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [trailerId, objectId]
+              properties:
+                trailerId:
+                  type: integer
+                objectId:
+                  type: integer
+      responses:
+        '204':
+          description: Прицеп прикреплен
+
+  /api/trailer/deattach/:
+    post:
+      tags: [Прицепы]
+      summary: Открепить прицеп от объекта
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [trailerId]
+              properties:
+                trailerId:
+                  type: integer
+      responses:
+        '204':
+          description: Прицеп откреплен
+
+  /api/trailer/history/{pk}/:
+    get:
+      tags: [Прицепы]
+      summary: История привязок прицепа
+      description: История всех привязок прицепа к объектам
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    trailerId:
+                      type: integer
+                    objectId:
+                      type: integer
+                    objectName:
+                      type: string
+                    datetimeStart:
+                      type: string
+                      format: date-time
+                    datetimeEnd:
+                      type: string
+                      format: date-time
+                      nullable: true
+
+  /api/trailers/groups/:
+    get:
+      tags: [Прицепы]
+      summary: Список групп прицепов
+      security:
+        - TokenAuth: []
+      responses:
+        '200':
+          description: Успешный ответ
+    post:
+      tags: [Прицепы]
+      summary: Создать группу прицепов
+      security:
+        - TokenAuth: []
+      responses:
+        '201':
+          description: Группа создана
+
+  /api/trailers/groups/{id}/:
+    get:
+      tags: [Прицепы]
+      summary: Детали группы прицепов
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Успешный ответ
+    put:
+      tags: [Прицепы]
+      summary: Обновить группу прицепов
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Группа обновлена
+    delete:
+      tags: [Прицепы]
+      summary: Удалить группу прицепов
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Группа удалена
+
+  # ==================== СООБЩЕНИЯ И ТРЕКИ ====================
+  /api/messages/get:
+    post:
+      tags: [Сообщения]
+      summary: Получить сообщения от объектов
+      description: |
+        Получение сообщений (координат, данных датчиков) от объектов за период.
+        Используется для построения треков и анализа параметров.
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [objectId, startDate, endDate]
+              properties:
+                objectId:
+                  type: integer
+                  description: ID объекта
+                startDate:
+                  type: string
+                  format: date-time
+                  description: Начало периода
+                endDate:
+                  type: string
+                  format: date-time
+                  description: Конец периода
+                limit:
+                  type: integer
+                  description: Максимальное количество сообщений
+                  default: 10000
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    t:
+                      type: string
+                      format: date-time
+                      description: Время сообщения
+                    pos:
+                      type: object
+                      properties:
+                        x:
+                          type: number
+                          description: Широта
+                        y:
+                          type: number
+                          description: Долгота
+                        s:
+                          type: string
+                          description: Скорость
+                        c:
+                          type: number
+                          description: Курс
+                    p:
+                      type: object
+                      description: Параметры датчиков
+
+  /api/messages/stat:
+    post:
+      tags: [Сообщения]
+      summary: Статистика сообщений
+      description: Получить статистику по сообщениям объекта за период
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [objectId, startDate, endDate]
+              properties:
+                objectId:
+                  type: integer
+                startDate:
+                  type: string
+                  format: date-time
+                endDate:
+                  type: string
+                  format: date-time
+      responses:
+        '200':
+          description: Статистика получена
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  totalMessages:
+                    type: integer
+                  firstMessageTime:
+                    type: string
+                    format: date-time
+                  lastMessageTime:
+                    type: string
+                    format: date-time
+
+  /api/messages/chart:
+    post:
+      tags: [Сообщения]
+      summary: Данные для графика
+      description: Получить данные параметров для построения графиков
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [objectId, startDate, endDate, parameters]
+              properties:
+                objectId:
+                  type: integer
+                startDate:
+                  type: string
+                  format: date-time
+                endDate:
+                  type: string
+                  format: date-time
+                parameters:
+                  type: array
+                  items:
+                    type: string
+                  description: Список параметров для графика
+      responses:
+        '200':
+          description: Данные для графика получены
+
+  /api/messages/point_info/:
+    post:
+      tags: [Сообщения]
+      summary: Информация о точке трека
+      description: Получить детальную информацию о конкретной точке на треке
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [objectId, timestamp]
+              properties:
+                objectId:
+                  type: integer
+                timestamp:
+                  type: string
+                  format: date-time
+      responses:
+        '200':
+          description: Информация о точке получена
+
+  /api/tracks/create/:
+    post:
+      tags: [Треки]
+      summary: Построить трек
+      description: |
+        Построение трека движения объекта за период.
+        Трек включает координаты, скорость, стоянки, поездки и другие данные.
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [startDate, endDate, objectId, trackType, detectTrips]
+              properties:
+                startDate:
+                  type: string
+                  format: date-time
+                  description: Начало периода
+                endDate:
+                  type: string
+                  format: date-time
+                  description: Конец периода
+                objectId:
+                  type: integer
+                  minimum: 1
+                  description: ID объекта
+                trackType:
+                  type: string
+                  description: Тип трека
+                sensorId:
+                  type: integer
+                  description: ID датчика (опционально)
+                detectTrips:
+                  type: boolean
+                  description: Определение поездок
+                withStops:
+                  type: boolean
+                  default: false
+                  description: Включить остановки
+                withParkings:
+                  type: boolean
+                  default: false
+                  description: Включить стоянки
+                withRefuels:
+                  type: boolean
+                  default: false
+                  description: Включить заправки
+                withPlums:
+                  type: boolean
+                  default: false
+                  description: Включить сливы
+                withOverSpeed:
+                  type: boolean
+                  default: false
+                  description: Включить превышения скорости
+      responses:
+        '200':
+          description: Трек построен
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Данные трека (структура зависит от типа трека)
+
+  /api/road_events/get/:
+    post:
+      tags: [Треки]
+      summary: Дорожные события
+      description: |
+        Получить информацию о дорожных событиях объекта за период.
+        События включают: потери связи, моточасы, превышения скорости, стоянки, сливы, заправки, остановки, поездки.
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [startDate, endDate, objectId]
+              properties:
+                startDate:
+                  type: string
+                  format: date-time
+                  description: Начало периода
+                endDate:
+                  type: string
+                  format: date-time
+                  description: Конец периода
+                objectId:
+                  type: integer
+                  minimum: 1
+                  description: ID объекта
+                withConnectionLosses:
+                  type: boolean
+                  default: false
+                  description: Включить потери связи
+                withEngineHours:
+                  type: boolean
+                  default: false
+                  description: Включить моточасы
+                withOverSpeed:
+                  type: boolean
+                  default: false
+                  description: Включить превышения скорости
+                withParkings:
+                  type: boolean
+                  default: false
+                  description: Включить стоянки
+                withPlums:
+                  type: boolean
+                  default: false
+                  description: Включить сливы
+                withRefuels:
+                  type: boolean
+                  default: false
+                  description: Включить заправки
+                withStops:
+                  type: boolean
+                  default: false
+                  description: Включить остановки
+                withTrips:
+                  type: boolean
+                  default: false
+                  description: Включить поездки
+      responses:
+        '200':
+          description: Дорожные события получены
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Данные дорожных событий
+
+  # ==================== УВЕДОМЛЕНИЯ ====================
+  /api/notifications/:
+    get:
+      tags: [Уведомления]
+      summary: Список правил уведомлений
+      description: |
+        Получить список настроенных правил уведомлений.
+        Уведомления могут отправляться при входе/выходе из геозон, превышении скорости и других событиях.
+      security:
+        - TokenAuth: []
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Notification'
+    post:
+      tags: [Уведомления]
+      summary: Создать правило уведомления
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NotificationCreateRequest'
+      responses:
+        '201':
+          description: Правило создано
+
+  /api/notifications/{id}/:
+    get:
+      tags: [Уведомления]
+      summary: Детали правила уведомления
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+    put:
+      tags: [Уведомления]
+      summary: Обновить правило уведомления
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Правило обновлено
+    delete:
+      tags: [Уведомления]
+      summary: Удалить правило уведомления
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Правило удалено
+
+  /api/notification_events/:
+    get:
+      tags: [Уведомления]
+      summary: Журнал событий уведомлений
+      description: История срабатывания правил уведомлений
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+        - name: startDate
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: endDate
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                        notificationId:
+                          type: integer
+                        notificationName:
+                          type: string
+                        objectId:
+                          type: integer
+                        objectName:
+                          type: string
+                        eventTime:
+                          type: string
+                          format: date-time
+                        message:
+                          type: string
+
+  # ==================== ОТЧЁТЫ ====================
+  # /api/reports/:
+  #   post:
+  #     tags: [Отчёты]
+  #     summary: Создать отчёт
+  #     description: |
+  #       Создание нового отчёта по заданным параметрам.
+  #       Отчёт может быть по пробегу, поездкам, стоянкам, топливу и другим параметрам.
+  #     security:
+  #       - TokenAuth: []
+  #     requestBody:
+  #       required: true
+  #       content:
+  #         application/json:
+  #           schema:
+  #             type: object
+  #             required: [reportType, objectIds, startDate, endDate]
+  #             properties:
+  #               reportType:
+  #                 type: string
+  #                 description: Тип отчёта
+  #                 enum: [mileage, trips, parkings, fuel, sensors, geozones, drivers]
+  #               objectIds:
+  #                 type: array
+  #                 items:
+  #                   type: integer
+  #                 description: ID объектов для отчёта
+  #               startDate:
+  #                 type: string
+  #                 format: date-time
+  #               endDate:
+  #                 type: string
+  #                 format: date-time
+  #               parameters:
+  #                 type: object
+  #                 description: Дополнительные параметры отчёта
+  #     responses:
+  #       '202':
+  #         description: Отчёт поставлен в очередь на формирование
+  #         content:
+  #           application/json:
+  #             schema:
+  #               type: object
+  #               properties:
+  #                 reportId:
+  #                   type: string
+  #                   format: uuid
+  #                   description: ID созданного отчёта
+
+  # /api/reports/{report_id}/:
+  #   get:
+  #     tags: [Отчёты]
+  #     summary: Получить отчёт
+  #     description: Получить данные сформированного отчёта
+  #     security:
+  #       - TokenAuth: []
+  #     parameters:
+  #       - name: report_id
+  #         in: path
+  #         required: true
+  #         schema:
+  #           type: string
+  #           format: uuid
+  #     responses:
+  #       '200':
+  #         description: Отчёт получен
+  #         content:
+  #           application/json:
+  #             schema:
+  #               type: object
+  #               properties:
+  #                 reportId:
+  #                   type: string
+  #                   format: uuid
+  #                 status:
+  #                   type: string
+  #                   enum: [pending, processing, completed, error]
+  #                 data:
+  #                   type: object
+  #                   description: Данные отчёта
+
+  # /api/reports/status/:
+  #   get:
+  #     tags: [Отчёты]
+  #     summary: Статус формирования отчёта
+  #     description: Проверить статус формирования отчёта
+  #     security:
+  #       - TokenAuth: []
+  #     parameters:
+  #       - name: reportId
+  #         in: query
+  #         required: true
+  #         schema:
+  #           type: string
+  #           format: uuid
+  #     responses:
+  #       '200':
+  #         description: Статус получен
+  #         content:
+  #           application/json:
+  #             schema:
+  #               type: object
+  #               properties:
+  #                 status:
+  #                   type: string
+  #                 progress:
+  #                   type: integer
+  #                   description: Прогресс в процентах
+
+  # /api/reports/table/{table_id}/:
+  #   get:
+  #     tags: [Отчёты]
+  #     summary: Получить табличные данные отчёта
+  #     security:
+  #       - TokenAuth: []
+  #     parameters:
+  #       - name: table_id
+  #         in: path
+  #         required: true
+  #         schema:
+  #           type: string
+  #           format: uuid
+  #     responses:
+  #       '200':
+  #         description: Табличные данные получены
+
+  # /api/reports/chart/{chart_id}/:
+  #   get:
+  #     tags: [Отчёты]
+  #     summary: Получить данные графика отчёта
+  #     security:
+  #       - TokenAuth: []
+  #     parameters:
+  #       - name: chart_id
+  #         in: path
+  #         required: true
+  #         schema:
+  #           type: string
+  #           format: uuid
+  #     responses:
+  #       '200':
+  #         description: Данные графика получены
+
+  # /api/reports/export/{export_type}/{report_id}:
+  #   get:
+  #     tags: [Отчёты]
+  #     summary: Экспорт отчёта
+  #     description: Экспорт отчёта в различных форматах (PDF, Excel, CSV)
+  #     security:
+  #       - TokenAuth: []
+  #     parameters:
+  #       - name: export_type
+  #         in: path
+  #         required: true
+  #         schema:
+  #           type: string
+  #           enum: [pdf, excel, csv]
+  #       - name: report_id
+  #         in: path
+  #         required: true
+  #         schema:
+  #           type: string
+  #           format: uuid
+  #     responses:
+  #       '200':
+  #         description: Файл отчёта
+  #         content:
+  #           application/pdf: {}
+  #           application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {}
+  #           text/csv: {}
+
+  # /api/reports/templates/:
+  #   get:
+  #     tags: [Отчёты]
+  #     summary: Список шаблонов отчётов
+  #     description: Получить список сохранённых шаблонов отчётов
+  #     security:
+  #       - TokenAuth: []
+  #     responses:
+  #       '200':
+  #         description: Список шаблонов
+  #         content:
+  #           application/json:
+  #             schema:
+  #               type: array
+  #               items:
+  #                 type: object
+  #                 properties:
+  #                   id:
+  #                     type: integer
+  #                   name:
+  #                     type: string
+  #                   reportType:
+  #                     type: string
+  #                   description:
+  #                     type: string
+  #   post:
+  #     tags: [Отчёты]
+  #     summary: Создать шаблон отчёта
+  #     security:
+  #       - TokenAuth: []
+  #     requestBody:
+  #       required: true
+  #       content:
+  #         application/json:
+  #           schema:
+  #             type: object
+  #             required: [name, reportType, parameters]
+  #             properties:
+  #               name:
+  #                 type: string
+  #               reportType:
+  #                 type: string
+  #               description:
+  #                 type: string
+  #               parameters:
+  #                 type: object
+  #     responses:
+  #       '201':
+  #         description: Шаблон создан
+
+  # /api/reports/templates/{id}/:
+  #   get:
+  #     tags: [Отчёты]
+  #     summary: Детали шаблона отчёта
+  #     security:
+  #       - TokenAuth: []
+  #     parameters:
+  #       - name: id
+  #         in: path
+  #         required: true
+  #         schema:
+  #           type: integer
+  #     responses:
+  #       '200':
+  #         description: Шаблон получен
+  #   put:
+  #     tags: [Отчёты]
+  #     summary: Обновить шаблон отчёта
+  #     security:
+  #       - TokenAuth: []
+  #     parameters:
+  #       - name: id
+  #         in: path
+  #         required: true
+  #         schema:
+  #           type: integer
+  #     responses:
+  #       '200':
+  #         description: Шаблон обновлён
+  #   delete:
+  #     tags: [Отчёты]
+  #     summary: Удалить шаблон отчёта
+  #     security:
+  #       - TokenAuth: []
+  #     parameters:
+  #       - name: id
+  #         in: path
+  #         required: true
+  #         schema:
+  #           type: integer
+  #     responses:
+  #       '204':
+  #         description: Шаблон удалён
+
+  # /api/reports/mailing/:
+  #   get:
+  #     tags: [Отчёты]
+  #     summary: Список рассылок отчётов
+  #     description: Список настроенных автоматических рассылок отчётов на email
+  #     security:
+  #       - TokenAuth: []
+  #     responses:
+  #       '200':
+  #         description: Список рассылок
+  #   post:
+  #     tags: [Отчёты]
+  #     summary: Создать рассылку отчётов
+  #     security:
+  #       - TokenAuth: []
+  #     requestBody:
+  #       required: true
+  #       content:
+  #         application/json:
+  #           schema:
+  #             type: object
+  #             required: [name, reportTemplateId, schedule, emails]
+  #             properties:
+  #               name:
+  #                 type: string
+  #               reportTemplateId:
+  #                 type: integer
+  #               schedule:
+  #                 type: string
+  #                 description: Расписание в формате cron
+  #               emails:
+  #                 type: array
+  #                 items:
+  #                   type: string
+  #                   format: email
+  #     responses:
+  #       '201':
+  #         description: Рассылка создана
+
+  # /api/reports/mailing/{id}/:
+  #   get:
+  #     tags: [Отчёты]
+  #     summary: Детали рассылки
+  #     security:
+  #       - TokenAuth: []
+  #     parameters:
+  #       - name: id
+  #         in: path
+  #         required: true
+  #         schema:
+  #           type: integer
+  #     responses:
+  #       '200':
+  #         description: Рассылка получена
+  #   put:
+  #     tags: [Отчёты]
+  #     summary: Обновить рассылку
+  #     security:
+  #       - TokenAuth: []
+  #     parameters:
+  #       - name: id
+  #         in: path
+  #         required: true
+  #         schema:
+  #           type: integer
+  #     responses:
+  #       '200':
+  #         description: Рассылка обновлена
+  #   delete:
+  #     tags: [Отчёты]
+  #     summary: Удалить рассылку
+  #     security:
+  #       - TokenAuth: []
+  #     parameters:
+  #       - name: id
+  #         in: path
+  #         required: true
+  #         schema:
+  #           type: integer
+  #     responses:
+  #       '204':
+  #         description: Рассылка удалена
+
+  # ==================== ЛОКАТОРЫ ====================
+  /api/locators/:
+    get:
+      tags: [Локаторы]
+      summary: Список локаторов
+      description: |
+        Список созданных локаторов (публичных ссылок для отслеживания объектов).
+        Локаторы позволяют предоставить доступ к отслеживанию объектов без регистрации.
+      security:
+        - TokenAuth: []
+      responses:
+        '200':
+          description: Список локаторов
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Locator'
+    post:
+      tags: [Локаторы]
+      summary: Создать локатор
+      description: Создать публичную ссылку для отслеживания объектов
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [activation, expirationValue, showTracks, showGeozones]
+              properties:
+                activation:
+                  type: string
+                  description: Дата активации
+                expirationValue:
+                  type: integer
+                  description: Значение срока действия
+                expirationType:
+                  type: string
+                  enum: [days, minutes, hours]
+                  description: Тип срока действия
+                note:
+                  type: string
+                  description: Примечание
+                showTracks:
+                  type: boolean
+                  description: Отображать треки
+                showGeozones:
+                  type: boolean
+                  description: Отображать геозоны
+                objectIds:
+                  type: array
+                  items:
+                    type: integer
+                  description: ID объектов
+                objectGroupIds:
+                  type: array
+                  items:
+                    type: integer
+                  description: ID групп объектов
+      responses:
+        '201':
+          description: Локатор создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Locator'
+
+  /api/locators/{locator_id}/:
+    get:
+      tags: [Локаторы]
+      summary: Детали локатора
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: locator_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Локатор получен
+    put:
+      tags: [Локаторы]
+      summary: Обновить локатор
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: locator_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Локатор обновлён
+    delete:
+      tags: [Локаторы]
+      summary: Удалить локатор
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: locator_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Локатор удалён
+
+  /api/locators/info/{locator_id}/:
+    get:
+      tags: [Локаторы]
+      summary: Публичная информация о локаторе
+      description: |
+        Публичный endpoint для получения информации о локаторе (без авторизации).
+        Используется для отображения карты с объектами по публичной ссылке.
+      parameters:
+        - name: locator_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Информация о локаторе
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  objects:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                        name:
+                          type: string
+                        position:
+                          type: object
+
+  /api/locators/info/{locator_id}/{object_id}/:
+    get:
+      tags: [Локаторы]
+      summary: Публичная информация об объекте в локаторе
+      description: Получить текущую информацию о конкретном объекте в локаторе (без авторизации)
+      parameters:
+        - name: locator_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: object_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Информация об объекте
+
+  /api/locators/track/{locator_id}/{object_id}/:
+    get:
+      tags: [Локаторы]
+      summary: Публичный трек объекта в локаторе
+      description: Получить трек движения объекта за период (без авторизации)
+      parameters:
+        - name: locator_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: object_id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: startDate
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: endDate
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Трек объекта
+
+  # ==================== ПОМЕЩЕНИЯ ====================
+  /api/building/:
+    get:
+      tags: [Помещения]
+      summary: Список зданий
+      description: Список зданий для контроля персонала в помещениях
+      security:
+        - TokenAuth: []
+      responses:
+        '200':
+          description: Список зданий
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    name:
+                      type: string
+                    address:
+                      type: string
+                    roomsCount:
+                      type: integer
+    post:
+      tags: [Помещения]
+      summary: Создать здание
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, address, lat, lng]
+              properties:
+                name:
+                  type: string
+                  maxLength: 255
+                  description: Название здания
+                address:
+                  type: string
+                  maxLength: 255
+                  description: Адрес здания
+                lat:
+                  type: number
+                  format: float
+                  description: Широта
+                lng:
+                  type: number
+                  format: float
+                  description: Долгота
+      responses:
+        '201':
+          description: Здание создано
+
+  /api/building/{id}/:
+    get:
+      tags: [Помещения]
+      summary: Детали здания
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Здание получено
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  name:
+                    type: string
+                  address:
+                    type: string
+                  lat:
+                    type: number
+                    format: float
+                  lng:
+                    type: number
+                    format: float
+                  rooms:
+                    type: array
+                    description: Комнаты в здании
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                        name:
+                          type: string
+    put:
+      tags: [Помещения]
+      summary: Обновить здание
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  maxLength: 255
+                address:
+                  type: string
+                  maxLength: 255
+                lat:
+                  type: number
+                  format: float
+                lng:
+                  type: number
+                  format: float
+      responses:
+        '200':
+          description: Здание обновлено
+    delete:
+      tags: [Помещения]
+      summary: Удалить здание
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Здание удалено
+
+  /api/building_rooms/:
+    get:
+      tags: [Помещения]
+      summary: Список комнат/помещений
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: buildingId
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Список комнат
+    post:
+      tags: [Помещения]
+      summary: Создать комнату/помещение
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, building, schema, devicesPositions]
+              properties:
+                name:
+                  type: string
+                  maxLength: 255
+                  description: Название комнаты
+                building:
+                  type: integer
+                  description: ID здания
+                schema:
+                  type: string
+                  format: binary
+                  description: Схема помещения (изображение)
+                devicesPositions:
+                  type: array
+                  description: Позиции устройств на схеме
+                  items:
+                    type: object
+                    properties:
+                      deviceId:
+                        type: integer
+                      x:
+                        type: number
+                      y:
+                        type: number
+      responses:
+        '201':
+          description: Комната создана
+
+  /api/building_rooms/{id}/:
+    get:
+      tags: [Помещения]
+      summary: Детали комнаты
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Комната получена
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  name:
+                    type: string
+                  building:
+                    type: integer
+                    description: ID здания
+                  schema:
+                    type: string
+                    description: URL схемы помещения
+                  devicesPositions:
+                    type: array
+                    description: Позиции устройств на схеме
+                    items:
+                      type: object
+                      properties:
+                        deviceId:
+                          type: integer
+                        x:
+                          type: number
+                        y:
+                          type: number
+                  devices:
+                    type: array
+                    description: Устройства в комнате
+                    items:
+                      $ref: '#/components/schemas/Device'
+    put:
+      tags: [Помещения]
+      summary: Обновить комнату
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  maxLength: 255
+                building:
+                  type: integer
+                  description: ID здания
+                schema:
+                  type: string
+                  format: binary
+                  description: Схема помещения (изображение)
+                devicesPositions:
+                  type: array
+                  description: Позиции устройств на схеме
+                  items:
+                    type: object
+                    properties:
+                      deviceId:
+                        type: integer
+                      x:
+                        type: number
+                      y:
+                        type: number
+      responses:
+        '200':
+          description: Комната обновлена
+    delete:
+      tags: [Помещения]
+      summary: Удалить комнату
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Комната удалена
+
+  /api/room_info/{room_id}/:
+    get:
+      tags: [Помещения]
+      summary: Информация о комнате и находящихся в ней объектах
+      description: |
+        Получить информацию о комнате и объектах, которые в данный момент находятся в ней.
+        Возвращает объекты, сгруппированные по MAC-адресам устройств (bluetooth-меток).
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: room_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Информация о комнате
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Объект с MAC-адресами устройств в качестве ключей
+                additionalProperties:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        description: Название объекта
+                      t:
+                        type: string
+                        format: date-time
+                        description: Время последнего сообщения
+              example:
+                "aa:bb:cc:dd:ee:ff":
+                  - name: "Сотрудник 1"
+                    t: "2025-10-07T12:34:56"
+                  - name: "Сотрудник 2"
+                    t: "2025-10-07T12:35:10"
+                "11:22:33:44:55:66":
+                  - name: "Сотрудник 3"
+                    t: "2025-10-07T12:30:00"
+
+  # ==================== ПОЛЬЗОВАТЕЛЬСКИЕ УСТРОЙСТВА ====================
+  # /api/user_devices/:
+  #   get:
+  #     tags: [Пользовательские устройства]
+  #     summary: Список мобильных устройств пользователя
+  #     description: |
+  #       Список мобильных устройств (телефонов, планшетов), с которых пользователь входил в систему.
+  #       Используется для управления push-уведомлениями.
+  #     security:
+  #       - TokenAuth: []
+  #     responses:
+  #       '200':
+  #         description: Список устройств
+  #         content:
+  #           application/json:
+  #             schema:
+  #               type: array
+  #               items:
+  #                 type: object
+  #                 properties:
+  #                   deviceId:
+  #                     type: string
+  #                     description: ID устройства
+  #                   deviceName:
+  #                     type: string
+  #                     description: Название устройства
+  #                   platform:
+  #                     type: string
+  #                     enum: [ios, android]
+  #                   lastActive:
+  #                     type: string
+  #                     format: date-time
+  #                   pushEnabled:
+  #                     type: boolean
+  #   post:
+  #     tags: [Пользовательские устройства]
+  #     summary: Зарегистрировать устройство
+  #     description: Регистрация мобильного устройства для получения push-уведомлений
+  #     security:
+  #       - TokenAuth: []
+  #     requestBody:
+  #       required: true
+  #       content:
+  #         application/json:
+  #           schema:
+  #             type: object
+  #             required: [deviceId, platform, pushToken]
+  #             properties:
+  #               deviceId:
+  #                 type: string
+  #               platform:
+  #                 type: string
+  #                 enum: [ios, android]
+  #               pushToken:
+  #                 type: string
+  #               deviceName:
+  #                 type: string
+  #     responses:
+  #       '201':
+  #         description: Устройство зарегистрировано
+
+  # /api/user_devices/{device_id}/:
+  #   delete:
+  #     tags: [Пользовательские устройства]
+  #     summary: Удалить устройство
+  #     description: Отменить регистрацию устройства и отключить push-уведомления
+  #     security:
+  #       - TokenAuth: []
+  #     parameters:
+  #       - name: device_id
+  #         in: path
+  #         required: true
+  #         schema:
+  #           type: string
+  #     responses:
+  #       '204':
+  #         description: Устройство удалено
+
+  # # ==================== ПРАВА ДОСТУПА ====================
+  # /api/access/available/list:
+  #   get:
+  #     tags: [Права доступа]
+  #     summary: Список доступных прав доступа
+  #     description: |
+  #       Получить список всех возможных прав доступа в системе.
+  #       Используется для настройки прав пользователей к ресурсам.
+  #     security:
+  #       - TokenAuth: []
+  #     responses:
+  #       '200':
+  #         description: Список прав доступа
+  #         content:
+  #           application/json:
+  #             schema:
+  #               type: object
+  #               properties:
+  #                 common:
+  #                   type: array
+  #                   items:
+  #                     type: string
+  #                   description: Общие права доступа
+  #                   example: ["view", "edit", "delete", "export"]
+  #                 objects:
+  #                   type: array
+  #                   items:
+  #                     type: string
+  #                   description: Права доступа к объектам
+  #                 drivers:
+  #                   type: array
+  #                   items:
+  #                     type: string
+  #                 geozones:
+  #                   type: array
+  #                   items:
+  #                     type: string
+  #                 reports:
+  #                   type: array
+  #                   items:
+  #                     type: string
+
+  # ==================== ОБЪЕКТЫ ====================
+  /api/objects/:
+    get:
+      tags: [Объекты]
+      summary: Список объектов
+      description: Возвращает список доступных пользователю объектов мониторинга.
+      security:
+        - TokenAuth: []
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ObjectListItem'
+    post:
+      tags: [Объекты]
+      summary: Создать объект
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                general:
+                  type: object
+                  properties:
+                    name: { type: string }
+                    objectTypeId: { type: integer }
+                    deviceTypeId: { type: integer }
+                    iconId: { type: integer }
+                    objectIconColor: { type: string }
+                    uniqueId: { type: string }
+                    phoneNumber:
+                      type: array
+                      items: { type: string }
+                    password: { type: string, nullable: true }
+                    useLbs: { type: boolean }
+                    useWifiBle: { type: boolean }
+                additional: { type: object }
+                tripDetector: { type: object }
+                customFields:
+                  type: array
+                  items: { type: object }
+                specifications:
+                  type: array
+                  items: { type: object }
+                sensors:
+                  type: array
+                  items: { type: object }
+                commands:
+                  type: array
+                  items: { type: object }
+                accesses: { type: object }
+                isActive: { type: boolean }
+      responses:
+        '201':
+          description: Создано
+  /api/objects/{id}/:
+    get:
+      tags: [Объекты]
+      summary: Детали объекта
+      description: |
+        Возвращает информацию об объекте.
+        Параметры запроса:
+        - card=true — карточка объекта (упрощённый состав полей)
+        - full=true — полное представление объекта
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: card
+          in: query
+          schema:
+            type: string
+          description: Если true — вернуть карточку объекта
+        - name: full
+          in: query
+          schema:
+            type: string
+          description: Если true — вернуть полное представление объекта
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  name:
+                    type: string
+                  uniqueId:
+                    type: string
+    put:
+      tags: [Объекты]
+      summary: Обновить объект
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200': { description: Обновлено }
+    delete:
+      tags: [Объекты]
+      summary: Удалить объект
+      security:
+        - TokenAuth: []
+      responses:
+        '204': { description: Удалено }
+  /api/objects/short/:
+    get:
+      tags: [Объекты]
+      summary: Список объектов (краткий)
+      security:
+        - TokenAuth: []
+      responses:
+        '200': { description: Успешный ответ }
+  /api/objects/{id}/sensors/:
+    get:
+      tags: [Объекты]
+      summary: Получить датчики объекта
+      security:
+        - TokenAuth: []
+      responses:
+        '200': { description: Успешный ответ }
+  /api/objects/{id}/commands/:
+    get:
+      tags: [Объекты]
+      summary: Получить команды объекта
+      security:
+        - TokenAuth: []
+      responses:
+        '200': { description: Успешный ответ }
+  /api/objects/{id}/drivers/:
+    get:
+      tags: [Объекты]
+      summary: Получить водителей объекта
+      security:
+        - TokenAuth: []
+      responses:
+        '200': { description: Успешный ответ }
+  /api/objects/{id}/send_command/:
+    post:
+      tags: [Объекты]
+      summary: Отправить команду объекту
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                type: { type: string }
+                params: { type: string }
+      responses:
+        '204': { description: Отправлено }
+  /api/objects/{id}/events:
+    post:
+      tags: [Объекты]
+      summary: Зарегистрировать событие
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201': { description: Создано }
+  /api/objects/{id}/events/bulk_delete:
+    post:
+      tags: [Объекты]
+      summary: Массовое удаление событий
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '204': { description: Удалено }
+  /api/objects/specification_list/:
+    get:
+      tags: [Объекты]
+      summary: Список спецификаций по аккаунту
+      security:
+        - TokenAuth: []
+      responses:
+        '200': { description: Успешный ответ }
+  /api/objects/display/:
+    post:
+      tags: [Объекты]
+      summary: Настроить видимость объектов в мониторинге
+      description: Принимает список идентификаторов объектов, которые должны отображаться у пользователя в мониторинге.
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VisibleObjectsIds'
+      responses:
+        '201': { description: Настройки применены }
+
+  /api/objects/set_map_visibility/:
+    post:
+      tags: [Объекты]
+      summary: Настроить отображение объектов на карте
+      description: Альтернативный endpoint для управления видимостью объектов
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                objectIds:
+                  type: array
+                  items:
+                    type: integer
+                showOnMap:
+                  type: boolean
+      responses:
+        '200': { description: Настройки применены }
+
+  /api/objects/groups/:
+    get:
+      tags: [Объекты]
+      summary: Список групп объектов
+      description: Получить список групп объектов для организации и фильтрации
+      security:
+        - TokenAuth: []
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    name:
+                      type: string
+                    description:
+                      type: string
+                    objectsCount:
+                      type: integer
+    post:
+      tags: [Объекты]
+      summary: Создать группу объектов
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+      responses:
+        '201':
+          description: Группа создана
+
+  /api/objects/groups/{id}/:
+    get:
+      tags: [Объекты]
+      summary: Детали группы объектов
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Успешный ответ
+    put:
+      tags: [Объекты]
+      summary: Обновить группу объектов
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+      responses:
+        '200':
+          description: Группа обновлена
+    delete:
+      tags: [Объекты]
+      summary: Удалить группу объектов
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Группа удалена
+
+  /api/objects/groups/{id}/manage/:
+    post:
+      tags: [Объекты]
+      summary: Управление объектами в группе
+      description: Добавление или удаление объектов из группы
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resourceIds, actionType]
+              properties:
+                resourceIds:
+                  type: array
+                  items:
+                    type: integer
+                  description: ID объектов для добавления/удаления
+                actionType:
+                  type: string
+                  enum: [add, remove]
+      responses:
+        '200':
+          description: Операция выполнена
+
+  /api/objects/import/:
+    post:
+      tags: [Объекты]
+      summary: Импорт объектов из файла
+      description: |
+        Массовый импорт объектов из Excel файла.
+        Создает задачу импорта и возвращает её ID для отслеживания прогресса.
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Excel файл с данными объектов
+      responses:
+        '202':
+          description: Импорт принят в обработку
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  taskId:
+                    type: string
+                    format: uuid
+                    description: ID задачи импорта
+        '400':
+          description: Ошибка валидации файла
+
+  /api/objects/import_task/:
+    get:
+      tags: [Объекты]
+      summary: Список задач импорта
+      description: Получить список всех задач импорта объектов
+      security:
+        - TokenAuth: []
+      responses:
+        '200':
+          description: Список задач импорта
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      format: uuid
+                    status:
+                      type: string
+                      enum: [pending, processing, completed, error]
+                    totalObjects:
+                      type: integer
+                    processedObjects:
+                      type: integer
+                    createdAt:
+                      type: string
+                      format: date-time
+
+  /api/objects/import_task/{pk}/:
+    get:
+      tags: [Объекты]
+      summary: Статус задачи импорта
+      description: Получить детальную информацию о задаче импорта
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Статус задачи
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                  totalObjects:
+                    type: integer
+                  processedObjects:
+                    type: integer
+                  successCount:
+                    type: integer
+                  errorCount:
+                    type: integer
+                  errors:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        row:
+                          type: integer
+                        message:
+                          type: string
+    delete:
+      tags: [Объекты]
+      summary: Удалить задачу импорта
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: pk
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Задача удалена
+
+  /api/device_models/:
+    get:
+      tags: [Объекты]
+      summary: Справочник моделей устройств для объектов
+      description: Получить список доступных моделей устройств (терминалов) для создания объектов
+      security:
+        - TokenAuth: []
+      responses:
+        '200':
+          description: Список моделей устройств
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    name:
+                      type: string
+                    manufacturer:
+                      type: string
+                    protocol:
+                      type: string
+  /api/objects/stats/:
+    post:
+      tags: [Объекты]
+      summary: Получить сводную статистику по объекту за период
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ObjectStatsRequest'
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectStatsResponse'
+  /api/objects/monitoring/:
+    get:
+      tags: [Объекты]
+      summary: Список видимых объектов (мониторинг)
+      description: |
+        Возвращает список объектов, видимых в мониторинге.
+        При передаче `objectIds` возвращается простой массив без пагинации.
+        При `app=true` структура ответа соответствует мобильной версии.
+      security:
+        - TokenAuth: []
+      parameters:
+        - in: query
+          name: app
+          schema: { type: string }
+          description: Если true — вернуть схему для мобильного клиента
+        - in: query
+          name: objectIds
+          schema: { type: string }
+          description: Список id через запятую (без пагинации)
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1 }
+        - in: query
+          name: perPage
+          schema: { type: integer, minimum: 0, maximum: 1000 }
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/PaginatedWebObjectList'
+                  - type: array
+                    items: { $ref: '#/components/schemas/MonitoringWebObject' }
+                  - type: array
+                    items: { $ref: '#/components/schemas/MonitoringAppObject' }
+  /api/objects/available_params/{objectId}/:
+    get:
+      tags: [Объекты]
+      summary: Доступные параметры датчиков для объекта
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: objectId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AvailableParamsResponse'
+  /api/objects/available_params/:
+    post:
+      tags: [Объекты]
+      summary: Доступные параметры датчиков для множества объектов
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                objectIds:
+                  type: array
+                  items: { type: integer }
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AvailableParamsResponse'
+
+  # CMS: Аутентификация и пользователи
+  # /api/cms/login/:
+  #   post:
+  #     tags: [CMS]
+  #     summary: Вход в CMS
+  #     requestBody:
+  #       required: true
+  #       content:
+  #         application/json:
+  #           schema:
+  #             $ref: '#/components/schemas/CmsLoginRequest'
+  #     responses:
+  #       '200':
+  #         description: Успешная авторизация
+  #         content:
+  #           application/json:
+  #             schema:
+  #               $ref: '#/components/schemas/CmsLoginResponse'
+  #             examples:
+  #               ok:
+  #                 value:
+  #                   token: "abcdef123456"
+
+  /api/cms/users/:
+    get:
+      tags: [CMS]
+      summary: Список пользователей (CMS)
+      security:
+        - TokenAuth: []
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/CmsUserListItem' }
+              examples:
+                sample:
+                  value:
+                    - id: 1
+                      email: user@example.com
+                      name: Иван
+                      username: ivan
+                      creatorName: Admin
+                      lastLogin: "2025-01-01T10:00:00Z"
+                      creationDatetime: "2024-12-12T12:00:00Z"
+                      accountId: 10
+                      accountName: Client A
+                      accountType: client
+                      accountIsActive: true
+                      accountBlockingDatetime: null
+                      isActive: true
+                      language: ru
+                      timezone: 3
+                      isAdmin: false
+                      hasAdminAccess: false
+                      visibleTabsNames: [monitoring, reports]
+                      currentUserAccess: [view, edit]
+    post:
+      tags: [CMS]
+      summary: Создать пользователя (CMS)
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CmsUserCreateRequest'
+            examples:
+              create:
+                value:
+                  name: Иван
+                  username: ivan
+                  email: user@example.com
+                  password: "P@ssw0rd!"
+                  hasAdminAccess: false
+                  visibleTabsNames: [monitoring, reports]
+                  accesses:
+                    common: [view]
+        
+      responses:
+        '201':
+          description: Создано
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CmsUser' }
+
+  /api/cms/users/{id}/:
+    get:
+      tags: [CMS]
+      summary: Детали пользователя (CMS)
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CmsUser' }
+              examples:
+                item:
+                  value:
+                    id: 1
+                    email: user@example.com
+                    name: Иван
+                    username: ivan
+                    creatorName: Admin
+                    lastLogin: "2025-01-01T10:00:00Z"
+                    creationDatetime: "2024-12-12T12:00:00Z"
+                    accountId: 10
+                    accountName: Client A
+                    accountType: client
+                    accountIsActive: true
+                    accountBlockingDatetime: null
+                    isActive: true
+                    language: ru
+                    timezone: 3
+                    isAdmin: false
+                    hasAdminAccess: false
+                    visibleTabsNames: [monitoring, reports]
+                    currentUserAccess: [view, edit]
+                    addressFormat: [country, city, street]
+                    objectCardSettings: { general: 1, sensors: 2 }
+                    monitoringItemSetup: { configListItem: { address: true } }
+                    visibleObjectsIds: [1,2]
+                    visibleObjectsCount: 2
+                    visibleGeozoneIds: [5]
+                    commonAccesses: [export]
+    put:
+      tags: [CMS]
+      summary: Обновить пользователя (CMS)
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CmsUserUpdateRequest'
+            examples:
+              update:
+                value:
+                  name: Иван Петров
+                  email: user@example.com
+                  timezone: 4
+                  isActive: true
+                  visibleTabsNames: [monitoring, reports, users]
+      responses:
+        '200':
+          description: Обновлено
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CmsUser' }
+    delete:
+      tags: [CMS]
+      summary: Удалить пользователя (CMS)
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '204': { description: Удалено }
+
+  /api/cms/users/{id}/activate/:
+    post:
+      tags: [CMS]
+      summary: Активировать/деактивировать пользователя (CMS)
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CmsUserActivateRequest' }
+      responses:
+        '201': { description: Изменён статус }
+
+  /api/cms/users/excel/:
+    post:
+      tags: [CMS]
+      summary: Экспорт списка пользователей в Excel (CMS)
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CmsUserExportRequest' }
+      responses:
+        '200':
+          description: Файл Excel
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {}
+
+  /api/cms/users/login_as/:
+    post:
+      tags: [CMS]
+      summary: Войти как другой пользователь (CMS)
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CmsLoginAsRequest' }
+      responses:
+        '200':
+          description: URL для перенаправления
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CmsLoginAsResponse' }
+
+  /api/cms/update_user_password/:
+    post:
+      tags: [CMS]
+      summary: Сменить пароль другого пользователя (CMS)
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateAnotherUserPasswordRequest' }
+      responses:
+        '201': { description: Пароль изменён }
+
+  /api/cms/password_reset/:
+    post:
+      tags: [CMS]
+      summary: Отправить ссылку для сброса пароля на email (CMS)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetRequest'
+      responses:
+        '200':
+          description: Успешно, сгенерирован токен для сброса пароля
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PasswordResetResponse'
+
+  /api/cms/device_retranslator_models/:
+    get:
+      tags: [CMS]
+      summary: Справочник моделей ретрансляторов устройств
+      security:
+        - TokenAuth: []
+      responses:
+        '200': { description: Успешный ответ }
+
+  # CMS: Объекты
+  /api/cms/objects/:
+    get:
+      tags: [CMS]
+      summary: Список объектов (CMS)
+      security:
+        - TokenAuth: []
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/CmsObjectListItem' }
+              examples:
+                sample:
+                  value:
+                    - id: 101
+                      name: Tractor-01
+                      uniqueId: tr-01
+                      creatorName: Admin
+                      creatorId: 2
+                      creatorIsActive: true
+                      accountId: 10
+                      accountName: Client A
+                      accountType: client
+                      accountIsActive: true
+                      phoneNumbers: ["+1234567"]
+                      deviceTypeName: Teltonika
+                      lastMessageDatetime: "2025-06-17T11:26:07Z"
+                      createdAt: "2024-12-12T12:00:00Z"
+                      isActive: true
+                      currentUserAccess: [view, edit]
+    post:
+      tags: [CMS]
+      summary: Экспорт объектов в Excel (CMS)
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CmsObjectExportRequest' }
+      responses:
+        '200':
+          description: Файл Excel
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {}
+
+  /api/cms/objects/{id}/:
+    get:
+      tags: [CMS]
+      summary: Детали объекта (CMS)
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CmsObject' }
+              examples:
+                item:
+                  value:
+                    id: 101
+                    name: Tractor-01
+                    uniqueId: tr-01
+                    deviceTypeId: 5
+                    objectIconColor: "#1464cc"
+                    objectCaptionColor: "#1464cc"
+                    trackColor: { type: single, singleColor: "#1464cc" }
+                    currentUserAccess: [view, edit]
+                    isDisplayed: true
+                    connectedStatus: true
+                    deviceCanSendCommands: true
+                    lastMessage:
+                      t: "2025-06-17T11:26:07Z"
+                      tpos: "2025-06-17T11:26:07Z"
+                      pos: { x: 60.67, y: 56.87, s: "7", c: 237, sc: 5 }
+                      rt: 1753093807
+
+  /api/cms/objects/short/:
+    get:
+      tags: [CMS]
+      summary: Сокращённый список объектов (CMS)
+      security:
+        - TokenAuth: []
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ObjectListShortItem' }
+
+  /api/cms/objects/specification_list/:
+    get:
+      tags: [CMS]
+      summary: Подсказки по характеристикам (CMS)
+      security:
+        - TokenAuth: []
+      parameters:
+        - in: query
+          name: accountId
+          schema: { type: integer }
+          description: Идентификатор аккаунта
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: { type: array, items: { type: string } }
+
+  /api/cms/objects/{id}/activate/:
+    post:
+      tags: [CMS]
+      summary: Активировать/деактивировать объект (CMS)
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ActivateRequest' }
+      responses:
+        '201': { description: Изменён статус }
+
+  /api/cms/objects/mass_delete/:
+    post:
+      tags: [CMS]
+      summary: Массовое удаление объектов (CMS)
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CmsObjectsMassDeleteRequest' }
+      responses:
+        '200': { description: Успешно удалено }
+
+  /api/cms/objects/change_account/:
+    post:
+      tags: [CMS]
+      summary: Переместить объекты в другой аккаунт (CMS)
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CmsObjectsChangeAccountRequest' }
+      responses:
+        '200': { description: Успешно перемещено }
+
+  # CMS: Группы объектов
+  /api/cms/objects/groups/:
+    get:
+      tags: [CMS]
+      summary: Список групп объектов (CMS)
+      security:
+        - TokenAuth: []
+      responses:
+        '200': { description: Успешный ответ }
+
+  /api/cms/objects/groups/{id}/:
+    get:
+      tags: [CMS]
+      summary: Детали группы объектов (CMS)
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Успешный ответ }
+
+  # CMS: Корзина объектов
+  /api/cms/trash/:
+    get:
+      tags: [CMS]
+      summary: Список объектов в корзине (CMS)
+      security:
+        - TokenAuth: []
+      responses:
+        '200': { description: Успешный ответ }
+    delete:
+      tags: [CMS]
+      summary: Удалить объект из корзины (CMS)
+      security:
+        - TokenAuth: []
+      responses:
+        '204': { description: Удалено }
+
+  /api/cms/trash/{id}/:
+    get:
+      tags: [CMS]
+      summary: Детали объекта в корзине (CMS)
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Успешный ответ }
+    delete:
+      tags: [CMS]
+      summary: Удалить из корзины (CMS)
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '204': { description: Удалено }
+
+  /api/cms/trash/restore/:
+    put:
+      tags: [CMS]
+      summary: Восстановить объекты из корзины (CMS)
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RestoreClearTrashRequest' }
+      responses:
+        '200': { description: Восстановлено }
+
+  /api/cms/trash/mass_delete/:
+    post:
+      tags: [CMS]
+      summary: Массовое удаление из корзины (CMS)
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RestoreClearTrashRequest' }
+      responses:
+        '200': { description: Удалено }
+
+  # /api/cms/trash/clear/:
+  #   delete:
+  #     tags: [CMS]
+  #     summary: Очистить корзину (CMS)
+  #     security:
+  #       - TokenAuth: []
+  #     responses:
+  #       '204': { description: Очищено }
+
+  # CMS: Ретрансляторы
+  /api/cms/retranslators/:
+    get:
+      tags: [CMS]
+      summary: Список ретрансляторов (CMS)
+      security:
+        - TokenAuth: []
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/RetranslatorListItem' }
+              examples:
+                sample:
+                  value:
+                    - id: 1
+                      name: RTR-1
+                      protocolName: Wialon
+                      serverAddress: "1.2.3.4"
+                      serverPort: "20850"
+                      accountName: Client A
+                      status: true
+                      objectsTotal: 12
+                      activeRetransmission:
+                        id: "11111111-1111-1111-1111-111111111111"
+                        status: running
+                        startDate: "2025-01-01T00:00:00Z"
+                        endDate: "2025-01-02T00:00:00Z"
+                        progressPercents: 42
+    post:
+      tags: [CMS]
+      summary: Создать ретранслятор (CMS)
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RetranslatorCreateUpdateRequest' }
+            examples:
+              create:
+                value:
+                  name: RTR-1
+                  protocol: 2
+                  serverAddress: "1.2.3.4"
+                  serverPort: 20850
+                  account: 10
+                  tiedObjects:
+                    - id: 101
+                      uniqueId: tr-01
+      responses:
+        '201':
+          description: Создано
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RetranslatorCreateUpdateResponse' }
+              examples:
+                created:
+                  value:
+                    id: 1
+                    name: RTR-1
+                    protocol: 2
+                    serverAddress: "1.2.3.4"
+                    serverPort: 20850
+                    account: 10
+                    status: true
+                    tiedObjects:
+                      - objectId: 101
+                        uniqueId: tr-01
+
+  /api/cms/retranslators/{id}/:
+    get:
+      tags: [CMS]
+      summary: Детали ретранслятора (CMS)
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Retranslator' }
+    put:
+      tags: [CMS]
+      summary: Обновить ретранслятор (CMS)
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RetranslatorCreateUpdateRequest' }
+      responses:
+        '200':
+          description: Обновлено
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RetranslatorCreateUpdateResponse' }
+    delete:
+      tags: [CMS]
+      summary: Удалить ретранслятор (CMS)
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '204': { description: Удалено }
+
+  /api/cms/retranslators/{id}/activate/:
+    post:
+      tags: [CMS]
+      summary: Активировать/деактивировать ретранслятор (CMS)
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ActivateRequest' }
+      responses:
+        '201': { description: Изменён статус }
+
+  /api/cms/retranslators/{id}/retransmissions/:
+    get:
+      tags: [CMS]
+      summary: Список задач ретрансляции (CMS)
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Успешный ответ }
+    post:
+      tags: [CMS]
+      summary: Создать задачу ретрансляции (CMS)
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RetransmissionCreateRequest' }
+      responses:
+        '201': { description: Создано }
+
+  /api/cms/retranslators/{id}/retransmissions/{entityId}/:
+    get:
+      tags: [CMS]
+      summary: Детали задачи ретрансляции (CMS)
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: entityId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Успешный ответ }
+
+  /api/cms/retranslators/{id}/retransmissions/{taskId}/stop/:
+    post:
+      tags: [CMS]
+      summary: Остановить задачу ретрансляции (CMS)
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: taskId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '202': { description: Остановлено }
+
+  /api/cms/retranslators/{id}/retransmissions/{taskId}/pause/:
+    post:
+      tags: [CMS]
+      summary: Поставить задачу на паузу (CMS)
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: taskId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '202': { description: Поставлено на паузу }
+
+  /api/cms/retranslators/{id}/retransmissions/{taskId}/resume/:
+    post:
+      tags: [CMS]
+      summary: Возобновить задачу ретрансляции (CMS)
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: taskId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '202': { description: Возобновлено }
+
+  # CMS: Шаблоны отчётов
+  # /api/cms/reports/templates/:
+  #   get:
+  #     tags: [CMS]
+  #     summary: Список шаблонов отчётов (CMS)
+  #     security:
+  #       - TokenAuth: []
+  #     responses:
+  #       '200':
+  #         description: Успешный ответ
+  #         content:
+  #           application/json:
+  #             schema:
+  #               type: array
+  #               items: { $ref: '#/components/schemas/CmsReportTemplateListItem' }
+
+  # /api/cms/reports/templates/{id}/:
+  #   get:
+  #     tags: [CMS]
+  #     summary: Детали шаблона отчёта (CMS)
+  #     security:
+  #       - TokenAuth: []
+  #     parameters:
+  #       - name: id
+  #         in: path
+  #         required: true
+  #         schema: { type: integer }
+  #     responses:
+  #       '200': { description: Успешный ответ }
+
+  # CMS: Аккаунты
+  /api/cms/accounts/:
+    get:
+      tags: [CMS]
+      summary: Список аккаунтов (CMS)
+      security:
+        - TokenAuth: []
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/CmsAccountListItem' }
+    post:
+      tags: [CMS]
+      summary: Создать аккаунт (CMS)
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CmsAccountCreateRequest' }
+      responses:
+        '201': { description: Создано }
+
+  /api/cms/accounts/{id}/:
+    get:
+      tags: [CMS]
+      summary: Детали аккаунта (CMS)
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Успешный ответ }
+    put:
+      tags: [CMS]
+      summary: Обновить аккаунт (CMS)
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CmsAccountUpdateRequest' }
+      responses:
+        '200': { description: Обновлено }
+    delete:
+      tags: [CMS]
+      summary: Удалить аккаунт (CMS)
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '204': { description: Удалено }
+
+  /api/cms/accounts/{id}/activate/:
+    post:
+      tags: [CMS]
+      summary: Активировать/деактивировать аккаунт (CMS)
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ActivateRequest' }
+      responses:
+        '201': { description: Изменён статус }
+
+  /api/cms/accounts/short/:
+    get:
+      tags: [CMS]
+      summary: Короткий список аккаунтов (CMS)
+      security:
+        - TokenAuth: []
+      responses:
+        '200': { description: Успешный ответ }
+
+  /api/cms/accounts/{id}/objects/:
+    get:
+      tags: [CMS]
+      summary: Объекты аккаунта и дочерних (CMS)
+      security:
+        - TokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Успешный ответ }
+
+  /api/cms/accounts/excel/:
+    post:
+      tags: [CMS]
+      summary: Экспорт аккаунтов в Excel (CMS)
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CmsAccountExportRequest' }
+      responses:
+        '200':
+          description: Файл Excel
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {}
+
+  /api/cms/accounts/change_account/:
+    post:
+      tags: [CMS]
+      summary: Переместить аккаунт и данные (CMS)
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AccountMoveRequest' }
+      responses:
+        '200': { description: Перемещено }
+
+  # CMS: Журнал
+  /api/cms/journal/:
+    get:
+      tags: [CMS]
+      summary: Журнал событий (CMS)
+      security:
+        - TokenAuth: []
+      responses:
+        '200': { description: Успешный ответ }
+  /api/update_user_profile/:
+    put:
+      tags: [Учетные записи]
+      summary: Обновить профиль пользователя
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserProfileUpdateRequest'
+      responses:
+        '201': { description: Обновлено }
+  /api/change_password/:
+    put:
+      tags: [Учетные записи]
+      summary: Изменить пароль пользователя
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordChangeRequest'
+      responses:
+        '200':
+          description: Успешно, возвращается новый токен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChangePasswordResponse'
+  /api/password_reset/:
+    post:
+      tags: [Учетные записи]
+      summary: Отправить ссылку для сброса пароля на email
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetRequest'
+      responses:
+        '200':
+          description: Успешно, сгенерирован токен для сброса пароля
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PasswordResetResponse'
+  /api/check_password_reset_token/:
+    post:
+      tags: [Учетные записи]
+      summary: Проверить валидность токена сброса пароля
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckPasswordResetTokenRequest'
+      responses:
+        '200': { description: Валидный токен }
+        '400': { description: Неверный или истёкший токен }
+  /api/password_reset_confirm/:
+    post:
+      tags: [Учетные записи]
+      summary: Сброс пароля и установка нового
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetConfirmRequest'
+      responses:
+        '201': { description: Пароль изменён }
+components:
+  securitySchemes:
+    TokenAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: Используйте формат `Token <ваш_токен>`
+  schemas:
+    ObjectListItem:
+      type: object
+      description: Объект в списке мониторинга (camelCase поля)
+      properties:
+        id: { type: integer, description: Идентификатор объекта }
+        name: { type: string, description: Название объекта }
+        driversAttached: { type: boolean, description: Признак наличия прикреплённых водителей }
+        deviceCanSendCommands: { type: boolean, description: Может ли устройство принимать команды }
+        connectedStatus: { type: boolean, description: Признак онлайн-соединения объекта }
+        specifications:
+          type: array
+          description: Технические характеристики объекта
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              value: { type: string }
+        iconId: { type: integer, description: Идентификатор иконки }
+        uniqueId: { type: string, description: Уникальный идентификатор трекера/устройства }
+        objectIconColor: { type: string, description: Цвет иконки объекта в HEX }
+        objectCaptionColor: { type: string, description: Цвет подписи объекта в HEX }
+        trackColor:
+          $ref: '#/components/schemas/TrackColor'
+        currentUserAccess:
+          type: array
+          description: Права текущего пользователя на объект
+          items: { type: string }
+        isDisplayed: { type: boolean, description: Признак отображения объекта в мониторинге }
+        lastMessage:
+          $ref: '#/components/schemas/LastMessage'
+    ObjectListShortItem:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        uniqueId: { type: string }
+        accountId: { type: integer }
+    ObjectCommand:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        type: { type: string, enum: [custom_msg] }
+        params: { type: string, nullable: true }
+        uuid: { type: string, format: uuid }
+        isVisible: { type: boolean }
+    ObjectSensorWithColors:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        unit: { type: string, nullable: true }
+        type: { type: string }
+        isVisible: { type: boolean }
+        uuid: { type: string, format: uuid }
+        colors: { type: object, nullable: true }
+    DriverPartial:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        phoneNumber: { type: string }
+    ObjectCommon:
+      type: object
+      properties:
+        lastMessage: { $ref: '#/components/schemas/LastMessage' }
+        id: { type: integer }
+        name: { type: string }
+        sensors:
+          type: array
+          items: { $ref: '#/components/schemas/ObjectSensorLight' }
+        commands:
+          type: array
+          items: { $ref: '#/components/schemas/ObjectCommandLight' }
+        drivers:
+          type: array
+          items: { $ref: '#/components/schemas/DriverPartial' }
+        deviceCanSendCommands: { type: boolean }
+        connectedStatus: { type: boolean }
+        uniqueId: { type: string }
+        iconId: { type: integer }
+        objectIconColor: { type: string }
+        objectCaptionColor: { type: string }
+        trackColor: { type: object }
+        currentUserAccess:
+          type: array
+          items: { type: string }
+        isDisplayed: { type: boolean }
+    ObjectCommandLight:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        type: { type: string }
+    ObjectSensorLight:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        unit: { type: string, nullable: true }
+        type: { type: string }
+        isVisible: { type: boolean }
+    LastMessage:
+      type: object
+      description: Последнее сообщение от объекта
+      properties:
+        t: { type: string, format: date-time, description: Время сообщения }
+        tpos: { type: string, format: date-time, nullable: true, description: Время последней валидной геопозиции }
+        pos:
+          type: object
+          description: Геопозиция и дополнительные параметры
+          properties:
+            c: { type: number, nullable: true, description: Курс/азимут, градусы }
+            s: { type: string, nullable: true, description: Скорость, км/ч (строкой) }
+            x: { type: number, nullable: true, description: Широта }
+            y: { type: number, nullable: true, description: Долгота }
+            z: { type: number, nullable: true, description: Высота }
+            sc: { type: number, nullable: true, description: Количество спутников }
+        rt: { type: integer, description: Время регистрации сообщения (unix timestamp) }
+
+    TrackColor:
+      type: object
+      description: Настройки цвета трека на карте
+      properties:
+        type:
+          type: string
+          description: Тип окраски трека
+          enum: [single, sensor]
+        arrayColor:
+          type: array
+          description: Диапазоны значений и соответствующие цвета
+          items:
+            $ref: '#/components/schemas/TrackColorRange'
+        sensorUuid:
+          type: string
+          format: uuid
+          nullable: true
+          description: UUID датчика, если используется раскраска по значению датчика
+        singleColor:
+          type: string
+          description: Цвет трека, если выбран одиночный цвет (HEX)
+
+    TrackColorRange:
+      type: object
+      description: Диапазон значений для раскраски трека
+      properties:
+        color: { type: string, description: Цвет в HEX }
+        maxValue: { type: number, nullable: true, description: Верхняя граница (включительно) }
+        minValue: { type: number, nullable: true, description: Нижняя граница (включительно) }
+    ObjectFull:
+      allOf:
+        - $ref: '#/components/schemas/ObjectCommon'
+        - type: object
+          properties:
+            specifications:
+              type: array
+              items:
+                type: object
+                properties:
+                  name: { type: string }
+                  value: { type: string }
+            deviceTypeId: { type: integer }
+            accesses: { type: object }
+    ObjectCreateRequest:
+      type: object
+      required: [general, additional, tripDetector, customFields, specifications, sensors, commands, accesses]
+      properties:
+        general:
+          type: object
+          required: [name, objectTypeId, deviceTypeId, iconId, objectIconColor, uniqueId, phoneNumber]
+          properties:
+            name: { type: string, maxLength: 255 }
+            objectTypeId: { type: string, enum: [car,human,animal,personal_other,camera,compressor,container,generator,azs,room,machine,vending,stationary_object_other] }
+            deviceTypeId: { type: integer }
+            iconId: { type: integer }
+            objectIconColor: { type: string }
+            uniqueId: { type: string, maxLength: 255 }
+            phoneNumber:
+              type: array
+              items: { type: string, maxLength: 16 }
+            password: { type: string, nullable: true }
+            useLbs: { type: boolean }
+            useWifiBle: { type: boolean }
+        additional:
+          type: object
+          properties:
+            normalConsumption100: { type: number }
+            idleMotionConsumptionNorm: { type: number }
+            seasonConsumption: { type: boolean }
+            citySpeedLimit: { type: integer }
+            maxIntervalBetweenMessages: { type: integer }
+            mileageFactor: { type: number }
+            speedLimitType: { type: string, nullable: true, enum: [fixed, road, null] }
+            speedLimit: { type: integer, nullable: true }
+            speedLimitTime: { type: integer, nullable: true }
+            objectCaptionColor: { type: string }
+            trackColor: { type: object }
+            messageValidityFiltering: { type: object }
+        tripDetector:
+          type: object
+          properties:
+            minDrivingSpeed: { type: integer }
+            minParkingTime: { type: integer }
+            minTripTime: { type: integer }
+            minTripDistance: { type: integer }
+            motionDetection: { type: string, enum: [ignition, speed, gps] }
+            maxDistanceBetweenMessages: { type: integer }
+        customFields:
+          type: array
+          items:
+            type: object
+            properties:
+              isAdminField: { type: boolean }
+              name: { type: string, maxLength: 1500 }
+              value: { type: string, maxLength: 1500 }
+        specifications:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              value: { type: string }
+        sensors:
+          type: array
+          items: { type: object }
+        commands:
+          type: array
+          items: { type: object }
+        accesses: { type: object }
+        isActive: { type: boolean }
+    ObjectUpdateRequest:
+      type: object
+      properties:
+        general: { $ref: '#/components/schemas/ObjectCreateRequest/properties/general' }
+        additional: { $ref: '#/components/schemas/ObjectCreateRequest/properties/additional' }
+        tripDetector: { $ref: '#/components/schemas/ObjectCreateRequest/properties/tripDetector' }
+        customFields: { $ref: '#/components/schemas/ObjectCreateRequest/properties/customFields' }
+        specifications: { $ref: '#/components/schemas/ObjectCreateRequest/properties/specifications' }
+        sensors: { $ref: '#/components/schemas/ObjectCreateRequest/properties/sensors' }
+        commands: { $ref: '#/components/schemas/ObjectCreateRequest/properties/commands' }
+        accesses: { $ref: '#/components/schemas/ObjectCreateRequest/properties/accesses' }
+        isActive: { type: boolean }
+    ObjectEvent:
+      type: object
+      properties:
+        id: { type: integer }
+        t: { type: string, format: date-time }
+        pos: { type: object, nullable: true }
+        description: { type: string }
+        type: { type: string, enum: [custom, refuel, violation] }
+        additionalData: { type: object, nullable: true }
+        rt: { type: string, format: date-time }
+        object: { type: integer }
+    ObjectEventCreateRequest:
+      type: object
+      required: [t, type, description]
+      properties:
+        t: { type: string, format: date-time }
+        type: { type: string, enum: [custom, refuel, violation] }
+        pos:
+          type: object
+          properties:
+            x: { type: number, minimum: -90, maximum: 90 }
+            y: { type: number, minimum: -180, maximum: 180 }
+        description: { type: string }
+        additionalData:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/EventRefuelAdditionalData'
+    EventRefuelAdditionalData:
+      type: object
+      properties:
+        fuelVolume: { type: number, minimum: 0 }
+        fuelCostTotal: { type: number, minimum: 0 }
+        fuelCostPerLiter: { type: number, minimum: 0 }
+        fuelCardNumber: { type: string, minLength: 0, maxLength: 100 }
+        fuelOperatorName: { type: string, minLength: 0, maxLength: 100 }
+    ObjectEventBulkDeleteRequest:
+      type: object
+      properties:
+        eventIds:
+          type: array
+          items: { type: integer, minimum: 1 }
+    VisibleObjectsIds:
+      type: object
+      properties:
+        visibleObjectsIds:
+          type: array
+          items: { type: integer, minimum: 1 }
+    ObjectStatsRequest:
+      type: object
+      properties:
+        startDate: { type: string, format: date-time }
+        endDate: { type: string, format: date-time }
+        objectId: { type: integer }
+    ObjectStatsResponse:
+      type: object
+      properties:
+        mileage: { type: number }
+        avgSpeed: { type: number }
+        maxSpeed: { type: number }
+        fuelConsumption: { type: number }
+        avgFuelConsumption: { type: number }
+        refuelVolume: { type: number }
+        plumVolume: { type: number }
+        parkingsDuration: { type: number }
+        tripsDuration: { type: number }
+        engineHours: { type: number }
+        idleTime: { type: number }
+    AvailableParamsResponse:
+      type: object
+      properties:
+        availableParams:
+          type: array
+          items: { type: string }
+    SendFastCommandRequest:
+      type: object
+      properties:
+        type: { type: string, default: custom_msg }
+        params: { type: string }
+    MonitoringWebObject:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        driversAttached: { type: boolean }
+        deviceCanSendCommands: { type: boolean }
+        connectedStatus: { type: boolean }
+        uniqueId: { type: string }
+        iconId: { type: integer }
+        objectIconColor: { type: string }
+        objectCaptionColor: { type: string }
+        trackColor: { type: object }
+        currentUserAccess:
+          type: array
+          items: { type: string }
+        showOnMap: { type: boolean }
+        lastMessage: { $ref: '#/components/schemas/LastMessage' }
+        specifications:
+          type: object
+          additionalProperties: { type: string }
+    MonitoringAppObject:
+      type: object
+      properties:
+        id: { type: integer }
+        iconId: { type: integer }
+        objectIconColor: { type: string }
+        objectCaptionColor: { type: string }
+        name: { type: string }
+        connectedStatus: { type: boolean }
+        deviceCanSendCommands: { type: boolean }
+        coordinates:
+          type: object
+          properties:
+            lat: { type: number }
+            lon: { type: number }
+        satellitesCount: { type: integer, nullable: true }
+        lastMessageTime: { type: string, nullable: true }
+        lastCoordsMessageTime: { type: string, nullable: true }
+        objectSpeedKmh: { type: integer, nullable: true }
+        showOnMap: { type: boolean }
+        currentUserAccess:
+          type: array
+          items: { type: string }
+    PaginatedWebObjectList:
+      type: object
+      properties:
+        count: { type: integer }
+        next: { type: string, nullable: true }
+        previous: { type: string, nullable: true }
+        results:
+          type: array
+          items: { $ref: '#/components/schemas/MonitoringWebObject' }
+
+    # Accounts
+    UserProfileUpdateRequest:
+      type: object
+      properties:
+        language: { type: string, nullable: true }
+        timezone: { type: integer, nullable: true }
+        username: { type: string }
+        fullName: { type: string }
+        email: { type: string, format: email }
+        addressFormat:
+          type: array
+          items: { type: string }
+        objectCardSettings:
+          type: object
+        monitoringItemSetup:
+          type: object
+
+    PasswordChangeRequest:
+      type: object
+      required: [oldPassword, newPassword, confirmPassword]
+      properties:
+        oldPassword: { type: string, minLength: 6, maxLength: 255 }
+        newPassword: { type: string, minLength: 6, maxLength: 255 }
+        confirmPassword: { type: string, minLength: 6, maxLength: 255 }
+
+    ChangePasswordResponse:
+      type: object
+      properties:
+        token: { type: string }
+
+    PasswordResetRequest:
+      type: object
+      required: [email, username]
+      properties:
+        email: { type: string, format: email }
+        username: { type: string }
+
+    PasswordResetResponse:
+      type: object
+      properties:
+        passwordToken: { type: string }
+
+    CheckPasswordResetTokenRequest:
+      type: object
+      properties:
+        passwordToken: { type: string }
+
+    PasswordResetConfirmRequest:
+      type: object
+      required: [newPassword, confirmPassword, passwordToken]
+      properties:
+        newPassword: { type: string, minLength: 6, maxLength: 255 }
+        confirmPassword: { type: string, minLength: 6, maxLength: 255 }
+        passwordToken: { type: string }
+
+    # CMS
+    CmsLoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string }
+        password: { type: string, minLength: 6, maxLength: 255 }
+
+    CmsLoginResponse:
+      type: object
+      properties:
+        token: { type: string }
+
+    CmsUserListItem:
+      type: object
+      properties:
+        id: { type: integer }
+        email: { type: string }
+        name: { type: string }
+        username: { type: string }
+        creatorName: { type: string }
+        lastLogin: { type: string, nullable: true }
+        creationDatetime: { type: string }
+        accountId: { type: integer }
+        accountName: { type: string }
+        accountType: { type: string }
+        accountIsActive: { type: boolean }
+        accountBlockingDatetime: { type: string, nullable: true }
+        isActive: { type: boolean }
+        language: { type: string }
+        timezone: { type: integer }
+        isAdmin: { type: boolean }
+        hasAdminAccess: { type: boolean }
+        visibleTabsNames:
+          type: array
+          items: { type: string }
+        currentUserAccess:
+          type: array
+          items: { type: string }
+
+    CmsUser:
+      allOf:
+        - $ref: '#/components/schemas/CmsUserListItem'
+        - type: object
+          properties:
+            addressFormat:
+              type: array
+              items: { type: string }
+            objectCardSettings: { type: object }
+            monitoringItemSetup: { type: object }
+            visibleObjectsIds:
+              type: array
+              items: { type: integer }
+            visibleObjectsCount: { type: integer }
+            visibleGeozoneIds:
+              type: array
+              items: { type: integer }
+            commonAccesses:
+              type: array
+              items: { type: string }
+
+    CmsUserCreateRequest:
+      type: object
+      properties:
+        name: { type: string }
+        username: { type: string }
+        email: { type: string, format: email }
+        password: { type: string, minLength: 6, maxLength: 255 }
+        hasAdminAccess: { type: boolean }
+        accesses: { type: object }
+        visibleTabsNames:
+          type: array
+          items: { type: string }
+
+    CmsUserUpdateRequest:
+      type: object
+      properties:
+        name: { type: string }
+        email: { type: string, format: email }
+        timezone: { type: integer }
+        isActive: { type: boolean }
+        visibleTabsNames:
+          type: array
+          items: { type: string }
+
+    CmsUserActivateRequest:
+      type: object
+      properties:
+        state: { type: boolean }
+
+    CmsUserExportRequest:
+      type: object
+      properties:
+        fields:
+          type: array
+          items: { type: string }
+        ordering: { type: string }
+        search: { type: string }
+
+    CmsLoginAsRequest:
+      type: object
+      properties:
+        userId: { type: integer }
+        type: { type: string, enum: [monitoring, cms] }
+
+    CmsLoginAsResponse:
+      type: object
+      properties:
+        redirectUrl: { type: string }
+
+    UpdateAnotherUserPasswordRequest:
+      type: object
+      required: [adminPassword, userId, newPassword, confirmNewPassword]
+      properties:
+        adminPassword: { type: string, minLength: 6, maxLength: 255 }
+        userId: { type: integer, minimum: 1 }
+        newPassword: { type: string, minLength: 6, maxLength: 255 }
+        confirmNewPassword: { type: string, minLength: 6, maxLength: 255 }
+
+    # CMS Objects
+    CmsObjectListItem:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        uniqueId: { type: string }
+        creatorName: { type: string }
+        creatorId: { type: integer }
+        creatorIsActive: { type: boolean }
+        accountId: { type: integer }
+        accountName: { type: string }
+        accountType: { type: string }
+        accountIsActive: { type: boolean }
+        phoneNumbers:
+          type: array
+          items: { type: string }
+        deviceTypeName: { type: string }
+        lastMessageDatetime: { type: string, nullable: true }
+        createdAt: { type: string }
+        isActive: { type: boolean }
+        currentUserAccess:
+          type: array
+          items: { type: string }
+
+    CmsObject:
+      allOf:
+        - $ref: '#/components/schemas/ObjectFull'
+
+    CmsObjectExportRequest:
+      type: object
+      properties:
+        fields: { type: array, items: { type: string } }
+        ordering: { type: string }
+        search: { type: string }
+
+    CmsObjectsMassDeleteRequest:
+      type: object
+      properties:
+        objectsIds:
+          type: array
+          items: { type: integer, minimum: 1 }
+
+    CmsObjectsChangeAccountRequest:
+      type: object
+      properties:
+        objectsIds:
+          type: array
+          items: { type: integer, minimum: 1 }
+        accountId: { type: integer, minimum: 1 }
+
+    ActivateRequest:
+      type: object
+      properties:
+        state: { type: boolean }
+
+    RestoreClearTrashRequest:
+      type: object
+      properties:
+        objectsInTrashIds:
+          type: array
+          items: { type: integer, minimum: 1 }
+
+    # CMS Accounts
+    CmsAccountListItem:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        type: { type: string }
+        isActive: { type: boolean }
+        adminFullname: { type: string }
+        objectsActive: { type: integer }
+        objectsTotal: { type: integer }
+        objectsDeleted: { type: integer }
+        blockingDatetime: { type: string, nullable: true }
+        comment: { type: string, nullable: true }
+        hierarchy: { type: string }
+        daysBeforeBlocking: { type: integer, nullable: true }
+        creationDatetime: { type: string }
+
+    CmsAccountCreateRequest:
+      type: object
+      properties:
+        name: { type: string }
+        type: { type: string, enum: [client, partner] }
+        comment: { type: string }
+        blockingDatetime: { type: string, nullable: true }
+        adminId: { type: integer, nullable: true }
+        admin:
+          type: object
+          properties:
+            name: { type: string }
+            username: { type: string }
+            email: { type: string }
+            password: { type: string }
+            confirmPassword: { type: string }
+            visibleTabsNames:
+              type: array
+              items: { type: string }
+
+    CmsAccountUpdateRequest:
+      type: object
+      properties:
+        name: { type: string }
+        comment: { type: string }
+        blockingDatetime: { type: string, nullable: true }
+
+    CmsAccountExportRequest:
+      type: object
+      properties:
+        fields: { type: array, items: { type: string } }
+        ordering: { type: string }
+        search: { type: string }
+        type: { type: string, enum: [client, partner] }
+        getChildren: { type: boolean }
+
+    AccountMoveRequest:
+      type: object
+      properties:
+        accountId: { type: integer, minimum: 1 }
+        targetAccountId: { type: integer, minimum: 1 }
+
+    RetransmissionCreateRequest:
+      type: object
+      required: [retranslatorId, startDate, endDate]
+      properties:
+        retranslatorId: { type: integer }
+        startDate: { type: string, format: date-time }
+        endDate: { type: string, format: date-time }
+
+    RetranslatorListItem:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        protocolName: { type: string }
+        serverAddress: { type: string }
+        serverPort: { type: string }
+        accountName: { type: string }
+        status: { type: boolean }
+        objectsTotal: { type: integer }
+        activeRetransmission:
+          type: object
+          nullable: true
+          properties:
+            id: { type: string, format: uuid }
+            status: { type: string }
+            startDate: { type: string }
+            endDate: { type: string }
+            progressPercents: { type: number }
+
+    RetranslatorCreateUpdateRequest:
+      type: object
+      properties:
+        name: { type: string }
+        protocol: { type: integer }
+        serverAddress: { type: string }
+        serverPort: { type: integer }
+        account: { type: integer }
+        tiedObjects:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              uniqueId: { type: string, nullable: true }
+
+    RetranslatorCreateUpdateResponse:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        protocol: { type: integer }
+        serverAddress: { type: string }
+        serverPort: { type: integer }
+        account: { type: integer }
+        status: { type: boolean }
+        tiedObjects:
+          type: array
+          items:
+            type: object
+            properties:
+              objectId: { type: integer }
+              uniqueId: { type: string, nullable: true }
+
+    Retranslator:
+      allOf:
+        - $ref: '#/components/schemas/RetranslatorCreateUpdateResponse'
+        - type: object
+          properties:
+            activeRetransmission:
+              type: object
+              nullable: true
+              properties:
+                id: { type: string, format: uuid }
+                status: { type: string }
+                startDate: { type: string }
+                endDate: { type: string }
+                progressPercents: { type: number }
+
+    CmsReportTemplateListItem:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+
+    # User schemas
+    CurrentUser:
+      type: object
+      description: Полная информация о текущем авторизованном пользователе
+      properties:
+        id:
+          type: integer
+          description: ID пользователя
+        username:
+          type: string
+          description: Имя пользователя для входа
+        email:
+          type: string
+          format: email
+          description: Email пользователя
+        firstName:
+          type: string
+          description: Имя
+        lastName:
+          type: string
+          description: Фамилия
+        isActive:
+          type: boolean
+          description: Активен ли пользователь
+        language:
+          type: string
+          description: Код языка интерфейса (ru, en)
+        timezone:
+          type: integer
+          description: Часовой пояс (смещение от UTC)
+        dateJoined:
+          type: string
+          format: date-time
+          description: Дата регистрации
+        lastLogin:
+          type: string
+          format: date-time
+          nullable: true
+          description: Дата последнего входа
+        accountId:
+          type: integer
+          description: ID аккаунта пользователя
+        accountName:
+          type: string
+          description: Название аккаунта
+        accountType:
+          type: string
+          enum: [client, partner, dealer]
+          description: Тип аккаунта
+        isAdmin:
+          type: boolean
+          description: Является ли администратором аккаунта
+        hasAdminAccess:
+          type: boolean
+          description: Имеет ли административные права
+        addressFormat:
+          type: array
+          items:
+            type: string
+          description: Формат отображения адресов
+        objectCardSettings:
+          type: object
+          description: Настройки отображения карточки объекта
+        monitoringItemSetup:
+          type: object
+          description: Настройки отображения элементов мониторинга
+
+    UserListItem:
+      type: object
+      description: Пользователь в списке
+      properties:
+        id:
+          type: integer
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+        firstName:
+          type: string
+        lastName:
+          type: string
+        isActive:
+          type: boolean
+        language:
+          type: string
+        timezone:
+          type: integer
+        dateJoined:
+          type: string
+          format: date-time
+        lastLogin:
+          type: string
+          format: date-time
+          nullable: true
+        accountId:
+          type: integer
+        accountName:
+          type: string
+        hasAdminAccess:
+          type: boolean
+        visibleTabsNames:
+          type: array
+          items:
+            type: string
+          description: Список доступных вкладок интерфейса
+        ownAccesses:
+          type: array
+          items:
+            type: string
+          description: Права доступа текущего пользователя к этому пользователю
+
+    UserDetail:
+      allOf:
+        - $ref: '#/components/schemas/UserListItem'
+        - type: object
+          properties:
+            addressFormat:
+              type: array
+              items:
+                type: string
+            objectCardSettings:
+              type: object
+            monitoringItemSetup:
+              type: object
+            visibleObjectsIds:
+              type: array
+              items:
+                type: integer
+              description: ID объектов, видимых пользователю
+            visibleObjectsCount:
+              type: integer
+              description: Количество видимых объектов
+            visibleGeozoneIds:
+              type: array
+              items:
+                type: integer
+              description: ID геозон, видимых пользователю
+            commonAccesses:
+              type: array
+              items:
+                type: string
+              description: Общие права доступа пользователя
+
+    UserCreateRequest:
+      type: object
+      required: [name, username, email, password, confirmPassword]
+      properties:
+        name:
+          type: string
+          description: Полное имя пользователя
+          minLength: 1
+          maxLength: 255
+        username:
+          type: string
+          description: Имя пользователя для входа
+          minLength: 3
+          maxLength: 150
+        email:
+          type: string
+          format: email
+          description: Email пользователя
+        password:
+          type: string
+          format: password
+          description: Пароль
+          minLength: 6
+          maxLength: 255
+        confirmPassword:
+          type: string
+          format: password
+          description: Подтверждение пароля
+          minLength: 6
+          maxLength: 255
+        hasAdminAccess:
+          type: boolean
+          description: Предоставить административные права
+          default: false
+        language:
+          type: string
+          description: Язык интерфейса
+          enum: [ru, en]
+          default: ru
+        timezone:
+          type: integer
+          description: Часовой пояс
+          minimum: -12
+          maximum: 14
+          default: 0
+        visibleTabsNames:
+          type: array
+          items:
+            type: string
+          description: Список доступных вкладок
+        accesses:
+          type: object
+          description: Настройки прав доступа
+          properties:
+            common:
+              type: array
+              items:
+                type: string
+              description: Общие права (view, edit, delete, export)
+
+    UserUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        email:
+          type: string
+          format: email
+        language:
+          type: string
+          enum: [ru, en]
+        timezone:
+          type: integer
+          minimum: -12
+          maximum: 14
+        isActive:
+          type: boolean
+        hasAdminAccess:
+          type: boolean
+        visibleTabsNames:
+          type: array
+          items:
+            type: string
+        addressFormat:
+          type: array
+          items:
+            type: string
+        objectCardSettings:
+          type: object
+        monitoringItemSetup:
+          type: object
+        accesses:
+          type: object
+
+    # Driver schemas
+    Driver:
+      type: object
+      description: Водитель в системе мониторинга
+      properties:
+        id:
+          type: integer
+          description: ID водителя
+        name:
+          type: string
+          description: ФИО водителя
+          maxLength: 255
+        code:
+          type: string
+          description: Уникальный код водителя
+          maxLength: 50
+          nullable: true
+        description:
+          type: string
+          description: Описание/примечание
+          nullable: true
+        phoneNumber:
+          type: string
+          description: Номер телефона
+          maxLength: 20
+          nullable: true
+        mobileKey:
+          type: string
+          description: Ключ идентификации водителя (для iButton, карт и т.д.)
+          maxLength: 100
+          nullable: true
+        isExcluding:
+          type: boolean
+          description: Исключающий водитель (при привязке отменяет все другие привязки на объекте)
+          default: false
+        customFields:
+          type: object
+          description: Дополнительные пользовательские поля
+          nullable: true
+        object:
+          type: object
+          nullable: true
+          description: Объект, к которому в данный момент привязан водитель
+          properties:
+            id:
+              type: integer
+              description: ID объекта
+            name:
+              type: string
+              description: Название объекта
+
+    DriverCreateRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: ФИО водителя
+          minLength: 1
+          maxLength: 255
+        code:
+          type: string
+          description: Уникальный код водителя
+          maxLength: 50
+          nullable: true
+        description:
+          type: string
+          description: Описание/примечание
+          nullable: true
+        phoneNumber:
+          type: string
+          description: Номер телефона
+          maxLength: 20
+          nullable: true
+        mobileKey:
+          type: string
+          description: Ключ идентификации (iButton, карты и т.д.)
+          maxLength: 100
+          nullable: true
+        isExcluding:
+          type: boolean
+          description: Исключающий водитель
+          default: false
+        customFields:
+          type: object
+          description: Дополнительные пользовательские поля
+          nullable: true
+
+    DriverUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        code:
+          type: string
+          maxLength: 50
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        phoneNumber:
+          type: string
+          maxLength: 20
+          nullable: true
+        mobileKey:
+          type: string
+          maxLength: 100
+          nullable: true
+        isExcluding:
+          type: boolean
+        customFields:
+          type: object
+          nullable: true
+
+    DriverGroup:
+      type: object
+      description: Группа водителей
+      properties:
+        id:
+          type: integer
+          description: ID группы
+        name:
+          type: string
+          description: Название группы
+          maxLength: 255
+        description:
+          type: string
+          description: Описание группы
+          nullable: true
+        tiedDrivers:
+          type: array
+          description: Список водителей в группе
+          items:
+            type: object
+            properties:
+              id:
+                type: integer
+              name:
+                type: string
+
+    # Device schemas
+    Device:
+      type: object
+      description: Устройство (bluetooth/wifi метка) в системе
+      properties:
+        id:
+          type: integer
+          description: ID устройства
+        name:
+          type: string
+          description: Название устройства
+          maxLength: 255
+        uniqueId:
+          type: string
+          description: Уникальный идентификатор устройства
+          maxLength: 255
+        deviceModelId:
+          type: integer
+          description: ID модели устройства
+        description:
+          type: string
+          description: Описание устройства
+          maxLength: 255
+          default: ""
+        latitude:
+          type: number
+          format: float
+          description: Широта (координата)
+          minimum: -90
+          maximum: 90
+          nullable: true
+        longitude:
+          type: number
+          format: float
+          description: Долгота (координата)
+          minimum: -180
+          maximum: 180
+          nullable: true
+        height:
+          type: number
+          format: float
+          description: Высота
+          nullable: true
+
+    DeviceCreateRequest:
+      type: object
+      required: [name, uniqueId, deviceModelId]
+      properties:
+        name:
+          type: string
+          description: Название устройства
+          minLength: 1
+          maxLength: 255
+        uniqueId:
+          type: string
+          description: Уникальный идентификатор устройства
+          minLength: 1
+          maxLength: 255
+        deviceModelId:
+          type: integer
+          description: ID модели устройства из справочника
+          minimum: 1
+        description:
+          type: string
+          description: Описание
+          maxLength: 255
+        latitude:
+          type: number
+          format: float
+          description: Широта (координата)
+          minimum: -90
+          maximum: 90
+          nullable: true
+        longitude:
+          type: number
+          format: float
+          description: Долгота (координата)
+          minimum: -180
+          maximum: 180
+          nullable: true
+        height:
+          type: number
+          format: float
+          description: Высота
+          nullable: true
+
+    DeviceUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        uniqueId:
+          type: string
+          minLength: 1
+          maxLength: 255
+        deviceModelId:
+          type: integer
+          minimum: 1
+        description:
+          type: string
+          maxLength: 255
+        latitude:
+          type: number
+          format: float
+          minimum: -90
+          maximum: 90
+          nullable: true
+        longitude:
+          type: number
+          format: float
+          minimum: -180
+          maximum: 180
+          nullable: true
+        height:
+          type: number
+          format: float
+          nullable: true
+
+    DeviceModel:
+      type: object
+      description: Модель устройства (справочник bluetooth/wifi меток)
+      properties:
+        id:
+          type: integer
+          description: ID модели
+        name:
+          type: string
+          description: Название модели
+          maxLength: 255
+
+    # Geozone schemas
+    Geozone:
+      type: object
+      description: Геозона (область на карте)
+      properties:
+        id:
+          type: integer
+          description: ID геозоны
+        name:
+          type: string
+          description: Название геозоны
+          maxLength: 255
+        nameFontSize:
+          type: integer
+          description: Размер шрифта названия
+        description:
+          type: string
+          description: Описание геозоны
+        type:
+          type: string
+          enum: [polygon, line, circle]
+          description: Тип геозоны
+        widthLine:
+          type: integer
+          description: Толщина линии (для типа line)
+          nullable: true
+        radiusCircle:
+          type: integer
+          description: Радиус окружности (для типа circle)
+          nullable: true
+        zoomVisibleFrom:
+          type: integer
+          description: Видимость от (уровень зума)
+        zoomVisibleTo:
+          type: integer
+          description: Видимость до (уровень зума)
+        colorName:
+          type: string
+          description: Название цвета
+          maxLength: 255
+        geozoneColor:
+          type: string
+          description: Цвет геозоны (hex)
+          maxLength: 255
+        square:
+          type: number
+          format: float
+          description: Площадь геозоны
+        perimeterMeters:
+          type: number
+          format: float
+          description: Периметр в метрах
+        geo:
+          type: object
+          description: Геометрия геозоны (GeoJSON)
+
+    GeozoneCreateRequest:
+      type: object
+      required: [name, nameFontSize, type, zoomVisibleFrom, zoomVisibleTo, colorName, geozoneColor, square, perimeterMeters, geo]
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        nameFontSize:
+          type: integer
+          maximum: 40
+        description:
+          type: string
+        type:
+          type: string
+          enum: [polygon, line, circle]
+        widthLine:
+          type: integer
+          description: Обязательно для типа line
+        radiusCircle:
+          type: integer
+          description: Обязательно для типа circle
+        zoomVisibleFrom:
+          type: integer
+        zoomVisibleTo:
+          type: integer
+        colorName:
+          type: string
+          maxLength: 255
+        geozoneColor:
+          type: string
+          maxLength: 255
+        square:
+          type: number
+          format: float
+        perimeterMeters:
+          type: number
+          format: float
+        geo:
+          type: object
+          description: GeoJSON геометрия
+
+    GeozoneUpdateRequest:
+      type: object
+      required: [name, nameFontSize, type, zoomVisibleFrom, zoomVisibleTo, colorName, geozoneColor, square, perimeterMeters, geo]
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        nameFontSize:
+          type: integer
+          maximum: 40
+        description:
+          type: string
+        type:
+          type: string
+          enum: [polygon, line, circle]
+        widthLine:
+          type: integer
+          description: Обязательно для типа line
+        radiusCircle:
+          type: integer
+          description: Обязательно для типа circle
+        zoomVisibleFrom:
+          type: integer
+        zoomVisibleTo:
+          type: integer
+        colorName:
+          type: string
+          maxLength: 255
+        geozoneColor:
+          type: string
+          maxLength: 255
+        square:
+          type: number
+          format: float
+        perimeterMeters:
+          type: number
+          format: float
+        geo:
+          type: object
+          description: GeoJSON геометрия
+
+    GeozoneGroup:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: ID группы
+        name:
+          type: string
+          description: Название группы
+          maxLength: 255
+        description:
+          type: string
+          description: Описание группы
+          maxLength: 255
+        tiedGeozones:
+          type: array
+          description: ID связанных геозон
+          items:
+            type: integer
+        accountId:
+          type: integer
+          description: ID аккаунта
+        creatorId:
+          type: integer
+          description: ID создателя
+          nullable: true
+
+    # Trailer schemas
+    Trailer:
+      type: object
+      description: Прицеп
+      properties:
+        id:
+          type: integer
+          description: ID прицепа
+        name:
+          type: string
+          description: Название прицепа
+          maxLength: 255
+        code:
+          type: string
+          description: Код прицепа
+          maxLength: 255
+          nullable: true
+        description:
+          type: string
+          description: Описание прицепа
+          nullable: true
+        workingWidth:
+          type: number
+          format: float
+          description: Ширина обработки (м)
+          minimum: 0
+          maximum: 100
+          nullable: true
+        isExcluding:
+          type: boolean
+          description: Исключающий прицеп
+          default: false
+        customFields:
+          type: object
+          description: Произвольные поля
+          default: {}
+        object:
+          type: object
+          nullable: true
+          description: Объект, к которому привязан прицеп
+          properties:
+            id:
+              type: integer
+            name:
+              type: string
+
+    TrailerCreateRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        code:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+        workingWidth:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 100
+        isExcluding:
+          type: boolean
+          default: false
+        customFields:
+          type: object
+          default: {}
+
+    # Notification schemas
+    Notification:
+      type: object
+      description: Правило уведомления
+      properties:
+        id:
+          type: integer
+          description: ID уведомления
+        name:
+          type: string
+          description: Название правила
+          maxLength: 255
+        description:
+          type: string
+          description: Описание правила
+          maxLength: 1000
+        type:
+          type: string
+          enum: [speed, geozone, sos, digital_input, message_param, sensor_value, lost_connection, downtime, sms, objects_location, address, exceeding_number_messages, refueling, drain]
+          description: Тип события для уведомления
+        tiedObjects:
+          type: array
+          items:
+            type: integer
+          description: ID объектов, для которых действует правило
+        text:
+          type: string
+          description: Текст уведомления
+          maxLength: 1000
+        intervalFrom:
+          type: string
+          format: date-time
+          description: Начало интервала
+          nullable: true
+        intervalTo:
+          type: string
+          format: date-time
+          description: Конец интервала
+          nullable: true
+        controlPeriod:
+          type: string
+          enum: [always, last_minute, last_ten_minutes, last_hour, last_day]
+          description: Период контроля относительно текущего времени
+        minDurationAlarmStatus:
+          type: object
+          description: Мин. продолжительность тревожного состояния
+          nullable: true
+          properties:
+            value:
+              type: integer
+              minimum: 0
+            unit:
+              type: string
+              enum: [sec, min, h]
+        maxCountTriggers:
+          type: integer
+          description: Макс. количество срабатываний
+          nullable: true
+        howGenerateAlarm:
+          type: string
+          enum: [on_change, all]
+          description: Генерировать уведомление
+        minDurationPrevStatus:
+          type: object
+          description: Мин. продолжительность предыдущего состояния
+          nullable: true
+        maxPeriodBetweenMessages:
+          type: integer
+          description: Макс. период между сообщениями (сек)
+          nullable: true
+        timeoutStatus:
+          type: object
+          description: Таймаут
+          nullable: true
+        isActive:
+          type: boolean
+          description: Активность правила
+          default: true
+        timeLimit:
+          type: object
+          description: Ограничение по времени
+          nullable: true
+        notificationWays:
+          type: object
+          description: Типы уведомлений (email, telegram, mobile_push, http_request и т.д.)
+          nullable: true
+        settings:
+          type: object
+          description: Настройки уведомления (зависят от типа)
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+          description: Дата создания
+        updatedAt:
+          type: string
+          format: date-time
+          description: Дата обновления
+
+    NotificationCreateRequest:
+      type: object
+      required: [name, type, text, controlPeriod, howGenerateAlarm, minDurationAlarmStatus, notificationWays, settings]
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+          maxLength: 1000
+        type:
+          type: string
+          enum: [speed, geozone, sos, digital_input, message_param, sensor_value, lost_connection, downtime, sms, objects_location, address, exceeding_number_messages, refueling, drain]
+        tiedObjects:
+          type: array
+          items:
+            type: integer
+          default: []
+        text:
+          type: string
+          maxLength: 1000
+        intervalFrom:
+          type: string
+          format: date-time
+          nullable: true
+        intervalTo:
+          type: string
+          format: date-time
+          nullable: true
+        controlPeriod:
+          type: string
+          enum: [always, last_minute, last_ten_minutes, last_hour, last_day]
+          default: always
+        minDurationAlarmStatus:
+          type: object
+          description: Объект с полями value (integer) и unit (sec/min/h)
+          properties:
+            value:
+              type: integer
+              minimum: 0
+            unit:
+              type: string
+              enum: [sec, min, h]
+        maxCountTriggers:
+          type: integer
+          nullable: true
+        howGenerateAlarm:
+          type: string
+          enum: [on_change, all]
+        minDurationPrevStatus:
+          type: object
+          nullable: true
+        maxPeriodBetweenMessages:
+          type: integer
+          nullable: true
+        timeoutStatus:
+          type: object
+          nullable: true
+        isActive:
+          type: boolean
+          default: true
+        timeLimit:
+          type: object
+          nullable: true
+        notificationWays:
+          type: object
+          description: 'Конфигурация способов уведомления: telegram, email, mobile_push, http_request, event_registration'
+        settings:
+          type: object
+          description: 'Настройки уведомления (зависят от типа): maxValue, minValue, geofence, sensorValue и т.д.'
+
+    # Locator schemas
+    Locator:
+      type: object
+      description: Локатор (публичная ссылка для отслеживания)
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Уникальный ID локатора (UUID)
+        accountId:
+          type: integer
+          description: ID аккаунта
+        creatorId:
+          type: integer
+          description: ID создателя
+        activation:
+          type: string
+          description: Дата активации
+        expirationValue:
+          type: integer
+          description: Значение срока действия
+        expirationType:
+          type: string
+          enum: [days, minutes, hours]
+          description: Тип срока действия
+        expiration:
+          type: string
+          format: date-time
+          nullable: true
+          description: Дата истечения срока действия
+        note:
+          type: string
+          description: Примечание
+        showTracks:
+          type: boolean
+          description: Отображать треки
+        showGeozones:
+          type: boolean
+          description: Отображать геозоны
+        createdAt:
+          type: string
+          format: date-time
+          description: Дата создания
+
+    
+

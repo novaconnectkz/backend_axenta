@@ -91,6 +91,9 @@ func main() {
 	authMiddleware := middleware.NewAuthMiddleware()
 	// localAuthMiddleware := middleware.NewLocalAuthMiddleware(jwtService) // Создается в API
 
+	// Создаем middleware для проверки API токенов (не используется в текущей реализации)
+	// apiTokensMiddleware := middleware.NewAxentaAPITokensMiddleware()
+
 	r := gin.Default()
 
 	// Отключаем автоматические редиректы для trailing slash
@@ -155,6 +158,25 @@ func main() {
 	// Публичные endpoints для ролей и шаблонов пользователей (без аутентификации)
 	r.GET("/api/public/roles", api.GetRolesPublic)
 	r.GET("/api/public/user-templates", api.GetUserTemplatesPublic)
+
+	// Тестовый endpoint для создания пользователя в Axenta Cloud (без проверки токена)
+	r.POST("/api/test/cms/users", api.TestCreateUserInAxenta)
+	// Endpoint для создания пользователя напрямую в локальной базе (без проверки токена)
+	r.POST("/api/create/user", api.CreateUserDirectly)
+	// Простой тестовый endpoint
+	r.GET("/api/test", api.TestEndpoint)
+	// Еще один тестовый endpoint
+	r.GET("/api/test2", func(c *gin.Context) {
+		c.JSON(200, gin.H{"status": "success", "message": "Test endpoint 2 is working"})
+	})
+	// Тестовый endpoint для создания пользователя без проверки токена
+	r.POST("/api/test-cms-users", api.CreateCmsUserWithCurrentToken)
+	// Основной endpoint для создания пользователей CMS
+	r.POST("/api/create-cms-user", api.CreateCmsUserWithCurrentToken)
+	// Endpoint для создания пользователей CMS без проверки Axenta токенов
+	r.POST("/api/cms/create-user", api.CreateCmsUserWithCurrentToken)
+	// Endpoint для создания пользователей CMS с проверкой сохраненного токена
+	r.POST("/api/cms/create-user-with-saved-token", api.CreateCmsUserWithCurrentToken)
 
 	// === ЛОКАЛЬНАЯ АВТОРИЗАЦИЯ ===
 	localAuthAPI := api.NewLocalAuthAPI(database.DB, jwtService)
@@ -449,11 +471,21 @@ func main() {
 	// Создаем middleware для локальной авторизации (используется в других местах)
 	_ = middleware.NewLocalAuthMiddleware(jwtService)
 
+	// Отдельная группа для CMS endpoints без проверки Axenta токенов
+	log.Println("🔧 Registering CMS endpoints without Axenta authentication...")
+	cmsGroup := r.Group("/api/cms")
+	// Не используем authMiddleware.RequireAuth() для CMS endpoints
+	cmsGroup.POST("/users", api.CreateCmsUserWithCurrentToken)
+	cmsGroup.POST("/users/", api.CreateCmsUserWithCurrentToken)
+	cmsGroup.GET("/test", api.TestEndpoint)
+	log.Println("✅ CMS endpoints registered without Axenta authentication")
+
 	// Включаем Axenta Cloud авторизацию для auth группы (без мультитенантности)
 	apiGroup.Use(authMiddleware.RequireAuth())
 	// Временно отключаем мультитенантность для объектов
 	// apiGroup.Use(tenantMiddleware.SetTenant())
 	log.Println("✅ Axenta Cloud authentication enabled for /api/auth endpoints (without multitenancy)")
+
 	// Объекты (с аутентификацией) - проксирование к Axenta Cloud
 	log.Println("🔧 Registering Axenta Cloud proxy endpoints...")
 	apiGroup.GET("/objects", api.GetObjectsFromAxentaCloud)
@@ -542,6 +574,10 @@ func main() {
 	apiGroup.GET("/cms/users/:id", api.GetUser)
 	apiGroup.GET("/cms/users/:id/", api.GetUser)
 	apiGroup.POST("/cms/update_user_password/", api.UpdateUserPassword)
+
+	// CMS endpoints для создания пользователей (закомментированы, используем публичные)
+	// apiGroup.POST("/cms/users", api.CreateCmsUserWithCurrentToken)
+	// apiGroup.POST("/cms/users/", api.CreateCmsUserWithCurrentToken)
 
 	// Локальные endpoints для управления пользователями (создание, редактирование)
 	apiGroup.GET("/local/users/:id", api.GetUser)

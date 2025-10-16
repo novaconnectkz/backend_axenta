@@ -64,7 +64,7 @@ func createReportsTestData(t *testing.T, db *gorm.DB) {
 		FirstName: "Test",
 		LastName:  "User",
 		IsActive:  true,
-		RoleID:    role.ID,
+		RoleID:    &role.ID,
 		CompanyID: 1,
 	}
 	require.NoError(t, db.Create(&user).Error)

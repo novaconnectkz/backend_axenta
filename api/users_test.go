@@ -125,7 +125,7 @@ func setupTestData(t *testing.T, db *gorm.DB) {
 		FirstName: "Test",
 		LastName:  "User",
 		IsActive:  true,
-		RoleID:    adminRole.ID,
+		RoleID:    &adminRole.ID,
 	}
 	require.NoError(t, db.Create(&user).Error)
 }
@@ -407,7 +407,7 @@ func TestDeleteUser(t *testing.T) {
 			Username: "userToDelete",
 			Email:    "delete@example.com",
 			Password: "password",
-			RoleID:   2, // user role
+			RoleID:   func() *uint { id := uint(2); return &id }(), // user role
 		}
 		require.NoError(t, db.Create(&user).Error)
 

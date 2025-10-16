@@ -300,6 +300,9 @@ func Login(c *gin.Context) {
 	// Создаем сервис для работы с пользователями Axenta
 	axentaUserService := services.NewAxentaUserService(db)
 
+	// Создаем сервис для работы с токенами пользователей
+	userTokenService := services.NewUserTokenService(db)
+
 	// Убеждаемся, что роли по умолчанию существуют
 	if err := axentaUserService.EnsureDefaultRoles(); err != nil {
 		log.Printf("Failed to ensure default roles: %v", err)
@@ -335,7 +338,7 @@ func Login(c *gin.Context) {
 
 		// Пытаемся назначить роль, если возможно
 		if roleID, roleErr := axentaUserService.GetRoleIDForAxentaUserType(axentaUser.AccountType); roleErr == nil {
-			user.RoleID = roleID
+			user.RoleID = &roleID
 			// Пытаемся загрузить роль для отображения
 			var role models.Role
 			if db.First(&role, roleID).Error == nil {
@@ -350,6 +353,12 @@ func Login(c *gin.Context) {
 			"account_type":     axentaUser.AccountType,
 			"axenta_user_type": user.AxentaUserType,
 		})
+	}
+
+	// Сохраняем токен пользователя
+	if err := userTokenService.SaveUserToken(user.ID, req.Username, axentaLogin.Token, c.GetHeader("User-Agent"), c.ClientIP()); err != nil {
+		log.Printf("⚠️ Failed to save user token: %v", err)
+		// Не прерываем процесс авторизации из-за ошибки сохранения токена
 	}
 
 	// Успешное получение данных пользователя

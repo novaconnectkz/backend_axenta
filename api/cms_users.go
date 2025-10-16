@@ -1,0 +1,993 @@
+package api
+
+import (
+	"backend_axenta/database"
+	"backend_axenta/models"
+	"backend_axenta/services"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+
+	"github.com/gin-gonic/gin"
+	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
+)
+
+// CmsUserCreateRequest представляет запрос на создание CMS пользователя
+type CmsUserCreateRequest struct {
+	Name             string                 `json:"name" binding:"required"`
+	Username         string                 `json:"username" binding:"required"`
+	Email            string                 `json:"email" binding:"required,email"`
+	Password         string                 `json:"password" binding:"required,min=6"`
+	HasAdminAccess   bool                   `json:"hasAdminAccess"`
+	VisibleTabsNames []string               `json:"visibleTabsNames"`
+	Accesses         map[string]interface{} `json:"accesses"`
+}
+
+// CmsUserResponse представляет ответ с данными CMS пользователя
+type CmsUserResponse struct {
+	ID                      uint                   `json:"id"`
+	Email                   string                 `json:"email"`
+	Name                    string                 `json:"name"`
+	Username                string                 `json:"username"`
+	CreatorName             string                 `json:"creatorName"`
+	LastLogin               *string                `json:"lastLogin"`
+	CreationDatetime        string                 `json:"creationDatetime"`
+	AccountID               string                 `json:"accountId"`
+	AccountName             string                 `json:"accountName"`
+	AccountType             string                 `json:"accountType"`
+	AccountIsActive         bool                   `json:"accountIsActive"`
+	AccountBlockingDatetime *string                `json:"accountBlockingDatetime"`
+	IsActive                bool                   `json:"isActive"`
+	Language                string                 `json:"language"`
+	Timezone                int                    `json:"timezone"`
+	IsAdmin                 bool                   `json:"isAdmin"`
+	HasAdminAccess          bool                   `json:"hasAdminAccess"`
+	VisibleTabsNames        []string               `json:"visibleTabsNames"`
+	CurrentUserAccess       []string               `json:"currentUserAccess"`
+	AddressFormat           []string               `json:"addressFormat"`
+	ObjectCardSettings      map[string]interface{} `json:"objectCardSettings"`
+	MonitoringItemSetup     map[string]interface{} `json:"monitoringItemSetup"`
+	VisibleObjectsIds       []int                  `json:"visibleObjectsIds"`
+	VisibleObjectsCount     int                    `json:"visibleObjectsCount"`
+	VisibleGeozoneIds       []int                  `json:"visibleGeozoneIds"`
+	CommonAccesses          []string               `json:"commonAccesses"`
+}
+
+// CreateCmsUser создает нового CMS пользователя
+func CreateCmsUser(c *gin.Context) {
+	db := database.GetTenantDB(c)
+	if db == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Database connection not available",
+		})
+		return
+	}
+
+	var req CmsUserCreateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Invalid request data: " + err.Error(),
+		})
+		return
+	}
+
+	// Валидация обязательных полей
+	if req.Name == "" || req.Username == "" || req.Email == "" || req.Password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Fields name, username, email, password are required",
+		})
+		return
+	}
+
+	// Проверка длины пароля
+	if len(req.Password) < 6 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Password must be at least 6 characters long",
+		})
+		return
+	}
+
+	// Проверка уникальности email и username
+	var existingUser models.User
+	if err := db.Where("email = ? OR username = ?", req.Email, req.Username).First(&existingUser).Error; err == nil {
+		c.JSON(http.StatusConflict, gin.H{
+			"status": "error",
+			"error":  "User with this email or username already exists",
+		})
+		return
+	}
+
+	// Хешируем пароль
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to hash password",
+		})
+		return
+	}
+
+	// Получаем accountId из переменной окружения
+	accountID := os.Getenv("AXENTA_DEFAULT_ACCOUNT_ID")
+	if accountID == "" {
+		accountID = "1" // Значение по умолчанию
+	}
+
+	// Начинаем транзакцию
+	tx := db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Создаем пользователя
+	user := models.User{
+		Username:   req.Username,
+		Email:      req.Email,
+		Password:   string(hashedPassword),
+		Name:       req.Name,
+		IsActive:   true,
+		UserType:   "cms_user",
+		LoginCount: 0,
+		CompanyID:  1, // Временно используем ID 1
+		// RoleID не устанавливаем - будет NULL
+	}
+
+	// Отладочная информация
+	fmt.Printf("Creating user with RoleID: %d\n", user.RoleID)
+
+	if err := tx.Create(&user).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to create user: " + err.Error(),
+		})
+		return
+	}
+
+	// Создаем user_tabs
+	for _, tabName := range req.VisibleTabsNames {
+		userTab := models.UserTab{
+			UserID: user.ID,
+			Name:   tabName,
+		}
+		if err := tx.Create(&userTab).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error",
+				"error":  "Failed to create user tab: " + err.Error(),
+			})
+			return
+		}
+	}
+
+	// Создаем user_accesses
+	for scope, perms := range req.Accesses {
+		permsJSON, err := json.Marshal(perms)
+		if err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error",
+				"error":  "Failed to serialize permissions: " + err.Error(),
+			})
+			return
+		}
+
+		userAccess := models.UserAccess{
+			UserID: user.ID,
+			Scope:  scope,
+			Perms:  string(permsJSON),
+		}
+		if err := tx.Create(&userAccess).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error",
+				"error":  "Failed to create user access: " + err.Error(),
+			})
+			return
+		}
+	}
+
+	// Завершаем транзакцию
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to commit transaction: " + err.Error(),
+		})
+		return
+	}
+
+	// Создаем пользователя в Axenta Cloud в фоновом режиме
+	go func() {
+		axentaService := services.NewAxentaUserService(database.DB)
+
+		// Получаем токен из заголовка
+		authHeader := c.GetHeader("Authorization")
+		var token string
+		if strings.HasPrefix(authHeader, "Token ") {
+			token = strings.TrimPrefix(authHeader, "Token ")
+		} else {
+			fmt.Printf("Failed to get token from Authorization header for user %s\n", user.Username)
+			return
+		}
+
+		// Преобразуем accesses в правильный формат
+		accesses := make(map[string][]string)
+		for scope, perms := range req.Accesses {
+			if permsSlice, ok := perms.([]interface{}); ok {
+				accesses[scope] = make([]string, len(permsSlice))
+				for i, perm := range permsSlice {
+					if permStr, ok := perm.(string); ok {
+						accesses[scope][i] = permStr
+					}
+				}
+			}
+		}
+
+		// Создаем пользователя в Axenta Cloud
+		axentaUser, err := axentaService.CreateUserInAxenta(token, &user, req.VisibleTabsNames, accesses)
+		if err != nil {
+			fmt.Printf("Failed to create user %s in Axenta Cloud: %v\n", user.Username, err)
+
+			// Обновляем пользователя в локальной базе, отмечая что синхронизация не удалась
+			user.IsAxentaUser = false
+			user.AxentaUserType = "local"
+			database.DB.Save(&user)
+		} else {
+			fmt.Printf("Successfully created user %s in Axenta Cloud with ID: %d\n", user.Username, axentaUser.ID)
+
+			// Обновляем пользователя в локальной базе, отмечая что он синхронизирован с Axenta
+			user.IsAxentaUser = true
+			user.AxentaUserType = "partner" // По умолчанию создаем как партнера
+			user.AxentaUserID = fmt.Sprintf("%d", axentaUser.ID)
+			user.ExternalSource = "axenta"
+			user.ExternalID = fmt.Sprintf("%d", axentaUser.ID)
+			database.DB.Save(&user)
+		}
+	}()
+
+	// Формируем ответ
+	response := CmsUserResponse{
+		ID:                      user.ID,
+		Email:                   user.Email,
+		Name:                    user.Name,
+		Username:                user.Username,
+		CreatorName:             user.Name, // Используем имя пользователя как создателя
+		LastLogin:               nil,       // Новый пользователь, последнего входа нет
+		CreationDatetime:        user.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		AccountID:               accountID,
+		AccountName:             "Default Account", // Значение по умолчанию
+		AccountType:             "partner",
+		AccountIsActive:         true,
+		AccountBlockingDatetime: nil,
+		IsActive:                user.IsActive,
+		Language:                "ru",
+		Timezone:                3, // UTC+3
+		IsAdmin:                 req.HasAdminAccess,
+		HasAdminAccess:          req.HasAdminAccess,
+		VisibleTabsNames:        req.VisibleTabsNames,
+		CurrentUserAccess:       []string{"view", "edit"}, // Доступ по умолчанию
+		AddressFormat:           []string{},
+		ObjectCardSettings:      map[string]interface{}{},
+		MonitoringItemSetup:     map[string]interface{}{},
+		VisibleObjectsIds:       []int{},
+		VisibleObjectsCount:     0,
+		VisibleGeozoneIds:       []int{},
+		CommonAccesses:          []string{"view", "edit"},
+	}
+
+	c.JSON(http.StatusCreated, response)
+}
+
+// GetCmsUser возвращает данные CMS пользователя
+func GetCmsUser(c *gin.Context) {
+	db := database.GetTenantDB(c)
+	if db == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Database connection not available",
+		})
+		return
+	}
+
+	userID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Invalid user ID",
+		})
+		return
+	}
+
+	var user models.User
+	if err := db.First(&user, userID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{
+				"status": "error",
+				"error":  "User not found",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to fetch user: " + err.Error(),
+		})
+		return
+	}
+
+	// Получаем вкладки пользователя
+	var userTabs []models.UserTab
+	if err := db.Where("user_id = ?", user.ID).Find(&userTabs).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to fetch user tabs: " + err.Error(),
+		})
+		return
+	}
+
+	// Получаем доступы пользователя
+	var userAccesses []models.UserAccess
+	if err := db.Where("user_id = ?", user.ID).Find(&userAccesses).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to fetch user accesses: " + err.Error(),
+		})
+		return
+	}
+
+	// Формируем списки
+	visibleTabsNames := make([]string, len(userTabs))
+	for i, tab := range userTabs {
+		visibleTabsNames[i] = tab.Name
+	}
+
+	// Получаем accountId из переменной окружения
+	accountID := os.Getenv("AXENTA_DEFAULT_ACCOUNT_ID")
+	if accountID == "" {
+		accountID = "1"
+	}
+
+	// Формируем дату последнего входа
+	var lastLoginFormatted *string
+	if user.LastLogin != nil {
+		formatted := user.LastLogin.Format("2006-01-02T15:04:05Z")
+		lastLoginFormatted = &formatted
+	}
+
+	response := CmsUserResponse{
+		ID:                      user.ID,
+		Email:                   user.Email,
+		Name:                    user.Name,
+		Username:                user.Username,
+		CreatorName:             user.Name,
+		LastLogin:               lastLoginFormatted,
+		CreationDatetime:        user.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		AccountID:               accountID,
+		AccountName:             "Default Account",
+		AccountType:             "partner",
+		AccountIsActive:         true,
+		AccountBlockingDatetime: nil,
+		IsActive:                user.IsActive,
+		Language:                "ru",
+		Timezone:                3,
+		IsAdmin:                 false, // Определить по user_accesses
+		HasAdminAccess:          false, // Определить по user_accesses
+		VisibleTabsNames:        visibleTabsNames,
+		CurrentUserAccess:       []string{"view", "edit"},
+		AddressFormat:           []string{},
+		ObjectCardSettings:      map[string]interface{}{},
+		MonitoringItemSetup:     map[string]interface{}{},
+		VisibleObjectsIds:       []int{},
+		VisibleObjectsCount:     0,
+		VisibleGeozoneIds:       []int{},
+		CommonAccesses:          []string{"view", "edit"},
+	}
+
+	// Определяем админские права по доступам
+	for _, access := range userAccesses {
+		if access.Scope == "admin" {
+			var perms []string
+			if err := json.Unmarshal([]byte(access.Perms), &perms); err == nil {
+				for _, perm := range perms {
+					if perm == "full" || perm == "admin" {
+						response.IsAdmin = true
+						response.HasAdminAccess = true
+						break
+					}
+				}
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// TestCreateUserInAxenta тестовый endpoint для создания пользователя в Axenta Cloud без проверки токена
+func TestCreateUserInAxenta(c *gin.Context) {
+	db := database.GetTenantDB(c)
+	if db == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Database connection not available",
+		})
+		return
+	}
+
+	var req CmsUserCreateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Invalid request data: " + err.Error(),
+		})
+		return
+	}
+
+	// Валидация обязательных полей
+	if req.Name == "" || req.Username == "" || req.Email == "" || req.Password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Fields name, username, email, password are required",
+		})
+		return
+	}
+
+	// Проверка длины пароля
+	if len(req.Password) < 6 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Password must be at least 6 characters long",
+		})
+		return
+	}
+
+	// Хешируем пароль
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to hash password",
+		})
+		return
+	}
+
+	// Создаем пользователя в локальной базе
+	user := models.User{
+		Username:   req.Username,
+		Email:      req.Email,
+		Password:   string(hashedPassword),
+		Name:       req.Name,
+		IsActive:   true,
+		UserType:   "cms_user",
+		LoginCount: 0,
+		CompanyID:  1,
+	}
+
+	if err := db.Create(&user).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to create user: " + err.Error(),
+		})
+		return
+	}
+
+	// Пытаемся создать пользователя в Axenta Cloud
+	axentaService := services.NewAxentaUserService(db)
+
+	// Преобразуем accesses в правильный формат
+	accesses := make(map[string][]string)
+	for scope, perms := range req.Accesses {
+		if permsSlice, ok := perms.([]interface{}); ok {
+			accesses[scope] = make([]string, len(permsSlice))
+			for i, perm := range permsSlice {
+				if permStr, ok := perm.(string); ok {
+					accesses[scope][i] = permStr
+				}
+			}
+		}
+	}
+
+	// Попробуем создать пользователя в Axenta Cloud с тестовым токеном
+	testToken := "test-token-123"
+	axentaUser, err := axentaService.CreateUserInAxenta(testToken, &user, req.VisibleTabsNames, accesses)
+
+	var response gin.H
+	if err != nil {
+		fmt.Printf("Failed to create user %s in Axenta Cloud: %v\n", user.Username, err)
+
+		// Обновляем пользователя в локальной базе, отмечая что синхронизация не удалась
+		user.IsAxentaUser = false
+		user.AxentaUserType = "local"
+		db.Save(&user)
+
+		response = gin.H{
+			"status":  "partial_success",
+			"message": "User created locally but failed to sync with Axenta Cloud",
+			"data": gin.H{
+				"user_id":        user.ID,
+				"username":       user.Username,
+				"email":          user.Email,
+				"is_axenta_user": user.IsAxentaUser,
+				"axenta_error":   err.Error(),
+			},
+		}
+	} else {
+		fmt.Printf("Successfully created user %s in Axenta Cloud with ID: %d\n", user.Username, axentaUser.ID)
+
+		// Обновляем пользователя в локальной базе, отмечая что он синхронизирован с Axenta
+		user.IsAxentaUser = true
+		user.AxentaUserType = "partner"
+		user.AxentaUserID = fmt.Sprintf("%d", axentaUser.ID)
+		user.ExternalSource = "axenta"
+		user.ExternalID = fmt.Sprintf("%d", axentaUser.ID)
+		db.Save(&user)
+
+		response = gin.H{
+			"status":  "success",
+			"message": "User created successfully in both local database and Axenta Cloud",
+			"data": gin.H{
+				"user_id":         user.ID,
+				"username":        user.Username,
+				"email":           user.Email,
+				"is_axenta_user":  user.IsAxentaUser,
+				"axenta_user_id":  axentaUser.ID,
+				"axenta_response": axentaUser,
+			},
+		}
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// CreateUserDirectly создает пользователя напрямую в локальной базе (без проверки токена)
+func CreateUserDirectly(c *gin.Context) {
+	db := database.GetTenantDB(c)
+	if db == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Database connection not available",
+		})
+		return
+	}
+
+	var req CmsUserCreateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Invalid request data: " + err.Error(),
+		})
+		return
+	}
+
+	// Валидация обязательных полей
+	if req.Name == "" || req.Username == "" || req.Email == "" || req.Password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Fields name, username, email, password are required",
+		})
+		return
+	}
+
+	// Проверка длины пароля
+	if len(req.Password) < 6 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Password must be at least 6 characters long",
+		})
+		return
+	}
+
+	// Проверка уникальности email и username
+	var existingUser models.User
+	if err := db.Where("email = ? OR username = ?", req.Email, req.Username).First(&existingUser).Error; err == nil {
+		c.JSON(http.StatusConflict, gin.H{
+			"status": "error",
+			"error":  "User with this email or username already exists",
+		})
+		return
+	}
+
+	// Хешируем пароль
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to hash password",
+		})
+		return
+	}
+
+	// Начинаем транзакцию
+	tx := db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Создаем пользователя
+	user := models.User{
+		Username:   req.Username,
+		Email:      req.Email,
+		Password:   string(hashedPassword),
+		Name:       req.Name,
+		IsActive:   true,
+		UserType:   "cms_user",
+		LoginCount: 0,
+		CompanyID:  1,
+	}
+
+	if err := tx.Create(&user).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to create user: " + err.Error(),
+		})
+		return
+	}
+
+	// Создаем user_tabs
+	for _, tabName := range req.VisibleTabsNames {
+		userTab := models.UserTab{
+			UserID: user.ID,
+			Name:   tabName,
+		}
+		if err := tx.Create(&userTab).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error",
+				"error":  "Failed to create user tab: " + err.Error(),
+			})
+			return
+		}
+	}
+
+	// Создаем user_accesses
+	for scope, perms := range req.Accesses {
+		permsJSON, err := json.Marshal(perms)
+		if err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error",
+				"error":  "Failed to marshal permissions: " + err.Error(),
+			})
+			return
+		}
+
+		userAccess := models.UserAccess{
+			UserID: user.ID,
+			Scope:  scope,
+			Perms:  string(permsJSON),
+		}
+		if err := tx.Create(&userAccess).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error",
+				"error":  "Failed to create user access: " + err.Error(),
+			})
+			return
+		}
+	}
+
+	// Завершаем транзакцию
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to commit transaction: " + err.Error(),
+		})
+		return
+	}
+
+	// Формируем ответ
+	response := CmsUserResponse{
+		ID:                      user.ID,
+		Email:                   user.Email,
+		Name:                    user.Name,
+		Username:                user.Username,
+		CreatorName:             user.Name,
+		LastLogin:               nil,
+		CreationDatetime:        user.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		AccountID:               "1",
+		AccountName:             "Default Account",
+		AccountType:             "partner",
+		AccountIsActive:         true,
+		AccountBlockingDatetime: nil,
+		IsActive:                user.IsActive,
+		Language:                "ru",
+		Timezone:                3,
+		IsAdmin:                 req.HasAdminAccess,
+		HasAdminAccess:          req.HasAdminAccess,
+		VisibleTabsNames:        req.VisibleTabsNames,
+		CurrentUserAccess:       []string{"view", "edit"},
+		AddressFormat:           []string{},
+		ObjectCardSettings:      map[string]interface{}{},
+		MonitoringItemSetup:     map[string]interface{}{},
+		VisibleObjectsIds:       []int{},
+		VisibleObjectsCount:     0,
+		VisibleGeozoneIds:       []int{},
+		CommonAccesses:          []string{"view", "edit"},
+	}
+
+	c.JSON(http.StatusCreated, response)
+}
+
+// CreateCmsUserWithCurrentToken создает пользователя CMS используя токен текущего авторизованного пользователя
+func CreateCmsUserWithCurrentToken(c *gin.Context) {
+	db := database.GetTenantDB(c)
+	if db == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Database connection not available",
+		})
+		return
+	}
+
+	var req CmsUserCreateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Invalid request data: " + err.Error(),
+		})
+		return
+	}
+
+	// Валидация обязательных полей
+	if req.Name == "" || req.Username == "" || req.Email == "" || req.Password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Fields name, username, email, password are required",
+		})
+		return
+	}
+
+	// Проверка длины пароля
+	if len(req.Password) < 6 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Password must be at least 6 characters long",
+		})
+		return
+	}
+
+	// Проверка уникальности email и username
+	var existingUser models.User
+	if err := db.Where("email = ? OR username = ?", req.Email, req.Username).First(&existingUser).Error; err == nil {
+		c.JSON(http.StatusConflict, gin.H{
+			"status": "error",
+			"error":  "User with this email or username already exists",
+		})
+		return
+	}
+
+	// Хешируем пароль
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to hash password",
+		})
+		return
+	}
+
+	// Получаем токен из заголовка Authorization для идентификации пользователя
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  "Authorization header is required",
+		})
+		return
+	}
+
+	// Извлекаем токен из заголовка "Token <token>"
+	var requestToken string
+	if strings.HasPrefix(authHeader, "Token ") {
+		requestToken = strings.TrimPrefix(authHeader, "Token ")
+	} else {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  "Invalid authorization header format. Expected 'Token <token>'",
+		})
+		return
+	}
+
+	// Создаем сервис для работы с токенами пользователей
+	userTokenService := services.NewUserTokenService(db)
+
+	// Находим пользователя по токену из заголовка
+	var currentUser models.User
+	if err := db.Where("id IN (SELECT user_id FROM user_tokens WHERE token = ? AND is_active = ?)", requestToken, true).First(&currentUser).Error; err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  "User not found or token invalid",
+		})
+		return
+	}
+
+	// Получаем сохраненный токен пользователя для Axenta Cloud
+	userToken, err := userTokenService.GetUserToken(currentUser.ID)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  "No valid Axenta token found for user",
+		})
+		return
+	}
+
+	// Используем сохраненный токен для создания пользователя в Axenta Cloud
+	currentToken := userToken.Token
+
+	// Получаем accountId из переменной окружения
+	accountID := os.Getenv("AXENTA_DEFAULT_ACCOUNT_ID")
+	if accountID == "" {
+		accountID = "1" // Значение по умолчанию
+	}
+
+	// Начинаем транзакцию
+	tx := db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Создаем пользователя
+	user := models.User{
+		Username:   req.Username,
+		Email:      req.Email,
+		Password:   string(hashedPassword),
+		Name:       req.Name,
+		IsActive:   true,
+		UserType:   "cms_user",
+		LoginCount: 0,
+		CompanyID:  1,
+	}
+
+	if err := tx.Create(&user).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to create user: " + err.Error(),
+		})
+		return
+	}
+
+	// Создаем user_tabs
+	for _, tabName := range req.VisibleTabsNames {
+		userTab := models.UserTab{
+			UserID: user.ID,
+			Name:   tabName,
+		}
+		if err := tx.Create(&userTab).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error",
+				"error":  "Failed to create user tab: " + err.Error(),
+			})
+			return
+		}
+	}
+
+	// Создаем user_accesses
+	for scope, perms := range req.Accesses {
+		permsJSON, err := json.Marshal(perms)
+		if err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error",
+				"error":  "Failed to marshal permissions: " + err.Error(),
+			})
+			return
+		}
+
+		userAccess := models.UserAccess{
+			UserID: user.ID,
+			Scope:  scope,
+			Perms:  string(permsJSON),
+		}
+		if err := tx.Create(&userAccess).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error",
+				"error":  "Failed to create user access: " + err.Error(),
+			})
+			return
+		}
+	}
+
+	// Завершаем транзакцию
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to commit transaction: " + err.Error(),
+		})
+		return
+	}
+
+	// Создаем пользователя в Axenta Cloud в фоновом режиме
+	go func() {
+		axentaService := services.NewAxentaUserService(database.DB)
+
+		// Преобразуем accesses в правильный формат
+		accesses := make(map[string][]string)
+		for scope, perms := range req.Accesses {
+			if permsSlice, ok := perms.([]interface{}); ok {
+				accesses[scope] = make([]string, len(permsSlice))
+				for i, perm := range permsSlice {
+					if permStr, ok := perm.(string); ok {
+						accesses[scope][i] = permStr
+					}
+				}
+			}
+		}
+
+		// Создаем пользователя в Axenta Cloud
+		axentaUser, err := axentaService.CreateUserInAxenta(currentToken, &user, req.VisibleTabsNames, accesses)
+		if err != nil {
+			fmt.Printf("Failed to create user %s in Axenta Cloud: %v\n", user.Username, err)
+
+			// Обновляем пользователя в локальной базе, отмечая что синхронизация не удалась
+			user.IsAxentaUser = false
+			user.AxentaUserType = "local"
+			database.DB.Save(&user)
+		} else {
+			fmt.Printf("Successfully created user %s in Axenta Cloud with ID: %d\n", user.Username, axentaUser.ID)
+
+			// Обновляем пользователя в локальной базе, отмечая что он синхронизирован с Axenta
+			user.IsAxentaUser = true
+			user.AxentaUserType = "partner"
+			user.AxentaUserID = fmt.Sprintf("%d", axentaUser.ID)
+			user.ExternalSource = "axenta"
+			user.ExternalID = fmt.Sprintf("%d", axentaUser.ID)
+			database.DB.Save(&user)
+		}
+	}()
+
+	// Формируем ответ
+	response := CmsUserResponse{
+		ID:                      user.ID,
+		Email:                   user.Email,
+		Name:                    user.Name,
+		Username:                user.Username,
+		CreatorName:             user.Name,
+		LastLogin:               nil,
+		CreationDatetime:        user.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		AccountID:               accountID,
+		AccountName:             "Default Account",
+		AccountType:             "partner",
+		AccountIsActive:         true,
+		AccountBlockingDatetime: nil,
+		IsActive:                user.IsActive,
+		Language:                "ru",
+		Timezone:                3,
+		IsAdmin:                 req.HasAdminAccess,
+		HasAdminAccess:          req.HasAdminAccess,
+		VisibleTabsNames:        req.VisibleTabsNames,
+		CurrentUserAccess:       []string{"view", "edit"},
+		AddressFormat:           []string{},
+		ObjectCardSettings:      map[string]interface{}{},
+		MonitoringItemSetup:     map[string]interface{}{},
+		VisibleObjectsIds:       []int{},
+		VisibleObjectsCount:     0,
+		VisibleGeozoneIds:       []int{},
+		CommonAccesses:          []string{"view", "edit"},
+	}
+
+	c.JSON(http.StatusCreated, response)
+}
+
+// TestEndpoint тестовый endpoint
+func TestEndpoint(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Test endpoint is working",
+	})
+}

@@ -123,6 +123,44 @@ func ConnectDatabase() error {
 	return nil
 }
 
+// ConnectDatabaseWithoutMigrations подключается к базе данных без выполнения миграций (для тестирования)
+func ConnectDatabaseWithoutMigrations() error {
+	cfg := config.GetConfig()
+
+	// Формируем DSN (Data Source Name)
+	dsn := cfg.GetDatabaseDSN()
+
+	// Подключаемся к базе данных с настройкой логирования медленных запросов
+	var err error
+	slowLogger := NewSlowQueryLogger(1000 * time.Millisecond) // Логируем запросы > 1 секунды
+	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
+		Logger: slowLogger,
+	})
+
+	if err != nil {
+		return fmt.Errorf("не удалось подключиться к базе данных: %w", err)
+	}
+
+	// Настраиваем пул соединений
+	sqlDB, err := DB.DB()
+	if err != nil {
+		return fmt.Errorf("не удалось получить sql.DB: %w", err)
+	}
+
+	// Применяем настройки пула соединений
+	sqlDB.SetMaxOpenConns(cfg.Database.MaxOpenConns)
+	sqlDB.SetMaxIdleConns(cfg.Database.MaxIdleConns)
+	sqlDB.SetConnMaxLifetime(cfg.Database.ConnMaxLifetime)
+
+	log.Printf("✅ Успешно подключено к PostgreSQL (пул: %d/%d соединений)",
+		cfg.Database.MaxIdleConns, cfg.Database.MaxOpenConns)
+
+	// Миграции пропускаем для тестирования
+	log.Println("⚠️ Миграции пропущены для тестирования")
+
+	return nil
+}
+
 // getEnv получает переменную окружения или возвращает значение по умолчанию
 // Deprecated: используйте config.GetConfig() вместо этого
 // Временно закомментировано - функция не используется

@@ -148,7 +148,7 @@ func TestCreateWarehouseOperation(t *testing.T) {
 		Email:     "warehouse@example.com",
 		FirstName: "Иван",
 		LastName:  "Складской",
-		RoleID:    role.ID,
+		RoleID:    &role.ID,
 		IsActive:  true,
 	}
 	db.Create(&user)

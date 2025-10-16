@@ -131,6 +131,24 @@ func GetAllMigrations() []MigrationInfo {
 			IsGlobal:    false,
 		},
 		{
+			TableName:   "user_tabs",
+			Model:       &models.UserTab{},
+			Description: "Вкладки пользователей",
+			IsGlobal:    false,
+		},
+		{
+			TableName:   "user_accesses",
+			Model:       &models.UserAccess{},
+			Description: "Доступы пользователей",
+			IsGlobal:    false,
+		},
+		{
+			TableName:   "user_tokens",
+			Model:       &models.UserToken{},
+			Description: "Токены пользователей для Axenta Cloud",
+			IsGlobal:    false,
+		},
+		{
 			TableName:   "objects",
 			Model:       &models.Object{},
 			Description: "Объекты мониторинга",

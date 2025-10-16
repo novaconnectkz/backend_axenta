@@ -297,7 +297,7 @@ func TestDatabaseMigrations(t *testing.T) {
 			Username: "test_user",
 			Email:    "test@example.com",
 			Password: "password",
-			RoleID:   role.ID,
+			RoleID:   &role.ID,
 			IsActive: true,
 		}
 		err = db.Create(&user).Error

@@ -212,7 +212,7 @@ func TestUserModel(t *testing.T) {
 			Username: "role_user",
 			Email:    "role@example.com",
 			Password: "password",
-			RoleID:   role.ID,
+			RoleID:   &role.ID,
 		}
 		err = db.Create(&user).Error
 		require.NoError(t, err)
