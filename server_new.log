@@ -814,3 +814,11 @@ Failed to create user test_user_prod_migration_161025 in Axenta Cloud: failed to
 </body>
 </html>
 
+[GIN] 2025/10/16 - 10:25:56 | 204 |     1.46425ms |             ::1 | OPTIONS  "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 10:25:57 | 200 |  654.379209ms |             ::1 | GET      "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 10:25:57 | 200 |  219.828583ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 10:25:58 | 200 |  558.830208ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/16 - 10:30:57 | 200 |  815.508292ms |             ::1 | GET      "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 10:30:57 | 204 |      61.875µs |             ::1 | OPTIONS  "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 10:30:58 | 200 |   195.41275ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 10:30:59 | 200 |  1.143648708s |             ::1 | GET      "/api/auth/users/stats"
