@@ -761,3 +761,56 @@ Successfully created user 2success_real_161025@example.com in Axenta Cloud with 
 [GIN] 2025/10/16 - 10:05:57 | 200 |  218.869666ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
 [GIN] 2025/10/16 - 10:05:57 | 204 |      21.208µs |             ::1 | OPTIONS  "/api/auth/users/stats"
 [GIN] 2025/10/16 - 10:05:58 | 200 |   994.79825ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/16 - 10:10:57 | 204 |    2.876875ms |             ::1 | OPTIONS  "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 10:10:57 | 200 |  687.190792ms |             ::1 | GET      "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 10:10:58 | 200 |  197.975916ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 10:10:58 | 200 |  482.383458ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/16 - 10:13:35 | 200 |    5.671125ms |             ::1 | GET      "/ping"
+[GIN] 2025/10/16 - 10:15:57 | 200 |  659.944541ms |             ::1 | GET      "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 10:15:57 | 204 |     346.458µs |             ::1 | OPTIONS  "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 10:15:57 | 200 |  234.187083ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 10:15:58 | 200 |    547.4535ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/16 - 10:16:01 | 200 |     730.542µs |             ::1 | GET      "/ping"
+2025/10/16 10:16:08 AUTH_LOG: {"company_id":"","ip_address":"::1","operation":"login_attempt","timestamp":"2025-10-16T10:16:08+03:00","user_agent":"curl/8.7.1","user_id":"","username":"glomos"}
+2025/10/16 10:16:09 AUTH_LOG: {"company_id":"","content_type":"application/json","operation":"axenta_login_response","response_code":200,"response_size":52,"timestamp":"2025-10-16T10:16:09+03:00","user_id":"","username":"glomos"}
+2025/10/16 10:16:09 AUTH_LOG: {"company_id":"","operation":"axenta_login_success","status":"success","timestamp":"2025-10-16T10:16:09+03:00","token_length":40,"user_id":"","username":"glomos"}
+2025/10/16 10:16:09 AUTH_LOG: {"auth_header":"Token 5e515a8f2874fc...","company_id":"","operation":"axenta_user_request_headers","timestamp":"2025-10-16T10:16:09+03:00","url":"https://axenta.cloud/api/current_user/","user_id":"","username":"glomos"}
+2025/10/16 10:16:09 AUTH_LOG: {"company_id":"","content_type":"application/json","operation":"axenta_user_response","response_code":200,"response_size":1600,"timestamp":"2025-10-16T10:16:09+03:00","user_id":"","username":"glomos"}
+2025/10/16 10:16:09 Updated Axenta user: glomos (type: partner)
+2025/10/16 10:16:09 AUTH_LOG: {"account_id":186,"account_name":"GLOMOS","account_type":"partner","axenta_user_type":"partner","company_id":"","email":"chudin@glomos.ru","full_data":true,"is_admin":true,"is_axenta_user":true,"operation":"login_success_full","role_id":1,"status":"success","timestamp":"2025-10-16T10:16:09+03:00","user_id":"23","username":"glomos"}
+[GIN] 2025/10/16 - 10:16:09 | 200 |  682.081542ms |             ::1 | POST     "/api/auth/login"
+[GIN] 2025/10/16 - 10:16:29 | 201 |   92.616708ms |             ::1 | POST     "/api/cms/users/"
+Failed to create user test_user_after_migration_161025 in Axenta Cloud: failed to create user in Axenta, status: 500, body: 
+<!doctype html>
+<html lang="en">
+<head>
+  <title>Server Error (500)</title>
+</head>
+<body>
+  <h1>Server Error (500)</h1><p></p>
+</body>
+</html>
+
+[GIN] 2025/10/16 - 10:20:57 | 200 |  819.118916ms |             ::1 | GET      "/api/auth/cms/objects/stats"
+[GIN] 2025/10/16 - 10:20:58 | 200 |    235.5265ms |             ::1 | GET      "/api/auth/cms/trash/?page=1&per_page=1000"
+[GIN] 2025/10/16 - 10:20:58 | 204 |      11.916µs |             ::1 | OPTIONS  "/api/auth/users/stats"
+[GIN] 2025/10/16 - 10:20:59 | 200 |  805.599584ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/16 - 10:21:27 | 204 |     19.6405ms |             ::1 | OPTIONS  "/api/auth/users/stats"
+2025/10/16 10:21:27 📡 Проксирование запроса пользователей к Axenta Cloud: https://axenta.cloud/api/cms/users/?page=1&per_page=20
+2025/10/16 10:21:27 🔍 Параметры запроса: page=1, limit=20, search=
+2025/10/16 10:21:27 ✅ Получено 20 пользователей от Axenta Cloud (всего: 572)
+2025/10/16 10:21:27 📊 Возвращаем: page=1, limit=20, pages=29, получено=20, total=572
+[GIN] 2025/10/16 - 10:21:27 | 200 |  486.574667ms |             ::1 | GET      "/api/auth/users?page=1&limit=20"
+[GIN] 2025/10/16 - 10:21:28 | 200 |  717.524166ms |             ::1 | GET      "/api/auth/users/stats"
+[GIN] 2025/10/16 - 10:22:25 | 201 |  208.414584ms |             ::1 | POST     "/api/cms/users/"
+Failed to create user test_user_prod_migration_161025 in Axenta Cloud: failed to create user in Axenta, status: 500, body: 
+<!doctype html>
+<html lang="en">
+<head>
+  <title>Server Error (500)</title>
+</head>
+<body>
+  <h1>Server Error (500)</h1><p></p>
+</body>
+</html>
+

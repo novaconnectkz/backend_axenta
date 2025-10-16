@@ -93,7 +93,7 @@ func main() {
 	globalTables := []string{
 		"companies", "billing_plans", "subscriptions",
 		"integrations", "integration_errors",
-		"local_users", "refresh_tokens",
+		"local_users", "refresh_tokens", "user_tokens",
 	}
 
 	db := database.GetDB()
@@ -137,7 +137,7 @@ func main() {
 				}
 
 				// Проверяем основные тенантные таблицы
-				tenantTables := []string{"users", "roles", "permissions", "objects", "contracts"}
+				tenantTables := []string{"users", "roles", "permissions", "objects", "contracts", "user_tokens"}
 				for _, table := range tenantTables {
 					if db.Migrator().HasTable(table) {
 						log.Printf("    ✅ %s", table)
