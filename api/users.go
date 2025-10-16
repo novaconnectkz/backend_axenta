@@ -3,6 +3,7 @@ package api
 import (
 	"backend_axenta/database"
 	"backend_axenta/models"
+	"backend_axenta/services"
 	"net/http"
 	"strconv"
 	"strings"
@@ -1047,5 +1048,96 @@ func UpdateUserPassword(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{
 		"status":  "success",
 		"message": "Пароль изменён",
+	})
+}
+
+// CheckUsernameRequest представляет запрос на проверку имени пользователя
+type CheckUsernameRequest struct {
+	Username string `json:"username" binding:"required,min=3,max=50"`
+}
+
+// CheckUsernameResponse представляет ответ проверки имени пользователя
+type CheckUsernameResponse struct {
+	Available bool   `json:"available"`
+	Message   string `json:"message"`
+	Source    string `json:"source,omitempty"` // "crm" или "axenta"
+}
+
+// CheckUsername проверяет доступность имени пользователя в CRM и Axenta
+func CheckUsername(c *gin.Context) {
+	db := database.GetTenantDB(c)
+	if db == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Подключение к базе данных недоступно",
+		})
+		return
+	}
+
+	var req CheckUsernameRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Неверный формат запроса: " + err.Error(),
+		})
+		return
+	}
+
+	// Проверяем в локальной базе данных CRM
+	var existingUser models.User
+	err := db.Where("username = ?", req.Username).First(&existingUser).Error
+	if err == nil {
+		// Пользователь найден в CRM
+		c.JSON(http.StatusOK, gin.H{
+			"status": "success",
+			"data": CheckUsernameResponse{
+				Available: false,
+				Message:   "Пользователь с таким именем уже существует в CRM",
+				Source:    "crm",
+			},
+		})
+		return
+	}
+
+	if err != gorm.ErrRecordNotFound {
+		// Ошибка базы данных
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка проверки имени пользователя: " + err.Error(),
+		})
+		return
+	}
+
+	// Проверяем в Axenta Cloud (если доступен токен)
+	authHeader := c.GetHeader("Authorization")
+	if authHeader != "" && strings.HasPrefix(authHeader, "Bearer ") {
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+
+		// Создаем сервис для работы с Axenta
+		axentaUserService := services.NewAxentaUserService(db)
+
+		// Пытаемся получить пользователя из Axenta
+		axentaUser, err := axentaUserService.GetUserFromAxenta(token)
+		if err == nil && axentaUser.Username == req.Username {
+			// Пользователь найден в Axenta
+			c.JSON(http.StatusOK, gin.H{
+				"status": "success",
+				"data": CheckUsernameResponse{
+					Available: false,
+					Message:   "Пользователь с таким именем уже существует в Axenta",
+					Source:    "axenta",
+				},
+			})
+			return
+		}
+	}
+
+	// Имя пользователя доступно
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data": CheckUsernameResponse{
+			Available: true,
+			Message:   "Имя пользователя доступно",
+		},
 	})
 }

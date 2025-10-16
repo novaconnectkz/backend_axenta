@@ -342,6 +342,85 @@ paths:
         '404':
           description: Пользователь не найден
 
+  /api/auth/local/users/check-username/:
+    post:
+      tags: [Пользователи]
+      summary: Проверка доступности имени пользователя
+      description: |
+        Проверяет доступность имени пользователя в CRM и Axenta Cloud.
+        Возвращает информацию о том, занято ли имя пользователя.
+      security:
+        - TokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - username
+              properties:
+                username:
+                  type: string
+                  minLength: 3
+                  maxLength: 50
+                  pattern: '^[a-zA-Z0-9_-]+$'
+                  description: Имя пользователя для проверки
+                  example: "newuser"
+      responses:
+        '200':
+          description: Результат проверки имени пользователя
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "success"
+                  data:
+                    type: object
+                    properties:
+                      available:
+                        type: boolean
+                        description: Доступно ли имя пользователя
+                        example: false
+                      message:
+                        type: string
+                        description: Сообщение о результате проверки
+                        example: "Пользователь с таким именем уже существует в CRM"
+                      source:
+                        type: string
+                        enum: [crm, axenta]
+                        description: Источник конфликта (если имя занято)
+                        example: "crm"
+        '400':
+          description: Ошибка валидации данных
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "error"
+                  error:
+                    type: string
+                    example: "Неверный формат запроса: username is required"
+        '500':
+          description: Внутренняя ошибка сервера
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "error"
+                  error:
+                    type: string
+                    example: "Подключение к базе данных недоступно"
+
   # ==================== ГЕОКОДИРОВАНИЕ ====================
   /api/geocoding/reverse/:
     post:

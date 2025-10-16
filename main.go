@@ -582,6 +582,7 @@ func main() {
 	// Локальные endpoints для управления пользователями (создание, редактирование)
 	apiGroup.GET("/local/users/:id", api.GetUser)
 	apiGroup.POST("/local/users", api.CreateUser)
+	apiGroup.POST("/local/users/check-username", api.CheckUsername)
 
 	// Учетные записи (прокси к Axenta API)
 	log.Println("🔧 Registering accounts proxy endpoints...")
