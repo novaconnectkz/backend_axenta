@@ -16,43 +16,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// translateValidationError переводит сообщения ошибок валидации на русский язык
-func translateValidationError(err error) string {
-	errorMsg := err.Error()
-
-	// Переводим основные сообщения валидации
-	translations := map[string]string{
-		"Field validation for 'Email' failed on the 'email' tag":       "Поле Email должно содержать корректный email адрес",
-		"Field validation for 'Username' failed on the 'required' tag": "Поле Имя пользователя обязательно для заполнения",
-		"Field validation for 'Name' failed on the 'required' tag":     "Поле Имя обязательно для заполнения",
-		"Field validation for 'Password' failed on the 'required' tag": "Поле Пароль обязательно для заполнения",
-		"Field validation for 'Password' failed on the 'min' tag":      "Пароль должен содержать минимум 6 символов",
-		"Field validation for 'Email' failed on the 'required' tag":    "Поле Email обязательно для заполнения",
-	}
-
-	// Ищем точное совпадение
-	if translated, exists := translations[errorMsg]; exists {
-		return translated
-	}
-
-	// Если точного совпадения нет, делаем базовый перевод
-	if strings.Contains(errorMsg, "required") {
-		return "Все обязательные поля должны быть заполнены"
-	}
-	if strings.Contains(errorMsg, "email") {
-		return "Некорректный формат email адреса"
-	}
-	if strings.Contains(errorMsg, "min") {
-		return "Значение слишком короткое"
-	}
-	if strings.Contains(errorMsg, "max") {
-		return "Значение слишком длинное"
-	}
-
-	// Если ничего не подошло, возвращаем общее сообщение
-	return "Неверные данные запроса"
-}
-
 // CmsUserCreateRequest представляет запрос на создание CMS пользователя
 type CmsUserCreateRequest struct {
 	Name             string                 `json:"name" binding:"required"`
