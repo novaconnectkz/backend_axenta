@@ -214,7 +214,7 @@ func CreateRole(c *gin.Context) {
 			strings.Contains(strings.ToLower(err.Error()), "constraint") {
 			c.JSON(http.StatusConflict, gin.H{
 				"status": "error",
-				"error":  "Role with this name already exists",
+				"error":  "Роль с таким именем уже существует",
 			})
 			return
 		}
@@ -313,7 +313,7 @@ func UpdateRole(c *gin.Context) {
 			strings.Contains(strings.ToLower(err.Error()), "constraint") {
 			c.JSON(http.StatusConflict, gin.H{
 				"status": "error",
-				"error":  "Role with this name already exists",
+				"error":  "Роль с таким именем уже существует",
 			})
 			return
 		}
@@ -611,7 +611,7 @@ func CreatePermission(c *gin.Context) {
 			strings.Contains(strings.ToLower(err.Error()), "constraint") {
 			c.JSON(http.StatusConflict, gin.H{
 				"status": "error",
-				"error":  "Permission with this name already exists",
+				"error":  "Разрешение с таким именем уже существует",
 			})
 			return
 		}

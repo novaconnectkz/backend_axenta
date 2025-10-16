@@ -200,7 +200,7 @@ func CreateUserTemplate(c *gin.Context) {
 			strings.Contains(strings.ToLower(err.Error()), "constraint") {
 			c.JSON(http.StatusConflict, gin.H{
 				"status": "error",
-				"error":  "User template with this name already exists",
+				"error":  "Шаблон пользователя с таким именем уже существует",
 			})
 			return
 		}
@@ -308,7 +308,7 @@ func UpdateUserTemplate(c *gin.Context) {
 			strings.Contains(strings.ToLower(err.Error()), "constraint") {
 			c.JSON(http.StatusConflict, gin.H{
 				"status": "error",
-				"error":  "User template with this name already exists",
+				"error":  "Шаблон пользователя с таким именем уже существует",
 			})
 			return
 		}

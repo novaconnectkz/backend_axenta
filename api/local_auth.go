@@ -103,7 +103,7 @@ func (api *LocalAuthAPI) LocalLogin(c *gin.Context) {
 		})
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
-			"error":  "Invalid request format",
+			"error":  "Неверный формат запроса",
 		})
 		return
 	}
@@ -131,7 +131,7 @@ func (api *LocalAuthAPI) LocalLogin(c *gin.Context) {
 			})
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"status": "error",
-				"error":  "Invalid credentials",
+				"error":  "Неверные учетные данные",
 			})
 			return
 		}
@@ -177,7 +177,7 @@ func (api *LocalAuthAPI) LocalLogin(c *gin.Context) {
 			})
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"status": "error",
-				"error":  "Failed to create user",
+				"error":  "Ошибка создания пользователя",
 			})
 			return
 		}
@@ -185,14 +185,14 @@ func (api *LocalAuthAPI) LocalLogin(c *gin.Context) {
 		// Сохраняем в БД
 		log.Printf("🔍 DB_DEBUG: Attempting to create user: %+v", newUser)
 		if err := publicDB.Create(&newUser).Error; err != nil {
-			log.Printf("🔍 DB_ERROR: Failed to create user: %v", err)
+			log.Printf("🔍 DB_ERROR: Ошибка создания пользователя: %v", err)
 			logLocalAuthOperation("login_user_creation_error", req.Username, "", "", map[string]interface{}{
 				"error":  err.Error(),
 				"status": "failed",
 			})
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"status": "error",
-				"error":  "Failed to create user",
+				"error":  "Ошибка создания пользователя",
 			})
 			return
 		}
@@ -217,7 +217,7 @@ func (api *LocalAuthAPI) LocalLogin(c *gin.Context) {
 			})
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"status": "error",
-				"error":  "Invalid credentials",
+				"error":  "Неверные учетные данные",
 			})
 			return
 		}
@@ -258,7 +258,7 @@ func (api *LocalAuthAPI) LocalLogin(c *gin.Context) {
 			})
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"status": "error",
-				"error":  "Invalid credentials",
+				"error":  "Неверные учетные данные",
 			})
 			return
 		}
@@ -273,7 +273,7 @@ func (api *LocalAuthAPI) LocalLogin(c *gin.Context) {
 		})
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Failed to generate tokens",
+			"error":  "Ошибка генерации токенов",
 		})
 		return
 	}
@@ -307,7 +307,7 @@ func (api *LocalAuthAPI) RefreshToken(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
-			"error":  "Invalid request format",
+			"error":  "Неверный формат запроса",
 		})
 		return
 	}
@@ -321,7 +321,7 @@ func (api *LocalAuthAPI) RefreshToken(c *gin.Context) {
 		})
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"status": "error",
-			"error":  "Invalid or expired refresh token",
+			"error":  "Неверный или истекший refresh токен",
 		})
 		return
 	}
@@ -346,7 +346,7 @@ func (api *LocalAuthAPI) LocalCurrentUser(c *gin.Context) {
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"status": "error",
-			"error":  "User not found in context",
+			"error":  "Пользователь не найден в контексте",
 		})
 		return
 	}
@@ -357,7 +357,7 @@ func (api *LocalAuthAPI) LocalCurrentUser(c *gin.Context) {
 	if err := publicDB.First(&user, userID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"status": "error",
-			"error":  "User not found",
+			"error":  "Пользователь не найден",
 		})
 		return
 	}
@@ -403,7 +403,7 @@ func (api *LocalAuthAPI) RegisterLocalUser(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
-			"error":  "Invalid request format",
+			"error":  "Неверный формат запроса",
 		})
 		return
 	}
@@ -423,7 +423,7 @@ func (api *LocalAuthAPI) RegisterLocalUser(c *gin.Context) {
 	if err := publicDB.Where("username = ?", req.Username).First(&existingUser).Error; err == nil {
 		c.JSON(http.StatusConflict, gin.H{
 			"status": "error",
-			"error":  "Username already exists",
+			"error":  "Имя пользователя уже существует",
 		})
 		return
 	}
@@ -451,7 +451,7 @@ func (api *LocalAuthAPI) RegisterLocalUser(c *gin.Context) {
 	if err := publicDB.Create(&user).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Failed to create user",
+			"error":  "Ошибка создания пользователя",
 		})
 		return
 	}

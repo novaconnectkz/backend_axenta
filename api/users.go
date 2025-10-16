@@ -74,7 +74,7 @@ func GetUsers(c *gin.Context) {
 	if db == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Database connection not available",
+			"error":  "Подключение к базе данных недоступно",
 		})
 		return
 	}
@@ -202,7 +202,7 @@ func GetUsers(c *gin.Context) {
 	if err := query.Count(&total).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Failed to count users: " + err.Error(),
+			"error":  "Ошибка подсчета пользователей: " + err.Error(),
 		})
 		return
 	}
@@ -212,7 +212,7 @@ func GetUsers(c *gin.Context) {
 	if err := query.Offset(offset).Limit(limit).Find(&users).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Failed to fetch users: " + err.Error(),
+			"error":  "Ошибка получения пользователей: " + err.Error(),
 		})
 		return
 	}
@@ -298,7 +298,7 @@ func GetUser(c *gin.Context) {
 	if db == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Database connection not available",
+			"error":  "Подключение к базе данных недоступно",
 		})
 		return
 	}
@@ -307,7 +307,7 @@ func GetUser(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
-			"error":  "Invalid user ID",
+			"error":  "Неверный ID пользователя",
 		})
 		return
 	}
@@ -395,7 +395,7 @@ func CreateUser(c *gin.Context) {
 	if db == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Database connection not available",
+			"error":  "Подключение к базе данных недоступно",
 		})
 		return
 	}
@@ -469,7 +469,7 @@ func CreateUser(c *gin.Context) {
 			strings.Contains(strings.ToLower(err.Error()), "constraint") {
 			c.JSON(http.StatusConflict, gin.H{
 				"status": "error",
-				"error":  "User with this username or email already exists",
+				"error":  "Пользователь с таким именем пользователя или email уже существует",
 			})
 			return
 		}
@@ -517,7 +517,7 @@ func UpdateUser(c *gin.Context) {
 	if db == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Database connection not available",
+			"error":  "Подключение к базе данных недоступно",
 		})
 		return
 	}
@@ -526,7 +526,7 @@ func UpdateUser(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
-			"error":  "Invalid user ID",
+			"error":  "Неверный ID пользователя",
 		})
 		return
 	}
@@ -623,7 +623,7 @@ func UpdateUser(c *gin.Context) {
 			strings.Contains(strings.ToLower(err.Error()), "constraint") {
 			c.JSON(http.StatusConflict, gin.H{
 				"status": "error",
-				"error":  "User with this username or email already exists",
+				"error":  "Пользователь с таким именем пользователя или email уже существует",
 			})
 			return
 		}
@@ -671,7 +671,7 @@ func GetUsersStats(c *gin.Context) {
 	if db == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Database connection not available",
+			"error":  "Подключение к базе данных недоступно",
 		})
 		return
 	}
@@ -804,7 +804,7 @@ func DeleteUser(c *gin.Context) {
 	if db == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Database connection not available",
+			"error":  "Подключение к базе данных недоступно",
 		})
 		return
 	}
@@ -813,7 +813,7 @@ func DeleteUser(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
-			"error":  "Invalid user ID",
+			"error":  "Неверный ID пользователя",
 		})
 		return
 	}
@@ -861,7 +861,7 @@ func BulkDeleteUsers(c *gin.Context) {
 	if db == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Database connection not available",
+			"error":  "Подключение к базе данных недоступно",
 		})
 		return
 	}
@@ -888,7 +888,7 @@ func BulkDeleteUsers(c *gin.Context) {
 	if err := db.Preload("Role").Where("id IN ?", req.UserIDs).Find(&existingUsers).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Failed to fetch users: " + err.Error(),
+			"error":  "Ошибка получения пользователей: " + err.Error(),
 		})
 		return
 	}
@@ -948,7 +948,7 @@ func UpdateUserPassword(c *gin.Context) {
 	if db == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Database connection not available",
+			"error":  "Подключение к базе данных недоступно",
 		})
 		return
 	}

@@ -100,7 +100,7 @@ func CreateCmsUser(c *gin.Context) {
 	if err := db.Where("email = ? OR username = ?", req.Email, req.Username).First(&existingUser).Error; err == nil {
 		c.JSON(http.StatusConflict, gin.H{
 			"status": "error",
-			"error":  "User with this email or username already exists",
+			"error":  "Пользователь с таким email или именем пользователя уже существует",
 		})
 		return
 	}
@@ -590,7 +590,7 @@ func CreateUserDirectly(c *gin.Context) {
 	if err := db.Where("email = ? OR username = ?", req.Email, req.Username).First(&existingUser).Error; err == nil {
 		c.JSON(http.StatusConflict, gin.H{
 			"status": "error",
-			"error":  "User with this email or username already exists",
+			"error":  "Пользователь с таким email или именем пользователя уже существует",
 		})
 		return
 	}
@@ -762,7 +762,7 @@ func CreateCmsUserWithCurrentToken(c *gin.Context) {
 	if err := db.Where("email = ? OR username = ?", req.Email, req.Username).First(&existingUser).Error; err == nil {
 		c.JSON(http.StatusConflict, gin.H{
 			"status": "error",
-			"error":  "User with this email or username already exists",
+			"error":  "Пользователь с таким email или именем пользователя уже существует",
 		})
 		return
 	}
