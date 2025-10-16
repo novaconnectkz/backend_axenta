@@ -317,13 +317,13 @@ func GetUser(c *gin.Context) {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{
 				"status": "error",
-				"error":  "User not found",
+				"error":  "Пользователь не найден",
 			})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Failed to fetch user: " + err.Error(),
+			"error":  "Ошибка получения пользователя: " + err.Error(),
 		})
 		return
 	}
@@ -404,7 +404,7 @@ func CreateUser(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
-			"error":  "Invalid request data: " + err.Error(),
+			"error":  "Неверные данные запроса: " + err.Error(),
 		})
 		return
 	}
@@ -414,7 +414,7 @@ func CreateUser(c *gin.Context) {
 	if err := db.First(&role, req.RoleID).Error; err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
-			"error":  "Role not found",
+			"error":  "Роль не найдена",
 		})
 		return
 	}
@@ -425,7 +425,7 @@ func CreateUser(c *gin.Context) {
 		if err := db.First(&template, *req.TemplateID).Error; err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "error",
-				"error":  "User template not found",
+				"error":  "Шаблон пользователя не найден",
 			})
 			return
 		}
@@ -436,7 +436,7 @@ func CreateUser(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Failed to hash password",
+			"error":  "Ошибка хеширования пароля",
 		})
 		return
 	}
@@ -475,7 +475,7 @@ func CreateUser(c *gin.Context) {
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Failed to create user: " + err.Error(),
+			"error":  "Ошибка создания пользователя: " + err.Error(),
 		})
 		return
 	}
@@ -484,7 +484,7 @@ func CreateUser(c *gin.Context) {
 	if err := db.Preload("Role").Preload("Template").First(&user, user.ID).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Failed to load created user: " + err.Error(),
+			"error":  "Ошибка загрузки созданного пользователя: " + err.Error(),
 		})
 		return
 	}
@@ -535,7 +535,7 @@ func UpdateUser(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
-			"error":  "Invalid request data: " + err.Error(),
+			"error":  "Неверные данные запроса: " + err.Error(),
 		})
 		return
 	}
@@ -546,13 +546,13 @@ func UpdateUser(c *gin.Context) {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{
 				"status": "error",
-				"error":  "User not found",
+				"error":  "Пользователь не найден",
 			})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Failed to fetch user: " + err.Error(),
+			"error":  "Ошибка получения пользователя: " + err.Error(),
 		})
 		return
 	}
@@ -563,7 +563,7 @@ func UpdateUser(c *gin.Context) {
 		if err := db.First(&role, *req.RoleID).Error; err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "error",
-				"error":  "Role not found",
+				"error":  "Роль не найдена",
 			})
 			return
 		}
@@ -575,7 +575,7 @@ func UpdateUser(c *gin.Context) {
 		if err := db.First(&template, *req.TemplateID).Error; err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "error",
-				"error":  "User template not found",
+				"error":  "Шаблон пользователя не найден",
 			})
 			return
 		}
@@ -629,7 +629,7 @@ func UpdateUser(c *gin.Context) {
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Failed to update user: " + err.Error(),
+			"error":  "Ошибка обновления пользователя: " + err.Error(),
 		})
 		return
 	}
@@ -638,7 +638,7 @@ func UpdateUser(c *gin.Context) {
 	if err := db.Preload("Role").Preload("Template").First(&user, user.ID).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Failed to load updated user: " + err.Error(),
+			"error":  "Ошибка загрузки обновленного пользователя: " + err.Error(),
 		})
 		return
 	}
@@ -681,7 +681,7 @@ func GetUsersStats(c *gin.Context) {
 	if err := db.Model(&models.User{}).Count(&totalUsers).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Failed to count total users: " + err.Error(),
+			"error":  "Ошибка подсчета общего количества пользователей: " + err.Error(),
 		})
 		return
 	}
@@ -691,7 +691,7 @@ func GetUsersStats(c *gin.Context) {
 	if err := db.Model(&models.User{}).Where("is_active = ?", true).Count(&activeUsers).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Failed to count active users: " + err.Error(),
+			"error":  "Ошибка подсчета активных пользователей: " + err.Error(),
 		})
 		return
 	}
@@ -733,7 +733,7 @@ func GetUsersStats(c *gin.Context) {
 		Scan(&roleStats).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Failed to get role statistics: " + err.Error(),
+			"error":  "Ошибка получения статистики ролей: " + err.Error(),
 		})
 		return
 	}
@@ -746,7 +746,7 @@ func GetUsersStats(c *gin.Context) {
 		Count(&recentUsers).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Failed to count recent users: " + err.Error(),
+			"error":  "Ошибка подсчета новых пользователей: " + err.Error(),
 		})
 		return
 	}
@@ -824,13 +824,13 @@ func DeleteUser(c *gin.Context) {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{
 				"status": "error",
-				"error":  "User not found",
+				"error":  "Пользователь не найден",
 			})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Failed to fetch user: " + err.Error(),
+			"error":  "Ошибка получения пользователя: " + err.Error(),
 		})
 		return
 	}
@@ -839,7 +839,7 @@ func DeleteUser(c *gin.Context) {
 	if err := db.Delete(&user).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Failed to delete user: " + err.Error(),
+			"error":  "Ошибка удаления пользователя: " + err.Error(),
 		})
 		return
 	}
@@ -870,7 +870,7 @@ func BulkDeleteUsers(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
-			"error":  "Invalid request data: " + err.Error(),
+			"error":  "Неверные данные запроса: " + err.Error(),
 		})
 		return
 	}
@@ -878,7 +878,7 @@ func BulkDeleteUsers(c *gin.Context) {
 	if len(req.UserIDs) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
-			"error":  "No user IDs provided",
+			"error":  "Не указаны ID пользователей",
 		})
 		return
 	}
@@ -896,7 +896,7 @@ func BulkDeleteUsers(c *gin.Context) {
 	if len(existingUsers) != len(req.UserIDs) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
-			"error":  "Some users not found",
+			"error":  "Некоторые пользователи не найдены",
 		})
 		return
 	}
@@ -912,7 +912,7 @@ func BulkDeleteUsers(c *gin.Context) {
 	if len(adminUsers) > 0 {
 		c.JSON(http.StatusForbidden, gin.H{
 			"status": "error",
-			"error":  "Cannot delete administrator users: " + strings.Join(adminUsers, ", "),
+			"error":  "Нельзя удалить администраторов: " + strings.Join(adminUsers, ", "),
 		})
 		return
 	}
@@ -922,7 +922,7 @@ func BulkDeleteUsers(c *gin.Context) {
 	if result.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Failed to delete users: " + result.Error.Error(),
+			"error":  "Ошибка удаления пользователей: " + result.Error.Error(),
 		})
 		return
 	}
@@ -957,7 +957,7 @@ func UpdateUserPassword(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
-			"error":  "Invalid request data: " + err.Error(),
+			"error":  "Неверные данные запроса: " + err.Error(),
 		})
 		return
 	}
@@ -966,7 +966,7 @@ func UpdateUserPassword(c *gin.Context) {
 	if req.NewPassword != req.ConfirmNewPassword {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
-			"error":  "New password and confirmation do not match",
+			"error":  "Новый пароль и подтверждение не совпадают",
 		})
 		return
 	}
@@ -976,7 +976,7 @@ func UpdateUserPassword(c *gin.Context) {
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"status": "error",
-			"error":  "User not authenticated",
+			"error":  "Пользователь не аутентифицирован",
 		})
 		return
 	}
@@ -1015,13 +1015,13 @@ func UpdateUserPassword(c *gin.Context) {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{
 				"status": "error",
-				"error":  "User not found",
+				"error":  "Пользователь не найден",
 			})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Failed to fetch user: " + err.Error(),
+			"error":  "Ошибка получения пользователя: " + err.Error(),
 		})
 		return
 	}

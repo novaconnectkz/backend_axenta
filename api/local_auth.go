@@ -412,7 +412,7 @@ func (api *LocalAuthAPI) RegisterLocalUser(c *gin.Context) {
 	if !models.IsValidRole(req.Role) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
-			"error":  "Invalid role",
+			"error":  "Неверная роль",
 		})
 		return
 	}
@@ -442,7 +442,7 @@ func (api *LocalAuthAPI) RegisterLocalUser(c *gin.Context) {
 	if err := user.SetPassword(req.Password); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Failed to hash password",
+			"error":  "Ошибка хеширования пароля",
 		})
 		return
 	}
