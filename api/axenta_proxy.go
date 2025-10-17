@@ -1068,17 +1068,17 @@ func fallbackLocalSearch(c *gin.Context, search, page, perPage, active, role str
 		}
 	}
 
-        // Возвращаем данные в том же формате, что и Axenta Cloud
-        c.JSON(http.StatusOK, gin.H{
-                "status": "success",
-                "data": gin.H{
-                        "items": userResponses,
-                        "total": total,
-                        "page":  pageInt,
-                        "limit": limitInt,
-                        "pages": (total + int64(limitInt) - 1) / int64(limitInt),                                                                               
-                },
-        })
+	// Возвращаем данные в том же формате, что и Axenta Cloud
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data": gin.H{
+			"items": userResponses,
+			"total": total,
+			"page":  pageInt,
+			"limit": limitInt,
+			"pages": (total + int64(limitInt) - 1) / int64(limitInt),
+		},
+	})
 }
 
 // convertOrderingToAxenta преобразует наш формат сортировки в формат Axenta Cloud
@@ -1102,11 +1102,11 @@ func convertOrderingToAxenta(ordering string) string {
 		"creator_name":       "first_name", // В Axenta Cloud сортируем по first_name
 		"-creator_name":      "-first_name",
 	}
-	
+
 	if axentaField, exists := fieldMapping[ordering]; exists {
 		return axentaField
 	}
-	
+
 	// Если поле не найдено, возвращаем пустую строку (без сортировки)
 	return ""
 }
@@ -1268,6 +1268,206 @@ func GetDeletedObjectsFromAxentaCloud(c *gin.Context) {
 			"page":        pageNum,
 			"limit":       perPageNum,
 			"total_pages": totalPages,
+		},
+	})
+}
+
+// GetObjectsStatsOptimizedFromAxentaCloud получает оптимизированную статистику объектов
+func GetObjectsStatsOptimizedFromAxentaCloud(c *gin.Context) {
+	// Получаем токен пользователя из заголовка Authorization
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  "Токен авторизации не предоставлен",
+		})
+		return
+	}
+
+	// Извлекаем токен из заголовка "Token <token>" или "Bearer <token>"
+	var userToken string
+	if strings.HasPrefix(authHeader, "Token ") {
+		userToken = strings.TrimPrefix(authHeader, "Token ")
+	} else if strings.HasPrefix(authHeader, "Bearer ") {
+		userToken = strings.TrimPrefix(authHeader, "Bearer ")
+	} else {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  "Неверный формат токена авторизации",
+		})
+		return
+	}
+
+	// Создаем HTTP клиент
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	// Запрашиваем статистику объектов из Axenta Cloud
+	axentaURL := "https://axenta.cloud/api/cms/objects/stats/"
+	req, err := http.NewRequest("GET", axentaURL, nil)
+	if err != nil {
+		log.Printf("❌ Ошибка создания запроса к Axenta Cloud: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка создания запроса",
+		})
+		return
+	}
+
+	req.Header.Set("Authorization", "Token "+userToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("❌ Ошибка запроса к Axenta Cloud: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка запроса к внешнему API",
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("❌ Ошибка чтения ответа от Axenta Cloud: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка чтения ответа",
+		})
+		return
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("❌ Axenta Cloud вернул статус %d: %s", resp.StatusCode, string(body))
+		c.JSON(resp.StatusCode, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("Внешний API вернул ошибку: %d", resp.StatusCode),
+		})
+		return
+	}
+
+	// Парсим ответ от Axenta Cloud
+	var axentaResponse map[string]interface{}
+	if err := json.Unmarshal(body, &axentaResponse); err != nil {
+		log.Printf("❌ Ошибка парсинга ответа от Axenta Cloud: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка парсинга ответа",
+		})
+		return
+	}
+
+	// Возвращаем оптимизированную статистику
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data": gin.H{
+			"total":     axentaResponse["total"],
+			"active":    axentaResponse["active"],
+			"inactive":  axentaResponse["inactive"],
+			"by_type":   axentaResponse["by_type"],
+			"by_status": axentaResponse["by_status"],
+		},
+	})
+}
+
+// GetUsersStatsOptimizedFromAxentaCloud получает оптимизированную статистику пользователей
+func GetUsersStatsOptimizedFromAxentaCloud(c *gin.Context) {
+	// Получаем токен пользователя из заголовка Authorization
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  "Токен авторизации не предоставлен",
+		})
+		return
+	}
+
+	// Извлекаем токен
+	var userToken string
+	if strings.HasPrefix(authHeader, "Token ") {
+		userToken = strings.TrimPrefix(authHeader, "Token ")
+	} else if strings.HasPrefix(authHeader, "Bearer ") {
+		userToken = strings.TrimPrefix(authHeader, "Bearer ")
+	} else {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  "Неверный формат токена авторизации",
+		})
+		return
+	}
+
+	// Создаем HTTP клиент
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	// Запрашиваем статистику пользователей из Axenta Cloud
+	axentaURL := "https://axenta.cloud/api/cms/users/stats/"
+	req, err := http.NewRequest("GET", axentaURL, nil)
+	if err != nil {
+		log.Printf("❌ Ошибка создания запроса к Axenta Cloud: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка создания запроса",
+		})
+		return
+	}
+
+	req.Header.Set("Authorization", "Token "+userToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("❌ Ошибка запроса к Axenta Cloud: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка запроса к внешнему API",
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("❌ Ошибка чтения ответа от Axenta Cloud: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка чтения ответа",
+		})
+		return
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("❌ Axenta Cloud вернул статус %d: %s", resp.StatusCode, string(body))
+		c.JSON(resp.StatusCode, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("Внешний API вернул ошибку: %d", resp.StatusCode),
+		})
+		return
+	}
+
+	// Парсим ответ от Axenta Cloud
+	var axentaResponse map[string]interface{}
+	if err := json.Unmarshal(body, &axentaResponse); err != nil {
+		log.Printf("❌ Ошибка парсинга ответа от Axenta Cloud: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка парсинга ответа",
+		})
+		return
+	}
+
+	// Возвращаем оптимизированную статистику
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data": gin.H{
+			"total":    axentaResponse["total"],
+			"active":   axentaResponse["active"],
+			"inactive": axentaResponse["inactive"],
+			"by_type":  axentaResponse["by_type"],
+			"by_role":  axentaResponse["by_role"],
 		},
 	})
 }

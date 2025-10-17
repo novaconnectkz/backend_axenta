@@ -492,6 +492,8 @@ func main() {
 	apiGroup.GET("/objects/", api.GetObjectsFromAxentaCloud)
 	apiGroup.GET("/objects/stats", api.GetObjectsStatsFromAxentaCloud)
 	apiGroup.GET("/objects/stats/", api.GetObjectsStatsFromAxentaCloud)
+	apiGroup.GET("/objects/stats/optimized", api.GetObjectsStatsOptimizedFromAxentaCloud)
+	apiGroup.GET("/objects/stats/optimized/", api.GetObjectsStatsOptimizedFromAxentaCloud)
 
 	// Добавляем поддержку CMS эндпоинтов для совместимости с фронтендом
 	apiGroup.GET("/cms/objects", api.GetObjectsFromAxentaCloud)
@@ -565,6 +567,8 @@ func main() {
 	apiGroup.GET("/users/", api.GetUsersFromAxentaCloud)
 	apiGroup.GET("/users/stats", api.GetUsersStatsFromAxentaCloud)
 	apiGroup.GET("/users/stats/", api.GetUsersStatsFromAxentaCloud)
+	apiGroup.GET("/users/stats/optimized", api.GetUsersStatsOptimizedFromAxentaCloud)
+	apiGroup.GET("/users/stats/optimized/", api.GetUsersStatsOptimizedFromAxentaCloud)
 
 	// CMS endpoints для пользователей
 	apiGroup.GET("/cms/users", api.GetUsersFromAxentaCloud)
