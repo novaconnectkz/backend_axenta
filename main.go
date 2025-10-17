@@ -593,6 +593,8 @@ func main() {
 	accountsHandler := handlers.NewAccountsHandler()
 	apiGroup.GET("/accounts", accountsHandler.GetAccounts)
 	apiGroup.GET("/accounts/", accountsHandler.GetAccounts)
+	apiGroup.POST("/accounts", accountsHandler.CreateAccount)
+	apiGroup.POST("/accounts/", accountsHandler.CreateAccount)
 	apiGroup.GET("/accounts/:id", accountsHandler.GetAccount)
 	apiGroup.GET("/accounts/:id/", accountsHandler.GetAccount)
 

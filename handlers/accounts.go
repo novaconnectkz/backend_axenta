@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -295,6 +296,114 @@ func (h *AccountsHandler) GetAccount(c *gin.Context) {
 
 	// Возвращаем данные
 	c.JSON(http.StatusOK, account)
+}
+
+// CreateAccount создает новую учетную запись через прокси к Axenta API
+func (h *AccountsHandler) CreateAccount(c *gin.Context) {
+	// Получаем токен из заголовка
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		authHeader = c.GetHeader("authorization")
+	}
+
+	if authHeader == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  "Authorization header is required",
+		})
+		return
+	}
+
+	// Читаем тело запроса
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Failed to read request body: " + err.Error(),
+		})
+		return
+	}
+
+	// Строим URL для Axenta API
+	axentaURL := "https://axenta.cloud/api/cms/accounts/"
+
+	// Создаем HTTP клиент
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	// Создаем запрос
+	req, err := http.NewRequest("POST", axentaURL, bytes.NewBuffer(body))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to create request: " + err.Error(),
+		})
+		return
+	}
+
+	// Добавляем заголовки авторизации
+	req.Header.Set("Authorization", authHeader)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	// Добавляем X-Tenant-ID если есть
+	tenantID := c.GetHeader("X-Tenant-ID")
+	if tenantID != "" {
+		req.Header.Set("X-Tenant-ID", tenantID)
+	}
+
+	// Логируем запрос
+	fmt.Printf("🔄 Proxy POST request to Axenta API: %s\n", axentaURL)
+	fmt.Printf("📋 Headers: Authorization=%s, X-Tenant-ID=%s\n",
+		authHeader[:min(20, len(authHeader))]+"...", tenantID)
+	fmt.Printf("📦 Body: %s\n", string(body))
+
+	// Выполняем запрос
+	resp, err := client.Do(req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to connect to Axenta API: " + err.Error(),
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	// Читаем ответ
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to read Axenta API response: " + err.Error(),
+		})
+		return
+	}
+
+	// Логируем ответ
+	fmt.Printf("📥 Axenta API response: %d %s\n", resp.StatusCode, string(respBody))
+
+	// Если Axenta API вернул ошибку, передаем её клиенту
+	if resp.StatusCode >= 400 {
+		c.JSON(resp.StatusCode, gin.H{
+			"status": "error",
+			"error":  "Axenta API error: " + string(respBody),
+		})
+		return
+	}
+
+	// Парсим успешный ответ
+	var account Account
+	if err := json.Unmarshal(respBody, &account); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to parse Axenta API response: " + err.Error(),
+		})
+		return
+	}
+
+	// Возвращаем данные
+	c.JSON(http.StatusCreated, account)
 }
 
 // min возвращает минимальное из двух чисел
