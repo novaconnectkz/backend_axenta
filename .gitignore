@@ -39,4 +39,46 @@ Thumbs.db
 /build
 
 # Logs
-*.logmain_test
+*.log
+*.log.*
+server*.log
+backend*.log
+local_server.log
+server_*.log
+server_output.log
+server_new.log
+server_clean*.log
+server_final*.log
+server_fresh*.log
+server_debug.log
+server_migrated.log
+server_test.log
+server_proxy.log
+server_public_endpoints.log
+server_search_test.log
+server_objects_fix.log
+server_auto_reg.log
+server_axenta_sync.log
+server_glomos_test.log
+server_jwt_fixed.log
+server_latest.log
+
+# Build artifacts
+main
+main_*
+test_*
+api_test_build
+middleware_test_build
+test_auth_build
+test_contracts_build
+test_server
+test_server.go
+
+# Backup files
+*.sql
+backup_*.sql
+*.tar.gz
+
+# Temporary files
+*.tmp
+*.temp

@@ -898,9 +898,17 @@ func main() {
 	// Статистика склада
 	apiGroup.GET("/warehouse/statistics", warehouseAPI.GetWarehouseStatistics)
 
+	// Группа для интеграций (без мультитенантности)
+	integrationsGroup := r.Group("/api")
+	integrationsGroup.Use(authMiddleware.RequireAuth())
+
 	// Интеграция с 1С
 	oneCAPI := api.NewOneCIntegrationAPI()
-	oneCAPI.RegisterRoutes(apiGroup)
+	oneCAPI.RegisterRoutes(integrationsGroup)
+
+	// Интеграция с Axenta Cloud
+	axentaAPI := api.NewAxentaIntegrationAPI(database.DB)
+	axentaAPI.RegisterRoutes(integrationsGroup)
 
 	// Система отчетности
 	reportService := services.NewReportService(database.DB)
