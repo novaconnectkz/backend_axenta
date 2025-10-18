@@ -335,14 +335,45 @@ func (api *AxentaIntegrationAPI) GetIntegrationStatus(c *gin.Context) {
 	// Для демонстрации используем фиксированный company_id = 1
 	companyID := uint(1)
 
-	status, err := api.axentaService.GetIntegrationStatus(c.Request.Context(), companyID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка получения статуса интеграции"})
+	// Проверяем наличие интеграции
+	var integration models.Integration
+	if err := api.db.Where("company_id = ? AND integration_type = ?", companyID, "axenta_cloud").First(&integration).Error; err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"configured":    false,
+			"active":        false,
+			"last_sync":     nil,
+			"errors_count":  0,
+			"connection_ok": false,
+		})
 		return
 	}
 
+	// Получаем детальный статус (используем для дополнительной информации)
+	_, err := api.axentaService.GetIntegrationStatus(c.Request.Context(), companyID)
+	if err != nil {
+		// Если не удалось получить детальный статус, продолжаем с базовой информацией
+		log.Printf("⚠️ Не удалось получить детальный статус интеграции: %v", err)
+	}
+
+	// Тестируем подключение
+	connectionOK := false
+	if err := api.axentaService.TestConnection(c.Request.Context(), companyID); err == nil {
+		connectionOK = true
+	}
+
+	// Получаем количество нерешенных ошибок
+	errors, _ := api.axentaService.GetIntegrationErrors(c.Request.Context(), companyID)
+	errorsCount := len(errors)
+
 	c.JSON(http.StatusOK, gin.H{
-		"status": status,
+		"configured":    true,
+		"active":        integration.IsActive,
+		"last_sync":     integration.LastSyncAt,
+		"errors_count":  errorsCount,
+		"connection_ok": connectionOK,
+		"created_at":    integration.CreatedAt,
+		"updated_at":    integration.UpdatedAt,
+		"error_message": integration.ErrorMessage,
 	})
 }
 
