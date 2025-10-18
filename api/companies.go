@@ -2,6 +2,7 @@ package api
 
 import (
 	"backend_axenta/middleware"
+	"backend_axenta/models"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -449,19 +450,58 @@ func (api *CompaniesAPI) BulkDeactivateCompanies(c *gin.Context) {
 	})
 }
 
-// ActivateCompany активирует компанию (заглушка)
+// ActivateCompany активирует компанию
 func (api *CompaniesAPI) ActivateCompany(c *gin.Context) {
-	c.JSON(http.StatusNotImplemented, gin.H{
-		"status": "error",
-		"error":  "Company activation is not implemented yet",
-	})
+	api.toggleCompanyStatus(c, true)
 }
 
-// DeactivateCompany деактивирует компанию (заглушка)
+// DeactivateCompany деактивирует компанию
 func (api *CompaniesAPI) DeactivateCompany(c *gin.Context) {
-	c.JSON(http.StatusNotImplemented, gin.H{
-		"status": "error",
-		"error":  "Company deactivation is not implemented yet",
+	api.toggleCompanyStatus(c, false)
+}
+
+// toggleCompanyStatus изменяет статус активности компании
+func (api *CompaniesAPI) toggleCompanyStatus(c *gin.Context, isActive bool) {
+	id := c.Param("id")
+
+	var company models.Company
+	if err := api.DB.Where("id = ?", id).First(&company).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{
+				"status": "error",
+				"error":  "Компания не найдена",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка получения компании: " + err.Error(),
+		})
+		return
+	}
+
+	company.IsActive = isActive
+
+	if err := api.DB.Save(&company).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка изменения статуса компании: " + err.Error(),
+		})
+		return
+	}
+
+	// Очищаем кэш
+	api.clearCompanyCache(company.ID)
+
+	action := "деактивирована"
+	if isActive {
+		action = "активирована"
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": fmt.Sprintf("Компания успешно %s", action),
+		"data":    api.companyToResponse(&company),
 	})
 }
 
@@ -613,4 +653,35 @@ func (api *CompaniesAPI) decryptPassword(encryptedPassword string) string {
 	}
 
 	return string(plaintext)
+}
+
+// companyToResponse преобразует модель компании в response формат
+func (api *CompaniesAPI) companyToResponse(company *models.Company) CompanyResponse {
+	return CompanyResponse{
+		ID:             company.ID,
+		CreatedAt:      company.CreatedAt,
+		UpdatedAt:      company.UpdatedAt,
+		Name:           company.Name,
+		DatabaseSchema: company.DatabaseSchema,
+		Domain:         company.Domain,
+		ContactEmail:   company.ContactEmail,
+		ContactPhone:   company.ContactPhone,
+		ContactPerson:  company.ContactPerson,
+		Address:        company.Address,
+		City:           company.City,
+		Country:        company.Country,
+		IsActive:       company.IsActive,
+		MaxUsers:       company.MaxUsers,
+		MaxObjects:     company.MaxObjects,
+		StorageQuota:   company.StorageQuota,
+		Language:       company.Language,
+		Timezone:       company.Timezone,
+		Currency:       company.Currency,
+	}
+}
+
+// clearCompanyCache очищает кэш компании
+func (api *CompaniesAPI) clearCompanyCache(companyID uint) {
+	// Простая реализация без Redis
+	// В будущем можно добавить Redis кэширование
 }
