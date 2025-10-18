@@ -406,6 +406,139 @@ func (h *AccountsHandler) CreateAccount(c *gin.Context) {
 	c.JSON(http.StatusCreated, account)
 }
 
+// AccountMoveRequest представляет запрос на перемещение учетной записи
+type AccountMoveRequest struct {
+	AccountID       int `json:"accountId" binding:"required,min=1"`
+	TargetAccountID int `json:"targetAccountId" binding:"required,min=1"`
+}
+
+// MoveAccount перемещает учетную запись и все её данные к другому партнеру
+func (h *AccountsHandler) MoveAccount(c *gin.Context) {
+	// Получаем токен из заголовка
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		authHeader = c.GetHeader("authorization")
+	}
+
+	if authHeader == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  "Authorization header is required",
+		})
+		return
+	}
+
+	// Парсим запрос
+	var moveRequest AccountMoveRequest
+	if err := c.ShouldBindJSON(&moveRequest); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Invalid request data: " + err.Error(),
+		})
+		return
+	}
+
+	// Проверяем, что аккаунты разные
+	if moveRequest.AccountID == moveRequest.TargetAccountID {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Account cannot be moved to itself",
+		})
+		return
+	}
+
+	// Строим URL для Axenta API
+	axentaURL := "https://axenta.cloud/api/cms/accounts/change_account/"
+
+	// Создаем HTTP клиент
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	// Подготавливаем данные для отправки
+	requestData := map[string]interface{}{
+		"accountId":       moveRequest.AccountID,
+		"targetAccountId": moveRequest.TargetAccountID,
+	}
+
+	jsonData, err := json.Marshal(requestData)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to prepare request data: " + err.Error(),
+		})
+		return
+	}
+
+	// Создаем запрос
+	req, err := http.NewRequest("POST", axentaURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to create request: " + err.Error(),
+		})
+		return
+	}
+
+	// Добавляем заголовки авторизации
+	req.Header.Set("Authorization", authHeader)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	// Добавляем X-Tenant-ID если есть
+	tenantID := c.GetHeader("X-Tenant-ID")
+	if tenantID != "" {
+		req.Header.Set("X-Tenant-ID", tenantID)
+	}
+
+	// Логируем запрос
+	fmt.Printf("🔄 Moving account %d to target account %d via Axenta API\n",
+		moveRequest.AccountID, moveRequest.TargetAccountID)
+
+	// Выполняем запрос
+	resp, err := client.Do(req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to connect to Axenta API: " + err.Error(),
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	// Читаем ответ
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to read Axenta API response: " + err.Error(),
+		})
+		return
+	}
+
+	// Проверяем статус ответа
+	if resp.StatusCode != http.StatusOK {
+		c.JSON(resp.StatusCode, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("Axenta API error: %s", string(body)),
+		})
+		return
+	}
+
+	fmt.Printf("✅ Successfully moved account %d to target account %d\n",
+		moveRequest.AccountID, moveRequest.TargetAccountID)
+
+	// Возвращаем успешный ответ
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Account moved successfully",
+		"data": gin.H{
+			"accountId":       moveRequest.AccountID,
+			"targetAccountId": moveRequest.TargetAccountID,
+		},
+	})
+}
+
 // min возвращает минимальное из двух чисел
 func min(a, b int) int {
 	if a < b {

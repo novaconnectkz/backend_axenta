@@ -478,6 +478,12 @@ func main() {
 	cmsGroup.POST("/users", api.CreateCmsUserWithCurrentToken)
 	cmsGroup.POST("/users/", api.CreateCmsUserWithCurrentToken)
 	cmsGroup.GET("/test", api.TestEndpoint)
+
+	// Добавляем обработчик для перемещения учетных записей
+	accountsHandler := handlers.NewAccountsHandler()
+	cmsGroup.POST("/accounts/change_account", accountsHandler.MoveAccount)
+	cmsGroup.POST("/accounts/change_account/", accountsHandler.MoveAccount)
+
 	log.Println("✅ CMS endpoints registered without Axenta authentication")
 
 	// Включаем Axenta Cloud авторизацию для auth группы (без мультитенантности)
@@ -590,7 +596,7 @@ func main() {
 
 	// Учетные записи (прокси к Axenta API)
 	log.Println("🔧 Registering accounts proxy endpoints...")
-	accountsHandler := handlers.NewAccountsHandler()
+	accountsHandler = handlers.NewAccountsHandler()
 	apiGroup.GET("/accounts", accountsHandler.GetAccounts)
 	apiGroup.GET("/accounts/", accountsHandler.GetAccounts)
 	apiGroup.POST("/accounts", accountsHandler.CreateAccount)
