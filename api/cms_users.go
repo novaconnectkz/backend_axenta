@@ -4,12 +4,15 @@ import (
 	"backend_axenta/database"
 	"backend_axenta/models"
 	"backend_axenta/services"
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
@@ -989,5 +992,409 @@ func TestEndpoint(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
 		"message": "Test endpoint is working",
+	})
+}
+
+// CreateUserInAxentaCloud создает пользователя в Axenta Cloud используя токен администратора
+func CreateUserInAxentaCloud(c *gin.Context) {
+	var req CmsUserCreateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  translateValidationError(err),
+		})
+		return
+	}
+
+	// Валидация обязательных полей
+	if req.Name == "" || req.Username == "" || req.Email == "" || req.Password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Fields name, username, email, password are required",
+		})
+		return
+	}
+
+	// Проверка длины пароля
+	if len(req.Password) < 6 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Password must be at least 6 characters long",
+		})
+		return
+	}
+
+	// Получаем токен из заголовка Authorization
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  "Authorization header is required",
+		})
+		return
+	}
+
+	// Извлекаем токен из заголовка "Token <token>"
+	var adminToken string
+	if strings.HasPrefix(authHeader, "Token ") {
+		adminToken = strings.TrimPrefix(authHeader, "Token ")
+	} else {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  "Invalid authorization header format. Expected 'Token <token>'",
+		})
+		return
+	}
+
+	// Создаем пользователя в Axenta Cloud напрямую
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	// Подготавливаем данные для Axenta Cloud
+	userData := map[string]interface{}{
+		"name":             req.Name,
+		"username":         req.Username,
+		"email":            req.Email,
+		"password":         req.Password,
+		"confirmPassword":  req.Password,
+		"language":         "ru",
+		"timezone":         3,
+		"visibleTabsNames": req.VisibleTabsNames,
+		"accesses": map[string]interface{}{
+			"common": map[string]interface{}{},
+		},
+	}
+
+	jsonData, err := json.Marshal(userData)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to marshal request data",
+		})
+		return
+	}
+
+	axentaURL := "https://axenta.cloud/api/users/"
+	httpReq, err := http.NewRequest("POST", axentaURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to create request to Axenta Cloud",
+		})
+		return
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Token "+adminToken)
+
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to connect to Axenta Cloud",
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to read response from Axenta Cloud",
+		})
+		return
+	}
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		c.JSON(resp.StatusCode, gin.H{
+			"status":  "error",
+			"error":   "Axenta Cloud request failed",
+			"details": string(body),
+		})
+		return
+	}
+
+	var axentaResponse map[string]interface{}
+	if err := json.Unmarshal(body, &axentaResponse); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to parse Axenta Cloud response",
+		})
+		return
+	}
+
+	// Возвращаем успешный ответ
+	c.JSON(http.StatusCreated, gin.H{
+		"status":  "success",
+		"message": "User created successfully in Axenta Cloud",
+		"data":    axentaResponse,
+	})
+}
+
+// CreateCmsUserWithAdminToken создает пользователя CMS используя токен администратора
+func CreateCmsUserWithAdminToken(c *gin.Context) {
+	var req CmsUserCreateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  translateValidationError(err),
+		})
+		return
+	}
+
+	// Валидация обязательных полей
+	if req.Name == "" || req.Username == "" || req.Email == "" || req.Password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Fields name, username, email, password are required",
+		})
+		return
+	}
+
+	// Проверка длины пароля
+	if len(req.Password) < 6 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Password must be at least 6 characters long",
+		})
+		return
+	}
+
+	// Получаем токен из заголовка Authorization
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  "Authorization header is required",
+		})
+		return
+	}
+
+	// Извлекаем токен из заголовка "Token <token>"
+	var adminToken string
+	if strings.HasPrefix(authHeader, "Token ") {
+		adminToken = strings.TrimPrefix(authHeader, "Token ")
+	} else {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  "Invalid authorization header format. Expected 'Token <token>'",
+		})
+		return
+	}
+
+	// Преобразуем accesses в правильный формат
+	accesses := make(map[string][]string)
+	for scope, perms := range req.Accesses {
+		if permsSlice, ok := perms.([]interface{}); ok {
+			accesses[scope] = make([]string, len(permsSlice))
+			for i, perm := range permsSlice {
+				if permStr, ok := perm.(string); ok {
+					accesses[scope][i] = permStr
+				}
+			}
+		}
+	}
+
+	// Создаем пользователя в Axenta Cloud напрямую
+	axentaService := services.NewAxentaUserService(database.DB)
+
+	// Создаем временный объект пользователя для передачи в сервис
+	userData := &models.User{
+		Username: req.Username,
+		Email:    req.Email,
+		Name:     req.Name,
+		Password: req.Password, // Пароль будет захеширован в сервисе
+	}
+
+	// Создаем пользователя в Axenta Cloud
+	axentaUser, err := axentaService.CreateUserInAxenta(adminToken, userData, req.VisibleTabsNames, accesses)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("Failed to create user in Axenta Cloud: %v", err),
+		})
+		return
+	}
+
+	// Возвращаем успешный ответ
+	c.JSON(http.StatusCreated, gin.H{
+		"status":  "success",
+		"message": "User created successfully in Axenta Cloud",
+		"data": gin.H{
+			"id":          axentaUser.ID,
+			"username":    axentaUser.Username,
+			"email":       axentaUser.Email,
+			"name":        axentaUser.Name,
+			"accountName": axentaUser.AccountName,
+			"accountType": axentaUser.AccountType,
+			"creatorName": axentaUser.CreatorName,
+			"lastLogin":   axentaUser.LastLogin,
+			"accountId":   axentaUser.AccountID,
+		},
+	})
+}
+
+// CmsLoginAsRequest структура запроса для входа как другой пользователь
+type CmsLoginAsRequest struct {
+	UserID int    `json:"userId" binding:"required"`
+	Type   string `json:"type" binding:"required,oneof=monitoring cms"`
+}
+
+// CmsLoginAsResponse структура ответа для входа как другой пользователь
+type CmsLoginAsResponse struct {
+	RedirectURL string `json:"redirectUrl"`
+}
+
+// LoginAs позволяет войти как другой пользователь CMS
+func LoginAs(c *gin.Context) {
+	var req CmsLoginAsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Invalid request format",
+		})
+		return
+	}
+
+	// Получаем токен из заголовка Authorization
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  "Authorization header is required",
+		})
+		return
+	}
+
+	// Извлекаем токен из заголовка "Token <token>"
+	var requestToken string
+	if strings.HasPrefix(authHeader, "Token ") {
+		requestToken = strings.TrimPrefix(authHeader, "Token ")
+	} else {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  "Invalid authorization header format. Expected 'Token <token>'",
+		})
+		return
+	}
+
+	// Получаем базу данных
+	db := database.DB
+
+	// Создаем сервис для работы с токенами пользователей
+	userTokenService := services.NewUserTokenService(db)
+
+	// Находим пользователя по токену из заголовка
+	var currentUser models.User
+	if err := db.Where("id IN (SELECT user_id FROM user_tokens WHERE token = ? AND is_active = ?)", requestToken, true).First(&currentUser).Error; err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  "User not found or token invalid",
+		})
+		return
+	}
+
+	// Получаем сохраненный токен пользователя для Axenta Cloud
+	userToken, err := userTokenService.GetUserToken(currentUser.ID)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  "No valid Axenta token found for user",
+		})
+		return
+	}
+
+	// Используем сохраненный токен для запроса к Axenta Cloud
+	axentaToken := userToken.Token
+
+	// Отправляем запрос к Axenta Cloud для получения токена другого пользователя
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	loginAsData := map[string]interface{}{
+		"userId": req.UserID,
+		"type":   req.Type,
+	}
+
+	jsonData, err := json.Marshal(loginAsData)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to marshal request data",
+		})
+		return
+	}
+
+	axentaURL := "https://axenta.cloud/api/cms/users/login_as/"
+	httpReq, err := http.NewRequest("POST", axentaURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to create request to Axenta Cloud",
+		})
+		return
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Token "+axentaToken)
+
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to connect to Axenta Cloud",
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to read response from Axenta Cloud",
+		})
+		return
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		c.JSON(resp.StatusCode, gin.H{
+			"status":  "error",
+			"error":   "Axenta Cloud request failed",
+			"details": string(body),
+		})
+		return
+	}
+
+	var axentaResponse map[string]interface{}
+	if err := json.Unmarshal(body, &axentaResponse); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to parse Axenta Cloud response",
+		})
+		return
+	}
+
+	// Извлекаем redirectUrl из ответа
+	redirectURL, ok := axentaResponse["redirectUrl"].(string)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "No redirectUrl in Axenta Cloud response",
+		})
+		return
+	}
+
+	// Возвращаем ответ
+	response := CmsLoginAsResponse{
+		RedirectURL: redirectURL,
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data":   response,
 	})
 }

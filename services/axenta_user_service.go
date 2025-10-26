@@ -257,6 +257,11 @@ func (s *AxentaUserService) CreateUserInAxenta(token string, userData *models.Us
 		return nil, fmt.Errorf("failed to marshal user data: %w", err)
 	}
 
+	// Временное логирование для отладки
+	log.Printf("🔍 DEBUG: Отправляем данные в Axenta Cloud: %s", string(jsonData))
+	log.Printf("🔍 DEBUG: URL: %s", s.baseURL+"/cms/users/")
+	log.Printf("🔍 DEBUG: Token: %s", token[:20]+"...")
+
 	// Создаем HTTP запрос
 	req, err := http.NewRequest("POST", s.baseURL+"/cms/users/", bytes.NewBuffer(jsonData))
 	if err != nil {

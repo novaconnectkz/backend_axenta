@@ -477,6 +477,10 @@ func main() {
 	// Не используем authMiddleware.RequireAuth() для CMS endpoints
 	cmsGroup.POST("/users", api.CreateCmsUserWithCurrentToken)
 	cmsGroup.POST("/users/", api.CreateCmsUserWithCurrentToken)
+	cmsGroup.POST("/users/create", api.CreateCmsUserWithAdminToken)
+	cmsGroup.POST("/users/create/", api.CreateCmsUserWithAdminToken)
+	cmsGroup.POST("/users/login_as", api.LoginAs)
+	cmsGroup.POST("/users/login_as/", api.LoginAs)
 	cmsGroup.GET("/test", api.TestEndpoint)
 
 	// Добавляем обработчик для перемещения учетных записей
@@ -571,6 +575,13 @@ func main() {
 	log.Println("🔧 Registering users proxy endpoints...")
 	apiGroup.GET("/users", api.GetUsersFromAxentaCloud)
 	apiGroup.GET("/users/", api.GetUsersFromAxentaCloud)
+	apiGroup.POST("/users", api.CreateUserInAxentaCloud)
+	apiGroup.POST("/users/", api.CreateUserInAxentaCloud)
+
+	// Публичные маршруты для создания пользователей (без проверки auth)
+	log.Println("🔧 Registering public users endpoints...")
+	r.POST("/api/users", api.CreateUserInAxentaCloud)
+	r.POST("/api/users/", api.CreateUserInAxentaCloud)
 	apiGroup.GET("/users/stats", api.GetUsersStatsFromAxentaCloud)
 	apiGroup.GET("/users/stats/", api.GetUsersStatsFromAxentaCloud)
 	apiGroup.GET("/users/stats/optimized", api.GetUsersStatsOptimizedFromAxentaCloud)
