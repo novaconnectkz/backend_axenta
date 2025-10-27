@@ -86,7 +86,8 @@ func GetUsers(c *gin.Context) {
 	if page < 1 {
 		page = 1
 	}
-	if limit < 1 || limit > 100 {
+	// Убираем ограничение на лимит для возможности вывода всех записей
+	if limit < 1 {
 		limit = 20
 	}
 	offset := (page - 1) * limit
@@ -190,12 +191,12 @@ func GetUsers(c *gin.Context) {
 		if orderBy, exists := allowedFields[ordering]; exists {
 			query = query.Order(orderBy)
 		} else {
-			// По умолчанию сортируем по username
-			query = query.Order("users.username")
+			// По умолчанию сортируем по дате создания (новые вверху)
+			query = query.Order("users.created_at DESC")
 		}
 	} else {
-		// Сортировка по умолчанию
-		query = query.Order("users.username")
+		// Сортировка по умолчанию - по дате создания (новые вверху)
+		query = query.Order("users.created_at DESC")
 	}
 
 	// Подсчет общего количества
