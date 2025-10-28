@@ -4,6 +4,9 @@ import (
 	"backend_axenta/database"
 	"backend_axenta/models"
 	"backend_axenta/services"
+	"bytes"
+	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -1141,4 +1144,111 @@ func CheckUsername(c *gin.Context) {
 			Message:   "Имя пользователя доступно",
 		},
 	})
+}
+
+// UserActivateRequest представляет запрос на активацию/деактивацию пользователя
+type UserActivateRequest struct {
+	State bool `json:"state"`
+}
+
+// ActivateUser активирует/деактивирует пользователя через прокси к Axenta Cloud API
+func ActivateUser(c *gin.Context) {
+	// Получаем токен из заголовка
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		authHeader = c.GetHeader("authorization")
+	}
+
+	if authHeader == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  "Authorization header is required",
+		})
+		return
+	}
+
+	// Получаем ID пользователя из параметров URL
+	idStr := c.Param("id")
+	if idStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "User ID is required",
+		})
+		return
+	}
+
+	// Читаем тело запроса
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Failed to read request body: " + err.Error(),
+		})
+		return
+	}
+
+	// Строим URL для Axenta API
+	axentaURL := fmt.Sprintf("https://axenta.cloud/api/cms/users/%s/activate/", idStr)
+
+	// Создаем HTTP клиент
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	// Создаем запрос
+	req, err := http.NewRequest("POST", axentaURL, bytes.NewBuffer(body))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to create request: " + err.Error(),
+		})
+		return
+	}
+
+	// Добавляем заголовки авторизации
+	req.Header.Set("Authorization", authHeader)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	// Добавляем X-Tenant-ID если есть
+	tenantID := c.GetHeader("X-Tenant-ID")
+	if tenantID != "" {
+		req.Header.Set("X-Tenant-ID", tenantID)
+	}
+
+	// Логируем запрос
+	fmt.Printf("🔄 Proxy POST request to Axenta API: %s\n", axentaURL)
+	authHeaderPreview := authHeader
+	if len(authHeader) > 20 {
+		authHeaderPreview = authHeader[:20] + "..."
+	}
+	fmt.Printf("📋 Headers: Authorization=%s, X-Tenant-ID=%s\n", authHeaderPreview, tenantID)
+	fmt.Printf("📦 Body: %s\n", string(body))
+
+	// Выполняем запрос
+	resp, err := client.Do(req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to connect to Axenta API: " + err.Error(),
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	// Читаем ответ
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Failed to read response from Axenta API: " + err.Error(),
+		})
+		return
+	}
+
+	// Логируем ответ
+	fmt.Printf("📥 Response from Axenta API: Status=%d, Body=%s\n", resp.StatusCode, string(respBody))
+
+	// Возвращаем ответ от Axenta API
+	c.Data(resp.StatusCode, "application/json", respBody)
 }

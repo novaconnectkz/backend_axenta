@@ -481,6 +481,7 @@ func main() {
 	cmsGroup.POST("/users/create/", api.CreateCmsUserWithAdminToken)
 	cmsGroup.POST("/users/login_as", api.LoginAs)
 	cmsGroup.POST("/users/login_as/", api.LoginAs)
+	cmsGroup.POST("/users/:id/activate/", api.ActivateUser)
 	cmsGroup.GET("/test", api.TestEndpoint)
 
 	// Добавляем обработчик для перемещения учетных записей
