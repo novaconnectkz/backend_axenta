@@ -941,7 +941,6 @@ func BulkDeleteUsers(c *gin.Context) {
 
 // UpdateUserPasswordRequest представляет запрос на смену пароля пользователя
 type UpdateUserPasswordRequest struct {
-	AdminPassword      string `json:"adminPassword" binding:"required,min=6,max=255"`
 	UserID             int    `json:"userId" binding:"required,min=1"`
 	NewPassword        string `json:"newPassword" binding:"required,min=6,max=255"`
 	ConfirmNewPassword string `json:"confirmNewPassword" binding:"required,min=6,max=255"`
@@ -1001,15 +1000,6 @@ func UpdateUserPassword(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{
 			"status": "error",
 			"error":  "Only administrators can change user passwords",
-		})
-		return
-	}
-
-	// Проверяем пароль администратора
-	if !currentUser.CheckPassword(req.AdminPassword) {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"status": "error",
-			"error":  "Invalid admin password",
 		})
 		return
 	}
