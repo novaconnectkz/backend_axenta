@@ -1,0 +1,86 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Документация
+*.md
+README.md
+QUICK_START.md
+QUICK_TEST.md
+CLEANUP_REPORT.md
+
+# Логи
+*.log
+logs/
+server*.log
+backend*.log
+
+# Временные файлы
+*.tmp
+*.bak
+*.swp
+*.swo
+*~
+
+# IDE
+.idea/
+.vscode/
+*.iml
+.DS_Store
+
+# Тесты
+coverage.out
+coverage.html
+*.test
+
+# Бинарники
+axenta_server
+main
+test_build
+./main
+
+# Docker
+Dockerfile
+docker-compose.yml
+docker-compose.*.yml
+.dockerignore
+
+# Скрипты развертывания
+deploy*.sh
+fix*.sh
+run*.sh
+setup*.sh
+cleanup*.sh
+diagnose*.sh
+check*.sh
+*.sh
+
+# Базы данных
+database_dumps/
+*.sql
+*.dump
+
+# Архивы
+*.tar.gz
+*.zip
+*.tar
+
+# Конфигурация
+env.production
+.env
+.env.local
+.env.*.local
+
+# Node modules (если есть в scripts)
+scripts/node_modules/
+
+# Примеры
+examples/
+
+# Scripts
+scripts/
+
+# Миграции SQL (если хранятся отдельно, можно убрать если нужны в контейнере)
+# database/migrations/*.sql
+

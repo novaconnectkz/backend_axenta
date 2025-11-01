@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"backend_axenta/database"
+	"backend_axenta/middleware"
 	"backend_axenta/models"
 	"backend_axenta/services"
 
@@ -96,7 +97,7 @@ type SetupIntegrationRequest struct {
 
 // SetupIntegration настраивает интеграцию с 1С
 func (api *OneCIntegrationAPI) SetupIntegration(c *gin.Context) {
-	companyID := GetCompanyID(c)
+	companyID := middleware.GetCompanyID(c)
 
 	var req SetupIntegrationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -176,7 +177,7 @@ func (api *OneCIntegrationAPI) SetupIntegration(c *gin.Context) {
 
 // UpdateIntegration обновляет настройки интеграции с 1С
 func (api *OneCIntegrationAPI) UpdateIntegration(c *gin.Context) {
-	companyID := GetCompanyID(c)
+	companyID := middleware.GetCompanyID(c)
 
 	var req SetupIntegrationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -229,7 +230,7 @@ func (api *OneCIntegrationAPI) UpdateIntegration(c *gin.Context) {
 
 // GetIntegrationConfig получает конфигурацию интеграции
 func (api *OneCIntegrationAPI) GetIntegrationConfig(c *gin.Context) {
-	companyID := GetCompanyID(c)
+	companyID := middleware.GetCompanyID(c)
 
 	var integration models.Integration
 	if err := api.db.Where("company_id = ? AND integration_type = ?", companyID, "1c").First(&integration).Error; err != nil {
@@ -254,7 +255,7 @@ func (api *OneCIntegrationAPI) GetIntegrationConfig(c *gin.Context) {
 
 // DeleteIntegration удаляет интеграцию с 1С
 func (api *OneCIntegrationAPI) DeleteIntegration(c *gin.Context) {
-	companyID := GetCompanyID(c)
+	companyID := middleware.GetCompanyID(c)
 
 	if err := api.db.Where("company_id = ? AND integration_type = ?", companyID, "1c").Delete(&models.Integration{}).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка удаления интеграции"})
@@ -266,7 +267,7 @@ func (api *OneCIntegrationAPI) DeleteIntegration(c *gin.Context) {
 
 // TestConnection тестирует подключение к 1С
 func (api *OneCIntegrationAPI) TestConnection(c *gin.Context) {
-	companyID := GetCompanyID(c)
+	companyID := middleware.GetCompanyID(c)
 
 	if err := api.oneCIntegrationService.TestConnection(c.Request.Context(), companyID); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -293,7 +294,7 @@ type ExportPaymentRegistryRequest struct {
 
 // ExportPaymentRegistry экспортирует реестр платежей в 1С
 func (api *OneCIntegrationAPI) ExportPaymentRegistry(c *gin.Context) {
-	companyID := GetCompanyID(c)
+	companyID := middleware.GetCompanyID(c)
 
 	var req ExportPaymentRegistryRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -355,7 +356,7 @@ func (api *OneCIntegrationAPI) ExportPaymentRegistry(c *gin.Context) {
 
 // ScheduleAutoExport планирует автоматический экспорт
 func (api *OneCIntegrationAPI) ScheduleAutoExport(c *gin.Context) {
-	companyID := GetCompanyID(c)
+	companyID := middleware.GetCompanyID(c)
 
 	if err := api.oneCIntegrationService.ScheduleAutoExport(c.Request.Context(), companyID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -370,7 +371,7 @@ func (api *OneCIntegrationAPI) ScheduleAutoExport(c *gin.Context) {
 
 // ImportCounterparties импортирует контрагентов из 1С
 func (api *OneCIntegrationAPI) ImportCounterparties(c *gin.Context) {
-	companyID := GetCompanyID(c)
+	companyID := middleware.GetCompanyID(c)
 
 	if err := api.oneCIntegrationService.ImportCounterparties(c.Request.Context(), companyID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -385,7 +386,7 @@ func (api *OneCIntegrationAPI) ImportCounterparties(c *gin.Context) {
 
 // SyncPaymentStatuses синхронизирует статусы платежей
 func (api *OneCIntegrationAPI) SyncPaymentStatuses(c *gin.Context) {
-	companyID := GetCompanyID(c)
+	companyID := middleware.GetCompanyID(c)
 
 	if err := api.oneCIntegrationService.SyncPaymentStatuses(c.Request.Context(), companyID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -400,7 +401,7 @@ func (api *OneCIntegrationAPI) SyncPaymentStatuses(c *gin.Context) {
 
 // GetIntegrationErrors получает список ошибок интеграции
 func (api *OneCIntegrationAPI) GetIntegrationErrors(c *gin.Context) {
-	companyID := GetCompanyID(c)
+	companyID := middleware.GetCompanyID(c)
 
 	resolved := c.Query("resolved") == "true"
 
@@ -441,7 +442,7 @@ func (api *OneCIntegrationAPI) ResolveError(c *gin.Context) {
 
 // GetIntegrationStatus получает статус интеграции
 func (api *OneCIntegrationAPI) GetIntegrationStatus(c *gin.Context) {
-	companyID := GetCompanyID(c)
+	companyID := middleware.GetCompanyID(c)
 
 	// Проверяем наличие интеграции
 	var integration models.Integration

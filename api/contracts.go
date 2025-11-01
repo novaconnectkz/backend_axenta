@@ -15,6 +15,31 @@ import (
 
 // GetContracts получает список всех договоров
 func GetContracts(c *gin.Context) {
+	// Проверяем demo-режим
+	if isDemoMode(c) {
+		demoContracts := []models.Contract{
+			{
+				ID:        24,
+				Number:    "DOG-2024-001",
+				Title:     "Договор с ООО Логистика Плюс",
+				ClientName: "ООО Логистика Плюс",
+				StartDate: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+				EndDate:   time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+				Status:    "active",
+				Currency:  "RUB",
+			},
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"status":      "success",
+			"data":        demoContracts,
+			"count":       len(demoContracts),
+			"total":       1,
+			"demo_notice": "Это демо-данные. Добавьте ?demo=0 для получения реальных данных.",
+		})
+		return
+	}
+
 	var contracts []models.Contract
 
 	// Базовый запрос для фильтрации (без Preload для подсчета)
@@ -40,10 +65,14 @@ func GetContracts(c *gin.Context) {
 		baseQuery = baseQuery.Where("end_date <= ?", time.Now().AddDate(0, 0, 30))
 	}
 
-	// Поиск по номеру или названию
-	if search := c.Query("search"); search != "" {
+	// Поиск по номеру или названию (поддержка параметра q из roadmap)
+	searchQuery := c.Query("q")
+	if searchQuery == "" {
+		searchQuery = c.Query("search") // Поддержка старого параметра search
+	}
+	if searchQuery != "" {
 		baseQuery = baseQuery.Where("number ILIKE ? OR title ILIKE ? OR client_name ILIKE ?",
-			"%"+search+"%", "%"+search+"%", "%"+search+"%")
+			"%"+searchQuery+"%", "%"+searchQuery+"%", "%"+searchQuery+"%")
 	}
 
 	// Пагинация

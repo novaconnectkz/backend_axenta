@@ -98,6 +98,73 @@ func GetAllMigrations() []MigrationInfo {
 			Description: "Refresh токены для локальной авторизации",
 			IsGlobal:    true,
 		},
+		// Новые таблицы для продвинутого биллинга (roadmap)
+		{
+			TableName:   "countries",
+			Model:       &models.Country{},
+			Description: "Справочник стран для налогов",
+			IsGlobal:    true,
+		},
+		{
+			TableName:   "tax_rates",
+			Model:       &models.TaxRate{},
+			Description: "Ставки НДС для стран",
+			IsGlobal:    true,
+		},
+		{
+			TableName:   "tax_rules",
+			Model:       &models.TaxRule{},
+			Description: "Правила применения НДС между странами",
+			IsGlobal:    true,
+		},
+		{
+			TableName:   "tariff_components",
+			Model:       &models.TariffComponent{},
+			Description: "Компоненты тарифов",
+			IsGlobal:    true,
+		},
+		{
+			TableName:   "assignments",
+			Model:       &models.Assignment{},
+			Description: "Привязки объектов к подпискам",
+			IsGlobal:    true,
+		},
+		{
+			TableName:   "freezes",
+			Model:       &models.Freeze{},
+			Description: "Заморозки объектов",
+			IsGlobal:    true,
+		},
+		{
+			TableName:   "usages",
+			Model:       &models.Usage{},
+			Description: "Использование объектов по дням",
+			IsGlobal:    true,
+		},
+		{
+			TableName:   "discounts",
+			Model:       &models.Discount{},
+			Description: "Скидки на различных уровнях",
+			IsGlobal:    true,
+		},
+		{
+			TableName:   "invoice_headers",
+			Model:       &models.InvoiceHeader{},
+			Description: "Заголовки счетов (advanced billing)",
+			IsGlobal:    true,
+		},
+		{
+			TableName:   "invoice_lines",
+			Model:       &models.InvoiceLine{},
+			Description: "Строки счетов (advanced billing)",
+			IsGlobal:    true,
+		},
+		{
+			TableName:   "invoice_sequences",
+			Model:       &models.InvoiceSequence{},
+			Description: "Последовательности нумерации счетов по странам",
+			IsGlobal:    true,
+		},
 
 		// Тенантные таблицы (в схемах компаний)
 		{
@@ -554,6 +621,22 @@ func RunAllMigrations(globalOnly bool) error {
 				return fmt.Errorf("ошибка миграции глобальной таблицы %s: %v", migration.TableName, result.Error)
 			}
 		}
+	}
+
+	// Создаем материализованные представления для биллинга
+	log.Println("")
+	log.Println("🔄 Создание материализованных представлений для биллинга...")
+	exists, errCheck := CheckMaterializedViewsExists(DB)
+	if errCheck != nil {
+		log.Printf("⚠️ Ошибка проверки существования представлений: %v", errCheck)
+	} else if !exists {
+		if errCreate := CreateMaterializedViews(DB); errCreate != nil {
+			log.Printf("⚠️ Ошибка создания материализованных представлений: %v", errCreate)
+			log.Println("ℹ️ Продолжаем выполнение миграций...")
+		}
+	} else {
+		log.Println("✅ Материализованные представления уже существуют")
+		log.Println("ℹ️ Используйте RefreshMaterializedViews() для обновления")
 	}
 
 	// Если нужны только глобальные миграции, завершаем

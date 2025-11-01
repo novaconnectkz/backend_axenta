@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -172,24 +173,107 @@ func (bs *BillingService) CalculateBillingForContract(contractID uint, periodSta
 		})
 	}
 
-	// Применяем скидку тарифного плана
-	result.DiscountAmount = decimal.Zero
-	if tariffPlan.DiscountPercent.GreaterThan(decimal.Zero) {
-		subtotal := result.BaseAmount.Add(result.ObjectsAmount)
-		result.DiscountAmount = subtotal.Mul(tariffPlan.DiscountPercent).Div(decimal.NewFromInt(100))
+	// Применяем скидки из таблицы discounts (по уровням иерархии)
+	discountService := NewDiscountService()
+	ctx := context.Background()
 
+	// Получаем ID для применения скидок
+	var objectIDs []*uint
+	for i := range objects {
+		if objects[i].ID > 0 {
+			objID := objects[i].ID
+			objectIDs = append(objectIDs, &objID)
+		}
+	}
+
+	// Применяем скидки (пока только на уровне договора и тарифа)
+	subtotal := result.BaseAmount.Add(result.ObjectsAmount)
+	discountedAmount, discountApplications, err := discountService.ApplyDiscounts(
+		ctx,
+		subtotal,
+		nil,                    // objectID - можно добавить по объектам отдельно
+		&contract.TariffPlanID, // tariffID
+		nil,                    // subscriptionID
+		nil,                    // appendixID
+		&contractID,            // contractID
+		periodStart,
+	)
+
+	if err != nil {
+		// Логируем ошибку, но продолжаем без скидок
+		fmt.Printf("⚠️ Ошибка применения скидок: %v\n", err)
+		discountedAmount = subtotal
+	}
+
+	result.DiscountAmount = subtotal.Sub(discountedAmount)
+
+	// Добавляем позиции скидок в счет
+	for _, app := range discountApplications {
 		result.Items = append(result.Items, InvoiceItemData{
-			Name:        fmt.Sprintf("Скидка %s%%", tariffPlan.DiscountPercent.String()),
-			Description: "Скидка по тарифному плану",
+			Name:        fmt.Sprintf("Скидка (%s)", app.Level),
+			Description: fmt.Sprintf("%s: %s", app.Type, app.Reason),
 			ItemType:    "discount",
 			Quantity:    decimal.NewFromInt(1),
-			UnitPrice:   result.DiscountAmount.Neg(),
-			Amount:      result.DiscountAmount.Neg(),
+			UnitPrice:   app.Amount.Neg(),
+			Amount:      app.Amount.Neg(),
 		})
 	}
 
+	// Также применяем старую скидку тарифного плана (для обратной совместимости)
+	if tariffPlan.DiscountPercent.GreaterThan(decimal.Zero) {
+		oldDiscountAmount := discountedAmount.Mul(tariffPlan.DiscountPercent).Div(decimal.NewFromInt(100))
+		result.DiscountAmount = result.DiscountAmount.Add(oldDiscountAmount)
+
+		result.Items = append(result.Items, InvoiceItemData{
+			Name:        fmt.Sprintf("Скидка тарифа %s%%", tariffPlan.DiscountPercent.String()),
+			Description: "Скидка по тарифному плану",
+			ItemType:    "discount",
+			Quantity:    decimal.NewFromInt(1),
+			UnitPrice:   oldDiscountAmount.Neg(),
+			Amount:      oldDiscountAmount.Neg(),
+		})
+		
+		discountedAmount = discountedAmount.Sub(oldDiscountAmount)
+	}
+
+	// Проверяем минимальную оплату (min_commit) для тарифных компонентов
+	var tariffComponents []models.TariffComponent
+	if err := bs.db.Where("tariff_plan_id = ? AND is_active = true AND deleted_at IS NULL", contract.TariffPlanID).
+		Find(&tariffComponents).Error; err == nil {
+		
+		for _, component := range tariffComponents {
+			if component.MinCommit.GreaterThan(decimal.Zero) {
+				// Находим позиции, связанные с этим компонентом
+				componentAmount := decimal.Zero
+				for _, item := range result.Items {
+					// TODO: Добавить связь между InvoiceItem и TariffComponent
+					// Пока считаем для всех позиций типа recurring
+					if item.ItemType == "subscription" || item.ItemType == "recurring" {
+						componentAmount = componentAmount.Add(item.Amount)
+					}
+				}
+
+				// Если сумма меньше минимальной оплаты, добавляем строку "Минимальная оплата"
+				if componentAmount.LessThan(component.MinCommit) {
+					minCommitDiff := component.MinCommit.Sub(componentAmount)
+					result.Items = append(result.Items, InvoiceItemData{
+						Name:        fmt.Sprintf("Минимальная оплата: %s", component.Name),
+						Description: fmt.Sprintf("Минимальная оплата за %s (недобор: %s)", component.Name, minCommitDiff.String()),
+						ItemType:    "min_commit",
+						Quantity:    decimal.NewFromInt(1),
+						UnitPrice:   minCommitDiff,
+						Amount:      minCommitDiff,
+						PeriodStart: &periodStart,
+						PeriodEnd:   &periodEnd,
+					})
+					discountedAmount = discountedAmount.Add(minCommitDiff)
+				}
+			}
+		}
+	}
+
 	// Рассчитываем промежуточную сумму
-	result.SubtotalAmount = result.BaseAmount.Add(result.ObjectsAmount).Sub(result.DiscountAmount)
+	result.SubtotalAmount = discountedAmount
 
 	// Рассчитываем налог
 	if !settings.TaxIncluded && settings.DefaultTaxRate.GreaterThan(decimal.Zero) {
@@ -496,4 +580,84 @@ func (bs *BillingService) CancelInvoice(invoiceID uint, reason string) error {
 	}
 
 	return nil
+}
+
+// NextInvoiceNumber генерирует следующий номер счета на основе таблицы invoice_sequences
+// Параметры:
+//   - countryCode: код страны (например, "RU", "KZ")
+//   - prefix: префикс номера (например, "INV", "СЧТ")
+//
+// Функция:
+//   1. Ищет существующую последовательность для countryCode и prefix
+//   2. Если не найдена, создает новую с дефолтным шаблоном "%s-%04d"
+//   3. Инкрементирует LastNumber
+//   4. Возвращает сгенерированный номер по шаблону
+func (bs *BillingService) NextInvoiceNumber(countryCode, prefix string) (string, error) {
+	if countryCode == "" {
+		countryCode = "RU" // По умолчанию Россия
+	}
+	if prefix == "" {
+		prefix = "INV" // По умолчанию INV
+	}
+
+	// Ищем существующую последовательность
+	var sequence models.InvoiceSequence
+	err := bs.db.Where("country_code = ? AND prefix = ? AND is_active = true", countryCode, prefix).First(&sequence).Error
+
+	if err == gorm.ErrRecordNotFound {
+		// Создаем новую последовательность
+		sequence = models.InvoiceSequence{
+			CountryCode: countryCode,
+			Prefix:      prefix,
+			Pattern:      "%s-%04d", // Дефолтный шаблон
+			LastNumber:   0,
+			Description:  fmt.Sprintf("Последовательность для %s, префикс %s", countryCode, prefix),
+			IsActive:     true,
+		}
+		if err := bs.db.Create(&sequence).Error; err != nil {
+			return "", fmt.Errorf("ошибка создания последовательности: %w", err)
+		}
+	} else if err != nil {
+		return "", fmt.Errorf("ошибка поиска последовательности: %w", err)
+	}
+
+	// Инкрементируем номер в транзакции
+	tx := bs.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	if err := tx.Error; err != nil {
+		return "", fmt.Errorf("ошибка начала транзакции: %w", err)
+	}
+
+	// Блокируем строку для обновления
+	var lockedSequence models.InvoiceSequence
+	if err := tx.Set("gorm:query_option", "FOR UPDATE").
+		Where("id = ?", sequence.ID).
+		First(&lockedSequence).Error; err != nil {
+		tx.Rollback()
+		return "", fmt.Errorf("ошибка блокировки последовательности: %w", err)
+	}
+
+	// Инкрементируем номер
+	lockedSequence.LastNumber++
+	newNumber := lockedSequence.LastNumber
+
+	// Сохраняем обновленную последовательность
+	if err := tx.Model(&lockedSequence).Update("last_number", newNumber).Error; err != nil {
+		tx.Rollback()
+		return "", fmt.Errorf("ошибка обновления последовательности: %w", err)
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return "", fmt.Errorf("ошибка коммита транзакции: %w", err)
+	}
+
+	// Генерируем номер по шаблону
+	invoiceNumber := fmt.Sprintf(sequence.Pattern, prefix, newNumber)
+
+	return invoiceNumber, nil
 }

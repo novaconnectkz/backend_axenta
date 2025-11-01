@@ -514,6 +514,34 @@ func GenerateInvoice(c *gin.Context) {
 
 // GetInvoices получает список счетов
 func GetInvoices(c *gin.Context) {
+	// Проверяем demo-режим
+	if isDemoMode(c) {
+		demoInvoices := []models.Invoice{
+			{
+				ID:            1,
+				Number:        "INV-2024-001",
+				Title:         "Счет за услуги мониторинга",
+				InvoiceDate:   time.Now().AddDate(0, 0, -5),
+				DueDate:       time.Now().AddDate(0, 0, 9),
+				SubtotalAmount: decimal.NewFromInt(10000),
+				TaxAmount:      decimal.NewFromInt(2000),
+				TotalAmount:    decimal.NewFromInt(12000),
+				PaidAmount:     decimal.Zero,
+				Currency:       "RUB",
+				Status:         "sent",
+			},
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"status":      "success",
+			"data":        demoInvoices,
+			"count":       len(demoInvoices),
+			"total":       1,
+			"demo_notice": "Это демо-данные. Добавьте ?demo=0 для получения реальных данных.",
+		})
+		return
+	}
+
 	companyIDStr := c.Query("company_id")
 	contractIDStr := c.Query("contract_id")
 	status := c.Query("status")
@@ -614,7 +642,65 @@ func GetInvoice(c *gin.Context) {
 	})
 }
 
-// ProcessPayment обрабатывает платеж по счету
+// SendInvoice отправляет счет клиенту (POST /api/invoices/:id/send согласно roadmap)
+func SendInvoice(c *gin.Context) {
+	id := c.Param("id")
+	invoiceID, err := strconv.ParseUint(id, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Неверный формат ID счета",
+		})
+		return
+	}
+
+	// Получаем счет
+	var invoice models.Invoice
+	if err := database.DB.First(&invoice, invoiceID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"status": "error",
+			"error":  "Счет не найден",
+		})
+		return
+	}
+
+	// Проверяем, можно ли отправить счет
+	if invoice.Status == "paid" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Нельзя отправить уже оплаченный счет",
+		})
+		return
+	}
+
+	if invoice.Status == "cancelled" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Нельзя отправить отмененный счет",
+		})
+		return
+	}
+
+	// Обновляем статус на "sent"
+	invoice.Status = "sent"
+	if err := database.DB.Save(&invoice).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка обновления статуса счета",
+		})
+		return
+	}
+
+	// TODO: Здесь можно добавить отправку email/уведомления клиенту
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Счет успешно отправлен",
+		"data":    invoice,
+	})
+}
+
+// ProcessPayment обрабатывает платеж по счету (POST /api/invoices/:id/pay согласно roadmap)
 func ProcessPayment(c *gin.Context) {
 	id := c.Param("id")
 	invoiceID, err := strconv.ParseUint(id, 10, 32)
@@ -952,6 +1038,85 @@ func UpdateBillingSettings(c *gin.Context) {
 }
 
 // ===== ДОПОЛНИТЕЛЬНЫЕ ENDPOINTS ДЛЯ АВТОМАТИЗАЦИИ БИЛЛИНГА =====
+
+// RunInvoicesGeneration запускает генерацию счетов (POST /api/invoices/run согласно roadmap)
+func RunInvoicesGeneration(c *gin.Context) {
+	// Получаем параметры из запроса
+	var requestData struct {
+		CompanyID uint   `json:"company_id"`
+		Year      int    `json:"year"`
+		Month     int    `json:"month"`
+		Period    string `json:"period"` // Формат YYYY-MM, альтернатива year+month
+	}
+
+	if err := c.ShouldBindJSON(&requestData); err != nil {
+		// Если JSON не передан, пробуем получить из query параметров
+		if companyIDStr := c.Query("company_id"); companyIDStr != "" {
+			if id, err := strconv.ParseUint(companyIDStr, 10, 32); err == nil {
+				requestData.CompanyID = uint(id)
+			}
+		}
+		if periodStr := c.Query("period"); periodStr != "" {
+			requestData.Period = periodStr
+		}
+		if yearStr := c.Query("year"); yearStr != "" {
+			if y, err := strconv.Atoi(yearStr); err == nil {
+				requestData.Year = y
+			}
+		}
+		if monthStr := c.Query("month"); monthStr != "" {
+			if m, err := strconv.Atoi(monthStr); err == nil {
+				requestData.Month = m
+			}
+		}
+	}
+
+	// Определяем год и месяц
+	var year, month int
+	if requestData.Period != "" {
+		// Парсим период в формате YYYY-MM
+		periodTime, err := time.Parse("2006-01", requestData.Period)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error",
+				"error":  "Неверный формат периода (ожидается YYYY-MM)",
+			})
+			return
+		}
+		year = periodTime.Year()
+		month = int(periodTime.Month())
+	} else {
+		if requestData.Year == 0 {
+			year = time.Now().Year()
+		} else {
+			year = requestData.Year
+		}
+		if requestData.Month == 0 {
+			month = int(time.Now().Month())
+		} else {
+			month = requestData.Month
+		}
+	}
+
+	// Создаем сервис автоматизации биллинга
+	automationService := services.NewBillingAutomationService()
+
+	// Генерируем счета
+	if err := automationService.AutoGenerateInvoicesForMonth(year, month); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": fmt.Sprintf("Счета за %d-%02d успешно сгенерированы", year, month),
+		"year":    year,
+		"month":   month,
+	})
+}
 
 // AutoGenerateInvoices автоматически генерирует счета за месяц
 func AutoGenerateInvoices(c *gin.Context) {

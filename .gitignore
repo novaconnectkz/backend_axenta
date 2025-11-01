@@ -23,6 +23,7 @@ go.work
 .env.development.local
 .env.test.local
 .env.production.local
+env.production
 
 # IDE
 .vscode/
@@ -73,12 +74,28 @@ test_auth_build
 test_contracts_build
 test_server
 test_server.go
+axenta_server
+axenta_backend
+axenta_backend_linux
+test_build
 
 # Backup files
 *.sql
 backup_*.sql
 *.tar.gz
+*.backup
+*.bak
+
+# Coverage reports
+coverage.out
+coverage.html
 
 # Temporary files
 *.tmp
 *.temp
+
+# Test files in home directory
+~/projects/
+
+# Deployment archives
+axenta_deploy_*.tar.gz

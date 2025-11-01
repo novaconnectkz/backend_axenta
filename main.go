@@ -426,10 +426,21 @@ func main() {
 	r.GET("/api/dashboard/layouts", api.GetDashboardLayouts)
 	r.GET("/api/dashboard/layouts/default", api.GetDefaultDashboardLayout)
 	r.GET("/api/notifications", api.GetDashboardNotificationsSimple)
+	
+	// Dashboard для биллинга согласно roadmap (Этап 4.2)
+	r.GET("/api/dashboard", api.GetBillingDashboard)
+
+	// OpenAPI документация (Этап 9)
+	r.GET("/api/docs", api.GetSwaggerUI)
+	r.GET("/api/docs/openapi.yaml", api.GetOpenAPISpec)
+	r.GET("/api/docs/billing-openapi.yaml", api.GetBillingOpenAPISpec)
+	// Алиас для совместимости
+	r.GET("/docs", api.GetSwaggerUI)
 
 	// Простые billing endpoints для отладки (без мультитенантности)
 	r.GET("/api/billing-plans-simple", api.GetBillingPlansSimple)
 	r.GET("/api/subscriptions-simple", api.GetSubscriptionsSimple)
+	r.GET("/api/billing-settings-simple", api.GetBillingSettingsSimple)
 
 	// Административные маршруты (с авторизацией)
 	adminGroup := r.Group("/api/admin")
@@ -742,6 +753,11 @@ func main() {
 	apiGroup.GET("/billing/invoices/:id", api.GetInvoice)
 	apiGroup.POST("/billing/invoices/:id/payment", api.ProcessPayment)
 	apiGroup.POST("/billing/invoices/:id/cancel", api.CancelInvoice)
+	
+	// Эндпоинты согласно roadmap (Этап 4.4)
+	apiGroup.POST("/invoices/run", api.RunInvoicesGeneration)           // POST /api/invoices/run
+	apiGroup.POST("/invoices/:id/send", api.SendInvoice)               // POST /api/invoices/:id/send
+	apiGroup.POST("/invoices/:id/pay", api.ProcessPayment)             // POST /api/invoices/:id/pay (алиас)
 
 	// История и отчеты
 	apiGroup.GET("/billing/history", api.GetBillingHistory)

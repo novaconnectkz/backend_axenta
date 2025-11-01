@@ -1,12 +1,14 @@
 package api
 
 import (
+	"backend_axenta/database"
 	"backend_axenta/middleware"
 	"backend_axenta/models"
 	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/shopspring/decimal"
 )
 
 // DashboardStats структура для статистики dashboard
@@ -253,4 +255,101 @@ func GetDashboardNotificationsSimple(c *gin.Context) {
 		"status": "success",
 		"data":   notifications,
 	})
+}
+
+// BillingDashboardResponse структура ответа для /api/dashboard?company_id= согласно roadmap
+type BillingDashboardResponse struct {
+	RevenueTotal      decimal.Decimal `json:"revenue_total"`      // Общий доход
+	SubscriptionsActive int64         `json:"subscriptions_active"` // Активные подписки
+	Payable           decimal.Decimal `json:"payable"`            // К оплате
+	Overdue           decimal.Decimal `json:"overdue"`            // Просрочено
+}
+
+// GetBillingDashboard получает статистику биллинга для dashboard согласно roadmap
+// GET /api/dashboard?company_id=&demo=1
+func GetBillingDashboard(c *gin.Context) {
+	// Проверяем demo-режим
+	if isDemoMode(c) {
+		demoResponse := BillingDashboardResponse{
+			RevenueTotal:        decimal.NewFromInt(50000),
+			SubscriptionsActive: 1,
+			Payable:             decimal.NewFromInt(8000),
+			Overdue:             decimal.NewFromInt(2000),
+		}
+
+		c.JSON(200, gin.H{
+			"status":       "success",
+			"data":         demoResponse,
+			"demo_notice":  "Это демо-данные. Добавьте ?demo=0 для получения реальных данных.",
+		})
+		return
+	}
+
+	companyIDStr := c.Query("company_id")
+	if companyIDStr == "" {
+		c.JSON(400, gin.H{
+			"status": "error",
+			"error":  "Параметр company_id обязателен",
+		})
+		return
+	}
+
+	companyID, err := strconv.ParseUint(companyIDStr, 10, 32)
+	if err != nil {
+		c.JSON(400, gin.H{
+			"status": "error",
+			"error":  "Неверный формат company_id",
+		})
+		return
+	}
+
+	response := BillingDashboardResponse{
+		RevenueTotal:        decimal.Zero,
+		SubscriptionsActive: 0,
+		Payable:             decimal.Zero,
+		Overdue:             decimal.Zero,
+	}
+
+	// Подсчитываем активные подписки
+	var activeSubscriptions int64
+	database.DB.Model(&models.Subscription{}).
+		Where("company_id = ? AND status = ? AND deleted_at IS NULL", companyID, "active").
+		Count(&activeSubscriptions)
+	response.SubscriptionsActive = activeSubscriptions
+
+	// Подсчитываем общий доход (из оплаченных счетов)
+	var paidInvoices []models.Invoice
+	database.DB.Model(&models.Invoice{}).
+		Where("company_id = ? AND status = ? AND deleted_at IS NULL", companyID, "paid").
+		Find(&paidInvoices)
+	
+	for _, invoice := range paidInvoices {
+		response.RevenueTotal = response.RevenueTotal.Add(invoice.TotalAmount)
+	}
+
+	// Подсчитываем к оплате (неоплаченные счета, не просроченные)
+	var payableInvoices []models.Invoice
+	database.DB.Model(&models.Invoice{}).
+		Where("company_id = ? AND status IN (?, ?) AND deleted_at IS NULL AND due_date >= ?", 
+			companyID, "sent", "draft", time.Now()).
+		Find(&payableInvoices)
+	
+	for _, invoice := range payableInvoices {
+		response.Payable = response.Payable.Add(invoice.GetRemainingAmount())
+	}
+
+	// Подсчитываем просроченные
+	var overdueInvoices []models.Invoice
+	database.DB.Model(&models.Invoice{}).
+		Where("company_id = ? AND status != ? AND status != ? AND deleted_at IS NULL AND due_date < ?", 
+			companyID, "paid", "cancelled", time.Now()).
+		Find(&overdueInvoices)
+	
+	for _, invoice := range overdueInvoices {
+		if invoice.IsOverdue() {
+			response.Overdue = response.Overdue.Add(invoice.GetRemainingAmount())
+		}
+	}
+
+	c.JSON(200, response)
 }

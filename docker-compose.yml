@@ -1,0 +1,113 @@
+version: '3.8'
+
+services:
+  # PostgreSQL база данных
+  postgres:
+    image: postgres:16-alpine
+    container_name: axenta_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: axenta_db
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - axenta_network
+
+  # pgAdmin для управления БД
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: axenta_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@axenta.local
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
+    ports:
+      - "5050:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - axenta_network
+
+  # Go приложение
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: axenta_app
+    environment:
+      # База данных
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: axenta_db
+      DB_SSLMODE: disable
+      
+      # Сервер
+      SERVER_PORT: 8080
+      BACKEND_URL: http://localhost:8080
+      GIN_MODE: release
+      
+      # Redis (опционально)
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ""
+      REDIS_DB: 0
+      
+      # JWT
+      JWT_SECRET: ${JWT_SECRET:-your-jwt-secret-key-change-in-production}
+      
+      # Axetna API
+      AXETNA_API_URL: ${AXETNA_API_URL:-https://api.axetna.cloud}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-your-32-character-encryption-key!!}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      # Монтируем для разработки (опционально, можно убрать для продакшена)
+      - ./logs:/app/logs
+    restart: unless-stopped
+    networks:
+      - axenta_network
+
+  # Redis (опционально, для кеширования)
+  redis:
+    image: redis:7-alpine
+    container_name: axenta_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - axenta_network
+
+volumes:
+  postgres_data:
+  pgadmin_data:
+  redis_data:
+
+networks:
+  axenta_network:
+    driver: bridge
+

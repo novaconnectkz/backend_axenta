@@ -8,6 +8,7 @@ import (
 
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -598,5 +599,330 @@ func TestBillingService_CalculateObjectsAmount(t *testing.T) {
 			expected, _ := decimal.NewFromString(tt.expectedAmount)
 			assert.Equal(t, expected, result)
 		})
+	}
+}
+
+func TestBillingService_MinCommit(t *testing.T) {
+	db := setupBillingTestDB()
+	billingService := &BillingService{db: db}
+
+	// Создаем тестовые данные
+	company := &models.Company{
+		Name:   "Test Company",
+		Domain: "test.com",
+	}
+	db.Create(company)
+
+	tariffPlan := &models.TariffPlan{
+		BillingPlan: models.BillingPlan{
+			Name:     "Premium Plan",
+			Price:    decimal.NewFromFloat(500.0), // Низкая базовая стоимость
+			Currency: "RUB",
+		},
+		PricePerObject:     decimal.NewFromFloat(50),
+		FreeObjectsCount:   0,
+		InactivePriceRatio: decimal.NewFromFloat(0.5),
+	}
+	db.Create(tariffPlan)
+
+	// Сначала нужно создать таблицу tariff_components
+	err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS tariff_components (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			created_at DATETIME,
+			updated_at DATETIME,
+			deleted_at DATETIME,
+			tariff_plan_id INTEGER NOT NULL,
+			type TEXT NOT NULL,
+			name TEXT NOT NULL,
+			unit TEXT,
+			price DECIMAL(15,2) NOT NULL,
+			min_commit DECIMAL(15,2) DEFAULT 0,
+			billing_period TEXT,
+			is_active BOOLEAN DEFAULT TRUE
+		)
+	`).Error
+	require.NoError(t, err)
+
+	// Создаем тарифный компонент с минимальной оплатой
+	tariffComponent := &models.TariffComponent{
+		TariffPlanID: tariffPlan.ID,
+		Type:         "recurring",
+		Name:         "Минимальная подписка",
+		Price:        decimal.NewFromFloat(1000.0), // Минимальная оплата
+		MinCommit:    decimal.NewFromFloat(1000.0),
+		BillingPeriod: "monthly",
+		IsActive:     true,
+	}
+	db.Create(tariffComponent)
+
+	contract := &models.Contract{
+		Number:       "TEST-MIN-001",
+		Title:        "Test Contract with Min Commit",
+		ClientName:   "Test Client",
+		StartDate:    time.Now().AddDate(0, -1, 0),
+		EndDate:      time.Now().AddDate(1, 0, 0),
+		TariffPlanID: tariffPlan.ID,
+		CompanyID:    company.ID,
+		Status:       "active",
+	}
+	db.Create(contract)
+
+	// Создаем минимальное количество объектов, чтобы сумма была меньше min_commit
+	// Базовая стоимость: 500
+	// Объекты: 5 * 50 = 250
+	// Итого: 750 < 1000 (min_commit)
+	objects := []models.Object{
+		{Name: "Object 1", Status: "active", IsActive: true, ContractID: contract.ID},
+		{Name: "Object 2", Status: "active", IsActive: true, ContractID: contract.ID},
+		{Name: "Object 3", Status: "active", IsActive: true, ContractID: contract.ID},
+		{Name: "Object 4", Status: "active", IsActive: true, ContractID: contract.ID},
+		{Name: "Object 5", Status: "active", IsActive: true, ContractID: contract.ID},
+	}
+
+	for _, obj := range objects {
+		db.Create(&obj)
+	}
+
+	// Создаем настройки биллинга
+	settings := &models.BillingSettings{
+		CompanyID:               company.ID,
+		DefaultTaxRate:          decimal.NewFromFloat(20),
+		TaxIncluded:             false,
+		EnableInactiveDiscounts: true,
+		InactiveDiscountRatio:   decimal.NewFromFloat(0.5),
+	}
+	db.Create(settings)
+
+	periodStart := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	periodEnd := time.Date(2024, 1, 31, 23, 59, 59, 0, time.UTC)
+
+	result, err := billingService.CalculateBillingForContract(contract.ID, periodStart, periodEnd)
+
+	// Проверяем результат
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+
+	// Базовая стоимость: 500
+	// Объекты: 5 * 50 = 250
+	// Сумма до min_commit: 750
+	// Min_commit: 1000
+	// Доплата за min_commit: 1000 - 750 = 250
+	// Промежуточная сумма: 750 + 250 = 1000
+	expectedSubtotal := decimal.NewFromFloat(1000.0)
+	assert.Equal(t, expectedSubtotal, result.SubtotalAmount)
+
+	// Проверяем, что есть позиция "Минимальная оплата"
+	var minCommitItem *InvoiceItemData
+	for i := range result.Items {
+		if result.Items[i].ItemType == "min_commit" {
+			minCommitItem = &result.Items[i]
+			break
+		}
+	}
+
+	require.NotNil(t, minCommitItem, "Должна быть позиция min_commit")
+	assert.Contains(t, minCommitItem.Name, "Минимальная оплата")
+	assert.Equal(t, decimal.NewFromFloat(250.0), minCommitItem.Amount)
+
+	// Проверяем, что итоговая сумма корректна (с НДС 20%)
+	// 1000 + 200 (НДС) = 1200
+	expectedTotal := decimal.NewFromFloat(1200.0)
+	assert.Equal(t, expectedTotal, result.TotalAmount)
+}
+
+func TestBillingService_MinCommit_NotApplied(t *testing.T) {
+	db := setupBillingTestDB()
+	billingService := &BillingService{db: db}
+
+	// Создаем тестовые данные
+	company := &models.Company{
+		Name:   "Test Company",
+		Domain: "test.com",
+	}
+	db.Create(company)
+
+	tariffPlan := &models.TariffPlan{
+		BillingPlan: models.BillingPlan{
+			Name:     "Premium Plan",
+			Price:    decimal.NewFromFloat(800.0),
+			Currency: "RUB",
+		},
+		PricePerObject:     decimal.NewFromFloat(100),
+		FreeObjectsCount:   0,
+		InactivePriceRatio: decimal.NewFromFloat(0.5),
+	}
+	db.Create(tariffPlan)
+
+	// Создаем таблицу tariff_components
+	err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS tariff_components (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			created_at DATETIME,
+			updated_at DATETIME,
+			deleted_at DATETIME,
+			tariff_plan_id INTEGER NOT NULL,
+			type TEXT NOT NULL,
+			name TEXT NOT NULL,
+			unit TEXT,
+			price DECIMAL(15,2) NOT NULL,
+			min_commit DECIMAL(15,2) DEFAULT 0,
+			billing_period TEXT,
+			is_active BOOLEAN DEFAULT TRUE
+		)
+	`).Error
+	require.NoError(t, err)
+
+	tariffComponent := &models.TariffComponent{
+		TariffPlanID: tariffPlan.ID,
+		Type:         "recurring",
+		Name:         "Минимальная подписка",
+		Price:        decimal.NewFromFloat(1000.0),
+		MinCommit:    decimal.NewFromFloat(1000.0),
+		BillingPeriod: "monthly",
+		IsActive:     true,
+	}
+	db.Create(tariffComponent)
+
+	contract := &models.Contract{
+		Number:       "TEST-MIN-002",
+		Title:        "Test Contract without Min Commit",
+		ClientName:   "Test Client",
+		StartDate:    time.Now().AddDate(0, -1, 0),
+		EndDate:      time.Now().AddDate(1, 0, 0),
+		TariffPlanID: tariffPlan.ID,
+		CompanyID:    company.ID,
+		Status:       "active",
+	}
+	db.Create(contract)
+
+	// Создаем достаточно объектов, чтобы сумма была больше min_commit
+	// Базовая стоимость: 800
+	// Объекты: 5 * 100 = 500
+	// Итого: 1300 > 1000 (min_commit), доплата не нужна
+	objects := []models.Object{
+		{Name: "Object 1", Status: "active", IsActive: true, ContractID: contract.ID},
+		{Name: "Object 2", Status: "active", IsActive: true, ContractID: contract.ID},
+		{Name: "Object 3", Status: "active", IsActive: true, ContractID: contract.ID},
+		{Name: "Object 4", Status: "active", IsActive: true, ContractID: contract.ID},
+		{Name: "Object 5", Status: "active", IsActive: true, ContractID: contract.ID},
+	}
+
+	for _, obj := range objects {
+		db.Create(&obj)
+	}
+
+	settings := &models.BillingSettings{
+		CompanyID:               company.ID,
+		DefaultTaxRate:          decimal.NewFromFloat(20),
+		TaxIncluded:             false,
+		EnableInactiveDiscounts: true,
+		InactiveDiscountRatio:   decimal.NewFromFloat(0.5),
+	}
+	db.Create(settings)
+
+	periodStart := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	periodEnd := time.Date(2024, 1, 31, 23, 59, 59, 0, time.UTC)
+
+	result, err := billingService.CalculateBillingForContract(contract.ID, periodStart, periodEnd)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+
+	// Проверяем, что нет позиции min_commit
+	var hasMinCommit bool
+	for _, item := range result.Items {
+		if item.ItemType == "min_commit" {
+			hasMinCommit = true
+			break
+		}
+	}
+	assert.False(t, hasMinCommit, "Не должно быть позиции min_commit, если сумма превышает минимум")
+
+	// Промежуточная сумма: 800 + 500 = 1300
+	expectedSubtotal := decimal.NewFromFloat(1300.0)
+	assert.Equal(t, expectedSubtotal, result.SubtotalAmount)
+}
+
+func TestBillingService_Idempotency(t *testing.T) {
+	// Тест идемпотентности: повторные расчеты для одного и того же периода должны давать одинаковые результаты
+	db := setupBillingTestDB()
+	billingService := &BillingService{db: db}
+
+	// Создаем тестовые данные
+	company := &models.Company{
+		Name:   "Test Company",
+		Domain: "test.com",
+	}
+	db.Create(company)
+
+	tariffPlan := &models.TariffPlan{
+		BillingPlan: models.BillingPlan{
+			Name:     "Basic Plan",
+			Price:    decimal.NewFromFloat(1000.0),
+			Currency: "RUB",
+		},
+		PricePerObject:     decimal.NewFromFloat(100),
+		FreeObjectsCount:   1,
+		InactivePriceRatio: decimal.NewFromFloat(0.5),
+	}
+	db.Create(tariffPlan)
+
+	contract := &models.Contract{
+		Number:       "TEST-IDEMP-001",
+		Title:        "Test Contract for Idempotency",
+		ClientName:   "Test Client",
+		StartDate:    time.Now().AddDate(0, -1, 0),
+		EndDate:      time.Now().AddDate(1, 0, 0),
+		TariffPlanID: tariffPlan.ID,
+		CompanyID:    company.ID,
+		Status:       "active",
+	}
+	db.Create(contract)
+
+	objects := []models.Object{
+		{Name: "Object 1", Status: "active", IsActive: true, ContractID: contract.ID},
+		{Name: "Object 2", Status: "active", IsActive: true, ContractID: contract.ID},
+	}
+
+	for _, obj := range objects {
+		db.Create(&obj)
+	}
+
+	settings := &models.BillingSettings{
+		CompanyID:               company.ID,
+		DefaultTaxRate:          decimal.NewFromFloat(20),
+		TaxIncluded:             false,
+		EnableInactiveDiscounts: true,
+		InactiveDiscountRatio:   decimal.NewFromFloat(0.5),
+	}
+	db.Create(settings)
+
+	periodStart := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	periodEnd := time.Date(2024, 1, 31, 23, 59, 59, 0, time.UTC)
+
+	// Первый расчет
+	result1, err1 := billingService.CalculateBillingForContract(contract.ID, periodStart, periodEnd)
+	require.NoError(t, err1)
+	require.NotNil(t, result1)
+
+	// Второй расчет (должен быть идентичным)
+	result2, err2 := billingService.CalculateBillingForContract(contract.ID, periodStart, periodEnd)
+	require.NoError(t, err2)
+	require.NotNil(t, result2)
+
+	// Проверяем, что результаты идентичны
+	assert.Equal(t, result1.SubtotalAmount, result2.SubtotalAmount, "Промежуточная сумма должна быть одинаковой")
+	assert.Equal(t, result1.TaxAmount, result2.TaxAmount, "НДС должен быть одинаковым")
+	assert.Equal(t, result1.TotalAmount, result2.TotalAmount, "Итоговая сумма должна быть одинаковой")
+	assert.Equal(t, result1.BaseAmount, result2.BaseAmount, "Базовая сумма должна быть одинаковой")
+	assert.Equal(t, result1.ObjectsAmount, result2.ObjectsAmount, "Сумма объектов должна быть одинаковой")
+	assert.Equal(t, len(result1.Items), len(result2.Items), "Количество позиций должно быть одинаковым")
+
+	// Проверяем детали позиций
+	for i := range result1.Items {
+		assert.Equal(t, result1.Items[i].Name, result2.Items[i].Name, "Название позиции должно совпадать")
+		assert.Equal(t, result1.Items[i].Amount, result2.Items[i].Amount, "Сумма позиции должна совпадать")
+		assert.Equal(t, result1.Items[i].ItemType, result2.Items[i].ItemType, "Тип позиции должен совпадать")
 	}
 }

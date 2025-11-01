@@ -1,0 +1,1394 @@
+openapi: 3.1.3
+info:
+  title: Axenta Billing & Contracts API
+  version: v1
+  description: |
+    API для управления биллингом, договорами и счетами в системе Axenta CRM.
+    Включает работу с тарифами, подписками, счетами и настройками биллинга.
+servers:
+  - url: https://axenta.cloud/api
+    description: Production
+  - url: http://localhost:8080/api
+    description: Local development
+
+tags:
+  - name: Dashboard
+    description: Статистика и аналитика биллинга
+  - name: Contracts
+    description: Управление договорами
+  - name: Invoices
+    description: Управление счетами
+  - name: Tariffs
+    description: Управление тарифными планами
+  - name: Subscriptions
+    description: Управление подписками
+  - name: Billing Settings
+    description: Настройки биллинга
+
+paths:
+  # ==================== DASHBOARD ====================
+  /dashboard:
+    get:
+      tags: [Dashboard]
+      summary: Получить статистику биллинга
+      description: |
+        Возвращает общую статистику биллинга: доходы, активные подписки, 
+        суммы к оплате и просроченные платежи.
+        Поддерживает демо-режим через параметр `?demo=1`.
+      parameters:
+        - name: company_id
+          in: query
+          description: ID компании (опционально)
+          schema:
+            type: integer
+        - name: demo
+          in: query
+          description: Демо-режим (1 или true для мок-данных)
+          schema:
+            type: string
+            enum: [0, 1, true, false]
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardResponse'
+              examples:
+                success:
+                  value:
+                    status: "success"
+                    data:
+                      revenue_total: 50000
+                      subscriptions_active: 1
+                      payable: 8000
+                      overdue: 2000
+                demo:
+                  value:
+                    status: "success"
+                    data:
+                      revenue_total: 50000
+                      subscriptions_active: 1
+                      payable: 8000
+                      overdue: 2000
+                    demo_notice: "Это демо-данные. Добавьте ?demo=0 для получения реальных данных."
+
+  # ==================== CONTRACTS ====================
+  /auth/contracts:
+    get:
+      tags: [Contracts]
+      summary: Получить список договоров
+      description: |
+        Возвращает список договоров с поддержкой фильтрации, поиска и пагинации.
+        Поддерживает демо-режим через параметр `?demo=1`.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: company_id
+          in: query
+          schema:
+            type: integer
+        - name: q
+          in: query
+          description: Поиск по номеру, названию или клиенту
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, inactive, expired, cancelled]
+        - name: active
+          in: query
+          schema:
+            type: boolean
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+        - name: demo
+          in: query
+          schema:
+            type: string
+            enum: [0, 1, true, false]
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContractsListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags: [Contracts]
+      summary: Создать новый договор
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContractCreate'
+      responses:
+        '201':
+          description: Договор создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContractResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/contracts/{id}:
+    get:
+      tags: [Contracts]
+      summary: Получить договор по ID
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContractResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    put:
+      tags: [Contracts]
+      summary: Обновить договор
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContractUpdate'
+      responses:
+        '200':
+          description: Договор обновлен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContractResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    delete:
+      tags: [Contracts]
+      summary: Удалить договор
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Договор удален
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/contracts/expiring:
+    get:
+      tags: [Contracts]
+      summary: Получить истекающие договоры
+      description: Возвращает договоры, срок действия которых истекает в ближайшие 30 дней
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "success"
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Contract'
+
+  # ==================== INVOICES ====================
+  /auth/billing/invoices:
+    get:
+      tags: [Invoices]
+      summary: Получить список счетов
+      description: |
+        Возвращает список счетов с поддержкой фильтрации и пагинации.
+        Поддерживает демо-режим через параметр `?demo=1`.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: company_id
+          in: query
+          schema:
+            type: integer
+        - name: contract_id
+          in: query
+          schema:
+            type: integer
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [draft, sent, paid, overdue, cancelled]
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+        - name: demo
+          in: query
+          schema:
+            type: string
+            enum: [0, 1, true, false]
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoicesListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags: [Invoices]
+      summary: Создать счет для договора
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [contract_id, period_start, period_end]
+              properties:
+                contract_id:
+                  type: integer
+                period_start:
+                  type: string
+                  format: date
+                  example: "2024-01-01"
+                period_end:
+                  type: string
+                  format: date
+                  example: "2024-01-31"
+      responses:
+        '201':
+          description: Счет создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/invoices/run:
+    post:
+      tags: [Invoices]
+      summary: Запустить автоматическую генерацию счетов
+      description: Генерирует счета для всех активных договоров за указанный период
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [year, month]
+              properties:
+                year:
+                  type: integer
+                  example: 2024
+                month:
+                  type: integer
+                  minimum: 1
+                  maximum: 12
+                  example: 1
+      responses:
+        '200':
+          description: Генерация запущена
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "success"
+                  message:
+                    type: string
+                    example: "Генерация счетов запущена"
+                  count:
+                    type: integer
+                    example: 5
+
+  /auth/invoices/{id}:
+    get:
+      tags: [Invoices]
+      summary: Получить счет по ID
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags: [Invoices]
+      summary: Отправить счет клиенту
+      description: Отправляет счет клиенту (электронная почта, печать и т.д.)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Счет отправлен
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "success"
+                  message:
+                    type: string
+                    example: "Счет отправлен клиенту"
+
+  /auth/invoices/{id}/pay:
+    post:
+      tags: [Invoices]
+      summary: Зарегистрировать оплату счета
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount]
+              properties:
+                amount:
+                  type: number
+                  format: decimal
+                  example: 12000.00
+                payment_method:
+                  type: string
+                  example: "bank_transfer"
+                notes:
+                  type: string
+                  example: "Оплата по счету №123"
+      responses:
+        '200':
+          description: Оплата зарегистрирована
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceResponse'
+
+  /auth/invoices/{id}/cancel:
+    post:
+      tags: [Invoices]
+      summary: Отменить счет
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  example: "Ошибка в расчетах"
+      responses:
+        '200':
+          description: Счет отменен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceResponse'
+
+  # ==================== TARIFFS (Billing Plans) ====================
+  /auth/billing/plans:
+    get:
+      tags: [Tariffs]
+      summary: Получить список тарифных планов
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: company_id
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "success"
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TariffPlan'
+                  count:
+                    type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags: [Tariffs]
+      summary: Создать тарифный план
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TariffPlanCreate'
+      responses:
+        '201':
+          description: Тарифный план создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TariffPlanResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/billing/plans/{id}:
+    get:
+      tags: [Tariffs]
+      summary: Получить тарифный план по ID
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TariffPlanResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    put:
+      tags: [Tariffs]
+      summary: Обновить тарифный план
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TariffPlanUpdate'
+      responses:
+        '200':
+          description: Тарифный план обновлен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TariffPlanResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    delete:
+      tags: [Tariffs]
+      summary: Удалить тарифный план
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Тарифный план удален
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ==================== SUBSCRIPTIONS ====================
+  /auth/billing/subscriptions:
+    get:
+      tags: [Subscriptions]
+      summary: Получить список подписок
+      description: Возвращает список подписок компании на тарифные планы
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: company_id
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "success"
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Subscription'
+                  count:
+                    type: integer
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags: [Subscriptions]
+      summary: Создать подписку
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubscriptionCreate'
+      responses:
+        '201':
+          description: Подписка создана
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/billing/subscriptions/{id}:
+    get:
+      tags: [Subscriptions]
+      summary: Получить подписку по ID
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    put:
+      tags: [Subscriptions]
+      summary: Обновить подписку
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubscriptionUpdate'
+      responses:
+        '200':
+          description: Подписка обновлена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    delete:
+      tags: [Subscriptions]
+      summary: Удалить подписку
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Подписка удалена
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ==================== BILLING SETTINGS ====================
+  /auth/billing/settings:
+    get:
+      tags: [Billing Settings]
+      summary: Получить настройки биллинга
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: company_id
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BillingSettingsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    put:
+      tags: [Billing Settings]
+      summary: Обновить настройки биллинга
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BillingSettingsUpdate'
+      responses:
+        '200':
+          description: Настройки обновлены
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BillingSettingsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT токен авторизации в формате `Bearer <token>`
+
+  schemas:
+    DashboardResponse:
+      type: object
+      properties:
+        revenue_total:
+          type: number
+          format: decimal
+          description: Общий доход
+          example: 50000
+        subscriptions_active:
+          type: integer
+          description: Количество активных подписок
+          example: 1
+        payable:
+          type: number
+          format: decimal
+          description: Сумма к оплате
+          example: 8000
+        overdue:
+          type: number
+          format: decimal
+          description: Просроченная сумма
+          example: 2000
+
+    Contract:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 24
+        number:
+          type: string
+          example: "DOG-2024-001"
+        title:
+          type: string
+          example: "Договор с ООО Логистика Плюс"
+        client_name:
+          type: string
+          example: "ООО Логистика Плюс"
+        start_date:
+          type: string
+          format: date
+          example: "2024-01-01"
+        end_date:
+          type: string
+          format: date
+          example: "2025-01-01"
+        status:
+          type: string
+          enum: [active, inactive, expired, cancelled]
+          example: "active"
+        currency:
+          type: string
+          example: "RUB"
+        tariff_id:
+          type: integer
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ContractCreate:
+      type: object
+      required: [number, title, client_name, start_date, end_date]
+      properties:
+        number:
+          type: string
+          example: "DOG-2024-001"
+        title:
+          type: string
+          example: "Договор с ООО Логистика Плюс"
+        client_name:
+          type: string
+          example: "ООО Логистика Плюс"
+        start_date:
+          type: string
+          format: date
+          example: "2024-01-01"
+        end_date:
+          type: string
+          format: date
+          example: "2025-01-01"
+        status:
+          type: string
+          enum: [active, inactive]
+          default: active
+        currency:
+          type: string
+          default: "RUB"
+        tariff_id:
+          type: integer
+          nullable: true
+
+    ContractUpdate:
+      type: object
+      properties:
+        title:
+          type: string
+        client_name:
+          type: string
+        start_date:
+          type: string
+          format: date
+        end_date:
+          type: string
+          format: date
+        status:
+          type: string
+          enum: [active, inactive, expired, cancelled]
+        currency:
+          type: string
+        tariff_id:
+          type: integer
+          nullable: true
+
+    ContractsListResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: "success"
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Contract'
+        count:
+          type: integer
+          example: 1
+        total:
+          type: integer
+          example: 1
+        page:
+          type: integer
+          example: 1
+        limit:
+          type: integer
+          example: 20
+
+    ContractResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: "success"
+        data:
+          $ref: '#/components/schemas/Contract'
+
+    Invoice:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        number:
+          type: string
+          example: "INV-2024-001"
+        title:
+          type: string
+          example: "Счет за услуги мониторинга"
+        invoice_date:
+          type: string
+          format: date
+          example: "2024-01-05"
+        due_date:
+          type: string
+          format: date
+          example: "2024-01-14"
+        subtotal_amount:
+          type: number
+          format: decimal
+          example: 10000
+        tax_amount:
+          type: number
+          format: decimal
+          example: 2000
+        total_amount:
+          type: number
+          format: decimal
+          example: 12000
+        paid_amount:
+          type: number
+          format: decimal
+          example: 0
+        currency:
+          type: string
+          example: "RUB"
+        status:
+          type: string
+          enum: [draft, sent, paid, overdue, cancelled]
+          example: "sent"
+        contract_id:
+          type: integer
+          example: 24
+
+    InvoicesListResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: "success"
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Invoice'
+        count:
+          type: integer
+          example: 1
+        total:
+          type: integer
+          example: 1
+        limit:
+          type: integer
+          example: 20
+        offset:
+          type: integer
+          example: 0
+
+    InvoiceResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: "success"
+        data:
+          $ref: '#/components/schemas/Invoice'
+
+    TariffPlan:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+          example: "Стандартный"
+        description:
+          type: string
+          nullable: true
+        price:
+          type: number
+          format: decimal
+          example: 1000.00
+          description: Цена тарифа
+        currency:
+          type: string
+          example: "RUB"
+        billing_period:
+          type: string
+          enum: [monthly, yearly, one-time]
+          example: "monthly"
+        max_devices:
+          type: integer
+          example: 10
+        max_users:
+          type: integer
+          example: 5
+        max_storage:
+          type: integer
+          example: 100
+        has_analytics:
+          type: boolean
+          default: false
+        has_api:
+          type: boolean
+          default: false
+        has_support:
+          type: boolean
+          default: false
+        has_custom_domain:
+          type: boolean
+          default: false
+        is_active:
+          type: boolean
+          default: true
+        is_popular:
+          type: boolean
+          default: false
+        company_id:
+          type: integer
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    TariffPlanCreate:
+      type: object
+      required: [name, price]
+      properties:
+        name:
+          type: string
+          example: "Стандартный"
+        description:
+          type: string
+          nullable: true
+        price:
+          type: number
+          format: decimal
+          example: 1000.00
+        currency:
+          type: string
+          default: "RUB"
+        billing_period:
+          type: string
+          enum: [monthly, yearly, one-time]
+          default: "monthly"
+        max_devices:
+          type: integer
+          default: 0
+        max_users:
+          type: integer
+          default: 0
+        max_storage:
+          type: integer
+          default: 0
+        has_analytics:
+          type: boolean
+          default: false
+        has_api:
+          type: boolean
+          default: false
+        has_support:
+          type: boolean
+          default: false
+        has_custom_domain:
+          type: boolean
+          default: false
+        is_active:
+          type: boolean
+          default: true
+        is_popular:
+          type: boolean
+          default: false
+        company_id:
+          type: integer
+          nullable: true
+
+    TariffPlanUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        price:
+          type: number
+          format: decimal
+        currency:
+          type: string
+        billing_period:
+          type: string
+          enum: [monthly, yearly, one-time]
+        max_devices:
+          type: integer
+        max_users:
+          type: integer
+        max_storage:
+          type: integer
+        has_analytics:
+          type: boolean
+        has_api:
+          type: boolean
+        has_support:
+          type: boolean
+        has_custom_domain:
+          type: boolean
+        is_active:
+          type: boolean
+        is_popular:
+          type: boolean
+        company_id:
+          type: integer
+          nullable: true
+
+    TariffPlanResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: "success"
+        data:
+          $ref: '#/components/schemas/TariffPlan'
+
+    Subscription:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        company_id:
+          type: integer
+          example: 24
+        billing_plan_id:
+          type: integer
+          example: 1
+        billing_plan:
+          $ref: '#/components/schemas/TariffPlan'
+        start_date:
+          type: string
+          format: date-time
+          example: "2024-01-01T00:00:00Z"
+        end_date:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2024-12-31T23:59:59Z"
+        status:
+          type: string
+          enum: [active, expired, cancelled, suspended]
+          example: "active"
+        is_auto_renew:
+          type: boolean
+          default: true
+        last_payment_date:
+          type: string
+          format: date-time
+          nullable: true
+        next_payment_date:
+          type: string
+          format: date-time
+          nullable: true
+        payment_method:
+          type: string
+          nullable: true
+          example: "card"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    SubscriptionCreate:
+      type: object
+      required: [company_id, billing_plan_id]
+      properties:
+        company_id:
+          type: integer
+          example: 24
+        billing_plan_id:
+          type: integer
+          example: 1
+        start_date:
+          type: string
+          format: date-time
+        end_date:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [active, expired, cancelled, suspended]
+          default: "active"
+        is_auto_renew:
+          type: boolean
+          default: true
+        payment_method:
+          type: string
+
+    SubscriptionUpdate:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [active, expired, cancelled, suspended]
+        is_auto_renew:
+          type: boolean
+        end_date:
+          type: string
+          format: date-time
+        payment_method:
+          type: string
+
+    SubscriptionResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: "success"
+        data:
+          $ref: '#/components/schemas/Subscription'
+
+    BillingSettings:
+      type: object
+      properties:
+        company_id:
+          type: integer
+        auto_generate_invoices:
+          type: boolean
+          example: true
+        invoice_due_days:
+          type: integer
+          example: 14
+        default_currency:
+          type: string
+          example: "RUB"
+        tax_rate:
+          type: number
+          format: decimal
+          example: 20.0
+        invoice_prefix:
+          type: string
+          example: "INV"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    BillingSettingsUpdate:
+      type: object
+      properties:
+        auto_generate_invoices:
+          type: boolean
+        invoice_due_days:
+          type: integer
+          minimum: 1
+          maximum: 90
+        default_currency:
+          type: string
+        tax_rate:
+          type: number
+          format: decimal
+        invoice_prefix:
+          type: string
+
+    BillingSettingsResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: "success"
+        data:
+          $ref: '#/components/schemas/BillingSettings'
+
+  responses:
+    Unauthorized:
+      description: Требуется авторизация
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              status:
+                type: string
+                example: "error"
+              error:
+                type: string
+                example: "Требуется авторизация"
+
+    BadRequest:
+      description: Неверный запрос
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              status:
+                type: string
+                example: "error"
+              error:
+                type: string
+                example: "Неверный формат данных"
+
+    NotFound:
+      description: Ресурс не найден
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              status:
+                type: string
+                example: "error"
+              error:
+                type: string
+                example: "Ресурс не найден"
+
