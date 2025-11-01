@@ -122,8 +122,40 @@ func GetObjectsFromAxentaCloud(c *gin.Context) {
 	perPage := c.DefaultQuery("per_page", "50")
 	ordering := c.DefaultQuery("ordering", "name")
 
-	// Формируем URL для Axenta Cloud API
+	// Формируем URL для Axenta Cloud API с базовыми параметрами
 	axentaURL := fmt.Sprintf("https://axenta.cloud/api/cms/objects/?page=%s&per_page=%s&ordering=%s", page, perPage, ordering)
+
+	// Добавляем дополнительные фильтры, если они переданы
+	if accountId := c.Query("accountId"); accountId != "" {
+		axentaURL += "&accountId=" + accountId
+	}
+	if accountName := c.Query("accountName"); accountName != "" {
+		axentaURL += "&accountName=" + url.QueryEscape(accountName)
+	}
+	if creatorName := c.Query("creatorName"); creatorName != "" {
+		axentaURL += "&creatorName=" + url.QueryEscape(creatorName)
+	}
+	if deviceTypeName := c.Query("deviceTypeName"); deviceTypeName != "" {
+		axentaURL += "&deviceTypeName=" + url.QueryEscape(deviceTypeName)
+	}
+	if uniqueId := c.Query("uniqueId"); uniqueId != "" {
+		axentaURL += "&uniqueId=" + url.QueryEscape(uniqueId)
+	}
+	if status := c.Query("status"); status != "" {
+		axentaURL += "&status=" + url.QueryEscape(status)
+	}
+	if objectType := c.Query("type"); objectType != "" {
+		axentaURL += "&type=" + url.QueryEscape(objectType)
+	}
+	if search := c.Query("search"); search != "" {
+		axentaURL += "&search=" + url.QueryEscape(search)
+	}
+	if contractId := c.Query("contract_id"); contractId != "" {
+		axentaURL += "&contract_id=" + contractId
+	}
+	if isActive := c.Query("is_active"); isActive != "" {
+		axentaURL += "&is_active=" + isActive
+	}
 
 	// Получаем токен пользователя из заголовка Authorization
 	authHeader := c.GetHeader("Authorization")
