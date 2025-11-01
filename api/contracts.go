@@ -1,11 +1,13 @@
 package api
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 	"time"
 
 	"backend_axenta/database"
+	"backend_axenta/middleware"
 	"backend_axenta/models"
 
 	"github.com/gin-gonic/gin"
@@ -147,17 +149,25 @@ func GetContract(c *gin.Context) {
 	})
 }
 
+// CreateContractRequest представляет запрос на создание договора
+type CreateContractRequest struct {
+	models.Contract
+	AccountID *uint `json:"account_id"` // ID учетной записи Axenta для автоматической привязки объектов
+}
+
 // CreateContract создает новый договор
 func CreateContract(c *gin.Context) {
-	var contract models.Contract
+	var request CreateContractRequest
 
-	if err := c.ShouldBindJSON(&contract); err != nil {
+	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
 			"error":  "Неверный формат данных",
 		})
 		return
 	}
+
+	contract := request.Contract
 
 	// Валидация обязательных полей
 	if contract.Number == "" {
@@ -250,8 +260,35 @@ func CreateContract(c *gin.Context) {
 		return
 	}
 
+	// Если указан account_id, привязываем объекты этой учетной записи к договору
+	if request.AccountID != nil && *request.AccountID > 0 {
+		accountID := *request.AccountID
+		
+		// Получаем подключение к БД текущей компании для работы с объектами
+		tenantDB := middleware.GetTenantDB(c)
+		if tenantDB == nil {
+			// Если нет tenantDB, используем обычную БД
+			tenantDB = database.DB
+		}
+
+		// Находим все объекты, которые принадлежат этой учетной записи (CompanyID = account_id)
+		var objectsToAttach []models.Object
+		if err := tenantDB.Where("company_id = ?", accountID).
+			Find(&objectsToAttach).Error; err == nil && len(objectsToAttach) > 0 {
+			// Привязываем объекты к договору
+			if err := tenantDB.Model(&models.Object{}).
+				Where("company_id = ?", accountID).
+				Update("contract_id", contract.ID).Error; err != nil {
+				// Логируем ошибку, но не прерываем создание договора
+				log.Printf("⚠️ Ошибка привязки объектов к договору %d: %v", contract.ID, err)
+			} else {
+				log.Printf("✅ Привязано %d объектов к договору %d", len(objectsToAttach), contract.ID)
+			}
+		}
+	}
+
 	// Загружаем связанные данные для ответа
-	database.DB.Preload("TariffPlan").First(&contract, contract.ID)
+	database.DB.Preload("TariffPlan").Preload("Objects").First(&contract, contract.ID)
 
 	c.JSON(http.StatusCreated, gin.H{
 		"status": "success",
