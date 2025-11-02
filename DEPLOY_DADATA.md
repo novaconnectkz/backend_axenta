@@ -5,45 +5,60 @@
 
 ## Способы добавления ключа на сервер
 
-### Способ 1: Через файл DADATA_API_KEY (рекомендуется)
+### Способ 1: Автоматический скрипт (рекомендуется) ⚡
+
+Используйте готовый скрипт для автоматического добавления ключа:
+
+```bash
+cd /path/to/backend_axenta
+./add_dadata_key_to_production.sh
+```
+
+Скрипт автоматически:
+- ✅ Подключится к серверу
+- ✅ Добавит/обновит ключ в `.env`
+- ✅ Перезапустит бэкенд сервис
+- ✅ Проверит статус
+
+### Способ 2: Через файл .env вручную
 
 1. Подключитесь к продакшен серверу:
 ```bash
-ssh user@your-production-server
+ssh root@api.axenta.glonass-saratov.ru
 ```
 
 2. Перейдите в директорию бэкенда:
 ```bash
-cd /path/to/backend_axenta
+cd /opt/axenta-backend
 ```
 
-3. Откройте или создайте файл `.env`:
+3. Добавьте или обновите ключ в `.env`:
 ```bash
-nano .env
-# или
-vi .env
+# Если ключ уже есть - обновим его
+sed -i 's|^DADATA_API_KEY=.*|DADATA_API_KEY=9f89eacbff6b5a22581f4f3d36103470a5fede82|' .env
+
+# Если ключа нет - добавим его
+if ! grep -q '^DADATA_API_KEY=' .env; then
+  echo 'DADATA_API_KEY=9f89eacbff6b5a22581f4f3d36103470a5fede82' >> .env
+fi
 ```
 
-4. Добавьте переменную окружения:
+4. Проверьте, что ключ добавлен:
 ```bash
-DADATA_API_KEY=9f89eacbff6b5a22581f4f3d36103470a5fede82
+grep DADATA_API_KEY .env
 ```
 
-5. Сохраните файл (Ctrl+O, затем Enter в nano, или :wq в vi)
-
-6. Перезапустите бэкенд сервис:
+5. Перезапустите бэкенд сервис:
 ```bash
-# Если используется systemd
-sudo systemctl restart backend-axenta
-
-# Или если запускается через PM2
-pm2 restart backend-axenta
-
-# Или если запускается напрямую
-# Остановите текущий процесс и запустите заново
+sudo systemctl restart axenta-backend
 ```
 
-### Способ 2: Через переменные окружения системы
+6. Проверьте статус сервиса:
+```bash
+sudo systemctl status axenta-backend
+```
+
+### Способ 3: Через переменные окружения системы
 
 1. Добавьте в `/etc/environment` или в файл конфигурации systemd service:
 ```bash
