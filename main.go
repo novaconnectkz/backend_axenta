@@ -717,6 +717,10 @@ func main() {
 	log.Println("🔧 Registering DaData API endpoints...")
 	apiGroup.POST("/dadata/organization", api.FindOrganizationByINN)
 	apiGroup.POST("/dadata/organization/", api.FindOrganizationByINN)
+	
+	// DaData API для поиска банков по БИК
+	apiGroup.POST("/dadata/bank", api.FindBankByBIK)
+	apiGroup.POST("/dadata/bank/", api.FindBankByBIK)
 
 	// Договоры
 	apiGroup.GET("/contracts", api.GetContracts)

@@ -277,3 +277,206 @@ func FindOrganizationByINN(c *gin.Context) {
 		"data":   organization,
 	})
 }
+
+// DaDataBankRequest запрос для поиска банка
+type DaDataBankRequest struct {
+	Query string `json:"query" binding:"required"`
+}
+
+// DaDataBankResponse ответ от DaData API для банка
+type DaDataBankResponse struct {
+	Suggestions []DaDataBankSuggestion `json:"suggestions"`
+}
+
+// DaDataBankSuggestion предложение от DaData для банка
+type DaDataBankSuggestion struct {
+	Value string         `json:"value"`
+	Data  DaDataBankData `json:"data"`
+}
+
+// DaDataBankName структура для имени банка
+type DaDataBankName struct {
+	Payment string `json:"payment"`
+	Full    string `json:"full,omitempty"`
+	Short   string `json:"short,omitempty"`
+}
+
+// DaDataBankData данные банка
+type DaDataBankData struct {
+	Bik                  string          `json:"bic"`
+	Name                 DaDataBankName  `json:"name"`
+	CorrespondentAccount string          `json:"correspondent_account,omitempty"`
+	Okpo                 string          `json:"okpo,omitempty"`
+	RegNumber            string          `json:"registration_number,omitempty"`
+	Swift                string          `json:"swift,omitempty"`
+	Inn                  string          `json:"inn,omitempty"`
+	Kpp                  string          `json:"kpp,omitempty"`
+}
+
+// FindBankByBIK находит банк по БИК
+// POST /api/auth/dadata/bank
+func FindBankByBIK(c *gin.Context) {
+	// Проверяем наличие API ключа
+	cfg := config.GetConfig()
+	if cfg.External.DaDataAPIKey == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "DaData API ключ не настроен на сервере",
+		})
+		return
+	}
+
+	// Парсим запрос
+	var req DaDataBankRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": fmt.Sprintf("Неверный формат запроса: %v", err),
+		})
+		return
+	}
+
+	// Валидация запроса
+	cleanQuery := strings.TrimSpace(strings.ReplaceAll(req.Query, " ", ""))
+	if cleanQuery == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "БИК не может быть пустым",
+		})
+		return
+	}
+
+	// Проверяем формат: БИК должен быть 9 цифр
+	if !regexp.MustCompile(`^\d{9}$`).MatchString(cleanQuery) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "БИК должен содержать 9 цифр",
+		})
+		return
+	}
+
+	// Подготавливаем запрос к DaData
+	requestBody := map[string]interface{}{
+		"query": cleanQuery,
+	}
+
+	jsonBody, err := json.Marshal(requestBody)
+	if err != nil {
+		log.Printf("Error marshaling request body: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Ошибка при подготовке запроса",
+		})
+		return
+	}
+
+	// Создаем HTTP клиент с таймаутом
+	client := &http.Client{
+		Timeout: requestTimeout,
+	}
+
+	// Формируем URL для поиска банка по БИК
+	url := fmt.Sprintf("%s/rs/findById/bank", daDataBaseURL)
+
+	// Создаем запрос
+	httpReq, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonBody))
+	if err != nil {
+		log.Printf("Error creating request: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Ошибка при создании запроса",
+		})
+		return
+	}
+
+	// Устанавливаем заголовки
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json")
+	httpReq.Header.Set("Authorization", fmt.Sprintf("Token %s", cfg.External.DaDataAPIKey))
+
+	// Выполняем запрос
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		log.Printf("Error executing DaData request: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Ошибка при запросе к DaData API",
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	// Читаем ответ
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("Error reading response body: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Ошибка при чтении ответа от DaData",
+		})
+		return
+	}
+
+	// Проверяем статус ответа
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("DaData API returned status %d: %s", resp.StatusCode, string(body))
+
+		// Обрабатываем специфичные ошибки
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status":  "error",
+				"message": "Неверный API ключ DaData. Пожалуйста, проверьте настройки сервера",
+			})
+			return
+		}
+
+		if resp.StatusCode == http.StatusTooManyRequests {
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"status":  "error",
+				"message": "Превышен лимит запросов к DaData API. Попробуйте позже",
+			})
+			return
+		}
+
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": fmt.Sprintf("Ошибка DaData API: статус %d", resp.StatusCode),
+		})
+		return
+	}
+
+	// Парсим ответ
+	var daDataResp DaDataBankResponse
+	if err := json.Unmarshal(body, &daDataResp); err != nil {
+		bodyStr := string(body)
+		bodyPreview := bodyStr
+		if len(bodyStr) > 1000 {
+			bodyPreview = bodyStr[:1000] + "..."
+		}
+		log.Printf("Error unmarshaling response: %v", err)
+		log.Printf("Response body (first 1000 chars): %s", bodyPreview)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": fmt.Sprintf("Ошибка при парсинге ответа от DaData: %v", err),
+		})
+		return
+	}
+
+	// Проверяем наличие результатов
+	if len(daDataResp.Suggestions) == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"status":  "success",
+			"data":    nil,
+			"message": "Банк не найден",
+		})
+		return
+	}
+
+	// Возвращаем первый результат
+	bank := daDataResp.Suggestions[0]
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data":   bank,
+	})
+}
