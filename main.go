@@ -713,6 +713,11 @@ func main() {
 	apiGroup.GET("/test/roles", api.TestRolesCreation)    // Тест создания ролей в tenant схеме
 	apiGroup.GET("/test/user-role", api.TestUserWithRole) // Тест пользователя с назначенной ролью
 
+	// DaData API для поиска организаций по ИНН/ОГРН
+	log.Println("🔧 Registering DaData API endpoints...")
+	apiGroup.POST("/dadata/organization", api.FindOrganizationByINN)
+	apiGroup.POST("/dadata/organization/", api.FindOrganizationByINN)
+
 	// Договоры
 	apiGroup.GET("/contracts", api.GetContracts)
 	apiGroup.GET("/contracts/:id", api.GetContract)

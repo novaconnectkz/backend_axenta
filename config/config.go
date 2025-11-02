@@ -126,6 +126,9 @@ type ExternalConfig struct {
 
 	// Google Maps
 	GoogleMapsAPIKey string `json:"google_maps_api_key"`
+
+	// DaData
+	DaDataAPIKey string `json:"dadata_api_key"`
 }
 
 type SMTPConfig struct {
@@ -224,6 +227,7 @@ func LoadConfig() (*Config, error) {
 			WebhookURL:       getEnv("WEBHOOK_URL", ""),
 			WebhookSecret:    getEnv("WEBHOOK_SECRET", ""),
 			GoogleMapsAPIKey: getEnv("GOOGLE_MAPS_API_KEY", ""),
+			DaDataAPIKey:     getEnv("DADATA_API_KEY", ""),
 		},
 	}
 
