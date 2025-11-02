@@ -240,6 +240,12 @@ func GetAllMigrations() []MigrationInfo {
 			IsGlobal:    false,
 		},
 		{
+			TableName:   "contract_numerators",
+			Model:       &models.ContractNumerator{},
+			Description: "Нумераторы договоров",
+			IsGlobal:    false,
+		},
+		{
 			TableName:   "tariff_plans",
 			Model:       &models.TariffPlan{},
 			Description: "Тарифные планы компаний",

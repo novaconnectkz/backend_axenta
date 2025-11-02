@@ -416,9 +416,12 @@ func (tm *TenantMiddleware) runTenantMigrations(tenantDB *gorm.DB) error {
 
 		// Договоры и тарифы
 		&models.BillingPlan{},
+		&models.BillingSettings{},
+		&models.Invoice{},
 		&models.TariffPlan{},
 		&models.Contract{},
 		&models.ContractAppendix{},
+		&models.ContractNumerator{},
 		&models.Subscription{},
 	}
 

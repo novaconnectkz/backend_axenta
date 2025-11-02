@@ -175,6 +175,11 @@ type BillingSettings struct {
 	InvoiceNumberPrefix string `json:"invoice_number_prefix" gorm:"default:'INV';type:varchar(10)"`     // Префикс номера счета
 	InvoiceNumberFormat string `json:"invoice_number_format" gorm:"default:'%s-%04d';type:varchar(20)"` // Формат номера счета
 
+	// Настройки нумерации договоров
+	ContractNumberingMethod string `json:"contract_numbering_method" gorm:"default:'manual';type:varchar(20)"` // manual, numerator, bitrix24
+	ContractDefaultNumeratorID *uint `json:"contract_default_numerator_id" gorm:"index"` // ID нумератора по умолчанию
+	Bitrix24DealNumberField   string `json:"bitrix24_deal_number_field" gorm:"type:varchar(50)"` // Код поля номера договора в Bitrix24 (например, UF_CRM_CONTRACT_NUMBER)
+
 	// Дополнительные настройки
 	Currency              string `json:"currency" gorm:"default:'RUB';type:varchar(3)"`
 	DefaultPaymentMethod  string `json:"default_payment_method" gorm:"type:varchar(50)"`

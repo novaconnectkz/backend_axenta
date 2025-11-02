@@ -624,3 +624,253 @@ func GetExpiringContracts(c *gin.Context) {
 		"days":   days,
 	})
 }
+
+// ===== API ДЛЯ НУМЕРАТОРОВ ДОГОВОРОВ =====
+
+// GetContractNumerators получает список нумераторов для компании
+func GetContractNumerators(c *gin.Context) {
+	companyIDStr := c.Query("company_id")
+	if companyIDStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Параметр company_id обязателен",
+		})
+		return
+	}
+
+	companyID, err := strconv.ParseUint(companyIDStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Неверный формат company_id",
+		})
+		return
+	}
+
+	var numerators []models.ContractNumerator
+	if err := database.DB.Where("company_id = ?", uint(companyID)).Order("is_default DESC, created_at ASC").Find(&numerators).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка при получении нумераторов",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data":   numerators,
+		"count":  len(numerators),
+	})
+}
+
+// GetContractNumerator получает конкретный нумератор по ID
+func GetContractNumerator(c *gin.Context) {
+	id := c.Param("id")
+
+	var numerator models.ContractNumerator
+	if err := database.DB.First(&numerator, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"status": "error",
+			"error":  "Нумератор не найден",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data":   numerator,
+	})
+}
+
+// CreateContractNumerator создает новый нумератор
+func CreateContractNumerator(c *gin.Context) {
+	var numerator models.ContractNumerator
+
+	if err := c.ShouldBindJSON(&numerator); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Неверный формат данных",
+		})
+		return
+	}
+
+	// Валидация
+	if numerator.Name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Название нумератора обязательно",
+		})
+		return
+	}
+
+	if numerator.Prefix == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Префикс нумератора обязателен",
+		})
+		return
+	}
+
+	if numerator.Template == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Шаблон номера обязателен",
+		})
+		return
+	}
+
+	// Если это нумератор по умолчанию, снимаем флаг с других
+	if numerator.IsDefault {
+		database.DB.Model(&models.ContractNumerator{}).
+			Where("company_id = ? AND is_default = ?", numerator.CompanyID, true).
+			Update("is_default", false)
+	}
+
+	if err := database.DB.Create(&numerator).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка при создании нумератора",
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"status": "success",
+		"data":   numerator,
+	})
+}
+
+// UpdateContractNumerator обновляет существующий нумератор
+func UpdateContractNumerator(c *gin.Context) {
+	id := c.Param("id")
+
+	var numerator models.ContractNumerator
+	if err := database.DB.First(&numerator, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"status": "error",
+			"error":  "Нумератор не найден",
+		})
+		return
+	}
+
+	var updateData models.ContractNumerator
+	if err := c.ShouldBindJSON(&updateData); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Неверный формат данных",
+		})
+		return
+	}
+
+	// Если делаем нумератор по умолчанию, снимаем флаг с других
+	if updateData.IsDefault && !numerator.IsDefault {
+		database.DB.Model(&models.ContractNumerator{}).
+			Where("company_id = ? AND is_default = ? AND id != ?", numerator.CompanyID, true, id).
+			Update("is_default", false)
+	}
+
+	if err := database.DB.Model(&numerator).Updates(updateData).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка при обновлении нумератора",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data":   numerator,
+	})
+}
+
+// DeleteContractNumerator удаляет нумератор (мягкое удаление)
+func DeleteContractNumerator(c *gin.Context) {
+	id := c.Param("id")
+
+	var numerator models.ContractNumerator
+	if err := database.DB.First(&numerator, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"status": "error",
+			"error":  "Нумератор не найден",
+		})
+		return
+	}
+
+	if err := database.DB.Delete(&numerator).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка при удалении нумератора",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Нумератор успешно удален",
+	})
+}
+
+// GenerateContractNumber генерирует номер договора по ID нумератора
+func GenerateContractNumber(c *gin.Context) {
+	numeratorIDStr := c.Param("numerator_id")
+	numeratorID, err := strconv.ParseUint(numeratorIDStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Неверный формат ID нумератора",
+		})
+		return
+	}
+
+	// Получаем параметры для генерации
+	var req struct {
+		ClientID   *uint `json:"client_id"`
+		CompanyID  *uint `json:"company_id"`
+		ContractID *uint `json:"contract_id"`
+	}
+
+	c.ShouldBindJSON(&req)
+
+	var numerator models.ContractNumerator
+	if err := database.DB.First(&numerator, uint(numeratorID)).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"status": "error",
+			"error":  "Нумератор не найден",
+		})
+		return
+	}
+
+	// Используем значения по умолчанию
+	clientID := uint(0)
+	if req.ClientID != nil {
+		clientID = *req.ClientID
+	}
+
+	companyID := numerator.CompanyID
+	if req.CompanyID != nil {
+		companyID = *req.CompanyID
+	}
+
+	contractID := uint(0)
+	if req.ContractID != nil {
+		contractID = *req.ContractID
+	}
+
+	// Генерируем номер
+	number, err := numerator.GenerateNumber(clientID, companyID, contractID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка генерации номера",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data": gin.H{
+			"number": number,
+			"counter": numerator.CounterValue,
+		},
+	})
+}

@@ -728,6 +728,14 @@ func main() {
 	// apiGroup.PUT("/contract-appendices/:id", api.UpdateContractAppendix)
 	// apiGroup.DELETE("/contract-appendices/:id", api.DeleteContractAppendix)
 
+	// Нумераторы договоров
+	apiGroup.GET("/contract-numerators", api.GetContractNumerators)
+	apiGroup.GET("/contract-numerators/:id", api.GetContractNumerator)
+	apiGroup.POST("/contract-numerators", api.CreateContractNumerator)
+	apiGroup.PUT("/contract-numerators/:id", api.UpdateContractNumerator)
+	apiGroup.DELETE("/contract-numerators/:id", api.DeleteContractNumerator)
+	apiGroup.POST("/contract-numerators/:numerator_id/generate", api.GenerateContractNumber)
+
 	// Тарифные планы и биллинг (уже были)
 	apiGroup.GET("/billing/plans", api.GetBillingPlans)
 	apiGroup.GET("/billing/plans/:id", api.GetBillingPlan)

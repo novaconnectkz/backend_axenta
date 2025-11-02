@@ -1,6 +1,8 @@
 package models
 
 import (
+	"fmt"
+	"math/rand"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -16,7 +18,7 @@ type Contract struct {
 
 	// Основные поля договора
 	Number      string `json:"number" gorm:"uniqueIndex;not null;type:varchar(50)"`
-	Title       string `json:"title" gorm:"not null;type:varchar(200)"`
+	Title       string `json:"title" gorm:"type:varchar(200)"` // Необязательное поле для однотипных услуг
 	Description string `json:"description" gorm:"type:text"`
 
 	// Связь с компанией (мультитенантность)
@@ -186,4 +188,115 @@ func (tp *TariffPlan) CalculateObjectPrice(objectCount int, inactiveCount int) d
 	}
 
 	return totalPrice
+}
+
+// ContractNumerator представляет нумератор для договоров
+type ContractNumerator struct {
+	ID        uint           `json:"id" gorm:"primarykey"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
+
+	// Связь с компанией
+	CompanyID uint `json:"company_id" gorm:"not null;index"`
+
+	// Основные поля нумератора
+	Name        string `json:"name" gorm:"not null;type:varchar(100)"`         // Название нумератора
+	Prefix      string `json:"prefix" gorm:"not null;type:varchar(10)"`        // Префикс (например "AX")
+	Template    string `json:"template" gorm:"not null;type:varchar(200)"`     // Шаблон номера (например "{PREFIX}-{DAY}{MONTH}{YEAR}/{CLIENT_ID}")
+	Description string `json:"description" gorm:"type:text"`                  // Описание нумератора
+
+	// Счетчик для последовательных номеров
+	CounterValue int `json:"counter_value" gorm:"default:0"`                   // Текущее значение счетчика
+
+	// Настройки
+	IsDefault   bool `json:"is_default" gorm:"default:false"`                 // Нумератор по умолчанию
+	IsActive    bool `json:"is_active" gorm:"default:true"`                   // Активен ли нумератор
+	AutoReset   bool `json:"auto_reset" gorm:"default:false"`                 // Автоматически сбрасывать счетчик (например, в новом году)
+	ResetPeriod string `json:"reset_period" gorm:"type:varchar(20)"`          // Период сброса: yearly, monthly, never
+
+	// Дополнительные поля
+	Notes string `json:"notes" gorm:"type:text"`
+}
+
+// TableName задает имя таблицы для модели ContractNumerator
+func (ContractNumerator) TableName() string {
+	return "contract_numerators"
+}
+
+// GenerateNumber генерирует номер договора по шаблону
+func (cn *ContractNumerator) GenerateNumber(clientID uint, companyID uint, contractID uint) (string, error) {
+	now := time.Now()
+	day := now.Day()
+	month := now.Month()
+	year := now.Year()
+
+	// Парсим шаблон и заменяем плейсхолдеры
+	result := cn.Template
+	
+	// Заменяем доступные плейсхолдеры
+	replacements := map[string]string{
+		"{PREFIX}":      cn.Prefix,
+		"{SEQ}":         fmt.Sprintf("%04d", cn.CounterValue),
+		"{DAY}":         fmt.Sprintf("%02d", day),
+		"{MONTH}":       fmt.Sprintf("%02d", int(month)),
+		"{YEAR}":        fmt.Sprintf("%d", year),
+		"{YEAR_SHORT}":  fmt.Sprintf("%d", year%100),
+		"{RANDOM}":      fmt.Sprintf("%06d", rand.Intn(1000000)),
+		"{ID}":          fmt.Sprintf("%d", contractID),
+		"{COMPANY_ID}":  fmt.Sprintf("%d", companyID),
+		"{CLIENT_ID}":   fmt.Sprintf("%d", clientID),
+	}
+
+	for placeholder, value := range replacements {
+		result = replaceAll(result, placeholder, value)
+	}
+
+	return result, nil
+}
+
+// IncrementCounter увеличивает счетчик на 1
+func (cn *ContractNumerator) IncrementCounter() {
+	cn.CounterValue++
+}
+
+// ShouldResetCounter проверяет, нужно ли сбрасывать счетчик
+func (cn *ContractNumerator) ShouldResetCounter() bool {
+	if !cn.AutoReset {
+		return false
+	}
+
+	switch cn.ResetPeriod {
+	case "yearly":
+		// Проверяем, изменился ли год (нужно хранить последний использованный год)
+		return true // Упрощенная версия
+	case "monthly":
+		return true // Упрощенная версия
+	case "never":
+		return false
+	default:
+		return false
+	}
+}
+
+// Helper function для замены всех вхождений
+func replaceAll(s, old, new string) string {
+	result := s
+	for {
+		newResult := replaceAllOnce(result, old, new)
+		if newResult == result {
+			break
+		}
+		result = newResult
+	}
+	return result
+}
+
+func replaceAllOnce(s, old, new string) string {
+	for i := 0; i <= len(s)-len(old); i++ {
+		if s[i:i+len(old)] == old {
+			return s[:i] + new + s[i+len(old):]
+		}
+	}
+	return s
 }

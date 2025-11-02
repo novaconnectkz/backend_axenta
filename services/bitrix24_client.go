@@ -45,19 +45,46 @@ type Bitrix24Contact struct {
 
 // Bitrix24Deal сделка в Битрикс24
 type Bitrix24Deal struct {
-	ID           string    `json:"ID"`
-	Title        string    `json:"TITLE"`
-	StageID      string    `json:"STAGE_ID"`
-	Opportunity  float64   `json:"OPPORTUNITY"`
-	CurrencyID   string    `json:"CURRENCY_ID"`
-	ContactID    string    `json:"CONTACT_ID"`
-	CompanyID    string    `json:"COMPANY_ID"`
-	AssignedByID string    `json:"ASSIGNED_BY_ID"`
-	DateCreate   time.Time `json:"DATE_CREATE"`
-	DateModify   time.Time `json:"DATE_MODIFY"`
-	BeginDate    time.Time `json:"BEGINDATE"`
-	CloseDate    time.Time `json:"CLOSEDATE"`
-	Comments     string    `json:"COMMENTS"`
+	ID           string                 `json:"ID"`
+	Title        string                 `json:"TITLE"`
+	StageID      string                 `json:"STAGE_ID"`
+	Opportunity  float64                `json:"OPPORTUNITY"`
+	CurrencyID   string                 `json:"CURRENCY_ID"`
+	ContactID    string                 `json:"CONTACT_ID"`
+	CompanyID    string                 `json:"COMPANY_ID"`
+	AssignedByID string                 `json:"ASSIGNED_BY_ID"`
+	DateCreate   time.Time              `json:"DATE_CREATE"`
+	DateModify   time.Time              `json:"DATE_MODIFY"`
+	BeginDate    time.Time              `json:"BEGINDATE"`
+	CloseDate    time.Time              `json:"CLOSEDATE"`
+	Comments     string                 `json:"COMMENTS"`
+	CustomFields map[string]interface{} `json:"-"` // Пользовательские поля (UF_CRM_* и другие)
+}
+
+// GetCustomField получает значение пользовательского поля по его коду
+func (d *Bitrix24Deal) GetCustomField(code string) interface{} {
+	if d.CustomFields == nil {
+		return nil
+	}
+	return d.CustomFields[code]
+}
+
+// GetCustomFieldString получает значение пользовательского поля как строку
+func (d *Bitrix24Deal) GetCustomFieldString(code string) string {
+	if val := d.GetCustomField(code); val != nil {
+		if str, ok := val.(string); ok {
+			return str
+		}
+		if str, ok := val.([]string); ok && len(str) > 0 {
+			return str[0]
+		}
+		if str, ok := val.([]interface{}); ok && len(str) > 0 {
+			if strVal, ok := str[0].(string); ok {
+				return strVal
+			}
+		}
+	}
+	return ""
 }
 
 // Bitrix24Company компания в Битрикс24
@@ -436,7 +463,8 @@ func (c *Bitrix24Client) GetDeal(ctx context.Context, credentials *Bitrix24Crede
 	}
 
 	deal := &Bitrix24Deal{
-		ID: dealID,
+		ID:           dealID,
+		CustomFields: make(map[string]interface{}),
 	}
 
 	if title, ok := resultData["TITLE"].(string); ok {
@@ -472,6 +500,19 @@ func (c *Bitrix24Client) GetDeal(ctx context.Context, credentials *Bitrix24Crede
 	if closeDate, ok := resultData["CLOSEDATE"].(string); ok && closeDate != "" {
 		if parsed, err := time.Parse("2006-01-02T15:04:05+07:00", closeDate); err == nil {
 			deal.CloseDate = parsed
+		}
+	}
+
+	// Сохраняем все остальные поля (включая пользовательские UF_CRM_*) в CustomFields
+	knownFields := map[string]bool{
+		"ID": true, "TITLE": true, "STAGE_ID": true, "OPPORTUNITY": true,
+		"CURRENCY_ID": true, "CONTACT_ID": true, "COMPANY_ID": true,
+		"ASSIGNED_BY_ID": true, "DATE_CREATE": true, "DATE_MODIFY": true,
+		"BEGINDATE": true, "CLOSEDATE": true, "COMMENTS": true,
+	}
+	for key, value := range resultData {
+		if !knownFields[key] {
+			deal.CustomFields[key] = value
 		}
 	}
 
