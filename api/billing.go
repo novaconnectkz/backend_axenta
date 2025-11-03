@@ -134,6 +134,15 @@ func CreateBillingPlan(c *gin.Context) {
 func UpdateBillingPlan(c *gin.Context) {
 	id := c.Param("id")
 
+	// Убеждаемся, что мы в схеме public для глобальных таблиц
+	if err := database.DB.Exec("SET search_path TO public").Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка подключения к базе данных",
+		})
+		return
+	}
+
 	var plan models.BillingPlan
 	if err := database.DB.First(&plan, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
