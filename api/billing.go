@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"backend_axenta/database"
@@ -101,19 +102,35 @@ func GetBillingPlan(c *gin.Context) {
 func CreateBillingPlan(c *gin.Context) {
 	var plan models.BillingPlan
 
+	// Логируем входящие данные для отладки
+	fmt.Printf("CreateBillingPlan: получен запрос, query params: %v\n", c.Request.URL.Query())
+
 	if err := c.ShouldBindJSON(&plan); err != nil {
+		fmt.Printf("CreateBillingPlan: ошибка парсинга JSON: %v\n", err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
-			"error":  "Неверный формат данных",
+			"error":  fmt.Sprintf("Неверный формат данных: %v", err),
 		})
 		return
 	}
+
+	fmt.Printf("CreateBillingPlan: распарсенные данные плана: Name=%s, Price=%s, CompanyID=%v\n", 
+		plan.Name, plan.Price.String(), plan.CompanyID)
 
 	// Валидация обязательных полей
 	if plan.Name == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
 			"error":  "Название тарифного плана обязательно",
+		})
+		return
+	}
+
+	// Проверяем, что Price корректно установлен
+	if plan.Price.IsZero() && plan.Price.IsNegative() {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Цена должна быть положительным числом",
 		})
 		return
 	}
@@ -137,6 +154,7 @@ func CreateBillingPlan(c *gin.Context) {
 	// Устанавливаем company_id из query параметра (если не указан в теле запроса)
 	if plan.CompanyID == nil {
 		companyIDStr := c.Query("company_id")
+		fmt.Printf("CreateBillingPlan: company_id из query: %s\n", companyIDStr)
 		if companyIDStr == "" {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "error",
@@ -147,10 +165,12 @@ func CreateBillingPlan(c *gin.Context) {
 		if companyID, err := strconv.ParseUint(companyIDStr, 10, 32); err == nil {
 			companyIDUint := uint(companyID)
 			plan.CompanyID = &companyIDUint
+			fmt.Printf("CreateBillingPlan: установлен company_id: %d\n", companyIDUint)
 		} else {
+			fmt.Printf("CreateBillingPlan: ошибка парсинга company_id: %v\n", err)
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "error",
-				"error":  "Неверный формат company_id",
+				"error":  fmt.Sprintf("Неверный формат company_id: %v", err),
 			})
 			return
 		}
@@ -158,24 +178,55 @@ func CreateBillingPlan(c *gin.Context) {
 
 	// Убеждаемся, что мы в схеме public для глобальных таблиц
 	if err := database.DB.Exec("SET search_path TO public").Error; err != nil {
+		fmt.Printf("CreateBillingPlan: ошибка установки search_path: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Ошибка подключения к базе данных",
+			"error":  fmt.Sprintf("Ошибка подключения к базе данных: %v", err),
 		})
 		return
 	}
 
+	fmt.Printf("CreateBillingPlan: создаем план с данными: Name=%s, Price=%s, CompanyID=%v\n", 
+		plan.Name, plan.Price.String(), plan.CompanyID)
+
+	// Проверяем, нет ли уже плана с таким же именем в этой компании
+	var existingPlan models.BillingPlan
+	if plan.CompanyID != nil {
+		if err := database.DB.Where("name = ? AND company_id = ?", plan.Name, *plan.CompanyID).First(&existingPlan).Error; err == nil {
+			fmt.Printf("CreateBillingPlan: план с именем '%s' уже существует для компании %d\n", plan.Name, *plan.CompanyID)
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error",
+				"error":  fmt.Sprintf("Тарифный план с названием '%s' уже существует для вашей компании", plan.Name),
+			})
+			return
+		}
+	}
+
 	if err := database.DB.Create(&plan).Error; err != nil {
 		// Логируем детальную информацию об ошибке
-		fmt.Printf("Ошибка при создании тарифного плана: %v\n", err)
-		fmt.Printf("Данные плана: %+v\n", plan)
+		fmt.Printf("CreateBillingPlan: ОШИБКА при создании тарифного плана: %v\n", err)
+		fmt.Printf("CreateBillingPlan: Данные плана: Name=%s, Price=%s, CompanyID=%v, Currency=%s, BillingPeriod=%s\n", 
+			plan.Name, plan.Price.String(), plan.CompanyID, plan.Currency, plan.BillingPeriod)
+		
+		// Проверяем тип ошибки для более понятного сообщения
+		errorMsg := "Ошибка при создании тарифного плана"
+		errStr := err.Error()
+		
+		// Проверяем на дубликат имени (может быть из-за старого индекса)
+		if strings.Contains(errStr, "duplicate key") || strings.Contains(errStr, "UNIQUE constraint") || strings.Contains(errStr, "violates unique constraint") {
+			errorMsg = fmt.Sprintf("Тарифный план с названием '%s' уже существует", plan.Name)
+		} else if errStr != "" {
+			errorMsg = fmt.Sprintf("Ошибка при создании тарифного плана: %v", err)
+		}
 		
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  fmt.Sprintf("Ошибка при создании тарифного плана: %v", err),
+			"error":  errorMsg,
 		})
 		return
 	}
+
+	fmt.Printf("CreateBillingPlan: план успешно создан с ID: %d\n", plan.ID)
 
 	c.JSON(http.StatusCreated, gin.H{
 		"status": "success",

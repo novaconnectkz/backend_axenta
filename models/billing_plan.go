@@ -15,7 +15,8 @@ type BillingPlan struct {
 	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
 
 	// Основные поля тарифного плана
-	Name        string          `json:"name" gorm:"uniqueIndex;not null;type:varchar(100)"`
+	// Уникальность по комбинации name + company_id (для изоляции между компаниями)
+	Name        string          `json:"name" gorm:"uniqueIndex:idx_billing_plan_company_name;not null;type:varchar(100)"`
 	Description string          `json:"description" gorm:"type:text"`
 	Price       decimal.Decimal `json:"price" gorm:"not null;type:decimal(10,2)"`
 	Currency    string          `json:"currency" gorm:"default:RUB;type:varchar(3)"`
@@ -37,7 +38,7 @@ type BillingPlan struct {
 	IsPopular bool `json:"is_popular" gorm:"default:false"`
 
 	// Для управления доступом
-	CompanyID *uint `json:"company_id" gorm:"index"` // Если тариф специфичен для компании (nullable)
+	CompanyID *uint `json:"company_id" gorm:"uniqueIndex:idx_billing_plan_company_name;index"` // Если тариф специфичен для компании (nullable)
 }
 
 // TableName задает имя таблицы для модели BillingPlan
