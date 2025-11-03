@@ -6,42 +6,8 @@ import (
 
 // GetBillingPlansSimple получает упрощенные планы биллинга
 func GetBillingPlansSimple(c *gin.Context) {
-	plans := []map[string]interface{}{
-		{
-			"id":               1,
-			"name":             "Базовый",
-			"description":      "Базовый тарифный план",
-			"price":            1000.0,
-			"currency":         "RUB",
-			"billing_period":   "monthly",
-			"max_devices":      10,
-			"max_users":        5,
-			"max_storage":      10,
-			"has_analytics":    false,
-			"has_api":          false,
-			"has_support":      true,
-			"has_custom_domain": false,
-			"is_active":        true,
-			"is_popular":       false,
-		},
-		{
-			"id":               2,
-			"name":             "Профессиональный",
-			"description":      "Расширенный тарифный план",
-			"price":            2500.0,
-			"currency":         "RUB",
-			"billing_period":   "monthly",
-			"max_devices":      0,
-			"max_users":        0,
-			"max_storage":      0,
-			"has_analytics":    true,
-			"has_api":          true,
-			"has_support":      true,
-			"has_custom_domain": true,
-			"is_active":        true,
-			"is_popular":       true,
-		},
-	}
+	// Возвращаем пустой массив вместо демо-данных
+	plans := []map[string]interface{}{}
 
 	c.JSON(200, gin.H{
 		"status": "success",
@@ -51,66 +17,8 @@ func GetBillingPlansSimple(c *gin.Context) {
 
 // GetSubscriptionsSimple получает упрощенные подписки
 func GetSubscriptionsSimple(c *gin.Context) {
-	subscriptions := []map[string]interface{}{
-		{
-			"id":         1,
-			"company_id": 24,
-			"billing_plan_id": 1,
-			"billing_plan": map[string]interface{}{
-				"id":              1,
-				"name":            "Базовый",
-				"description":     "Базовый тарифный план",
-				"price":           1000.0,
-				"currency":        "RUB",
-				"billing_period":  "monthly",
-				"max_devices":     10,
-				"max_users":       5,
-				"max_storage":     10,
-				"has_analytics":   false,
-				"has_api":         false,
-				"has_support":     true,
-				"has_custom_domain": false,
-				"is_active":       true,
-				"is_popular":      false,
-			},
-			"start_date":      "2024-01-01T00:00:00Z",
-			"end_date":        nil,
-			"status":          "active",
-			"is_auto_renew":   true,
-			"last_payment_date": nil,
-			"next_payment_date": "2024-02-01T00:00:00Z",
-			"payment_method":  "",
-		},
-		{
-			"id":         2,
-			"company_id": 24,
-			"billing_plan_id": 2,
-			"billing_plan": map[string]interface{}{
-				"id":              2,
-				"name":            "Профессиональный",
-				"description":     "Расширенный тарифный план",
-				"price":           2500.0,
-				"currency":        "RUB",
-				"billing_period":  "monthly",
-				"max_devices":     0,
-				"max_users":       0,
-				"max_storage":     0,
-				"has_analytics":   true,
-				"has_api":         true,
-				"has_support":     true,
-				"has_custom_domain": true,
-				"is_active":       true,
-				"is_popular":      true,
-			},
-			"start_date":      "2024-06-01T00:00:00Z",
-			"end_date":        nil,
-			"status":          "active",
-			"is_auto_renew":   true,
-			"last_payment_date": "2024-06-01T00:00:00Z",
-			"next_payment_date": "2024-07-01T00:00:00Z",
-			"payment_method":  "card",
-		},
-	}
+	// Возвращаем пустой массив вместо демо-данных
+	subscriptions := []map[string]interface{}{}
 
 	c.JSON(200, gin.H{
 		"status": "success",
