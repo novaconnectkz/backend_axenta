@@ -135,10 +135,24 @@ func CreateBillingPlan(c *gin.Context) {
 	}
 
 	// Устанавливаем company_id из query параметра (если не указан в теле запроса)
-	if companyIDStr := c.Query("company_id"); companyIDStr != "" && plan.CompanyID == nil {
+	if plan.CompanyID == nil {
+		companyIDStr := c.Query("company_id")
+		if companyIDStr == "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error",
+				"error":  "Параметр company_id обязателен для создания тарифного плана",
+			})
+			return
+		}
 		if companyID, err := strconv.ParseUint(companyIDStr, 10, 32); err == nil {
 			companyIDUint := uint(companyID)
 			plan.CompanyID = &companyIDUint
+		} else {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error",
+				"error":  "Неверный формат company_id",
+			})
+			return
 		}
 	}
 
@@ -152,9 +166,13 @@ func CreateBillingPlan(c *gin.Context) {
 	}
 
 	if err := database.DB.Create(&plan).Error; err != nil {
+		// Логируем детальную информацию об ошибке
+		fmt.Printf("Ошибка при создании тарифного плана: %v\n", err)
+		fmt.Printf("Данные плана: %+v\n", plan)
+		
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Ошибка при создании тарифного плана",
+			"error":  fmt.Sprintf("Ошибка при создании тарифного плана: %v", err),
 		})
 		return
 	}
