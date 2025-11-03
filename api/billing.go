@@ -31,9 +31,13 @@ func GetBillingPlans(c *gin.Context) {
 	// Получаем только активные планы по умолчанию
 	query := database.DB.Where("is_active = ?", true)
 
-	// Опциональная фильтрация по компании
+	// Фильтрация по компании (обязательна для изоляции)
 	if companyID := c.Query("company_id"); companyID != "" {
-		query = query.Where("company_id = ? OR company_id IS NULL", companyID)
+		// Возвращаем только планы этой компании
+		query = query.Where("company_id = ?", companyID)
+	} else {
+		// Если company_id не указан, возвращаем пустой список (безопасность)
+		query = query.Where("1 = 0") // Никогда не вернет результаты
 	}
 
 	if err := query.Find(&plans).Error; err != nil {
@@ -54,12 +58,35 @@ func GetBillingPlans(c *gin.Context) {
 // GetBillingPlan получает конкретный тарифный план по ID
 func GetBillingPlan(c *gin.Context) {
 	id := c.Param("id")
+	companyIDStr := c.Query("company_id")
+
+	if err := database.DB.Exec("SET search_path TO public").Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка подключения к базе данных",
+		})
+		return
+	}
 
 	var plan models.BillingPlan
-	if err := database.DB.First(&plan, id).Error; err != nil {
+	query := database.DB.Where("id = ?", id)
+
+	// Проверяем принадлежность к компании
+	if companyIDStr != "" {
+		query = query.Where("company_id = ?", companyIDStr)
+	} else {
+		// Если company_id не указан, возвращаем ошибку (безопасность)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Параметр company_id обязателен",
+		})
+		return
+	}
+
+	if err := query.First(&plan).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"status": "error",
-			"error":  "Тарифный план не найден",
+			"error":  "Тарифный план не найден или не принадлежит вашей компании",
 		})
 		return
 	}
@@ -107,6 +134,14 @@ func CreateBillingPlan(c *gin.Context) {
 		plan.BillingPeriod = "monthly"
 	}
 
+	// Устанавливаем company_id из query параметра (если не указан в теле запроса)
+	if companyIDStr := c.Query("company_id"); companyIDStr != "" && plan.CompanyID == nil {
+		if companyID, err := strconv.ParseUint(companyIDStr, 10, 32); err == nil {
+			companyIDUint := uint(companyID)
+			plan.CompanyID = &companyIDUint
+		}
+	}
+
 	// Убеждаемся, что мы в схеме public для глобальных таблиц
 	if err := database.DB.Exec("SET search_path TO public").Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -133,8 +168,8 @@ func CreateBillingPlan(c *gin.Context) {
 // UpdateBillingPlan обновляет существующий тарифный план
 func UpdateBillingPlan(c *gin.Context) {
 	id := c.Param("id")
+	companyIDStr := c.Query("company_id")
 
-	// Убеждаемся, что мы в схеме public для глобальных таблиц
 	if err := database.DB.Exec("SET search_path TO public").Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
@@ -144,10 +179,23 @@ func UpdateBillingPlan(c *gin.Context) {
 	}
 
 	var plan models.BillingPlan
-	if err := database.DB.First(&plan, id).Error; err != nil {
+	query := database.DB.Where("id = ?", id)
+
+	// Проверяем принадлежность к компании
+	if companyIDStr != "" {
+		query = query.Where("company_id = ?", companyIDStr)
+	} else {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Параметр company_id обязателен",
+		})
+		return
+	}
+
+	if err := query.First(&plan).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"status": "error",
-			"error":  "Тарифный план не найден",
+			"error":  "Тарифный план не найден или не принадлежит вашей компании",
 		})
 		return
 	}
@@ -170,6 +218,9 @@ func UpdateBillingPlan(c *gin.Context) {
 		return
 	}
 
+	// Игнорируем попытку изменить company_id через обновление
+	updateData.CompanyID = nil
+
 	if err := database.DB.Model(&plan).Updates(updateData).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
@@ -187,19 +238,41 @@ func UpdateBillingPlan(c *gin.Context) {
 // DeleteBillingPlan удаляет тарифный план (мягкое удаление)
 func DeleteBillingPlan(c *gin.Context) {
 	id := c.Param("id")
+	companyIDStr := c.Query("company_id")
 
-	var plan models.BillingPlan
-	if err := database.DB.First(&plan, id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
+	if err := database.DB.Exec("SET search_path TO public").Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Тарифный план не найден",
+			"error":  "Ошибка подключения к базе данных",
 		})
 		return
 	}
 
-	// Проверяем, есть ли активные подписки на этот план
+	var plan models.BillingPlan
+	query := database.DB.Where("id = ?", id)
+
+	// Проверяем принадлежность к компании
+	if companyIDStr != "" {
+		query = query.Where("company_id = ?", companyIDStr)
+	} else {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Параметр company_id обязателен",
+		})
+		return
+	}
+
+	if err := query.First(&plan).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"status": "error",
+			"error":  "Тарифный план не найден или не принадлежит вашей компании",
+		})
+		return
+	}
+
+	// Проверяем, есть ли активные подписки на этот план (только для этой компании)
 	var subscriptionCount int64
-	database.DB.Model(&models.Subscription{}).Where("billing_plan_id = ? AND status = 'active'", plan.ID).Count(&subscriptionCount)
+	database.DB.Model(&models.Subscription{}).Where("billing_plan_id = ? AND company_id = ? AND status = 'active'", plan.ID, companyIDStr).Count(&subscriptionCount)
 
 	if subscriptionCount > 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
