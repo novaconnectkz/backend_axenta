@@ -19,6 +19,15 @@ import (
 func GetBillingPlans(c *gin.Context) {
 	var plans []models.BillingPlan
 
+	// Убеждаемся, что мы в схеме public для глобальных таблиц
+	if err := database.DB.Exec("SET search_path TO public").Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка подключения к базе данных",
+		})
+		return
+	}
+
 	// Получаем только активные планы по умолчанию
 	query := database.DB.Where("is_active = ?", true)
 
@@ -96,6 +105,15 @@ func CreateBillingPlan(c *gin.Context) {
 	}
 	if plan.BillingPeriod == "" {
 		plan.BillingPeriod = "monthly"
+	}
+
+	// Убеждаемся, что мы в схеме public для глобальных таблиц
+	if err := database.DB.Exec("SET search_path TO public").Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка подключения к базе данных",
+		})
+		return
 	}
 
 	if err := database.DB.Create(&plan).Error; err != nil {
@@ -518,11 +536,11 @@ func GetInvoices(c *gin.Context) {
 	if isDemoMode(c) {
 		demoInvoices := []models.Invoice{
 			{
-				ID:            1,
-				Number:        "INV-2024-001",
-				Title:         "Счет за услуги мониторинга",
-				InvoiceDate:   time.Now().AddDate(0, 0, -5),
-				DueDate:       time.Now().AddDate(0, 0, 9),
+				ID:             1,
+				Number:         "INV-2024-001",
+				Title:          "Счет за услуги мониторинга",
+				InvoiceDate:    time.Now().AddDate(0, 0, -5),
+				DueDate:        time.Now().AddDate(0, 0, 9),
 				SubtotalAmount: decimal.NewFromInt(10000),
 				TaxAmount:      decimal.NewFromInt(2000),
 				TotalAmount:    decimal.NewFromInt(12000),
