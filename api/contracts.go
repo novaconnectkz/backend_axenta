@@ -1412,16 +1412,99 @@ func DeleteContractNumerator(c *gin.Context) {
 
 	// Получаем tenant DB (схема компании)
 	tenantDB := middleware.GetTenantDB(c)
+	companyID := middleware.GetCompanyID(c)
+
+	log.Printf("DeleteContractNumerator: удаление нумератора ID=%s, tenantDB из middleware: %v, companyID из контекста: %d\n", id, tenantDB != nil, companyID)
+
 	if tenantDB == nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status": "error",
-			"error":  "Не удалось определить компанию",
-		})
-		return
+		log.Printf("DeleteContractNumerator: tenantDB не найден из middleware, пробуем получить company_id для подключения\n")
+
+		// Пробуем получить company_id для подключения к tenant DB
+		companyIDStr := c.Query("company_id")
+		if companyIDStr == "" {
+			if companyID == 0 {
+				tenantIDStr := c.GetHeader("X-Tenant-ID")
+				if tenantIDStr != "" {
+					if parsedID, err := strconv.ParseUint(tenantIDStr, 10, 32); err == nil {
+						companyID = uint(parsedID)
+						log.Printf("DeleteContractNumerator: companyID из заголовка X-Tenant-ID = %d\n", companyID)
+					}
+				}
+			}
+		} else {
+			if parsedID, err := strconv.ParseUint(companyIDStr, 10, 32); err == nil {
+				companyID = uint(parsedID)
+				log.Printf("DeleteContractNumerator: companyID из query параметра = %d\n", companyID)
+			}
+		}
+
+		if companyID == 0 {
+			log.Printf("DeleteContractNumerator: ❌ ОШИБКА - не удалось определить company_id\n")
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error",
+				"error":  "Не удалось определить компанию",
+			})
+			return
+		}
+
+		// Получаем tenant DB по company_id
+		var company models.Company
+		log.Printf("DeleteContractNumerator: поиск компании с ID %d в основной БД (схема public)\n", companyID)
+
+		// Используем основную БД с явным указанием схемы public через прямой SQL
+		mainDB := database.DB
+		if mainDB == nil {
+			log.Printf("DeleteContractNumerator: ❌ основная БД не доступна\n")
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error",
+				"error":  "Ошибка подключения к базе данных",
+			})
+			return
+		}
+
+		// Используем прямой SQL запрос с явным указанием схемы public
+		result := mainDB.Raw("SELECT * FROM public.companies WHERE id = ?", companyID).Scan(&company)
+		if result.Error != nil {
+			log.Printf("DeleteContractNumerator: ❌ ОШИБКА при поиске компании ID %d через Raw SQL: %v\n", companyID, result.Error)
+
+			// Пробуем через Table с явным указанием схемы
+			if err := mainDB.Table("public.companies").Where("id = ?", companyID).First(&company).Error; err != nil {
+				log.Printf("DeleteContractNumerator: ❌ ОШИБКА при поиске через Table: %v\n", err)
+
+				// Пробуем через Model
+				if err2 := mainDB.Model(&models.Company{}).Where("id = ?", companyID).First(&company).Error; err2 != nil {
+					log.Printf("DeleteContractNumerator: ❌ ОШИБКА при поиске через Model: %v\n", err2)
+
+					c.JSON(http.StatusBadRequest, gin.H{
+						"status": "error",
+						"error":  fmt.Sprintf("Компания не найдена (ID: %d). Ошибка: %v", companyID, err2),
+					})
+					return
+				}
+			}
+		}
+
+		log.Printf("DeleteContractNumerator: ✅ компания найдена: ID=%d, Name=%s, Schema=%s\n", company.ID, company.Name, company.DatabaseSchema)
+
+		var err error
+		tenantDB, err = database.ConnectToTenant(company.DatabaseSchema)
+		if err != nil {
+			log.Printf("DeleteContractNumerator: ❌ ОШИБКА подключения к схеме %s: %v\n", company.DatabaseSchema, err)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error",
+				"error":  fmt.Sprintf("Ошибка подключения к схеме компании: %v", err),
+			})
+			return
+		}
+
+		log.Printf("DeleteContractNumerator: ✅ подключение к tenant схеме %s установлено\n", company.DatabaseSchema)
+	} else {
+		log.Printf("DeleteContractNumerator: ✅ используем tenantDB из middleware, companyID = %d\n", companyID)
 	}
 
 	var numerator models.ContractNumerator
 	if err := tenantDB.First(&numerator, id).Error; err != nil {
+		log.Printf("DeleteContractNumerator: ❌ нумератор с ID %s не найден: %v\n", id, err)
 		c.JSON(http.StatusNotFound, gin.H{
 			"status": "error",
 			"error":  "Нумератор не найден",
@@ -1429,13 +1512,18 @@ func DeleteContractNumerator(c *gin.Context) {
 		return
 	}
 
+	log.Printf("DeleteContractNumerator: найден нумератор ID=%d, Name=%s, удаляем...\n", numerator.ID, numerator.Name)
+
 	if err := tenantDB.Delete(&numerator).Error; err != nil {
+		log.Printf("DeleteContractNumerator: ❌ ошибка при удалении нумератора: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Ошибка при удалении нумератора",
+			"error":  fmt.Sprintf("Ошибка при удалении нумератора: %v", err),
 		})
 		return
 	}
+
+	log.Printf("DeleteContractNumerator: ✅ нумератор успешно удален\n")
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
