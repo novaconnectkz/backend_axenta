@@ -204,16 +204,101 @@ func CreateBillingPlan(c *gin.Context) {
 	fmt.Printf("CreateBillingPlan: создаем план с данными: Name=%s, Price=%s, CompanyID=%v\n",
 		plan.Name, plan.Price.String(), plan.CompanyID)
 
-	// Проверяем, нет ли уже плана с таким же именем в этой компании
+	// Проверяем, нет ли уже плана с таким же именем
+	// ВАЖНО: Уникальный индекс idx_billing_plans_name в БД действует глобально по имени,
+	// поэтому проверяем ВСЕ планы с таким именем, независимо от company_id
 	var existingPlan models.BillingPlan
+	// Сначала проверяем планы для текущей компании
 	if plan.CompanyID != nil {
-		if err := database.DB.Where("name = ? AND company_id = ?", plan.Name, *plan.CompanyID).First(&existingPlan).Error; err == nil {
-			fmt.Printf("CreateBillingPlan: план с именем '%s' уже существует для компании %d\n", plan.Name, *plan.CompanyID)
+		// Проверяем активные планы для этой компании
+		if err := database.DB.Where("name = ? AND company_id = ? AND is_active = ?", plan.Name, *plan.CompanyID, true).First(&existingPlan).Error; err == nil {
+			fmt.Printf("CreateBillingPlan: активный план с именем '%s' уже существует для компании %d (ID: %d)\n", plan.Name, *plan.CompanyID, existingPlan.ID)
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "error",
 				"error":  fmt.Sprintf("Тарифный план с названием '%s' уже существует для вашей компании", plan.Name),
 			})
 			return
+		}
+		// Проверяем неактивные планы для этой компании
+		if err := database.DB.Where("name = ? AND company_id = ? AND is_active = ?", plan.Name, *plan.CompanyID, false).First(&existingPlan).Error; err == nil {
+			fmt.Printf("CreateBillingPlan: найден неактивный план с именем '%s' для компании %d (ID: %d)\n", 
+				plan.Name, *plan.CompanyID, existingPlan.ID)
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error",
+				"error":  fmt.Sprintf("Тарифный план с названием '%s' уже существует (неактивен). Пожалуйста, активируйте существующий план или удалите его перед созданием нового.", plan.Name),
+			})
+			return
+		}
+	}
+	
+	// ВАЖНО: Также проверяем планы с таким именем глобально (включая удаленные)
+	// Уникальный индекс в БД действует на все записи, включая удаленные (soft delete)
+	// Используем Unscoped() чтобы найти даже удаленные планы
+	var deletedPlan models.BillingPlan
+	if err := database.DB.Unscoped().Where("name = ?", plan.Name).First(&deletedPlan).Error; err == nil {
+		// Найден план (активный или удаленный)
+		fmt.Printf("CreateBillingPlan: ⚠️ найден план с именем '%s' глобально (ID: %d, company_id: %v, is_active: %v, deleted_at: %v)\n", 
+			plan.Name, deletedPlan.ID, deletedPlan.CompanyID, deletedPlan.IsActive, deletedPlan.DeletedAt)
+		
+		// Если план удален (мягкое удаление)
+		if deletedPlan.DeletedAt.Valid {
+			// Если удаленный план принадлежит той же компании, физически удаляем его
+			if plan.CompanyID != nil && deletedPlan.CompanyID != nil && *deletedPlan.CompanyID == *plan.CompanyID {
+				fmt.Printf("CreateBillingPlan: найден удаленный план '%s' для той же компании %d, физически удаляем его\n", 
+					plan.Name, *plan.CompanyID)
+				// Физически удаляем старый план, чтобы освободить имя
+				if err := database.DB.Unscoped().Delete(&deletedPlan).Error; err != nil {
+					fmt.Printf("CreateBillingPlan: ⚠️ ошибка физического удаления старого плана: %v\n", err)
+					// Продолжаем создание, возможно БД разрешит
+				} else {
+					fmt.Printf("CreateBillingPlan: ✅ старый удаленный план физически удален, можно создавать новый\n")
+				}
+			} else if deletedPlan.CompanyID == nil {
+				// Удаленный план с company_id=NULL (глобальный план) - можно физически удалить, если создаем для конкретной компании
+				if plan.CompanyID != nil {
+					fmt.Printf("CreateBillingPlan: найден удаленный глобальный план '%s', физически удаляем его для создания плана компании %d\n", 
+						plan.Name, *plan.CompanyID)
+					if err := database.DB.Unscoped().Delete(&deletedPlan).Error; err != nil {
+						fmt.Printf("CreateBillingPlan: ⚠️ ошибка физического удаления старого глобального плана: %v\n", err)
+					} else {
+						fmt.Printf("CreateBillingPlan: ✅ старый удаленный глобальный план физически удален, можно создавать новый\n")
+					}
+				} else {
+					// Создаем глобальный план, а удаленный тоже глобальный - нельзя
+					c.JSON(http.StatusBadRequest, gin.H{
+						"status": "error",
+						"error":  fmt.Sprintf("Тарифный план с названием '%s' уже существует в системе. Пожалуйста, выберите другое название.", plan.Name),
+					})
+					return
+				}
+			} else {
+				// Удаленный план другой компании - нельзя использовать это имя
+				c.JSON(http.StatusBadRequest, gin.H{
+					"status": "error",
+					"error":  fmt.Sprintf("Тарифный план с названием '%s' уже существует в системе. Пожалуйста, выберите другое название.", plan.Name),
+				})
+				return
+			}
+		} else {
+			// План не удален
+			// Если план принадлежит другой компании или не имеет company_id
+			if deletedPlan.CompanyID == nil || (plan.CompanyID != nil && *deletedPlan.CompanyID != *plan.CompanyID) {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"status": "error",
+					"error":  fmt.Sprintf("Тарифный план с названием '%s' уже существует в системе. Пожалуйста, выберите другое название.", plan.Name),
+				})
+				return
+			}
+			// Если это тот же план (что маловероятно, так как мы уже проверили выше)
+			if deletedPlan.CompanyID != nil && plan.CompanyID != nil && *deletedPlan.CompanyID == *plan.CompanyID {
+				if !deletedPlan.IsActive {
+					c.JSON(http.StatusBadRequest, gin.H{
+						"status": "error",
+						"error":  fmt.Sprintf("Тарифный план с названием '%s' уже существует (неактивен). Пожалуйста, активируйте существующий план или удалите его перед созданием нового.", plan.Name),
+					})
+					return
+				}
+			}
 		}
 	}
 
@@ -227,9 +312,26 @@ func CreateBillingPlan(c *gin.Context) {
 		errorMsg := "Ошибка при создании тарифного плана"
 		errStr := err.Error()
 
-		// Проверяем на дубликат имени (может быть из-за старого индекса)
+		// Проверяем на дубликат имени (может быть из-за старого индекса или глобального уникального индекса)
 		if strings.Contains(errStr, "duplicate key") || strings.Contains(errStr, "UNIQUE constraint") || strings.Contains(errStr, "violates unique constraint") {
-			errorMsg = fmt.Sprintf("Тарифный план с названием '%s' уже существует", plan.Name)
+			// Пытаемся найти существующий план для более информативного сообщения
+			var existingPlan models.BillingPlan
+			if plan.CompanyID != nil {
+				if err := database.DB.Where("name = ?", plan.Name).First(&existingPlan).Error; err == nil {
+					errorMsg = fmt.Sprintf("Тарифный план с названием '%s' уже существует (ID: %d, компания: %v, активен: %v)", 
+						plan.Name, existingPlan.ID, existingPlan.CompanyID, existingPlan.IsActive)
+				} else {
+					errorMsg = fmt.Sprintf("Тарифный план с названием '%s' уже существует", plan.Name)
+				}
+			} else {
+				errorMsg = fmt.Sprintf("Тарифный план с названием '%s' уже существует", plan.Name)
+			}
+			// Возвращаем 400 Bad Request вместо 500 Internal Server Error для ошибок валидации
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error",
+				"error":  errorMsg,
+			})
+			return
 		} else if errStr != "" {
 			errorMsg = fmt.Sprintf("Ошибка при создании тарифного плана: %v", err)
 		}
