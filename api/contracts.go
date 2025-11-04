@@ -674,15 +674,53 @@ func GetContractNumerators(c *gin.Context) {
 
 		// Получаем tenant DB по company_id
 		var company models.Company
-		if err := database.DB.First(&company, companyID).Error; err != nil {
-			log.Printf("GetContractNumerators: ❌ ОШИБКА - компания с ID %d не найдена: %v\n", companyID, err)
-			c.JSON(http.StatusBadRequest, gin.H{
+		log.Printf("GetContractNumerators: поиск компании с ID %d в основной БД (схема public)\n", companyID)
+
+		// Используем основную БД с явным указанием схемы public через прямой SQL
+		mainDB := database.DB
+		if mainDB == nil {
+			log.Printf("GetContractNumerators: ❌ основная БД не доступна\n")
+			c.JSON(http.StatusInternalServerError, gin.H{
 				"status": "error",
-				"error":  "Компания не найдена",
+				"error":  "Ошибка подключения к базе данных",
 			})
 			return
 		}
 
+		// Используем прямой SQL запрос с явным указанием схемы public
+		result := mainDB.Raw("SELECT * FROM public.companies WHERE id = ?", companyID).Scan(&company)
+		if result.Error != nil {
+			log.Printf("GetContractNumerators: ❌ ОШИБКА при поиске компании ID %d через Raw SQL: %v\n", companyID, result.Error)
+
+			// Пробуем через Table с явным указанием схемы
+			if err := mainDB.Table("public.companies").Where("id = ?", companyID).First(&company).Error; err != nil {
+				log.Printf("GetContractNumerators: ❌ ОШИБКА при поиске через Table: %v\n", err)
+
+				// Пробуем через Model
+				if err2 := mainDB.Model(&models.Company{}).Where("id = ?", companyID).First(&company).Error; err2 != nil {
+					log.Printf("GetContractNumerators: ❌ ОШИБКА при поиске через Model: %v\n", err2)
+
+					// Проверяем, может быть компания есть, но с другим ID
+					var allCompanies []models.Company
+					if err3 := mainDB.Raw("SELECT * FROM public.companies LIMIT 10").Scan(&allCompanies).Error; err3 == nil {
+						log.Printf("GetContractNumerators: найдено компаний в БД: %d\n", len(allCompanies))
+						for _, comp := range allCompanies {
+							log.Printf("GetContractNumerators: компания ID=%d, Name=%s, Schema=%s\n", comp.ID, comp.Name, comp.DatabaseSchema)
+						}
+					} else {
+						log.Printf("GetContractNumerators: ошибка при получении списка компаний: %v\n", err3)
+					}
+
+					c.JSON(http.StatusBadRequest, gin.H{
+						"status": "error",
+						"error":  fmt.Sprintf("Компания не найдена (ID: %d). Ошибка: %v", companyID, err2),
+					})
+					return
+				}
+			}
+		}
+
+		log.Printf("GetContractNumerators: ✅ компания найдена: ID=%d, Name=%s, Schema=%s\n", company.ID, company.Name, company.DatabaseSchema)
 		log.Printf("GetContractNumerators: подключение к схеме компании %s (ID: %d)\n", company.DatabaseSchema, companyID)
 		var err error
 		tenantDB, err = database.ConnectToTenant(company.DatabaseSchema)
@@ -987,8 +1025,7 @@ func CreateContractNumerator(c *gin.Context) {
 		var company models.Company
 		log.Printf("CreateContractNumerator: поиск компании с ID %d в основной БД (схема public)\n", companyID)
 
-		// Используем основную БД с явным указанием схемы public
-		// Важно: используем database.DB напрямую, так как это подключение к основной БД
+		// Используем основную БД с явным указанием схемы public через прямой SQL
 		mainDB := database.DB
 		if mainDB == nil {
 			log.Printf("CreateContractNumerator: ❌ основная БД не доступна\n")
@@ -999,36 +1036,36 @@ func CreateContractNumerator(c *gin.Context) {
 			return
 		}
 
-		// Устанавливаем search_path на public для поиска компании
-		if err := mainDB.Exec("SET search_path TO public").Error; err != nil {
-			log.Printf("CreateContractNumerator: ⚠️ предупреждение при установке search_path: %v\n", err)
-		}
+		// Используем прямой SQL запрос с явным указанием схемы public
+		result := mainDB.Raw("SELECT * FROM public.companies WHERE id = ?", companyID).Scan(&company)
+		if result.Error != nil {
+			log.Printf("CreateContractNumerator: ❌ ОШИБКА при поиске компании ID %d через Raw SQL: %v\n", companyID, result.Error)
 
-		// Ищем компанию с явным указанием схемы
-		if err := mainDB.Table("public.companies").Where("id = ?", companyID).First(&company).Error; err != nil {
-			log.Printf("CreateContractNumerator: ❌ ОШИБКА при поиске компании ID %d: %v\n", companyID, err)
-			log.Printf("CreateContractNumerator: тип ошибки: %T\n", err)
+			// Пробуем через Table с явным указанием схемы
+			if err := mainDB.Table("public.companies").Where("id = ?", companyID).First(&company).Error; err != nil {
+				log.Printf("CreateContractNumerator: ❌ ОШИБКА при поиске через Table: %v\n", err)
 
-			// Пробуем без явного указания схемы
-			if err2 := mainDB.Model(&models.Company{}).Where("id = ?", companyID).First(&company).Error; err2 != nil {
-				log.Printf("CreateContractNumerator: ❌ ОШИБКА при поиске через Model: %v\n", err2)
+				// Пробуем через Model
+				if err2 := mainDB.Model(&models.Company{}).Where("id = ?", companyID).First(&company).Error; err2 != nil {
+					log.Printf("CreateContractNumerator: ❌ ОШИБКА при поиске через Model: %v\n", err2)
 
-				// Проверяем, может быть компания есть, но с другим ID
-				var allCompanies []models.Company
-				if err3 := mainDB.Model(&models.Company{}).Limit(10).Find(&allCompanies).Error; err3 == nil {
-					log.Printf("CreateContractNumerator: найдено компаний в БД: %d\n", len(allCompanies))
-					for _, comp := range allCompanies {
-						log.Printf("CreateContractNumerator: компания ID=%d, Name=%s, Schema=%s\n", comp.ID, comp.Name, comp.DatabaseSchema)
+					// Проверяем, может быть компания есть, но с другим ID
+					var allCompanies []models.Company
+					if err3 := mainDB.Raw("SELECT * FROM public.companies LIMIT 10").Scan(&allCompanies).Error; err3 == nil {
+						log.Printf("CreateContractNumerator: найдено компаний в БД: %d\n", len(allCompanies))
+						for _, comp := range allCompanies {
+							log.Printf("CreateContractNumerator: компания ID=%d, Name=%s, Schema=%s\n", comp.ID, comp.Name, comp.DatabaseSchema)
+						}
+					} else {
+						log.Printf("CreateContractNumerator: ошибка при получении списка компаний: %v\n", err3)
 					}
-				} else {
-					log.Printf("CreateContractNumerator: ошибка при получении списка компаний: %v\n", err3)
-				}
 
-				c.JSON(http.StatusBadRequest, gin.H{
-					"status": "error",
-					"error":  fmt.Sprintf("Компания не найдена (ID: %d). Ошибка: %v", companyID, err2),
-				})
-				return
+					c.JSON(http.StatusBadRequest, gin.H{
+						"status": "error",
+						"error":  fmt.Sprintf("Компания не найдена (ID: %d). Ошибка: %v", companyID, err2),
+					})
+					return
+				}
 			}
 		}
 
