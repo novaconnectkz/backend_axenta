@@ -529,11 +529,25 @@ func GetSubscriptions(c *gin.Context) {
 	})
 }
 
+// CreateSubscriptionData представляет данные для создания подписки
+type CreateSubscriptionData struct {
+	CompanyID                 uint   `json:"company_id" binding:"required"`
+	BillingPlanID             uint   `json:"billing_plan_id" binding:"required"`
+	StartDate                 string `json:"start_date"`
+	EndDate                   string `json:"end_date"`
+	Status                    string `json:"status"`
+	IsAutoRenew               bool   `json:"is_auto_renew"`
+	PaymentMethod             string `json:"payment_method"`
+	ContractID                *uint  `json:"contract_id"`
+	SplitPeriod               bool   `json:"split_period"`
+	TransferFromSubscriptionID *uint `json:"transfer_from_subscription_id"`
+}
+
 // CreateSubscription создает новую подписку
 func CreateSubscription(c *gin.Context) {
-	var subscription models.Subscription
+	var data CreateSubscriptionData
 
-	if err := c.ShouldBindJSON(&subscription); err != nil {
+	if err := c.ShouldBindJSON(&data); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
 			"error":  "Неверный формат данных",
@@ -542,7 +556,7 @@ func CreateSubscription(c *gin.Context) {
 	}
 
 	// Валидация обязательных полей
-	if subscription.CompanyID == 0 {
+	if data.CompanyID == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
 			"error":  "Поле company_id обязательно",
@@ -550,7 +564,7 @@ func CreateSubscription(c *gin.Context) {
 		return
 	}
 
-	if subscription.BillingPlanID == 0 {
+	if data.BillingPlanID == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
 			"error":  "Поле billing_plan_id обязательно",
@@ -560,7 +574,7 @@ func CreateSubscription(c *gin.Context) {
 
 	// Проверяем существование тарифного плана
 	var plan models.BillingPlan
-	if err := database.DB.First(&plan, subscription.BillingPlanID).Error; err != nil {
+	if err := database.DB.First(&plan, data.BillingPlanID).Error; err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
 			"error":  "Тарифный план не найден",
@@ -568,12 +582,90 @@ func CreateSubscription(c *gin.Context) {
 		return
 	}
 
-	// Устанавливаем значения по умолчанию
-	if subscription.StartDate.IsZero() {
-		subscription.StartDate = time.Now()
+	// Проверяем права на тарифы по договору, если указан contract_id
+	if data.ContractID != nil {
+		var contract models.Contract
+		if err := database.DB.First(&contract, *data.ContractID).Error; err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error",
+				"error":  "Договор не найден",
+			})
+			return
+		}
+
+		// Проверяем, что у договора есть доступ к тарифам (если tariff_plan_id = 0, значит нет прав)
+		if contract.TariffPlanID == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error",
+				"error":  "Нет прав на тарифы в этом договоре",
+			})
+			return
+		}
 	}
-	if subscription.Status == "" {
-		subscription.Status = "active"
+
+	// Обрабатываем перенос из существующей подписки
+	if data.TransferFromSubscriptionID != nil {
+		var oldSubscription models.Subscription
+		if err := database.DB.First(&oldSubscription, *data.TransferFromSubscriptionID).Error; err == nil {
+			// Отменяем старую подписку
+			oldSubscription.Status = "cancelled"
+			database.DB.Save(&oldSubscription)
+		}
+	}
+
+	// Парсим дату начала
+	var startDate time.Time
+	if data.StartDate != "" {
+		parsedDate, err := time.Parse("2006-01-02", data.StartDate)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error",
+				"error":  "Неверный формат даты начала",
+			})
+			return
+		}
+		startDate = parsedDate
+	} else {
+		startDate = time.Now()
+	}
+
+	// Определяем статус: если дата начала в будущем, устанавливаем "scheduled"
+	status := data.Status
+	now := time.Now()
+	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	startOfDayStartDate := time.Date(startDate.Year(), startDate.Month(), startDate.Day(), 0, 0, 0, 0, startDate.Location())
+
+	if startOfDayStartDate.After(startOfDay) {
+		status = "scheduled"
+	} else if status == "" {
+		status = "active"
+	}
+
+	// Обработка разбиения периода (если указано)
+	endDate := (*time.Time)(nil)
+	if data.EndDate != "" {
+		parsedEndDate, err := time.Parse("2006-01-02", data.EndDate)
+		if err == nil {
+			endDate = &parsedEndDate
+		}
+	}
+
+	// Если разбит период для месячного тарифа, устанавливаем конец месяца
+	if data.SplitPeriod && plan.BillingPeriod == "monthly" {
+		// Конец месяца для даты начала
+		lastDayOfMonth := time.Date(startDate.Year(), startDate.Month()+1, 0, 23, 59, 59, 0, startDate.Location())
+		endDate = &lastDayOfMonth
+	}
+
+	// Создаем подписку
+	subscription := models.Subscription{
+		CompanyID:     data.CompanyID,
+		BillingPlanID: data.BillingPlanID,
+		StartDate:     startDate,
+		EndDate:       endDate,
+		Status:        status,
+		IsAutoRenew:   data.IsAutoRenew,
+		PaymentMethod: data.PaymentMethod,
 	}
 
 	// Вычисляем дату следующего платежа
@@ -581,7 +673,12 @@ func CreateSubscription(c *gin.Context) {
 		var nextPayment time.Time
 		switch plan.BillingPeriod {
 		case "monthly":
-			nextPayment = subscription.StartDate.AddDate(0, 1, 0)
+			if endDate != nil {
+				// Если период разбит, следующая оплата после конца текущего периода
+				nextPayment = (*endDate).AddDate(0, 0, 1)
+			} else {
+				nextPayment = subscription.StartDate.AddDate(0, 1, 0)
+			}
 		case "yearly":
 			nextPayment = subscription.StartDate.AddDate(1, 0, 0)
 		default:
@@ -1527,6 +1624,26 @@ func ProcessScheduledDeletions(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
 		"message": "Плановые удаления успешно обработаны",
+	})
+}
+
+// ActivateScheduledSubscriptions активирует запланированные подписки
+func ActivateScheduledSubscriptions(c *gin.Context) {
+	// Создаем сервис автоматизации биллинга
+	automationService := services.NewBillingAutomationService()
+
+	// Активируем запланированные подписки
+	if err := automationService.ActivateScheduledSubscriptions(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Запланированные подписки успешно активированы",
 	})
 }
 

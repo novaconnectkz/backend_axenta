@@ -145,6 +145,48 @@ func (bas *BillingAutomationService) ProcessScheduledDeletions() error {
 	return nil
 }
 
+// ActivateScheduledSubscriptions активирует запланированные подписки, которые должны начаться сегодня
+func (bas *BillingAutomationService) ActivateScheduledSubscriptions() error {
+	// Получаем текущую дату (начало дня)
+	now := time.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	tomorrow := today.AddDate(0, 0, 1)
+
+	// Получаем подписки со статусом "scheduled", которые должны активироваться сегодня
+	var subscriptions []models.Subscription
+	if err := bas.db.Where("status = ? AND start_date >= ? AND start_date < ?", 
+		"scheduled", today, tomorrow).
+		Find(&subscriptions).Error; err != nil {
+		return fmt.Errorf("ошибка получения запланированных подписок: %w", err)
+	}
+
+	if len(subscriptions) == 0 {
+		return nil // Нет подписок для активации
+	}
+
+	activatedCount := 0
+	errors := make([]error, 0)
+
+	for _, subscription := range subscriptions {
+		// Активируем подписку
+		subscription.Status = "active"
+		
+		if err := bas.db.Save(&subscription).Error; err != nil {
+			errors = append(errors, fmt.Errorf("ошибка активации подписки %d: %w", subscription.ID, err))
+			continue
+		}
+
+		activatedCount++
+	}
+
+	if len(errors) > 0 {
+		return fmt.Errorf("активация завершена с ошибками. Активировано подписок: %d, ошибок: %d. Первая ошибка: %v",
+			activatedCount, len(errors), errors[0])
+	}
+
+	return nil
+}
+
 // GetInvoicesByPeriod получает счета за определенный период
 func (bas *BillingAutomationService) GetInvoicesByPeriod(companyID *uint, startDate, endDate time.Time) ([]models.Invoice, error) {
 	query := bas.db.Where("invoice_date >= ? AND invoice_date <= ?", startDate, endDate).

@@ -63,7 +63,7 @@ type Subscription struct {
 	EndDate   *time.Time `json:"end_date"`
 
 	// Статус подписки
-	Status      string `json:"status" gorm:"default:active;type:varchar(20)"` // active, expired, cancelled, suspended
+	Status      string `json:"status" gorm:"default:active;type:varchar(20)"` // active, scheduled, expired, cancelled, suspended
 	IsAutoRenew bool   `json:"is_auto_renew" gorm:"default:true"`
 
 	// Платежная информация
