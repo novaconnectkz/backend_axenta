@@ -960,10 +960,22 @@ func CreateContractNumerator(c *gin.Context) {
 
 	// Получаем tenant DB (схема компании)
 	tenantDB := middleware.GetTenantDB(c)
+	companyIDFromContext := middleware.GetCompanyID(c)
+
+	log.Printf("CreateContractNumerator: tenantDB из middleware: %v\n", tenantDB != nil)
+	log.Printf("CreateContractNumerator: companyID из контекста middleware: %d\n", companyIDFromContext)
+
 	if tenantDB == nil {
-		log.Printf("CreateContractNumerator: tenantDB не найден, пробуем получить company_id для подключения\n")
+		log.Printf("CreateContractNumerator: tenantDB не найден из middleware, пробуем получить company_id для подключения\n")
+
+		// Используем companyID из контекста, если он есть и больше чем из запроса
+		if companyIDFromContext > 0 && (companyID == 0 || companyIDFromContext != companyID) {
+			log.Printf("CreateContractNumerator: используем companyID из контекста middleware: %d (вместо %d из запроса)\n", companyIDFromContext, companyID)
+			companyID = companyIDFromContext
+		}
 
 		if companyID == 0 {
+			log.Printf("CreateContractNumerator: ❌ companyID = 0, не можем продолжить\n")
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "error",
 				"error":  "Не удалось определить компанию",
@@ -973,22 +985,80 @@ func CreateContractNumerator(c *gin.Context) {
 
 		// Получаем tenant DB по company_id
 		var company models.Company
-		if err := database.DB.First(&company, companyID).Error; err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{
+		log.Printf("CreateContractNumerator: поиск компании с ID %d в основной БД (схема public)\n", companyID)
+
+		// Используем основную БД с явным указанием схемы public
+		// Важно: используем database.DB напрямую, так как это подключение к основной БД
+		mainDB := database.DB
+		if mainDB == nil {
+			log.Printf("CreateContractNumerator: ❌ основная БД не доступна\n")
+			c.JSON(http.StatusInternalServerError, gin.H{
 				"status": "error",
-				"error":  "Компания не найдена",
+				"error":  "Ошибка подключения к базе данных",
 			})
 			return
 		}
 
+		// Устанавливаем search_path на public для поиска компании
+		if err := mainDB.Exec("SET search_path TO public").Error; err != nil {
+			log.Printf("CreateContractNumerator: ⚠️ предупреждение при установке search_path: %v\n", err)
+		}
+
+		// Ищем компанию с явным указанием схемы
+		if err := mainDB.Table("public.companies").Where("id = ?", companyID).First(&company).Error; err != nil {
+			log.Printf("CreateContractNumerator: ❌ ОШИБКА при поиске компании ID %d: %v\n", companyID, err)
+			log.Printf("CreateContractNumerator: тип ошибки: %T\n", err)
+
+			// Пробуем без явного указания схемы
+			if err2 := mainDB.Model(&models.Company{}).Where("id = ?", companyID).First(&company).Error; err2 != nil {
+				log.Printf("CreateContractNumerator: ❌ ОШИБКА при поиске через Model: %v\n", err2)
+
+				// Проверяем, может быть компания есть, но с другим ID
+				var allCompanies []models.Company
+				if err3 := mainDB.Model(&models.Company{}).Limit(10).Find(&allCompanies).Error; err3 == nil {
+					log.Printf("CreateContractNumerator: найдено компаний в БД: %d\n", len(allCompanies))
+					for _, comp := range allCompanies {
+						log.Printf("CreateContractNumerator: компания ID=%d, Name=%s, Schema=%s\n", comp.ID, comp.Name, comp.DatabaseSchema)
+					}
+				} else {
+					log.Printf("CreateContractNumerator: ошибка при получении списка компаний: %v\n", err3)
+				}
+
+				c.JSON(http.StatusBadRequest, gin.H{
+					"status": "error",
+					"error":  fmt.Sprintf("Компания не найдена (ID: %d). Ошибка: %v", companyID, err2),
+				})
+				return
+			}
+		}
+
+		log.Printf("CreateContractNumerator: ✅ компания найдена: ID=%d, Name=%s, Schema=%s\n", company.ID, company.Name, company.DatabaseSchema)
+
 		var err error
 		tenantDB, err = database.ConnectToTenant(company.DatabaseSchema)
 		if err != nil {
+			log.Printf("CreateContractNumerator: ❌ ошибка подключения к схеме %s: %v\n", company.DatabaseSchema, err)
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"status": "error",
 				"error":  fmt.Sprintf("Ошибка подключения к схеме компании: %v", err),
 			})
 			return
+		}
+
+		log.Printf("CreateContractNumerator: ✅ подключение к tenant схеме %s установлено\n", company.DatabaseSchema)
+	} else {
+		log.Printf("CreateContractNumerator: ✅ используем tenantDB из middleware, companyID из контекста = %d, из запроса = %d\n", companyIDFromContext, companyID)
+		// Если tenantDB уже есть из middleware, используем companyID из контекста (он более надежный)
+		if companyIDFromContext > 0 {
+			companyID = companyIDFromContext
+			numerator.CompanyID = companyID
+			log.Printf("CreateContractNumerator: установлен companyID=%d из контекста middleware\n", companyID)
+		} else if companyID > 0 {
+			// Если companyID из запроса есть, используем его
+			numerator.CompanyID = companyID
+			log.Printf("CreateContractNumerator: установлен companyID=%d из запроса\n", companyID)
+		} else {
+			log.Printf("CreateContractNumerator: ⚠️ ВНИМАНИЕ! companyID = 0 даже при наличии tenantDB из middleware\n")
 		}
 	}
 
