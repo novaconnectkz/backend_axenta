@@ -36,7 +36,7 @@ func GetBillingPlans(c *gin.Context) {
 	if companyID := c.Query("company_id"); companyID != "" {
 		// Логируем для отладки
 		fmt.Printf("GetBillingPlans: фильтруем по company_id=%s\n", companyID)
-		
+
 		// Парсим company_id в uint для корректного сравнения
 		if companyIDUint, err := strconv.ParseUint(companyID, 10, 32); err == nil {
 			// Возвращаем только планы этой компании
@@ -129,7 +129,7 @@ func CreateBillingPlan(c *gin.Context) {
 		return
 	}
 
-	fmt.Printf("CreateBillingPlan: распарсенные данные плана: Name=%s, Price=%s, CompanyID=%v\n", 
+	fmt.Printf("CreateBillingPlan: распарсенные данные плана: Name=%s, Price=%s, CompanyID=%v\n",
 		plan.Name, plan.Price.String(), plan.CompanyID)
 
 	// Валидация обязательных полей
@@ -201,7 +201,7 @@ func CreateBillingPlan(c *gin.Context) {
 		return
 	}
 
-	fmt.Printf("CreateBillingPlan: создаем план с данными: Name=%s, Price=%s, CompanyID=%v\n", 
+	fmt.Printf("CreateBillingPlan: создаем план с данными: Name=%s, Price=%s, CompanyID=%v\n",
 		plan.Name, plan.Price.String(), plan.CompanyID)
 
 	// Проверяем, нет ли уже плана с таким же именем в этой компании
@@ -220,20 +220,20 @@ func CreateBillingPlan(c *gin.Context) {
 	if err := database.DB.Create(&plan).Error; err != nil {
 		// Логируем детальную информацию об ошибке
 		fmt.Printf("CreateBillingPlan: ОШИБКА при создании тарифного плана: %v\n", err)
-		fmt.Printf("CreateBillingPlan: Данные плана: Name=%s, Price=%s, CompanyID=%v, Currency=%s, BillingPeriod=%s\n", 
+		fmt.Printf("CreateBillingPlan: Данные плана: Name=%s, Price=%s, CompanyID=%v, Currency=%s, BillingPeriod=%s\n",
 			plan.Name, plan.Price.String(), plan.CompanyID, plan.Currency, plan.BillingPeriod)
-		
+
 		// Проверяем тип ошибки для более понятного сообщения
 		errorMsg := "Ошибка при создании тарифного плана"
 		errStr := err.Error()
-		
+
 		// Проверяем на дубликат имени (может быть из-за старого индекса)
 		if strings.Contains(errStr, "duplicate key") || strings.Contains(errStr, "UNIQUE constraint") || strings.Contains(errStr, "violates unique constraint") {
 			errorMsg = fmt.Sprintf("Тарифный план с названием '%s' уже существует", plan.Name)
 		} else if errStr != "" {
 			errorMsg = fmt.Sprintf("Ошибка при создании тарифного плана: %v", err)
 		}
-		
+
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  errorMsg,
@@ -324,7 +324,29 @@ func DeleteBillingPlan(c *gin.Context) {
 	id := c.Param("id")
 	companyIDStr := c.Query("company_id")
 
+	// Параметр company_id обязателен
+	if companyIDStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Параметр company_id обязателен",
+		})
+		return
+	}
+
+	// Парсим company_id в uint
+	companyIDUint, err := strconv.ParseUint(companyIDStr, 10, 32)
+	if err != nil {
+		fmt.Printf("DeleteBillingPlan: ошибка парсинга company_id: %v\n", err)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("Неверный формат company_id: %v", err),
+		})
+		return
+	}
+	companyID := uint(companyIDUint)
+
 	if err := database.DB.Exec("SET search_path TO public").Error; err != nil {
+		fmt.Printf("DeleteBillingPlan: ошибка установки search_path: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  "Ошибка подключения к базе данных",
@@ -333,18 +355,7 @@ func DeleteBillingPlan(c *gin.Context) {
 	}
 
 	var plan models.BillingPlan
-	query := database.DB.Where("id = ?", id)
-
-	// Проверяем принадлежность к компании
-	if companyIDStr != "" {
-		query = query.Where("company_id = ?", companyIDStr)
-	} else {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status": "error",
-			"error":  "Параметр company_id обязателен",
-		})
-		return
-	}
+	query := database.DB.Where("id = ? AND company_id = ?", id, companyID)
 
 	if err := query.First(&plan).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
@@ -356,7 +367,7 @@ func DeleteBillingPlan(c *gin.Context) {
 
 	// Проверяем, есть ли активные подписки на этот план (только для этой компании)
 	var subscriptionCount int64
-	database.DB.Model(&models.Subscription{}).Where("billing_plan_id = ? AND company_id = ? AND status = 'active'", plan.ID, companyIDStr).Count(&subscriptionCount)
+	database.DB.Model(&models.Subscription{}).Where("billing_plan_id = ? AND company_id = ? AND status = 'active'", plan.ID, companyID).Count(&subscriptionCount)
 
 	if subscriptionCount > 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
