@@ -772,3 +772,168 @@ func CreateTenantSchema(companyID uint, schemaName string) error {
 	log.Printf("✅ Схема %s создана и настроена", schemaName)
 	return nil
 }
+
+// CreateMissingGlobalTables создает недостающие глобальные таблицы напрямую через AutoMigrate
+func CreateMissingGlobalTables() error {
+	if DB == nil {
+		return fmt.Errorf("база данных не инициализирована")
+	}
+
+	// Убеждаемся, что мы в схеме public
+	if err := DB.Exec("SET search_path TO public").Error; err != nil {
+		log.Printf("⚠️ Не удалось переключиться на схему public: %v", err)
+		return err
+	}
+
+	log.Println("🔧 Создание недостающих глобальных таблиц...")
+
+	// Список моделей для создания в схеме public (в правильном порядке)
+	// Сначала создаем таблицы без зависимостей
+	globalModels := []interface{}{
+		&models.BillingSettings{},
+		&models.ContractNumerator{},
+		&models.InvoiceItem{},
+		&models.Invoice{},
+		&models.BillingHistory{},
+	}
+
+	for _, model := range globalModels {
+		log.Printf("🔄 Создание таблицы для модели %T...", model)
+		// Используем обычный AutoMigrate - если foreign key constraints не могут быть созданы,
+		// таблица все равно будет создана, но без constraints
+		if err := DB.AutoMigrate(model); err != nil {
+			// Игнорируем ошибки связанные с foreign keys - таблица все равно может быть создана
+			if !strings.Contains(err.Error(), "foreign") && !strings.Contains(err.Error(), "constraint") {
+				log.Printf("❌ Ошибка создания таблицы для %T: %v", model, err)
+				// Продолжаем создавать другие таблицы даже при ошибке
+			} else {
+				log.Printf("⚠️ Предупреждение при создании таблицы для %T (возможно foreign key): %v", model, err)
+			}
+			continue
+		}
+		log.Printf("✅ Таблица для %T создана/обновлена", model)
+	}
+
+	// Если AutoMigrate не сработал для Invoice, InvoiceItem и BillingHistory, создаем их через SQL
+	if err := createInvoiceTablesViaSQL(); err != nil {
+		log.Printf("⚠️ Ошибка создания таблиц счетов через SQL: %v", err)
+	}
+
+	log.Println("✅ Попытка создания недостающих глобальных таблиц завершена")
+	return nil
+}
+
+// createInvoiceTablesViaSQL создает таблицы invoices, invoice_items и billing_history через SQL напрямую
+func createInvoiceTablesViaSQL() error {
+	// Проверяем, существует ли таблица invoices
+	var count int64
+	if err := DB.Raw("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'invoices'").Scan(&count).Error; err == nil && count > 0 {
+		log.Println("ℹ️ Таблица invoices уже существует")
+		return nil
+	}
+
+	log.Println("🔧 Создание таблиц счетов через SQL...")
+
+	// Создаем таблицу invoices
+	invoicesSQL := `
+		CREATE TABLE IF NOT EXISTS invoices (
+			id BIGSERIAL PRIMARY KEY,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+			deleted_at TIMESTAMP WITH TIME ZONE,
+			number VARCHAR(50) NOT NULL,
+			title VARCHAR(200) NOT NULL,
+			description TEXT,
+			invoice_date TIMESTAMP WITH TIME ZONE NOT NULL,
+			due_date TIMESTAMP WITH TIME ZONE NOT NULL,
+			company_id BIGINT NOT NULL,
+			contract_id BIGINT,
+			tariff_plan_id BIGINT NOT NULL,
+			billing_period_start TIMESTAMP WITH TIME ZONE NOT NULL,
+			billing_period_end TIMESTAMP WITH TIME ZONE NOT NULL,
+			subtotal_amount DECIMAL(15,2) NOT NULL,
+			tax_rate DECIMAL(5,2) DEFAULT 0,
+			tax_amount DECIMAL(15,2) DEFAULT 0,
+			total_amount DECIMAL(15,2) NOT NULL,
+			currency VARCHAR(3) DEFAULT 'RUB',
+			status VARCHAR(20) DEFAULT 'draft',
+			paid_at TIMESTAMP WITH TIME ZONE,
+			paid_amount DECIMAL(15,2) DEFAULT 0,
+			notes TEXT,
+			external_id VARCHAR(100)
+		);
+		CREATE UNIQUE INDEX IF NOT EXISTS invoices_number_key ON invoices(number) WHERE deleted_at IS NULL;
+		CREATE INDEX IF NOT EXISTS invoices_company_id_idx ON invoices(company_id);
+		CREATE INDEX IF NOT EXISTS invoices_contract_id_idx ON invoices(contract_id);
+		CREATE INDEX IF NOT EXISTS invoices_deleted_at_idx ON invoices(deleted_at);
+	`
+
+	if err := DB.Exec(invoicesSQL).Error; err != nil {
+		log.Printf("❌ Ошибка создания таблицы invoices: %v", err)
+		return err
+	}
+	log.Println("✅ Таблица invoices создана")
+
+	// Создаем таблицу invoice_items
+	invoiceItemsSQL := `
+		CREATE TABLE IF NOT EXISTS invoice_items (
+			id BIGSERIAL PRIMARY KEY,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+			deleted_at TIMESTAMP WITH TIME ZONE,
+			invoice_id BIGINT NOT NULL,
+			name VARCHAR(200) NOT NULL,
+			description TEXT,
+			item_type VARCHAR(50) NOT NULL,
+			object_id BIGINT,
+			quantity DECIMAL(10,3) NOT NULL,
+			unit_price DECIMAL(15,2) NOT NULL,
+			amount DECIMAL(15,2) NOT NULL,
+			period_start TIMESTAMP WITH TIME ZONE,
+			period_end TIMESTAMP WITH TIME ZONE,
+			notes TEXT
+		);
+		CREATE INDEX IF NOT EXISTS invoice_items_invoice_id_idx ON invoice_items(invoice_id);
+		CREATE INDEX IF NOT EXISTS invoice_items_object_id_idx ON invoice_items(object_id);
+		CREATE INDEX IF NOT EXISTS invoice_items_deleted_at_idx ON invoice_items(deleted_at);
+	`
+
+	if err := DB.Exec(invoiceItemsSQL).Error; err != nil {
+		log.Printf("❌ Ошибка создания таблицы invoice_items: %v", err)
+		return err
+	}
+	log.Println("✅ Таблица invoice_items создана")
+
+	// Создаем таблицу billing_history
+	billingHistorySQL := `
+		CREATE TABLE IF NOT EXISTS billing_history (
+			id BIGSERIAL PRIMARY KEY,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+			deleted_at TIMESTAMP WITH TIME ZONE,
+			company_id BIGINT NOT NULL,
+			invoice_id BIGINT,
+			contract_id BIGINT,
+			operation VARCHAR(50) NOT NULL,
+			amount DECIMAL(15,2),
+			currency VARCHAR(3) DEFAULT 'RUB',
+			description TEXT,
+			period_start TIMESTAMP WITH TIME ZONE,
+			period_end TIMESTAMP WITH TIME ZONE,
+			metadata JSONB,
+			status VARCHAR(20) DEFAULT 'completed'
+		);
+		CREATE INDEX IF NOT EXISTS billing_history_company_id_idx ON billing_history(company_id);
+		CREATE INDEX IF NOT EXISTS billing_history_invoice_id_idx ON billing_history(invoice_id);
+		CREATE INDEX IF NOT EXISTS billing_history_contract_id_idx ON billing_history(contract_id);
+		CREATE INDEX IF NOT EXISTS billing_history_deleted_at_idx ON billing_history(deleted_at);
+	`
+
+	if err := DB.Exec(billingHistorySQL).Error; err != nil {
+		log.Printf("❌ Ошибка создания таблицы billing_history: %v", err)
+		return err
+	}
+	log.Println("✅ Таблица billing_history создана")
+
+	return nil
+}

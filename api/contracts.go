@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -631,6 +632,7 @@ func GetExpiringContracts(c *gin.Context) {
 func GetContractNumerators(c *gin.Context) {
 	companyIDStr := c.Query("company_id")
 	if companyIDStr == "" {
+		log.Printf("GetContractNumerators: company_id не указан\n")
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
 			"error":  "Параметр company_id обязателен",
@@ -640,22 +642,36 @@ func GetContractNumerators(c *gin.Context) {
 
 	companyID, err := strconv.ParseUint(companyIDStr, 10, 32)
 	if err != nil {
+		log.Printf("GetContractNumerators: ошибка парсинга company_id: %v\n", err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
-			"error":  "Неверный формат company_id",
+			"error":  fmt.Sprintf("Неверный формат company_id: %v", err),
+		})
+		return
+	}
+	log.Printf("GetContractNumerators: запрос для company_id=%d\n", uint(companyID))
+
+	// Убеждаемся, что мы в схеме public для глобальных таблиц
+	if err := database.DB.Exec("SET search_path TO public").Error; err != nil {
+		log.Printf("GetContractNumerators: ошибка установки search_path: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("Ошибка подключения к базе данных: %v", err),
 		})
 		return
 	}
 
 	var numerators []models.ContractNumerator
 	if err := database.DB.Where("company_id = ?", uint(companyID)).Order("is_default DESC, created_at ASC").Find(&numerators).Error; err != nil {
+		log.Printf("GetContractNumerators: ОШИБКА при получении нумераторов: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Ошибка при получении нумераторов",
+			"error":  fmt.Sprintf("Ошибка при получении нумераторов: %v", err),
 		})
 		return
 	}
 
+	log.Printf("GetContractNumerators: найдено %d нумераторов для company_id=%d\n", len(numerators), uint(companyID))
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
 		"data":   numerators,

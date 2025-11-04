@@ -34,10 +34,25 @@ func GetBillingPlans(c *gin.Context) {
 
 	// Фильтрация по компании (обязательна для изоляции)
 	if companyID := c.Query("company_id"); companyID != "" {
-		// Возвращаем только планы этой компании
-		query = query.Where("company_id = ?", companyID)
+		// Логируем для отладки
+		fmt.Printf("GetBillingPlans: фильтруем по company_id=%s\n", companyID)
+		
+		// Парсим company_id в uint для корректного сравнения
+		if companyIDUint, err := strconv.ParseUint(companyID, 10, 32); err == nil {
+			// Возвращаем только планы этой компании
+			query = query.Where("company_id = ?", uint(companyIDUint))
+			fmt.Printf("GetBillingPlans: используем company_id=%d (uint)\n", uint(companyIDUint))
+		} else {
+			fmt.Printf("GetBillingPlans: ошибка парсинга company_id: %v\n", err)
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error",
+				"error":  fmt.Sprintf("Неверный формат company_id: %v", err),
+			})
+			return
+		}
 	} else {
 		// Если company_id не указан, возвращаем пустой список (безопасность)
+		fmt.Printf("GetBillingPlans: company_id не указан, возвращаем пустой список\n")
 		query = query.Where("1 = 0") // Никогда не вернет результаты
 	}
 
@@ -729,21 +744,36 @@ func GetInvoices(c *gin.Context) {
 		offset = 0
 	}
 
-	query := database.DB.Model(&models.Invoice{}).
-		Preload("Contract").
-		Preload("TariffPlan").
-		Preload("Items")
+	// Убеждаемся, что мы в схеме public для глобальных таблиц
+	if err := database.DB.Exec("SET search_path TO public").Error; err != nil {
+		fmt.Printf("GetInvoices: ошибка установки search_path: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("Ошибка подключения к базе данных: %v", err),
+		})
+		return
+	}
 
+	// Базовый запрос - без Preload сначала для фильтрации
+	query := database.DB.Model(&models.Invoice{})
+
+	// Фильтрация по компании обязательна для изоляции
 	if companyIDStr != "" {
 		companyID, err := strconv.ParseUint(companyIDStr, 10, 32)
 		if err != nil {
+			fmt.Printf("GetInvoices: ошибка парсинга company_id: %v\n", err)
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "error",
-				"error":  "Неверный формат company_id",
+				"error":  fmt.Sprintf("Неверный формат company_id: %v", err),
 			})
 			return
 		}
+		fmt.Printf("GetInvoices: фильтруем по company_id=%d\n", uint(companyID))
 		query = query.Where("company_id = ?", uint(companyID))
+	} else {
+		// Если company_id не указан, возвращаем пустой список (безопасность)
+		fmt.Printf("GetInvoices: company_id не указан, возвращаем пустой список\n")
+		query = query.Where("1 = 0") // Никогда не вернет результаты
 	}
 
 	if contractIDStr != "" {
@@ -762,25 +792,36 @@ func GetInvoices(c *gin.Context) {
 		query = query.Where("status = ?", status)
 	}
 
-	// Подсчитываем общее количество
+	// Подсчитываем общее количество (без Preload)
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
+		fmt.Printf("GetInvoices: ОШИБКА при подсчете счетов: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Ошибка при подсчете счетов",
+			"error":  fmt.Sprintf("Ошибка при подсчете счетов: %v", err),
 		})
 		return
 	}
 
+	fmt.Printf("GetInvoices: найдено счетов: %d\n", total)
+
+	// Добавляем Preload только для основных записей (без Contract, так как он в tenant схеме)
+	// TariffPlan нужно загружать из billing_plans, но в модели Invoice используется TariffPlan
+	// Попробуем загрузить только Items, а TariffPlan попробуем через Join или отдельно
+	queryWithPreload := query.Preload("Items")
+
 	// Получаем счета с пагинацией
 	var invoices []models.Invoice
-	if err := query.Limit(limit).Offset(offset).Order("created_at DESC").Find(&invoices).Error; err != nil {
+	if err := queryWithPreload.Limit(limit).Offset(offset).Order("created_at DESC").Find(&invoices).Error; err != nil {
+		fmt.Printf("GetInvoices: ОШИБКА при получении счетов: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Ошибка при получении счетов",
+			"error":  fmt.Sprintf("Ошибка при получении счетов: %v", err),
 		})
 		return
 	}
+
+	fmt.Printf("GetInvoices: успешно получено %d счетов\n", len(invoices))
 
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
@@ -1083,6 +1124,7 @@ func GetOverdueInvoices(c *gin.Context) {
 func GetBillingSettings(c *gin.Context) {
 	companyIDStr := c.Query("company_id")
 	if companyIDStr == "" {
+		fmt.Printf("GetBillingSettings: company_id не указан\n")
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
 			"error":  "Параметр company_id обязателен",
@@ -1092,13 +1134,25 @@ func GetBillingSettings(c *gin.Context) {
 
 	companyIDUint, err := strconv.ParseUint(companyIDStr, 10, 32)
 	if err != nil {
+		fmt.Printf("GetBillingSettings: ошибка парсинга company_id: %v\n", err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
-			"error":  "Неверный формат company_id",
+			"error":  fmt.Sprintf("Неверный формат company_id: %v", err),
 		})
 		return
 	}
 	companyID := uint(companyIDUint)
+	fmt.Printf("GetBillingSettings: запрос для company_id=%d\n", companyID)
+
+	// Убеждаемся, что мы в схеме public для глобальных таблиц
+	if err := database.DB.Exec("SET search_path TO public").Error; err != nil {
+		fmt.Printf("GetBillingSettings: ошибка установки search_path: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("Ошибка подключения к базе данных: %v", err),
+		})
+		return
+	}
 
 	var settings models.BillingSettings
 	if err := database.DB.Where("company_id = ?", companyID).First(&settings).Error; err != nil {
@@ -1125,15 +1179,19 @@ func GetBillingSettings(c *gin.Context) {
 			Bitrix24DealNumberField:    "",
 		}
 
+		fmt.Printf("GetBillingSettings: настройки не найдены, создаем по умолчанию для company_id=%d\n", companyID)
 		if err := database.DB.Create(&settings).Error; err != nil {
+			fmt.Printf("GetBillingSettings: ОШИБКА при создании настроек: %v\n", err)
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"status": "error",
-				"error":  "Ошибка создания настроек биллинга",
+				"error":  fmt.Sprintf("Ошибка создания настроек биллинга: %v", err),
 			})
 			return
 		}
+		fmt.Printf("GetBillingSettings: настройки успешно созданы для company_id=%d\n", companyID)
 	}
 
+	fmt.Printf("GetBillingSettings: возвращаем настройки для company_id=%d\n", companyID)
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
 		"data":   settings,
