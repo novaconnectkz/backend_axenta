@@ -2,6 +2,7 @@ package models
 
 import (
 	"fmt"
+	"log"
 	"math/rand"
 	"time"
 
@@ -235,23 +236,39 @@ func (cn *ContractNumerator) GenerateNumber(clientID uint, companyID uint, contr
 	result := cn.Template
 	
 	// Заменяем доступные плейсхолдеры
+	// SEQ начинается с 001 (3 цифры с ведущими нулями)
+	// Используем CounterValue + 1, чтобы первый номер был 001, а не 000
+	seqValue := cn.CounterValue + 1
+	if seqValue < 1 {
+		seqValue = 1 // Гарантируем, что первый номер будет 001
+	}
+	
+	// Генерируем случайное число от 0 до 99 (2 цифры)
+	randomValue := rand.Intn(100)
+	
 	replacements := map[string]string{
 		"{PREFIX}":      cn.Prefix,
-		"{SEQ}":         fmt.Sprintf("%04d", cn.CounterValue),
+		"{SEQ}":         fmt.Sprintf("%03d", seqValue),       // 3 цифры: 001, 002, 003...
 		"{DAY}":         fmt.Sprintf("%02d", day),
 		"{MONTH}":       fmt.Sprintf("%02d", int(month)),
 		"{YEAR}":        fmt.Sprintf("%d", year),
-		"{YEAR_SHORT}":  fmt.Sprintf("%d", year%100),
-		"{RANDOM}":      fmt.Sprintf("%06d", rand.Intn(1000000)),
-		"{ID}":          fmt.Sprintf("%d", contractID),
-		"{COMPANY_ID}":  fmt.Sprintf("%d", companyID),
-		"{CLIENT_ID}":   fmt.Sprintf("%d", clientID),
+		"{YEAR_SHORT}":  fmt.Sprintf("%02d", year%100),      // 2 цифры: 24, 25...
+		"{RANDOM}":      fmt.Sprintf("%02d", randomValue),   // 2 цифры: 00, 01, 02...99
+		// {ID}, {COMPANY_ID}, {CLIENT_ID} удалены из нумератора
 	}
 
+	log.Printf("GenerateNumber: шаблон='%s', CounterValue=%d, seqValue=%d, randomValue=%d", 
+		cn.Template, cn.CounterValue, seqValue, randomValue)
+	
 	for placeholder, value := range replacements {
+		oldResult := result
 		result = replaceAll(result, placeholder, value)
+		if oldResult != result {
+			log.Printf("GenerateNumber: заменен '%s' на '%s', результат: '%s'", placeholder, value, result)
+		}
 	}
 
+	log.Printf("GenerateNumber: итоговый номер: '%s'", result)
 	return result, nil
 }
 

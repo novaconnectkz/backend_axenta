@@ -1417,17 +1417,8 @@ func CreateContractNumerator(c *gin.Context) {
 func UpdateContractNumerator(c *gin.Context) {
 	id := c.Param("id")
 
-	// Получаем tenant DB (схема компании)
-	tenantDB := middleware.GetTenantDB(c)
+	// Получаем companyID из контекста, заголовка или query параметра
 	companyID := middleware.GetCompanyID(c)
-
-	if tenantDB == nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status": "error",
-			"error":  "Не удалось определить компанию",
-		})
-		return
-	}
 
 	// Получаем companyID если его нет
 	if companyID == 0 {
@@ -1452,6 +1443,44 @@ func UpdateContractNumerator(c *gin.Context) {
 			"error":  "Не удалось определить компанию",
 		})
 		return
+	}
+
+	// Получаем tenantDB из контекста или создаем его вручную
+	tenantDB := middleware.GetTenantDB(c)
+	
+	if tenantDB == nil {
+		// Если tenantDB не установлен в контексте (мультитенантность отключена),
+		// создаем подключение вручную по companyID
+		log.Printf("UpdateContractNumerator: создаем tenantDB вручную для companyID=%d\n", companyID)
+		
+		// Получаем информацию о компании из основной БД
+		var company models.Company
+		if err := database.DB.Raw("SELECT * FROM public.companies WHERE id = ?", companyID).Scan(&company).Error; err != nil {
+			log.Printf("UpdateContractNumerator: ⚠️ ошибка поиска компании: %v\n", err)
+			// Пробуем альтернативный способ
+			if err2 := database.DB.Table("public.companies").Where("id = ?", companyID).First(&company).Error; err2 != nil {
+				log.Printf("UpdateContractNumerator: ⚠️ ошибка поиска компании (альтернативный способ): %v\n", err2)
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"status": "error",
+					"error":  fmt.Sprintf("Компания не найдена (ID: %d)", companyID),
+				})
+				return
+			}
+		}
+		
+		// Создаем подключение к tenant схеме
+		var err2 error
+		tenantDB, err2 = database.ConnectToTenant(company.DatabaseSchema)
+		if err2 != nil {
+			log.Printf("UpdateContractNumerator: ⚠️ ошибка подключения к tenant схеме '%s': %v\n", company.DatabaseSchema, err2)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error",
+				"error":  fmt.Sprintf("Ошибка подключения к базе данных компании: %v", err2),
+			})
+			return
+		}
+		
+		log.Printf("UpdateContractNumerator: ✅ tenantDB создан для схемы '%s'\n", company.DatabaseSchema)
 	}
 
 	// КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Фильтруем по company_id для изоляции данных
@@ -1664,14 +1693,92 @@ func GenerateContractNumber(c *gin.Context) {
 
 	c.ShouldBindJSON(&req)
 
-	var numerator models.ContractNumerator
-	if err := database.DB.First(&numerator, uint(numeratorID)).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
+	// Получаем companyID из контекста, заголовка или запроса
+	companyID := middleware.GetCompanyID(c)
+	log.Printf("GenerateContractNumber: companyID из контекста = %d\n", companyID)
+	
+	if companyID == 0 {
+		// Пробуем получить из заголовка
+		companyIDStr := c.GetHeader("X-Tenant-ID")
+		log.Printf("GenerateContractNumber: X-Tenant-ID = '%s'\n", companyIDStr)
+		
+		if companyIDStr != "" {
+			if id, err := strconv.ParseUint(companyIDStr, 10, 32); err == nil {
+				companyID = uint(id)
+				log.Printf("GenerateContractNumber: companyID из заголовка = %d\n", companyID)
+			} else {
+				log.Printf("GenerateContractNumber: ⚠️ ошибка парсинга companyID из заголовка: %v\n", err)
+			}
+		}
+		if req.CompanyID != nil {
+			companyID = *req.CompanyID
+			log.Printf("GenerateContractNumber: companyID из запроса = %d\n", companyID)
+		}
+	}
+
+	if companyID == 0 {
+		log.Printf("GenerateContractNumber: ⚠️ companyID остался 0\n")
+		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
-			"error":  "Нумератор не найден",
+			"error":  "Не удалось определить компанию",
 		})
 		return
 	}
+
+	// Получаем tenantDB из контекста или создаем его вручную
+	tenantDB := middleware.GetTenantDB(c)
+	log.Printf("GenerateContractNumber: tenantDB из контекста: %v\n", tenantDB != nil)
+	
+	if tenantDB == nil {
+		// Если tenantDB не установлен в контексте (мультитенантность отключена),
+		// создаем подключение вручную по companyID
+		log.Printf("GenerateContractNumber: создаем tenantDB вручную для companyID=%d\n", companyID)
+		
+		// Получаем информацию о компании из основной БД
+		var company models.Company
+		if err := database.DB.Raw("SELECT * FROM public.companies WHERE id = ?", companyID).Scan(&company).Error; err != nil {
+			log.Printf("GenerateContractNumber: ⚠️ ошибка поиска компании: %v\n", err)
+			// Пробуем альтернативный способ
+			if err2 := database.DB.Table("public.companies").Where("id = ?", companyID).First(&company).Error; err2 != nil {
+				log.Printf("GenerateContractNumber: ⚠️ ошибка поиска компании (альтернативный способ): %v\n", err2)
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"status": "error",
+					"error":  fmt.Sprintf("Компания не найдена (ID: %d)", companyID),
+				})
+				return
+			}
+		}
+		
+		// Создаем подключение к tenant схеме
+		var err2 error
+		tenantDB, err2 = database.ConnectToTenant(company.DatabaseSchema)
+		if err2 != nil {
+			log.Printf("GenerateContractNumber: ⚠️ ошибка подключения к tenant схеме '%s': %v\n", company.DatabaseSchema, err2)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error",
+				"error":  fmt.Sprintf("Ошибка подключения к базе данных компании: %v", err2),
+			})
+			return
+		}
+		
+		log.Printf("GenerateContractNumber: ✅ tenantDB создан для схемы '%s'\n", company.DatabaseSchema)
+	}
+
+	log.Printf("GenerateContractNumber: поиск нумератора ID=%d, companyID=%d\n", uint(numeratorID), companyID)
+	
+	// Загружаем нумератор из tenant схемы с фильтром по company_id
+	var numerator models.ContractNumerator
+	if err := tenantDB.Where("id = ? AND company_id = ?", uint(numeratorID), companyID).First(&numerator).Error; err != nil {
+		log.Printf("GenerateContractNumber: ⚠️ ошибка поиска нумератора: %v\n", err)
+		c.JSON(http.StatusNotFound, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("Нумератор не найден: %v", err),
+		})
+		return
+	}
+	
+	log.Printf("GenerateContractNumber: нумератор найден: ID=%d, Name='%s', CounterValue=%d\n", 
+		numerator.ID, numerator.Name, numerator.CounterValue)
 
 	// Используем значения по умолчанию
 	clientID := uint(0)
@@ -1679,25 +1786,45 @@ func GenerateContractNumber(c *gin.Context) {
 		clientID = *req.ClientID
 	}
 
-	companyID := numerator.CompanyID
-	if req.CompanyID != nil {
-		companyID = *req.CompanyID
-	}
-
 	contractID := uint(0)
 	if req.ContractID != nil {
 		contractID = *req.ContractID
 	}
 
+	log.Printf("GenerateContractNumber: генерация номера для нумератора ID=%d, CounterValue=%d, шаблон='%s'\n", 
+		numerator.ID, numerator.CounterValue, numerator.Template)
+
 	// Генерируем номер
 	number, err := numerator.GenerateNumber(clientID, companyID, contractID)
 	if err != nil {
+		log.Printf("GenerateContractNumber: ошибка генерации: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  "Ошибка генерации номера",
 		})
 		return
 	}
+
+	log.Printf("GenerateContractNumber: сгенерирован номер: '%s'\n", number)
+
+	// КРИТИЧЕСКИ ВАЖНО: Инкрементируем счетчик ПОСЛЕ генерации номера и сохраняем в БД
+	// Это гарантирует, что следующий номер будет с увеличенным SEQ
+	oldCounterValue := numerator.CounterValue
+	numerator.IncrementCounter()
+	
+	// Сохраняем обновленный счетчик в БД
+	// Используем UpdateColumn для более простого обновления одного поля
+	if err := tenantDB.Model(&numerator).UpdateColumn("counter_value", numerator.CounterValue).Error; err != nil {
+		log.Printf("GenerateContractNumber: ⚠️ ошибка сохранения счетчика: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("Ошибка сохранения счетчика: %v", err),
+		})
+		return
+	}
+
+	log.Printf("GenerateContractNumber: ✅ счетчик обновлен: CounterValue=%d (было %d)\n", 
+		numerator.CounterValue, oldCounterValue)
 
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
