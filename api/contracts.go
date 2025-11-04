@@ -734,10 +734,41 @@ func GetContractNumerators(c *gin.Context) {
 		}
 	} else {
 		log.Printf("GetContractNumerators: tenantDB получен из контекста, companyID = %d\n", companyID)
+		// Убеждаемся, что у нас есть companyID для фильтрации
+		if companyID == 0 {
+			// Пробуем получить из заголовка или query
+			companyIDStr := c.Query("company_id")
+			if companyIDStr == "" {
+				tenantIDStr := c.GetHeader("X-Tenant-ID")
+				if tenantIDStr != "" {
+					if parsedID, err := strconv.ParseUint(tenantIDStr, 10, 32); err == nil {
+						companyID = uint(parsedID)
+						log.Printf("GetContractNumerators: companyID из заголовка X-Tenant-ID = %d\n", companyID)
+					}
+				}
+			} else {
+				if parsedID, err := strconv.ParseUint(companyIDStr, 10, 32); err == nil {
+					companyID = uint(parsedID)
+					log.Printf("GetContractNumerators: companyID из query параметра = %d\n", companyID)
+				}
+			}
+		}
 	}
 
+	// КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Обязательно фильтруем по company_id для изоляции данных между компаниями
+	if companyID == 0 {
+		log.Printf("GetContractNumerators: ❌ ОШИБКА - companyID = 0, не можем безопасно получить нумераторы\n")
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Не удалось определить компанию для фильтрации нумераторов",
+		})
+		return
+	}
+
+	log.Printf("GetContractNumerators: получаем нумераторы ТОЛЬКО для компании ID %d\n", companyID)
 	var numerators []models.ContractNumerator
-	if err := tenantDB.Order("is_default DESC, created_at ASC").Find(&numerators).Error; err != nil {
+	// ВАЖНО: Фильтруем по company_id для изоляции данных между компаниями
+	if err := tenantDB.Where("company_id = ?", companyID).Order("is_default DESC, created_at ASC").Find(&numerators).Error; err != nil {
 		log.Printf("GetContractNumerators: ❌ ОШИБКА при получении нумераторов: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
@@ -750,6 +781,10 @@ func GetContractNumerators(c *gin.Context) {
 	if len(numerators) > 0 {
 		for i, n := range numerators {
 			log.Printf("GetContractNumerators: нумератор %d: ID=%d, Name=%s, CompanyID=%d, IsDefault=%v\n", i+1, n.ID, n.Name, n.CompanyID, n.IsDefault)
+			// Дополнительная проверка безопасности
+			if n.CompanyID != companyID {
+				log.Printf("GetContractNumerators: ⚠️ ВНИМАНИЕ! Найден нумератор с несоответствующим company_id: %d != %d\n", n.CompanyID, companyID)
+			}
 		}
 	}
 
@@ -766,6 +801,8 @@ func GetContractNumerator(c *gin.Context) {
 
 	// Получаем tenant DB (схема компании)
 	tenantDB := middleware.GetTenantDB(c)
+	companyID := middleware.GetCompanyID(c)
+
 	if tenantDB == nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
@@ -774,8 +811,34 @@ func GetContractNumerator(c *gin.Context) {
 		return
 	}
 
+	// Получаем companyID если его нет
+	if companyID == 0 {
+		companyIDStr := c.Query("company_id")
+		if companyIDStr == "" {
+			tenantIDStr := c.GetHeader("X-Tenant-ID")
+			if tenantIDStr != "" {
+				if parsedID, err := strconv.ParseUint(tenantIDStr, 10, 32); err == nil {
+					companyID = uint(parsedID)
+				}
+			}
+		} else {
+			if parsedID, err := strconv.ParseUint(companyIDStr, 10, 32); err == nil {
+				companyID = uint(parsedID)
+			}
+		}
+	}
+
+	if companyID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Не удалось определить компанию",
+		})
+		return
+	}
+
+	// КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Фильтруем по company_id для изоляции данных
 	var numerator models.ContractNumerator
-	if err := tenantDB.First(&numerator, id).Error; err != nil {
+	if err := tenantDB.Where("id = ? AND company_id = ?", id, companyID).First(&numerator).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"status": "error",
 			"error":  "Нумератор не найден",
@@ -1356,6 +1419,8 @@ func UpdateContractNumerator(c *gin.Context) {
 
 	// Получаем tenant DB (схема компании)
 	tenantDB := middleware.GetTenantDB(c)
+	companyID := middleware.GetCompanyID(c)
+
 	if tenantDB == nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
@@ -1364,8 +1429,34 @@ func UpdateContractNumerator(c *gin.Context) {
 		return
 	}
 
+	// Получаем companyID если его нет
+	if companyID == 0 {
+		companyIDStr := c.Query("company_id")
+		if companyIDStr == "" {
+			tenantIDStr := c.GetHeader("X-Tenant-ID")
+			if tenantIDStr != "" {
+				if parsedID, err := strconv.ParseUint(tenantIDStr, 10, 32); err == nil {
+					companyID = uint(parsedID)
+				}
+			}
+		} else {
+			if parsedID, err := strconv.ParseUint(companyIDStr, 10, 32); err == nil {
+				companyID = uint(parsedID)
+			}
+		}
+	}
+
+	if companyID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Не удалось определить компанию",
+		})
+		return
+	}
+
+	// КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Фильтруем по company_id для изоляции данных
 	var numerator models.ContractNumerator
-	if err := tenantDB.First(&numerator, id).Error; err != nil {
+	if err := tenantDB.Where("id = ? AND company_id = ?", id, companyID).First(&numerator).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"status": "error",
 			"error":  "Нумератор не найден",
@@ -1385,10 +1476,20 @@ func UpdateContractNumerator(c *gin.Context) {
 	// Исключаем company_id из обновления (нельзя менять принадлежность нумератора)
 	updateData.CompanyID = 0
 
-	// Если делаем нумератор по умолчанию, снимаем флаг с других
+	// Дополнительная проверка безопасности перед обновлением
+	if numerator.CompanyID != companyID {
+		log.Printf("UpdateContractNumerator: ⚠️ ВНИМАНИЕ! Попытка обновить нумератор другой компании: %d != %d\n", numerator.CompanyID, companyID)
+		c.JSON(http.StatusForbidden, gin.H{
+			"status": "error",
+			"error":  "Нумератор принадлежит другой компании",
+		})
+		return
+	}
+
+	// Если делаем нумератор по умолчанию, снимаем флаг с других (только для той же компании)
 	if updateData.IsDefault && !numerator.IsDefault {
 		tenantDB.Model(&models.ContractNumerator{}).
-			Where("is_default = ? AND id != ?", true, id).
+			Where("is_default = ? AND id != ? AND company_id = ?", true, id, companyID).
 			Update("is_default", false)
 	}
 
@@ -1502,9 +1603,10 @@ func DeleteContractNumerator(c *gin.Context) {
 		log.Printf("DeleteContractNumerator: ✅ используем tenantDB из middleware, companyID = %d\n", companyID)
 	}
 
+	// КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Фильтруем по company_id для изоляции данных
 	var numerator models.ContractNumerator
-	if err := tenantDB.First(&numerator, id).Error; err != nil {
-		log.Printf("DeleteContractNumerator: ❌ нумератор с ID %s не найден: %v\n", id, err)
+	if err := tenantDB.Where("id = ? AND company_id = ?", id, companyID).First(&numerator).Error; err != nil {
+		log.Printf("DeleteContractNumerator: ❌ нумератор с ID %s не найден для компании %d: %v\n", id, companyID, err)
 		c.JSON(http.StatusNotFound, gin.H{
 			"status": "error",
 			"error":  "Нумератор не найден",
@@ -1512,7 +1614,17 @@ func DeleteContractNumerator(c *gin.Context) {
 		return
 	}
 
-	log.Printf("DeleteContractNumerator: найден нумератор ID=%d, Name=%s, удаляем...\n", numerator.ID, numerator.Name)
+	// Дополнительная проверка безопасности
+	if numerator.CompanyID != companyID {
+		log.Printf("DeleteContractNumerator: ⚠️ ВНИМАНИЕ! Попытка удалить нумератор другой компании: %d != %d\n", numerator.CompanyID, companyID)
+		c.JSON(http.StatusForbidden, gin.H{
+			"status": "error",
+			"error":  "Нумератор принадлежит другой компании",
+		})
+		return
+	}
+
+	log.Printf("DeleteContractNumerator: найден нумератор ID=%d, Name=%s, CompanyID=%d, удаляем...\n", numerator.ID, numerator.Name, numerator.CompanyID)
 
 	if err := tenantDB.Delete(&numerator).Error; err != nil {
 		log.Printf("DeleteContractNumerator: ❌ ошибка при удалении нумератора: %v\n", err)
