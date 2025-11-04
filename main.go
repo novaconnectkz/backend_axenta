@@ -169,6 +169,8 @@ func main() {
 	r.GET("/api/test2", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "success", "message": "Test endpoint 2 is working"})
 	})
+	// ВРЕМЕННЫЙ тестовый endpoint для создания нумератора без авторизации (только для тестирования)
+	r.POST("/api/test/contract-numerators", api.CreateContractNumerator)
 	// Тестовый endpoint для создания пользователя без проверки токена
 	r.POST("/api/test-cms-users", api.CreateCmsUserWithCurrentToken)
 	// Основной endpoint для создания пользователей CMS
