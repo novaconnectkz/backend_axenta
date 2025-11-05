@@ -725,12 +725,25 @@ func main() {
 	apiGroup.POST("/dadata/bank/", api.FindBankByBIK)
 
 	// Договоры
+	// Важно: более специфичные роуты (с дополнительными параметрами) должны быть зарегистрированы ПЕРЕД общими
+	// Например: /contracts/:id/objects должен быть ПЕРЕД /contracts/:id
+	log.Println("🔧 Регистрация роутов для договоров...")
+	apiGroup.GET("/contracts/expiring", api.GetExpiringContracts)
+	
+	// Роуты для работы с объектами договора (регистрируем ПЕРЕД общими роутами)
+	apiGroup.POST("/contracts/:id/objects", api.AttachObjectsToContract)
+	log.Printf("✅ Зарегистрирован POST /api/auth/contracts/:id/objects -> AttachObjectsToContract")
+	
+	apiGroup.DELETE("/contracts/:id/objects/:object_id", api.DetachObjectFromContract)
+	log.Printf("✅ Зарегистрирован DELETE /api/auth/contracts/:id/objects/:object_id -> DetachObjectFromContract")
+	
+	// Общие роуты для договоров
 	apiGroup.GET("/contracts", api.GetContracts)
 	apiGroup.GET("/contracts/:id", api.GetContract)
 	apiGroup.POST("/contracts", api.CreateContract)
 	apiGroup.PUT("/contracts/:id", api.UpdateContract)
 	apiGroup.DELETE("/contracts/:id", api.DeleteContract)
-	apiGroup.GET("/contracts/expiring", api.GetExpiringContracts)
+	log.Println("✅ Все роуты для договоров зарегистрированы")
 	// apiGroup.GET("/contracts/:contract_id/cost", api.CalculateContractCost) // Временно отключено
 
 	// Приложения к договорам - временно отключено
@@ -740,12 +753,12 @@ func main() {
 	// apiGroup.DELETE("/contract-appendices/:id", api.DeleteContractAppendix)
 
 	// Нумераторы договоров
-	apiGroup.GET("/contract-numerators", api.GetContractNumerators)
+	apiGroup.POST("/contract-numerators/:numerator_id/generate", api.GenerateContractNumber)
 	apiGroup.GET("/contract-numerators/:id", api.GetContractNumerator)
-	apiGroup.POST("/contract-numerators", api.CreateContractNumerator)
 	apiGroup.PUT("/contract-numerators/:id", api.UpdateContractNumerator)
 	apiGroup.DELETE("/contract-numerators/:id", api.DeleteContractNumerator)
-	apiGroup.POST("/contract-numerators/:numerator_id/generate", api.GenerateContractNumber)
+	apiGroup.GET("/contract-numerators", api.GetContractNumerators)
+	apiGroup.POST("/contract-numerators", api.CreateContractNumerator)
 
 	// Тарифные планы и биллинг (уже были)
 	apiGroup.GET("/billing/plans", api.GetBillingPlans)

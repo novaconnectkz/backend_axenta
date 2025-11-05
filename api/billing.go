@@ -677,7 +677,7 @@ func CreateSubscription(c *gin.Context) {
 				// Если период разбит, следующая оплата после конца текущего периода
 				nextPayment = (*endDate).AddDate(0, 0, 1)
 			} else {
-				nextPayment = subscription.StartDate.AddDate(0, 1, 0)
+			nextPayment = subscription.StartDate.AddDate(0, 1, 0)
 			}
 		case "yearly":
 			nextPayment = subscription.StartDate.AddDate(1, 0, 0)

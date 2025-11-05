@@ -46,10 +46,10 @@ type Contract struct {
 	TotalAmount decimal.Decimal `json:"total_amount" gorm:"type:decimal(15,2)"`
 	Currency    string          `json:"currency" gorm:"default:'RUB';type:varchar(3)"`
 
-	// Страны и реквизиты
-	SellerCountryCode  string           `json:"seller_country_code" gorm:"type:varchar(2);index"`                    // Страна продавца
-	BuyerCountryCode   string           `json:"buyer_country_code" gorm:"type:varchar(2);index"`                     // Страна покупателя
-	NDSRateOverride    *decimal.Decimal `json:"nds_rate_override" gorm:"type:decimal(5,2)"`                        // Переопределение ставки НДС (NULL = использовать расчет)
+	// Страны и реквизиты (поля не используются в текущей версии БД)
+	SellerCountryCode  string           `json:"seller_country_code" gorm:"-"`                    // Страна продавца (не используется)
+	BuyerCountryCode   string           `json:"buyer_country_code" gorm:"-"`                     // Страна покупателя (не используется)
+	NDSRateOverride    *decimal.Decimal `json:"nds_rate_override" gorm:"-"`                        // Переопределение ставки НДС (не используется)
 
 	// Статус договора
 	Status   string `json:"status" gorm:"default:'draft';type:varchar(20)"` // draft, active, expired, cancelled, suspended
