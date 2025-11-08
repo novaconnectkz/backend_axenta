@@ -62,7 +62,7 @@ func GetObjects(c *gin.Context) {
 	}).Preload("Template", func(db *gorm.DB) *gorm.DB {
 		return db.Select("id, name, category") // Загружаем только нужные поля
 	}).Preload("Location", func(db *gorm.DB) *gorm.DB {
-		return db.Select("id, name, address") // Загружаем только нужные поля
+		return db.Select("id, city, region, country, timezone, latitude, longitude, is_active, notes") // Реальные поля модели
 	})
 
 	if err := query.Offset(offset).Limit(limit).Find(&objects).Error; err != nil {

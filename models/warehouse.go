@@ -1,6 +1,7 @@
 package models
 
 import (
+	"strings"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -105,6 +106,10 @@ type Location struct {
 	// Дополнительная информация
 	Notes string `json:"notes" gorm:"type:text"`
 
+	// Производные поля для клиентских приложений
+	Name    string `json:"name" gorm:"-"`
+	Address string `json:"address" gorm:"-"`
+
 	// Связи
 	Objects []Object `json:"objects,omitempty" gorm:"foreignKey:LocationID"`
 }
@@ -120,6 +125,39 @@ func (l *Location) GetFullName() string {
 		return l.City + ", " + l.Region
 	}
 	return l.City
+}
+
+// AfterFind заполняет производные поля после загрузки записи
+func (l *Location) AfterFind(tx *gorm.DB) (err error) {
+	l.populateDerivedFields()
+	return nil
+}
+
+// AfterSave заполняет производные поля после создания/обновления записи
+func (l *Location) AfterSave(tx *gorm.DB) (err error) {
+	l.populateDerivedFields()
+	return nil
+}
+
+func (l *Location) populateDerivedFields() {
+	l.Name = l.GetFullName()
+
+	addressParts := []string{}
+	if l.City != "" {
+		addressParts = append(addressParts, l.City)
+	}
+	if l.Region != "" && !strings.EqualFold(l.Region, l.City) {
+		addressParts = append(addressParts, l.Region)
+	}
+	if l.Country != "" {
+		addressParts = append(addressParts, l.Country)
+	}
+
+	if len(addressParts) > 0 {
+		l.Address = strings.Join(addressParts, ", ")
+	} else {
+		l.Address = ""
+	}
 }
 
 // Installer представляет монтажника
