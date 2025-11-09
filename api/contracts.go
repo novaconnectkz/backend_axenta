@@ -831,6 +831,28 @@ func GetExpiringContracts(c *gin.Context) {
 
 // ===== API ДЛЯ НУМЕРАТОРОВ ДОГОВОРОВ =====
 
+func ensureContractNumeratorTable(db *gorm.DB) error {
+	if db == nil {
+		return fmt.Errorf("tenant DB is nil")
+	}
+
+	migrator := db.Migrator()
+	if migrator.HasTable(&models.ContractNumerator{}) {
+		return nil
+	}
+
+	log.Printf("ensureContractNumeratorTable: таблица contract_numerators отсутствует, пытаемся создать через AutoMigrate")
+	if err := db.AutoMigrate(&models.ContractNumerator{}); err != nil {
+		if strings.Contains(err.Error(), "already exists") {
+			return nil
+		}
+		return err
+	}
+
+	log.Printf("ensureContractNumeratorTable: таблица contract_numerators успешно создана")
+	return nil
+}
+
 // GetContractNumerators получает список нумераторов для компании
 func GetContractNumerators(c *gin.Context) {
 	// Получаем tenant DB (схема компании)
@@ -953,6 +975,15 @@ func GetContractNumerators(c *gin.Context) {
 		}
 	}
 
+	if err := ensureContractNumeratorTable(tenantDB); err != nil {
+		log.Printf("GetContractNumerators: ❌ не удалось создать таблицу contract_numerators: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("Ошибка подготовки таблицы нумераторов: %v", err),
+		})
+		return
+	}
+
 	// КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Обязательно фильтруем по company_id для изоляции данных между компаниями
 	if companyID == 0 {
 		log.Printf("GetContractNumerators: ❌ ОШИБКА - companyID = 0, не можем безопасно получить нумераторы\n")
@@ -1030,6 +1061,15 @@ func GetContractNumerator(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
 			"error":  "Не удалось определить компанию",
+		})
+		return
+	}
+
+	if err := ensureContractNumeratorTable(tenantDB); err != nil {
+		log.Printf("GetContractNumerator: ❌ не удалось создать таблицу contract_numerators: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("Ошибка подготовки таблицы нумераторов: %v", err),
 		})
 		return
 	}
@@ -1360,6 +1400,15 @@ func CreateContractNumerator(c *gin.Context) {
 		}
 	}
 
+	if err := ensureContractNumeratorTable(tenantDB); err != nil {
+		log.Printf("CreateContractNumerator: ❌ не удалось создать таблицу contract_numerators: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("Ошибка подготовки таблицы нумераторов: %v", err),
+		})
+		return
+	}
+
 	// Если это нумератор по умолчанию, снимаем флаг с других
 	if numerator.IsDefault {
 		log.Printf("CreateContractNumerator: снимаем флаг is_default с других нумераторов\n")
@@ -1681,6 +1730,15 @@ func UpdateContractNumerator(c *gin.Context) {
 		log.Printf("UpdateContractNumerator: ✅ tenantDB создан для схемы '%s'\n", company.DatabaseSchema)
 	}
 
+	if err := ensureContractNumeratorTable(tenantDB); err != nil {
+		log.Printf("UpdateContractNumerator: ❌ не удалось создать таблицу contract_numerators: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("Ошибка подготовки таблицы нумераторов: %v", err),
+		})
+		return
+	}
+
 	// КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Фильтруем по company_id для изоляции данных
 	var numerator models.ContractNumerator
 	if err := tenantDB.Where("id = ? AND company_id = ?", id, companyID).First(&numerator).Error; err != nil {
@@ -1830,6 +1888,15 @@ func DeleteContractNumerator(c *gin.Context) {
 		log.Printf("DeleteContractNumerator: ✅ используем tenantDB из middleware, companyID = %d\n", companyID)
 	}
 
+	if err := ensureContractNumeratorTable(tenantDB); err != nil {
+		log.Printf("DeleteContractNumerator: ❌ не удалось создать таблицу contract_numerators: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("Ошибка подготовки таблицы нумераторов: %v", err),
+		})
+		return
+	}
+
 	// КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Фильтруем по company_id для изоляции данных
 	var numerator models.ContractNumerator
 	if err := tenantDB.Where("id = ? AND company_id = ?", id, companyID).First(&numerator).Error; err != nil {
@@ -1960,6 +2027,15 @@ func GenerateContractNumber(c *gin.Context) {
 		}
 
 		log.Printf("GenerateContractNumber: ✅ tenantDB создан для схемы '%s'\n", company.DatabaseSchema)
+	}
+
+	if err := ensureContractNumeratorTable(tenantDB); err != nil {
+		log.Printf("GenerateContractNumber: ❌ не удалось создать таблицу contract_numerators: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("Ошибка подготовки таблицы нумераторов: %v", err),
+		})
+		return
 	}
 
 	log.Printf("GenerateContractNumber: поиск нумератора ID=%d, companyID=%d\n", uint(numeratorID), companyID)

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"backend_axenta/config"
@@ -17,7 +18,11 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-var DB *gorm.DB
+var (
+	DB            *gorm.DB
+	tenantDBCache = make(map[string]*gorm.DB)
+	tenantDBMutex sync.RWMutex
+)
 
 // CreateDatabaseIfNotExists создает базу данных, если она не существует
 func CreateDatabaseIfNotExists() error {
@@ -95,9 +100,31 @@ func ConnectDatabase() error {
 	}
 
 	// Применяем настройки пула соединений
-	sqlDB.SetMaxOpenConns(cfg.Database.MaxOpenConns)
-	sqlDB.SetMaxIdleConns(cfg.Database.MaxIdleConns)
-	sqlDB.SetConnMaxLifetime(cfg.Database.ConnMaxLifetime)
+	tenantMaxOpen := cfg.Database.MaxOpenConns
+	if tenantMaxOpen <= 0 {
+		tenantMaxOpen = 5
+	} else if tenantMaxOpen > 10 {
+		tenantMaxOpen = 10
+	}
+
+	tenantMaxIdle := cfg.Database.MaxIdleConns
+	if tenantMaxIdle <= 0 {
+		tenantMaxIdle = 2
+	}
+	if tenantMaxIdle > tenantMaxOpen {
+		tenantMaxIdle = tenantMaxOpen
+	}
+
+	tenantConnLifetime := cfg.Database.ConnMaxLifetime
+	if tenantConnLifetime <= 0 {
+		tenantConnLifetime = 5 * time.Minute
+	} else if tenantConnLifetime > 30*time.Minute {
+		tenantConnLifetime = 30 * time.Minute
+	}
+
+	sqlDB.SetMaxOpenConns(tenantMaxOpen)
+	sqlDB.SetMaxIdleConns(tenantMaxIdle)
+	sqlDB.SetConnMaxLifetime(tenantConnLifetime)
 
 	log.Printf("✅ Успешно подключено к PostgreSQL (пул: %d/%d соединений)",
 		cfg.Database.MaxIdleConns, cfg.Database.MaxOpenConns)
@@ -304,6 +331,13 @@ func ConnectToTenant(databaseSchema string) (*gorm.DB, error) {
 		return DB, nil
 	}
 
+	tenantDBMutex.RLock()
+	if cachedDB, ok := tenantDBCache[databaseSchema]; ok {
+		tenantDBMutex.RUnlock()
+		return cachedDB, nil
+	}
+	tenantDBMutex.RUnlock()
+
 	// Формируем DSN для подключения к схеме компании
 	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s search_path=%s",
 		cfg.Database.Host,
@@ -322,6 +356,19 @@ func ConnectToTenant(databaseSchema string) (*gorm.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to tenant database schema '%s': %v", databaseSchema, err)
 	}
+
+	sqlDB, err := tenantDB.DB()
+	if err != nil {
+		return nil, fmt.Errorf("failed to configure tenant database schema '%s': %v", databaseSchema, err)
+	}
+
+	sqlDB.SetMaxOpenConns(cfg.Database.MaxOpenConns)
+	sqlDB.SetMaxIdleConns(cfg.Database.MaxIdleConns)
+	sqlDB.SetConnMaxLifetime(cfg.Database.ConnMaxLifetime)
+
+	tenantDBMutex.Lock()
+	tenantDBCache[databaseSchema] = tenantDB
+	tenantDBMutex.Unlock()
 
 	return tenantDB, nil
 }
