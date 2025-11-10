@@ -6,6 +6,7 @@ import (
 	"backend_axenta/services"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type LoginRequest struct {
@@ -297,6 +299,29 @@ func Login(c *gin.Context) {
 		return
 	}
 
+	if axentaUser.AccountID > 0 {
+		company, created, ensureErr := ensureCompanyExists(db, axentaUser, req.Username)
+		if ensureErr != nil {
+			logAuthOperation("company_sync_error", req.Username, "", "", map[string]interface{}{
+				"status":       "warning",
+				"error":        ensureErr.Error(),
+				"account_id":   axentaUser.AccountID,
+				"account_name": axentaUser.AccountName,
+			})
+		} else if company != nil {
+			event := "company_checked"
+			if created {
+				event = "company_created"
+			}
+			logAuthOperation(event, req.Username, "", fmt.Sprintf("%d", company.ID), map[string]interface{}{
+				"status":       "success",
+				"account_id":   axentaUser.AccountID,
+				"account_name": axentaUser.AccountName,
+				"schema":       company.DatabaseSchema,
+			})
+		}
+	}
+
 	// Создаем сервис для работы с пользователями Axenta
 	axentaUserService := services.NewAxentaUserService(db)
 
@@ -356,7 +381,19 @@ func Login(c *gin.Context) {
 	}
 
 	// Сохраняем токен пользователя
-	if err := userTokenService.SaveUserToken(user.ID, req.Username, axentaLogin.Token, c.GetHeader("User-Agent"), c.ClientIP()); err != nil {
+	accountIDUint := uint(0)
+	if axentaUser.AccountID > 0 {
+		accountIDUint = uint(axentaUser.AccountID)
+	}
+
+	if err := userTokenService.SaveUserToken(
+		user.ID,
+		req.Username,
+		accountIDUint,
+		axentaLogin.Token,
+		c.GetHeader("User-Agent"),
+		c.ClientIP(),
+	); err != nil {
 		log.Printf("⚠️ Failed to save user token: %v", err)
 		// Не прерываем процесс авторизации из-за ошибки сохранения токена
 	}
@@ -406,6 +443,95 @@ func Login(c *gin.Context) {
 			"user":  userResponse,
 		},
 	})
+}
+
+func ensureCompanyExists(db *gorm.DB, axentaUser AxentaUserResponse, username string) (*models.Company, bool, error) {
+	if db == nil {
+		return nil, false, fmt.Errorf("database connection is nil")
+	}
+	if axentaUser.AccountID <= 0 {
+		return nil, false, fmt.Errorf("account id is not provided")
+	}
+
+	schemaName := fmt.Sprintf("tenant_%d", axentaUser.AccountID)
+	companyName := axentaUser.AccountName
+	if companyName == "" {
+		companyName = fmt.Sprintf("Компания %d", axentaUser.AccountID)
+	}
+
+	var company models.Company
+	err := db.Where("id = ?", axentaUser.AccountID).First(&company).Error
+	created := false
+	needSchemaMigration := false
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		company = models.Company{
+			ID:             uint(axentaUser.AccountID),
+			Name:           companyName,
+			DatabaseSchema: schemaName,
+			AxetnaLogin:    username,
+			AxetnaPassword: "",
+			ContactEmail:   axentaUser.Email,
+			IsActive:       true,
+		}
+
+		if err := db.Create(&company).Error; err != nil {
+			return nil, false, err
+		}
+		created = true
+		needSchemaMigration = true
+	} else if err != nil {
+		return nil, false, err
+	} else {
+		updates := make(map[string]interface{})
+
+		if company.Name != companyName && companyName != "" {
+			updates["name"] = companyName
+		}
+
+		if company.DatabaseSchema == "" {
+			updates["database_schema"] = schemaName
+			company.DatabaseSchema = schemaName
+			needSchemaMigration = true
+		} else if company.DatabaseSchema != schemaName {
+			updates["database_schema"] = schemaName
+			company.DatabaseSchema = schemaName
+			needSchemaMigration = true
+		}
+
+		if company.AxetnaLogin == "" && username != "" {
+			updates["axetna_login"] = username
+		}
+
+		if company.AxetnaPassword == "" {
+			updates["axetna_password"] = ""
+		}
+
+		if company.ContactEmail == "" && axentaUser.Email != "" {
+			updates["contact_email"] = axentaUser.Email
+		}
+
+		if len(updates) > 0 {
+			if err := db.Model(&company).Updates(updates).Error; err != nil {
+				return nil, false, err
+			}
+		}
+	}
+
+	if company.DatabaseSchema == "" {
+		company.DatabaseSchema = schemaName
+		if err := db.Model(&company).Update("database_schema", schemaName).Error; err == nil {
+			needSchemaMigration = true
+		}
+	}
+
+	if needSchemaMigration {
+		if err := database.CreateTenantSchema(company.ID, company.DatabaseSchema); err != nil {
+			return &company, created, err
+		}
+	}
+
+	return &company, created, nil
 }
 
 // Создание fallback данных пользователя

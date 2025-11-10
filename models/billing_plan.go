@@ -15,11 +15,12 @@ type BillingPlan struct {
 	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
 
 	// Основные поля тарифного плана
-	// Уникальность по комбинации name + company_id (для изоляции между компаниями)
-	Name        string          `json:"name" gorm:"uniqueIndex:idx_billing_plan_company_name;not null;type:varchar(100)"`
-	Description string          `json:"description" gorm:"type:text"`
-	Price       decimal.Decimal `json:"price" gorm:"not null;type:decimal(10,2)"`
-	Currency    string          `json:"currency" gorm:"default:RUB;type:varchar(3)"`
+	// Уникальность по комбинации admin_account_id + name (для изоляции между администраторами)
+	AdminAccountID uint            `json:"admin_account_id" gorm:"not null;index;uniqueIndex:idx_billing_plan_admin_name"`
+	Name           string          `json:"name" gorm:"uniqueIndex:idx_billing_plan_admin_name;not null;type:varchar(100)"`
+	Description    string          `json:"description" gorm:"type:text"`
+	Price          decimal.Decimal `json:"price" gorm:"not null;type:decimal(10,2)"`
+	Currency       string          `json:"currency" gorm:"default:RUB;type:varchar(3)"`
 
 	// Период тарификации
 	BillingPeriod string `json:"billing_period" gorm:"default:monthly;type:varchar(20)"` // monthly, yearly, one-time
@@ -38,7 +39,7 @@ type BillingPlan struct {
 	IsPopular bool `json:"is_popular" gorm:"default:false"`
 
 	// Для управления доступом
-	CompanyID *uint `json:"company_id" gorm:"uniqueIndex:idx_billing_plan_company_name;index"` // Если тариф специфичен для компании (nullable)
+	CompanyID *uint `json:"company_id" gorm:"index"` // Если тариф специфичен для компании (nullable)
 }
 
 // TableName задает имя таблицы для модели BillingPlan
@@ -54,9 +55,10 @@ type Subscription struct {
 	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
 
 	// Связи
-	CompanyID     uint        `json:"company_id" gorm:"not null;index"`
-	BillingPlanID uint        `json:"billing_plan_id" gorm:"not null"`
-	BillingPlan   BillingPlan `json:"billing_plan" gorm:"foreignKey:BillingPlanID"`
+	AdminAccountID uint        `json:"admin_account_id" gorm:"not null;index"`
+	CompanyID      uint        `json:"company_id" gorm:"not null;index"`
+	BillingPlanID  uint        `json:"billing_plan_id" gorm:"not null"`
+	BillingPlan    BillingPlan `json:"billing_plan" gorm:"foreignKey:BillingPlanID"`
 
 	// Период подписки
 	StartDate time.Time  `json:"start_date" gorm:"not null"`

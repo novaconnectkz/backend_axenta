@@ -19,6 +19,7 @@ type UserToken struct {
 	Token     string     `json:"token" gorm:"not null;type:text"`
 	ExpiresAt *time.Time `json:"expires_at" gorm:"index"`
 	IsActive  bool       `json:"is_active" gorm:"default:true"`
+	AccountID uint       `json:"account_id" gorm:"not null;index"`
 
 	// Дополнительная информация
 	LastUsedAt *time.Time `json:"last_used_at"`

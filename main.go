@@ -60,6 +60,16 @@ func main() {
 	api.InitOneCService()
 	log.Println("✅ 1C Integration Service initialized successfully")
 
+	// Инициализируем сервис синхронизации Axenta
+	axentaSyncService := services.NewAxentaSyncService(database.DB)
+	axentaSyncScheduler := services.NewAxentaSyncScheduler(axentaSyncService)
+	if err := axentaSyncScheduler.Start(); err != nil {
+		log.Printf("⚠️ Axenta Sync Scheduler failed to start: %v", err)
+	} else {
+		services.SetAxentaSyncScheduler(axentaSyncScheduler)
+		defer axentaSyncScheduler.Stop()
+	}
+
 	// Инициализируем систему уведомлений - временно отключено
 	// cache := services.NewCacheService(database.RedisClient, log.New(log.Writer(), "CACHE: ", log.LstdFlags))
 	// notificationService := services.NewNotificationService(database.DB, cache)
@@ -428,7 +438,7 @@ func main() {
 	r.GET("/api/dashboard/layouts", api.GetDashboardLayouts)
 	r.GET("/api/dashboard/layouts/default", api.GetDefaultDashboardLayout)
 	r.GET("/api/notifications", api.GetDashboardNotificationsSimple)
-	
+
 	// Dashboard для биллинга согласно roadmap (Этап 4.2)
 	r.GET("/api/dashboard", api.GetBillingDashboard)
 
@@ -506,9 +516,8 @@ func main() {
 
 	// Включаем Axenta Cloud авторизацию для auth группы (без мультитенантности)
 	apiGroup.Use(authMiddleware.RequireAuth())
-	// Временно отключаем мультитенантность для объектов
-	// apiGroup.Use(tenantMiddleware.SetTenant())
-	log.Println("✅ Axenta Cloud authentication enabled for /api/auth endpoints (without multitenancy)")
+	apiGroup.Use(tenantMiddleware.SetTenant())
+	log.Println("✅ Axenta Cloud authentication enabled for /api/auth endpoints (with multitenancy)")
 
 	// Объекты (с аутентификацией) - проксирование к Axenta Cloud
 	log.Println("🔧 Registering Axenta Cloud proxy endpoints...")
@@ -719,7 +728,7 @@ func main() {
 	log.Println("🔧 Registering DaData API endpoints...")
 	apiGroup.POST("/dadata/organization", api.FindOrganizationByINN)
 	apiGroup.POST("/dadata/organization/", api.FindOrganizationByINN)
-	
+
 	// DaData API для поиска банков по БИК
 	apiGroup.POST("/dadata/bank", api.FindBankByBIK)
 	apiGroup.POST("/dadata/bank/", api.FindBankByBIK)
@@ -729,14 +738,14 @@ func main() {
 	// Например: /contracts/:id/objects должен быть ПЕРЕД /contracts/:id
 	log.Println("🔧 Регистрация роутов для договоров...")
 	apiGroup.GET("/contracts/expiring", api.GetExpiringContracts)
-	
+
 	// Роуты для работы с объектами договора (регистрируем ПЕРЕД общими роутами)
 	apiGroup.POST("/contracts/:id/objects", api.AttachObjectsToContract)
 	log.Printf("✅ Зарегистрирован POST /api/auth/contracts/:id/objects -> AttachObjectsToContract")
-	
+
 	apiGroup.DELETE("/contracts/:id/objects/:object_id", api.DetachObjectFromContract)
 	log.Printf("✅ Зарегистрирован DELETE /api/auth/contracts/:id/objects/:object_id -> DetachObjectFromContract")
-	
+
 	// Общие роуты для договоров
 	apiGroup.GET("/contracts", api.GetContracts)
 	apiGroup.GET("/contracts/:id", api.GetContract)
@@ -785,11 +794,11 @@ func main() {
 	apiGroup.GET("/billing/invoices/:id", api.GetInvoice)
 	apiGroup.POST("/billing/invoices/:id/payment", api.ProcessPayment)
 	apiGroup.POST("/billing/invoices/:id/cancel", api.CancelInvoice)
-	
+
 	// Эндпоинты согласно roadmap (Этап 4.4)
-	apiGroup.POST("/invoices/run", api.RunInvoicesGeneration)           // POST /api/invoices/run
-	apiGroup.POST("/invoices/:id/send", api.SendInvoice)               // POST /api/invoices/:id/send
-	apiGroup.POST("/invoices/:id/pay", api.ProcessPayment)             // POST /api/invoices/:id/pay (алиас)
+	apiGroup.POST("/invoices/run", api.RunInvoicesGeneration) // POST /api/invoices/run
+	apiGroup.POST("/invoices/:id/send", api.SendInvoice)      // POST /api/invoices/:id/send
+	apiGroup.POST("/invoices/:id/pay", api.ProcessPayment)    // POST /api/invoices/:id/pay (алиас)
 
 	// История и отчеты
 	apiGroup.GET("/billing/history", api.GetBillingHistory)

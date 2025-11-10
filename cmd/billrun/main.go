@@ -21,6 +21,7 @@ func main() {
 	period := flag.String("period", "", "Период биллинга в формате YYYY-MM (например, 2025-10)")
 	month := flag.String("month", "", "Месяц биллинга в формате YYYY-MM (алиас для period)")
 	dryRun := flag.Bool("dry-run", false, "Режим сухого прогона (не создавать счета, только показать расчеты)")
+	adminAccountID := flag.Int("admin", 0, "ID аккаунта администратора (partner account). Если не указан, используется значение --company")
 	help := flag.Bool("help", false, "Показать справку")
 
 	flag.Parse()
@@ -85,8 +86,14 @@ func main() {
 
 	log.Printf("📅 Период: %s - %s", startDate.Format("02.01.2006"), endDate.Format("02.01.2006"))
 
+	adminID := uint(*adminAccountID)
+	if adminID == 0 {
+		adminID = uint(*companyID)
+		log.Printf("ℹ️ admin_account_id не указан, используется значение company_id=%d", adminID)
+	}
+
 	// Создаем сервисы
-	billingService := services.NewBillingService()
+	billingService := services.NewBillingService(adminID)
 
 	// Если указан конкретный договор
 	if *contractID > 0 {
@@ -127,7 +134,7 @@ func processContract(billingService *services.BillingService, db *gorm.DB, contr
 	var existingInvoice models.Invoice
 	err := db.Where("contract_id = ? AND billing_period_start = ? AND billing_period_end = ? AND deleted_at IS NULL",
 		contractID, startDate, endDate).First(&existingInvoice).Error
-	
+
 	if err == nil {
 		log.Printf("⏭️ Счет за период %s уже существует: %s (статус: %s)",
 			startDate.Format("01.2006"), existingInvoice.Number, existingInvoice.Status)
@@ -189,6 +196,7 @@ func printHelp() {
 	fmt.Println("")
 	fmt.Println("Флаги:")
 	fmt.Println("  --company ID     ID компании (обязательно)")
+	fmt.Println("  --admin ID       ID аккаунта администратора (partner). Если не указан, используется --company")
 	fmt.Println("  --contract ID    ID договора (опционально, по умолчанию обрабатываются все активные)")
 	fmt.Println("  --period YYYY-MM Период биллинга (например, 2025-10)")
 	fmt.Println("  --month YYYY-MM  Алиас для --period")

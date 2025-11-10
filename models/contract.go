@@ -22,8 +22,9 @@ type Contract struct {
 	Title       string `json:"title" gorm:"type:varchar(200)"` // Необязательное поле для однотипных услуг
 	Description string `json:"description" gorm:"type:text"`
 
-	// Связь с компанией (мультитенантность)
-	CompanyID uint `json:"company_id" gorm:"not null;index"`
+	// Связь с администратором и компанией (мультитенантность)
+	AdminAccountID uint `json:"admin_account_id" gorm:"not null;index"`
+	CompanyID      uint `json:"company_id" gorm:"not null;index"`
 
 	// Клиент
 	ClientName    string `json:"client_name" gorm:"not null;type:varchar(200)"`
@@ -47,9 +48,9 @@ type Contract struct {
 	Currency    string          `json:"currency" gorm:"default:'RUB';type:varchar(3)"`
 
 	// Страны и реквизиты (поля не используются в текущей версии БД)
-	SellerCountryCode  string           `json:"seller_country_code" gorm:"-"`                    // Страна продавца (не используется)
-	BuyerCountryCode   string           `json:"buyer_country_code" gorm:"-"`                     // Страна покупателя (не используется)
-	NDSRateOverride    *decimal.Decimal `json:"nds_rate_override" gorm:"-"`                        // Переопределение ставки НДС (не используется)
+	SellerCountryCode string           `json:"seller_country_code" gorm:"-"` // Страна продавца (не используется)
+	BuyerCountryCode  string           `json:"buyer_country_code" gorm:"-"`  // Страна покупателя (не используется)
+	NDSRateOverride   *decimal.Decimal `json:"nds_rate_override" gorm:"-"`   // Переопределение ставки НДС (не используется)
 
 	// Статус договора
 	Status   string `json:"status" gorm:"default:'draft';type:varchar(20)"` // draft, active, expired, cancelled, suspended
@@ -198,23 +199,24 @@ type ContractNumerator struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
 
-	// Связь с компанией
-	CompanyID uint `json:"company_id" gorm:"not null;index"`
+	// Связь с администратором и компанией
+	AdminAccountID uint `json:"admin_account_id" gorm:"not null;index"`
+	CompanyID      uint `json:"company_id" gorm:"not null;index"`
 
 	// Основные поля нумератора
-	Name        string `json:"name" gorm:"not null;type:varchar(100)"`         // Название нумератора
-	Prefix      string `json:"prefix" gorm:"not null;type:varchar(10)"`        // Префикс (например "AX")
-	Template    string `json:"template" gorm:"not null;type:varchar(200)"`     // Шаблон номера (например "{PREFIX}-{DAY}{MONTH}{YEAR}/{CLIENT_ID}")
-	Description string `json:"description" gorm:"type:text"`                  // Описание нумератора
+	Name        string `json:"name" gorm:"not null;type:varchar(100)"`     // Название нумератора
+	Prefix      string `json:"prefix" gorm:"not null;type:varchar(10)"`    // Префикс (например "AX")
+	Template    string `json:"template" gorm:"not null;type:varchar(200)"` // Шаблон номера (например "{PREFIX}-{DAY}{MONTH}{YEAR}/{CLIENT_ID}")
+	Description string `json:"description" gorm:"type:text"`               // Описание нумератора
 
 	// Счетчик для последовательных номеров
-	CounterValue int `json:"counter_value" gorm:"default:0"`                   // Текущее значение счетчика
+	CounterValue int `json:"counter_value" gorm:"default:0"` // Текущее значение счетчика
 
 	// Настройки
-	IsDefault   bool `json:"is_default" gorm:"default:false"`                 // Нумератор по умолчанию
-	IsActive    bool `json:"is_active" gorm:"default:true"`                   // Активен ли нумератор
-	AutoReset   bool `json:"auto_reset" gorm:"default:false"`                 // Автоматически сбрасывать счетчик (например, в новом году)
-	ResetPeriod string `json:"reset_period" gorm:"type:varchar(20)"`          // Период сброса: yearly, monthly, never
+	IsDefault   bool   `json:"is_default" gorm:"default:false"`      // Нумератор по умолчанию
+	IsActive    bool   `json:"is_active" gorm:"default:true"`        // Активен ли нумератор
+	AutoReset   bool   `json:"auto_reset" gorm:"default:false"`      // Автоматически сбрасывать счетчик (например, в новом году)
+	ResetPeriod string `json:"reset_period" gorm:"type:varchar(20)"` // Период сброса: yearly, monthly, never
 
 	// Дополнительные поля
 	Notes string `json:"notes" gorm:"type:text"`
@@ -234,7 +236,7 @@ func (cn *ContractNumerator) GenerateNumber(clientID uint, companyID uint, contr
 
 	// Парсим шаблон и заменяем плейсхолдеры
 	result := cn.Template
-	
+
 	// Заменяем доступные плейсхолдеры
 	// SEQ начинается с 001 (3 цифры с ведущими нулями)
 	// Используем CounterValue + 1, чтобы первый номер был 001, а не 000
@@ -242,24 +244,24 @@ func (cn *ContractNumerator) GenerateNumber(clientID uint, companyID uint, contr
 	if seqValue < 1 {
 		seqValue = 1 // Гарантируем, что первый номер будет 001
 	}
-	
+
 	// Генерируем случайное число от 0 до 99 (2 цифры)
 	randomValue := rand.Intn(100)
-	
+
 	replacements := map[string]string{
-		"{PREFIX}":      cn.Prefix,
-		"{SEQ}":         fmt.Sprintf("%03d", seqValue),       // 3 цифры: 001, 002, 003...
-		"{DAY}":         fmt.Sprintf("%02d", day),
-		"{MONTH}":       fmt.Sprintf("%02d", int(month)),
-		"{YEAR}":        fmt.Sprintf("%d", year),
-		"{YEAR_SHORT}":  fmt.Sprintf("%02d", year%100),      // 2 цифры: 24, 25...
-		"{RANDOM}":      fmt.Sprintf("%02d", randomValue),   // 2 цифры: 00, 01, 02...99
+		"{PREFIX}":     cn.Prefix,
+		"{SEQ}":        fmt.Sprintf("%03d", seqValue), // 3 цифры: 001, 002, 003...
+		"{DAY}":        fmt.Sprintf("%02d", day),
+		"{MONTH}":      fmt.Sprintf("%02d", int(month)),
+		"{YEAR}":       fmt.Sprintf("%d", year),
+		"{YEAR_SHORT}": fmt.Sprintf("%02d", year%100),    // 2 цифры: 24, 25...
+		"{RANDOM}":     fmt.Sprintf("%02d", randomValue), // 2 цифры: 00, 01, 02...99
 		// {ID}, {COMPANY_ID}, {CLIENT_ID} удалены из нумератора
 	}
 
-	log.Printf("GenerateNumber: шаблон='%s', CounterValue=%d, seqValue=%d, randomValue=%d", 
+	log.Printf("GenerateNumber: шаблон='%s', CounterValue=%d, seqValue=%d, randomValue=%d",
 		cn.Template, cn.CounterValue, seqValue, randomValue)
-	
+
 	for placeholder, value := range replacements {
 		oldResult := result
 		result = replaceAll(result, placeholder, value)

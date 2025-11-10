@@ -17,7 +17,7 @@ func NewUserTokenService(db *gorm.DB) *UserTokenService {
 }
 
 // SaveUserToken сохраняет токен пользователя
-func (s *UserTokenService) SaveUserToken(userID uint, username, token, userAgent, ipAddress string) error {
+func (s *UserTokenService) SaveUserToken(userID uint, username string, accountID uint, token, userAgent, ipAddress string) error {
 	// Сначала деактивируем все существующие токены для этого пользователя
 	if err := s.db.Model(&models.UserToken{}).
 		Where("user_id = ? AND is_active = ?", userID, true).
@@ -29,6 +29,7 @@ func (s *UserTokenService) SaveUserToken(userID uint, username, token, userAgent
 	userToken := &models.UserToken{
 		UserID:     userID,
 		Username:   username,
+		AccountID:  accountID,
 		Token:      token,
 		IsActive:   true,
 		UserAgent:  userAgent,

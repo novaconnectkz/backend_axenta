@@ -148,6 +148,18 @@ func GetAllMigrations() []MigrationInfo {
 			IsGlobal:    true,
 		},
 		{
+			TableName:   "axenta_account_snapshots",
+			Model:       &models.AxentaAccountSnapshot{},
+			Description: "Снимки учетных записей Axenta",
+			IsGlobal:    true,
+		},
+		{
+			TableName:   "axenta_object_snapshots",
+			Model:       &models.AxentaObjectSnapshot{},
+			Description: "Снимки объектов Axenta",
+			IsGlobal:    true,
+		},
+		{
 			TableName:   "invoice_headers",
 			Model:       &models.InvoiceHeader{},
 			Description: "Заголовки счетов (advanced billing)",
@@ -744,17 +756,16 @@ func CreateTenantSchema(companyID uint, schemaName string) error {
 		return fmt.Errorf("ошибка создания схемы %s: %v", schemaName, err)
 	}
 
-	// Переключаемся на новую схему
-	err = DB.Exec(fmt.Sprintf("SET search_path TO %s", schemaName)).Error
+	tenantDB, err := ConnectToTenant(schemaName)
 	if err != nil {
-		return fmt.Errorf("ошибка переключения на схему %s: %v", schemaName, err)
+		return fmt.Errorf("ошибка подключения к схеме %s: %v", schemaName, err)
 	}
 
 	// Выполняем миграции только для тенантных таблиц
 	migrations := GetAllMigrations()
 	for _, migration := range migrations {
 		if !migration.IsGlobal {
-			result := RunMigration(DB, migration)
+			result := RunMigration(tenantDB, migration)
 			if result.Error != nil {
 				log.Printf("❌ Ошибка создания таблицы %s в схеме %s: %v", migration.TableName, schemaName, result.Error)
 				// Продолжаем создание других таблиц
@@ -795,6 +806,8 @@ func CreateMissingGlobalTables() error {
 		&models.InvoiceItem{},
 		&models.Invoice{},
 		&models.BillingHistory{},
+		&models.AxentaAccountSnapshot{},
+		&models.AxentaObjectSnapshot{},
 	}
 
 	for _, model := range globalModels {
@@ -820,6 +833,11 @@ func CreateMissingGlobalTables() error {
 	}
 
 	log.Println("✅ Попытка создания недостающих глобальных таблиц завершена")
+
+	if err := ensureBillingSchemaIntegrity(); err != nil {
+		log.Printf("⚠️ Ошибка проверки структуры таблиц биллинга: %v", err)
+	}
+
 	return nil
 }
 
@@ -841,6 +859,7 @@ func createInvoiceTablesViaSQL() error {
 			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 			deleted_at TIMESTAMP WITH TIME ZONE,
+			admin_account_id BIGINT NOT NULL,
 			number VARCHAR(50) NOT NULL,
 			title VARCHAR(200) NOT NULL,
 			description TEXT,
@@ -863,6 +882,7 @@ func createInvoiceTablesViaSQL() error {
 			external_id VARCHAR(100)
 		);
 		CREATE UNIQUE INDEX IF NOT EXISTS invoices_number_key ON invoices(number) WHERE deleted_at IS NULL;
+		CREATE INDEX IF NOT EXISTS invoices_admin_account_id_idx ON invoices(admin_account_id);
 		CREATE INDEX IF NOT EXISTS invoices_company_id_idx ON invoices(company_id);
 		CREATE INDEX IF NOT EXISTS invoices_contract_id_idx ON invoices(contract_id);
 		CREATE INDEX IF NOT EXISTS invoices_deleted_at_idx ON invoices(deleted_at);
@@ -911,6 +931,7 @@ func createInvoiceTablesViaSQL() error {
 			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 			deleted_at TIMESTAMP WITH TIME ZONE,
+			admin_account_id BIGINT NOT NULL,
 			company_id BIGINT NOT NULL,
 			invoice_id BIGINT,
 			contract_id BIGINT,
@@ -923,6 +944,7 @@ func createInvoiceTablesViaSQL() error {
 			metadata JSONB,
 			status VARCHAR(20) DEFAULT 'completed'
 		);
+		CREATE INDEX IF NOT EXISTS billing_history_admin_account_id_idx ON billing_history(admin_account_id);
 		CREATE INDEX IF NOT EXISTS billing_history_company_id_idx ON billing_history(company_id);
 		CREATE INDEX IF NOT EXISTS billing_history_invoice_id_idx ON billing_history(invoice_id);
 		CREATE INDEX IF NOT EXISTS billing_history_contract_id_idx ON billing_history(contract_id);
@@ -936,4 +958,132 @@ func createInvoiceTablesViaSQL() error {
 	log.Println("✅ Таблица billing_history создана")
 
 	return nil
+}
+
+func ensureBillingSchemaIntegrity() error {
+	var issues []string
+
+	columnChecks := []struct {
+		table          string
+		column         string
+		definition     string
+		requireNotNull bool
+	}{
+		{"billing_plans", "admin_account_id", "BIGINT", false},
+		{"billing_plans", "company_id", "BIGINT", false},
+		{"subscriptions", "admin_account_id", "BIGINT", false},
+		{"subscriptions", "company_id", "BIGINT", false},
+		{"invoices", "admin_account_id", "BIGINT", true},
+		{"billing_history", "admin_account_id", "BIGINT", true},
+		{"billing_settings", "admin_account_id", "BIGINT", true},
+		{"billing_settings", "company_id", "BIGINT", true},
+	}
+
+	for _, check := range columnChecks {
+		if err := ensureColumnExists(check.table, check.column, check.definition); err != nil {
+			issues = append(issues, fmt.Sprintf("таблица %s: %v", check.table, err))
+			continue
+		}
+		if check.requireNotNull {
+			if err := ensureNotNullIfPossible(check.table, check.column); err != nil {
+				issues = append(issues, fmt.Sprintf("таблица %s: %v", check.table, err))
+			}
+		}
+	}
+
+	if err := dropIndexIfExists("idx_billing_settings_admin_company"); err != nil {
+		issues = append(issues, fmt.Sprintf("индекс idx_billing_settings_admin_company: %v", err))
+	}
+
+	indexChecks := []struct {
+		name       string
+		table      string
+		definition string
+		unique     bool
+	}{
+		{"idx_billing_plan_admin_name", "billing_plans", "(admin_account_id, name)", true},
+		{"idx_subscriptions_admin_company", "subscriptions", "(admin_account_id, company_id)", false},
+		{"billing_settings_company_id_idx", "billing_settings", "(company_id)", false},
+		{"billing_settings_admin_account_id_idx", "billing_settings", "(admin_account_id)", false},
+		{"invoices_admin_account_id_idx", "invoices", "(admin_account_id)", false},
+		{"billing_history_admin_account_id_idx", "billing_history", "(admin_account_id)", false},
+	}
+
+	for _, check := range indexChecks {
+		if err := ensureIndexExists(check.name, check.table, check.definition, check.unique); err != nil {
+			issues = append(issues, fmt.Sprintf("индекс %s: %v", check.name, err))
+		}
+	}
+
+	if len(issues) > 0 {
+		return fmt.Errorf(strings.Join(issues, "; "))
+	}
+
+	return nil
+}
+
+func ensureColumnExists(table, column, dataType string) error {
+	query := fmt.Sprintf(
+		"ALTER TABLE IF EXISTS public.%s ADD COLUMN IF NOT EXISTS %s %s",
+		table,
+		column,
+		dataType,
+	)
+	return DB.Exec(query).Error
+}
+
+func ensureNotNullIfPossible(table, column string) error {
+	var total int64
+	if err := DB.Raw(
+		fmt.Sprintf("SELECT COUNT(*) FROM public.%s", table),
+	).Scan(&total).Error; err != nil {
+		return fmt.Errorf("не удалось подсчитать строки: %w", err)
+	}
+
+	if total == 0 {
+		if err := DB.Exec(
+			fmt.Sprintf("ALTER TABLE public.%s ALTER COLUMN %s SET NOT NULL", table, column),
+		).Error; err != nil {
+			return fmt.Errorf("не удалось установить NOT NULL: %w", err)
+		}
+		return nil
+	}
+
+	var nulls int64
+	if err := DB.Raw(
+		fmt.Sprintf("SELECT COUNT(*) FROM public.%s WHERE %s IS NULL", table, column),
+	).Scan(&nulls).Error; err != nil {
+		return fmt.Errorf("не удалось подсчитать NULL значения: %w", err)
+	}
+
+	if nulls == 0 {
+		if err := DB.Exec(
+			fmt.Sprintf("ALTER TABLE public.%s ALTER COLUMN %s SET NOT NULL", table, column),
+		).Error; err != nil {
+			return fmt.Errorf("не удалось установить NOT NULL: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func ensureIndexExists(name, table, definition string, unique bool) error {
+	indexType := "INDEX"
+	if unique {
+		indexType = "UNIQUE INDEX"
+	}
+
+	query := fmt.Sprintf(
+		"CREATE %s IF NOT EXISTS %s ON public.%s %s",
+		indexType,
+		name,
+		table,
+		definition,
+	)
+
+	return DB.Exec(query).Error
+}
+
+func dropIndexIfExists(name string) error {
+	return DB.Exec(fmt.Sprintf("DROP INDEX IF EXISTS %s", name)).Error
 }

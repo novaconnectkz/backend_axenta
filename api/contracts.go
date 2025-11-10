@@ -16,6 +16,7 @@ import (
 	"backend_axenta/database"
 	"backend_axenta/middleware"
 	"backend_axenta/models"
+	"backend_axenta/services"
 
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
@@ -24,6 +25,15 @@ import (
 
 // GetContracts получает список всех договоров
 func GetContracts(c *gin.Context) {
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
 	// Проверяем demo-режим
 	if isDemoMode(c) {
 		demoContracts := []models.Contract{
@@ -62,7 +72,7 @@ func GetContracts(c *gin.Context) {
 
 	// Базовый запрос для фильтрации (без Preload для подсчета)
 	// Используем tenant DB, так как договоры находятся в tenant схеме
-	baseQuery := tenantDB.Model(&models.Contract{})
+	baseQuery := tenantDB.Model(&models.Contract{}).Where("admin_account_id = ?", adminAccountID)
 
 	// Фильтрация по статусу
 	if status := c.Query("status"); status != "" {
@@ -149,7 +159,10 @@ func GetContracts(c *gin.Context) {
 	for i := range contracts {
 		if contracts[i].TariffPlanID > 0 {
 			var billingPlan models.BillingPlan
-			if err := publicDB.Select("id, name, price, currency, billing_period").First(&billingPlan, contracts[i].TariffPlanID).Error; err == nil {
+			if err := publicDB.
+				Select("id, name, price, currency, billing_period").
+				Where("id = ? AND admin_account_id = ?", contracts[i].TariffPlanID, adminAccountID).
+				First(&billingPlan).Error; err == nil {
 				// TariffPlan в модели Contract - это BillingPlan, просто присваиваем
 				contracts[i].TariffPlan = billingPlan
 			} else {
@@ -172,15 +185,63 @@ func GetContracts(c *gin.Context) {
 
 // GetContract получает конкретный договор по ID
 func GetContract(c *gin.Context) {
-	id := c.Param("id")
-
-	var contract models.Contract
-	if err := database.DB.Preload("TariffPlan").Preload("Appendices").Preload("Objects").First(&contract, id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
 			"status": "error",
-			"error":  "Договор не найден",
+			"error":  err.Error(),
 		})
 		return
+	}
+
+	idStr := c.Param("id")
+	contractID, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Неверный формат ID договора",
+		})
+		return
+	}
+
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB == nil {
+		log.Printf("⚠️ Не удалось получить tenant DB из контекста, используем основную БД")
+		tenantDB = database.DB
+	}
+
+	var contract models.Contract
+	if err := tenantDB.
+		Preload("Appendices").
+		Preload("Objects").
+		Where("id = ? AND admin_account_id = ?", uint(contractID), adminAccountID).
+		First(&contract).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{
+				"status": "error",
+				"error":  "Договор не найден",
+			})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error",
+				"error":  "Ошибка при получении договора",
+			})
+		}
+		return
+	}
+
+	if contract.TariffPlanID > 0 {
+		publicDB := database.DB.Session(&gorm.Session{})
+		if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
+			log.Printf("⚠️ Не удалось переключиться на public: %v", err)
+		} else {
+			var billingPlan models.BillingPlan
+			if err := publicDB.
+				Where("id = ? AND admin_account_id = ?", contract.TariffPlanID, adminAccountID).
+				First(&billingPlan).Error; err == nil {
+				contract.TariffPlan = billingPlan
+			}
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -196,6 +257,7 @@ type CreateContractRequestRaw struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
 	CompanyID   uint   `json:"company_id"`
+	ObjectIDs   []uint `json:"object_ids"`
 
 	// Клиент
 	ClientName    string `json:"client_name"`
@@ -222,11 +284,22 @@ type CreateContractRequestRaw struct {
 // CreateContractRequest представляет запрос на создание договора
 type CreateContractRequest struct {
 	models.Contract
-	AccountID *uint `json:"account_id"` // ID учетной записи Axenta для автоматической привязки объектов
+	AccountID *uint  `json:"account_id"` // ID учетной записи Axenta для автоматической привязки объектов
+	ObjectIDs []uint `json:"object_ids"`
 }
 
 // CreateContract создает новый договор
 func CreateContract(c *gin.Context) {
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		log.Printf("CreateContract: не удалось определить admin_account_id: %v", err)
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
 	// Сначала парсим в структуру с датами как строками
 	var rawRequest CreateContractRequestRaw
 	if err := c.ShouldBindJSON(&rawRequest); err != nil {
@@ -240,7 +313,6 @@ func CreateContract(c *gin.Context) {
 
 	// Парсим даты из строк
 	var startDate, endDate time.Time
-	var err error
 
 	if rawRequest.StartDateStr != "" {
 		startDate, err = time.Parse(time.RFC3339, rawRequest.StartDateStr)
@@ -279,26 +351,28 @@ func CreateContract(c *gin.Context) {
 	// Создаем структуру Contract из rawRequest
 	// Поля SellerCountryCode, BuyerCountryCode, NDSRateOverride помечены gorm:"-" и будут автоматически игнорироваться
 	contract := models.Contract{
-		Number:        rawRequest.Number,
-		Title:         rawRequest.Title,
-		Description:   rawRequest.Description,
-		CompanyID:     rawRequest.CompanyID,
-		ClientName:    rawRequest.ClientName,
-		ClientINN:     rawRequest.ClientINN,
-		ClientKPP:     rawRequest.ClientKPP,
-		ClientEmail:   rawRequest.ClientEmail,
-		ClientPhone:   rawRequest.ClientPhone,
-		ClientAddress: rawRequest.ClientAddress,
-		StartDate:     startDate,
-		EndDate:       endDate,
-		TariffPlanID:  rawRequest.TariffPlanID,
-		Status:        rawRequest.Status,
-		Notes:         rawRequest.Notes,
+		Number:         rawRequest.Number,
+		Title:          rawRequest.Title,
+		Description:    rawRequest.Description,
+		CompanyID:      rawRequest.CompanyID,
+		ClientName:     rawRequest.ClientName,
+		ClientINN:      rawRequest.ClientINN,
+		ClientKPP:      rawRequest.ClientKPP,
+		ClientEmail:    rawRequest.ClientEmail,
+		ClientPhone:    rawRequest.ClientPhone,
+		ClientAddress:  rawRequest.ClientAddress,
+		StartDate:      startDate,
+		EndDate:        endDate,
+		TariffPlanID:   rawRequest.TariffPlanID,
+		Status:         rawRequest.Status,
+		Notes:          rawRequest.Notes,
+		AdminAccountID: adminAccountID,
 	}
 
 	request := CreateContractRequest{
 		Contract:  contract,
 		AccountID: rawRequest.AccountID,
+		ObjectIDs: rawRequest.ObjectIDs,
 	}
 
 	// Логируем полученные данные
@@ -360,9 +434,10 @@ func CreateContract(c *gin.Context) {
 	}
 
 	// Проверяем существование тарифного плана
-	log.Printf("🔍 Поиск тарифного плана с ID=%d", contract.TariffPlanID)
+	log.Printf("🔍 Поиск тарифного плана с ID=%d для admin_account_id=%d", contract.TariffPlanID, adminAccountID)
 	var tariffPlan models.BillingPlan
-	if err := database.DB.First(&tariffPlan, contract.TariffPlanID).Error; err != nil {
+	if err := database.DB.Where("id = ? AND admin_account_id = ?", contract.TariffPlanID, adminAccountID).
+		First(&tariffPlan).Error; err != nil {
 		log.Printf("❌ Тарифный план не найден: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
@@ -461,35 +536,70 @@ func CreateContract(c *gin.Context) {
 
 	log.Printf("✅ Договор успешно создан с ID=%d", contract.ID)
 
-	// Если указан account_id, привязываем объекты этой учетной записи к договору
+	// Привязываем объекты только выбранной компании
+	targetCompanyID := contract.CompanyID
+	selectedObjectIDs := request.ObjectIDs
+
 	if request.AccountID != nil && *request.AccountID > 0 {
-		accountID := *request.AccountID
-
-		// Получаем подключение к БД текущей компании для работы с объектами
-		tenantDB := middleware.GetTenantDB(c)
-		if tenantDB == nil {
-			// Если нет tenantDB, используем обычную БД
-			tenantDB = database.DB
+		if *request.AccountID != targetCompanyID {
+			log.Printf("⚠️ AccountID %d не совпадает с CompanyID договора %d, возвращаем ошибку", *request.AccountID, targetCompanyID)
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error",
+				"error":  "account_id не соответствует компании договора",
+			})
+			return
 		}
+	}
 
-		// Находим все объекты, которые принадлежат этой учетной записи (CompanyID = account_id)
-		var objectsToAttach []models.Object
-		if err := tenantDB.Where("company_id = ?", accountID).
-			Find(&objectsToAttach).Error; err == nil && len(objectsToAttach) > 0 {
-			// Привязываем объекты к договору
-			if err := tenantDB.Model(&models.Object{}).
-				Where("company_id = ?", accountID).
-				Update("contract_id", contract.ID).Error; err != nil {
-				// Логируем ошибку, но не прерываем создание договора
-				log.Printf("⚠️ Ошибка привязки объектов к договору %d: %v", contract.ID, err)
-			} else {
-				log.Printf("✅ Привязано %d объектов к договору %d", len(objectsToAttach), contract.ID)
+	attachedCount := int64(0)
+	if len(selectedObjectIDs) > 0 {
+		log.Printf("🔗 Привязываем выбранные объекты %v к договору %d", selectedObjectIDs, contract.ID)
+		res := tenantDB.Model(&models.Object{}).
+			Where("company_id = ?", targetCompanyID).
+			Where("id IN ?", selectedObjectIDs).
+			Update("contract_id", contract.ID)
+		if res.Error != nil {
+			log.Printf("⚠️ Ошибка привязки выбранных объектов к договору %d: %v", contract.ID, res.Error)
+		} else {
+			attachedCount = res.RowsAffected
+			if attachedCount != int64(len(selectedObjectIDs)) {
+				log.Printf("⚠️ Не все объекты привязаны: ожидалось %d, обновлено %d", len(selectedObjectIDs), attachedCount)
+			}
+		}
+	} else {
+		log.Printf("ℹ️ Список object_ids пуст, привязываем все объекты компании %d", targetCompanyID)
+		res := tenantDB.Model(&models.Object{}).
+			Where("company_id = ?", targetCompanyID).
+			Update("contract_id", contract.ID)
+		if res.Error != nil {
+			log.Printf("⚠️ Ошибка массовой привязки объектов к договору %d: %v", contract.ID, res.Error)
+		} else {
+			attachedCount = res.RowsAffected
+		}
+	}
+
+	log.Printf("📊 Итог привязки объектов к договору %d: обновлено %d записей", contract.ID, attachedCount)
+
+	// Загружаем связанные данные для ответа
+	if err := tenantDB.Preload("Objects").First(&contract, contract.ID).Error; err != nil {
+		log.Printf("⚠️ Не удалось загрузить объекты договора %d: %v", contract.ID, err)
+	}
+
+	if contract.TariffPlanID > 0 {
+		publicDB := database.DB.Session(&gorm.Session{})
+		if err := publicDB.Exec("SET search_path TO public").Error; err == nil {
+			var billingPlan models.BillingPlan
+			if err := publicDB.
+				Where("id = ? AND admin_account_id = ?", contract.TariffPlanID, adminAccountID).
+				First(&billingPlan).Error; err == nil {
+				contract.TariffPlan = billingPlan
 			}
 		}
 	}
 
-	// Загружаем связанные данные для ответа
-	database.DB.Preload("TariffPlan").Preload("Objects").First(&contract, contract.ID)
+	if scheduler := services.GetAxentaSyncScheduler(); scheduler != nil {
+		scheduler.SyncAdminAsync(adminAccountID)
+	}
 
 	c.JSON(http.StatusCreated, gin.H{
 		"status": "success",
@@ -499,10 +609,25 @@ func CreateContract(c *gin.Context) {
 
 // UpdateContract обновляет существующий договор
 func UpdateContract(c *gin.Context) {
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
 	id := c.Param("id")
 
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB == nil {
+		log.Printf("⚠️ Не удалось получить tenant DB из контекста, используем основную БД")
+		tenantDB = database.DB
+	}
+
 	var contract models.Contract
-	if err := database.DB.First(&contract, id).Error; err != nil {
+	if err := tenantDB.Where("id = ? AND admin_account_id = ?", id, adminAccountID).First(&contract).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"status": "error",
 			"error":  "Договор не найден",
@@ -522,7 +647,7 @@ func UpdateContract(c *gin.Context) {
 	// Проверяем тарифный план если он изменился
 	if updateData.TariffPlanID != 0 && updateData.TariffPlanID != contract.TariffPlanID {
 		var tariffPlan models.BillingPlan
-		if err := database.DB.First(&tariffPlan, updateData.TariffPlanID).Error; err != nil {
+		if err := database.DB.Where("id = ? AND admin_account_id = ?", updateData.TariffPlanID, adminAccountID).First(&tariffPlan).Error; err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "error",
 				"error":  "Тарифный план не найден",
@@ -531,7 +656,8 @@ func UpdateContract(c *gin.Context) {
 		}
 	}
 
-	if err := database.DB.Model(&contract).Updates(updateData).Error; err != nil {
+	updateData.AdminAccountID = 0
+	if err := tenantDB.Model(&contract).Updates(updateData).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  "Ошибка при обновлении договора",
@@ -540,7 +666,21 @@ func UpdateContract(c *gin.Context) {
 	}
 
 	// Загружаем обновленные данные
-	database.DB.Preload("TariffPlan").Preload("Appendices").Preload("Objects").First(&contract, contract.ID)
+	if err := tenantDB.Preload("Appendices").Preload("Objects").First(&contract, contract.ID).Error; err != nil {
+		log.Printf("⚠️ Не удалось загрузить обновленные данные договора %d: %v", contract.ID, err)
+	}
+
+	if contract.TariffPlanID > 0 {
+		publicDB := database.DB.Session(&gorm.Session{})
+		if err := publicDB.Exec("SET search_path TO public").Error; err == nil {
+			var billingPlan models.BillingPlan
+			if err := publicDB.
+				Where("id = ? AND admin_account_id = ?", contract.TariffPlanID, adminAccountID).
+				First(&billingPlan).Error; err == nil {
+				contract.TariffPlan = billingPlan
+			}
+		}
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
@@ -550,6 +690,15 @@ func UpdateContract(c *gin.Context) {
 
 // DeleteContract удаляет договор
 func DeleteContract(c *gin.Context) {
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
 	id := c.Param("id")
 
 	// Получаем tenant DB для работы с договорами и объектами
@@ -560,7 +709,7 @@ func DeleteContract(c *gin.Context) {
 	}
 
 	var contract models.Contract
-	if err := tenantDB.First(&contract, id).Error; err != nil {
+	if err := tenantDB.Where("id = ? AND admin_account_id = ?", id, adminAccountID).First(&contract).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"status": "error",
 			"error":  "Договор не найден",

@@ -352,16 +352,14 @@ func (tm *TenantMiddleware) SwitchToTenantSchema(schemaName string) *gorm.DB {
 
 // switchToTenantSchema переключается на схему БД конкретной компании
 func (tm *TenantMiddleware) switchToTenantSchema(schemaName string) *gorm.DB {
-	// Клонируем подключение к БД
-	tenantDB := database.DB.Session(&gorm.Session{})
-
-	// Переключаемся на схему компании
-	if err := tenantDB.Exec(fmt.Sprintf("SET search_path TO %s", schemaName)).Error; err != nil {
-		fmt.Printf("Ошибка переключения на схему %s: %v\n", schemaName, err)
+	tenantDB, err := database.ConnectToTenant(schemaName)
+	if err != nil {
+		fmt.Printf("Ошибка подключения к схеме %s: %v\n", schemaName, err)
 		return nil
 	}
 
-	return tenantDB
+	// Возвращаем новый session, чтобы операции не влияли на кэш gorm
+	return tenantDB.Session(&gorm.Session{})
 }
 
 // CreateTenantSchema создает новую схему БД для компании (публичный метод для тестов)
@@ -393,7 +391,7 @@ func (tm *TenantMiddleware) createTenantSchema(schemaName string) error {
 // runTenantMigrations выполняет миграции для схемы компании
 func (tm *TenantMiddleware) runTenantMigrations(tenantDB *gorm.DB) error {
 	// Список моделей для миграции в схеме компании
-	models := []interface{}{
+	tenantModels := []interface{}{
 		// Пользователи и роли
 		&models.Permission{},
 		&models.Role{},
@@ -425,10 +423,8 @@ func (tm *TenantMiddleware) runTenantMigrations(tenantDB *gorm.DB) error {
 		&models.Subscription{},
 	}
 
-	for _, model := range models {
-		if err := tenantDB.AutoMigrate(model); err != nil {
-			return fmt.Errorf("ошибка миграции модели %T: %v", model, err)
-		}
+	if err := tenantDB.AutoMigrate(tenantModels...); err != nil {
+		return fmt.Errorf("ошибка миграции моделей tenant схемы: %w", err)
 	}
 
 	// Создаем роли по умолчанию для Axenta пользователей в новой tenant схеме
@@ -475,7 +471,7 @@ func (tm *TenantMiddleware) createDefaultRoles(tenantDB *gorm.DB) error {
 	for _, role := range defaultRoles {
 		var existingRole models.Role
 		err := tenantDB.Where("name = ?", role.Name).First(&existingRole).Error
-		
+
 		if err == gorm.ErrRecordNotFound {
 			if err := tenantDB.Create(&role).Error; err != nil {
 				return fmt.Errorf("failed to create role %s: %w", role.Name, err)

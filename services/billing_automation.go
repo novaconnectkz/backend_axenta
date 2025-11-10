@@ -15,13 +15,15 @@ import (
 type BillingAutomationService struct {
 	db             *gorm.DB
 	billingService *BillingService
+	adminAccountID uint
 }
 
 // NewBillingAutomationService создает новый экземпляр BillingAutomationService
-func NewBillingAutomationService() *BillingAutomationService {
+func NewBillingAutomationService(adminAccountID uint) *BillingAutomationService {
 	return &BillingAutomationService{
 		db:             database.DB,
-		billingService: NewBillingService(),
+		billingService: NewBillingService(adminAccountID),
+		adminAccountID: adminAccountID,
 	}
 }
 
@@ -45,10 +47,11 @@ type BillingStatistics struct {
 func (bas *BillingAutomationService) AutoGenerateInvoicesForMonth(year int, month int) error {
 	// Получаем все активные договоры
 	var contracts []models.Contract
-	if err := bas.db.Where("status = ? AND start_date <= ? AND end_date >= ?",
+	if err := bas.db.Where("status = ? AND start_date <= ? AND end_date >= ? AND admin_account_id = ?",
 		"active",
 		time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC),
-		time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)).
+		time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC),
+		bas.adminAccountID).
 		Find(&contracts).Error; err != nil {
 		return fmt.Errorf("ошибка получения активных договоров: %w", err)
 	}
@@ -63,8 +66,8 @@ func (bas *BillingAutomationService) AutoGenerateInvoicesForMonth(year int, mont
 	for _, contract := range contracts {
 		// Проверяем, не создан ли уже счет за этот период
 		var existingInvoice models.Invoice
-		if err := bas.db.Where("contract_id = ? AND billing_period_start = ? AND billing_period_end = ?",
-			contract.ID, periodStart, periodEnd).First(&existingInvoice).Error; err == nil {
+		if err := bas.db.Where("contract_id = ? AND billing_period_start = ? AND billing_period_end = ? AND admin_account_id = ?",
+			contract.ID, periodStart, periodEnd, bas.adminAccountID).First(&existingInvoice).Error; err == nil {
 			// Счет уже существует, пропускаем
 			continue
 		}
@@ -116,8 +119,13 @@ func (bas *BillingAutomationService) ProcessScheduledDeletions() error {
 
 		// Получаем CompanyID из договора
 		var contract models.Contract
-		if err := bas.db.First(&contract, obj.ContractID).Error; err == nil {
+		if err := bas.db.Where("id = ? AND admin_account_id = ?", obj.ContractID, bas.adminAccountID).
+			First(&contract).Error; err == nil {
 			history.CompanyID = contract.CompanyID
+			history.AdminAccountID = bas.adminAccountID
+		} else {
+			// Договор не принадлежит текущему администратору, пропускаем объект
+			continue
 		}
 
 		if err := bas.db.Create(history).Error; err != nil {
@@ -154,8 +162,8 @@ func (bas *BillingAutomationService) ActivateScheduledSubscriptions() error {
 
 	// Получаем подписки со статусом "scheduled", которые должны активироваться сегодня
 	var subscriptions []models.Subscription
-	if err := bas.db.Where("status = ? AND start_date >= ? AND start_date < ?", 
-		"scheduled", today, tomorrow).
+	if err := bas.db.Where("status = ? AND start_date >= ? AND start_date < ? AND admin_account_id = ?",
+		"scheduled", today, tomorrow, bas.adminAccountID).
 		Find(&subscriptions).Error; err != nil {
 		return fmt.Errorf("ошибка получения запланированных подписок: %w", err)
 	}
@@ -170,7 +178,7 @@ func (bas *BillingAutomationService) ActivateScheduledSubscriptions() error {
 	for _, subscription := range subscriptions {
 		// Активируем подписку
 		subscription.Status = "active"
-		
+
 		if err := bas.db.Save(&subscription).Error; err != nil {
 			errors = append(errors, fmt.Errorf("ошибка активации подписки %d: %w", subscription.ID, err))
 			continue
@@ -189,9 +197,9 @@ func (bas *BillingAutomationService) ActivateScheduledSubscriptions() error {
 
 // GetInvoicesByPeriod получает счета за определенный период
 func (bas *BillingAutomationService) GetInvoicesByPeriod(companyID *uint, startDate, endDate time.Time) ([]models.Invoice, error) {
-	query := bas.db.Where("invoice_date >= ? AND invoice_date <= ?", startDate, endDate).
-		Preload("Contract").
-		Preload("TariffPlan").
+	query := bas.db.Where("invoice_date >= ? AND invoice_date <= ? AND admin_account_id = ?", startDate, endDate, bas.adminAccountID).
+		Preload("Contract", "admin_account_id = ?", bas.adminAccountID).
+		Preload("TariffPlan", "admin_account_id = ?", bas.adminAccountID).
 		Preload("Items").
 		Order("invoice_date DESC")
 
@@ -227,8 +235,8 @@ func (bas *BillingAutomationService) GetBillingStatistics(companyID uint, year i
 
 	// Получаем счета за период
 	var invoices []models.Invoice
-	if err := bas.db.Where("company_id = ? AND invoice_date >= ? AND invoice_date <= ?",
-		companyID, startDate, endDate).Find(&invoices).Error; err != nil {
+	if err := bas.db.Where("company_id = ? AND invoice_date >= ? AND invoice_date <= ? AND admin_account_id = ?",
+		companyID, startDate, endDate, bas.adminAccountID).Find(&invoices).Error; err != nil {
 		return nil, fmt.Errorf("ошибка получения счетов для статистики: %w", err)
 	}
 
@@ -261,7 +269,7 @@ func (bas *BillingAutomationService) GetBillingStatistics(companyID uint, year i
 func (bas *BillingAutomationService) SendInvoiceReminders() error {
 	// Получаем настройки биллинга для всех компаний
 	var settingsList []models.BillingSettings
-	if err := bas.db.Find(&settingsList).Error; err != nil {
+	if err := bas.db.Where("admin_account_id = ?", bas.adminAccountID).Find(&settingsList).Error; err != nil {
 		return fmt.Errorf("ошибка получения настроек биллинга: %w", err)
 	}
 
@@ -271,8 +279,8 @@ func (bas *BillingAutomationService) SendInvoiceReminders() error {
 
 		// Счета, по которым скоро наступает срок оплаты
 		dueSoonDate := time.Now().AddDate(0, 0, settings.NotifyBeforeDue)
-		if err := bas.db.Where("company_id = ? AND due_date <= ? AND due_date > ? AND status NOT IN ?",
-			settings.CompanyID, dueSoonDate, time.Now(), []string{"paid", "cancelled"}).
+		if err := bas.db.Where("company_id = ? AND due_date <= ? AND due_date > ? AND status NOT IN ? AND admin_account_id = ?",
+			settings.CompanyID, dueSoonDate, time.Now(), []string{"paid", "cancelled"}, bas.adminAccountID).
 			Find(&invoices).Error; err != nil {
 			continue // Пропускаем эту компанию при ошибке
 		}
@@ -280,8 +288,8 @@ func (bas *BillingAutomationService) SendInvoiceReminders() error {
 		// Просроченные счета
 		var overdueInvoices []models.Invoice
 		overdueDate := time.Now().AddDate(0, 0, -settings.NotifyOverdue)
-		if err := bas.db.Where("company_id = ? AND due_date < ? AND status NOT IN ?",
-			settings.CompanyID, overdueDate, []string{"paid", "cancelled"}).
+		if err := bas.db.Where("company_id = ? AND due_date < ? AND status NOT IN ? AND admin_account_id = ?",
+			settings.CompanyID, overdueDate, []string{"paid", "cancelled"}, bas.adminAccountID).
 			Find(&overdueInvoices).Error; err != nil {
 			continue
 		}
@@ -296,14 +304,15 @@ func (bas *BillingAutomationService) SendInvoiceReminders() error {
 			// Создаем записи в истории о напоминаниях
 			for _, invoice := range invoices {
 				history := &models.BillingHistory{
-					CompanyID:   invoice.CompanyID,
-					InvoiceID:   &invoice.ID,
-					ContractID:  invoice.ContractID,
-					Operation:   "reminder_sent",
-					Amount:      decimal.Zero,
-					Currency:    invoice.Currency,
-					Description: fmt.Sprintf("Отправлено напоминание по счету %s", invoice.Number),
-					Status:      "completed",
+					AdminAccountID: bas.adminAccountID,
+					CompanyID:      invoice.CompanyID,
+					InvoiceID:      &invoice.ID,
+					ContractID:     invoice.ContractID,
+					Operation:      "reminder_sent",
+					Amount:         decimal.Zero,
+					Currency:       invoice.Currency,
+					Description:    fmt.Sprintf("Отправлено напоминание по счету %s", invoice.Number),
+					Status:         "completed",
 				}
 
 				bas.db.Create(history) // Игнорируем ошибки для логирования

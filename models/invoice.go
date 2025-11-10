@@ -23,11 +23,12 @@ type Invoice struct {
 	DueDate     time.Time `json:"due_date" gorm:"not null"`
 
 	// Связи
-	CompanyID    uint        `json:"company_id" gorm:"not null;index"`
-	ContractID   *uint       `json:"contract_id" gorm:"index"` // Может быть null для общих счетов
-	Contract     *Contract   `json:"contract,omitempty" gorm:"foreignKey:ContractID"`
-	TariffPlanID uint        `json:"tariff_plan_id" gorm:"not null"`
-	TariffPlan   *TariffPlan `json:"tariff_plan,omitempty" gorm:"foreignKey:TariffPlanID"`
+	AdminAccountID uint        `json:"admin_account_id" gorm:"not null;index"`
+	CompanyID      uint        `json:"company_id" gorm:"not null;index"`
+	ContractID     *uint       `json:"contract_id" gorm:"index"` // Может быть null для общих счетов
+	Contract       *Contract   `json:"contract,omitempty" gorm:"foreignKey:ContractID"`
+	TariffPlanID   uint        `json:"tariff_plan_id" gorm:"not null"`
+	TariffPlan     *TariffPlan `json:"tariff_plan,omitempty" gorm:"foreignKey:TariffPlanID"`
 
 	// Период биллинга
 	BillingPeriodStart time.Time `json:"billing_period_start" gorm:"not null"`
@@ -119,11 +120,12 @@ type BillingHistory struct {
 	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
 
 	// Связи
-	CompanyID  uint      `json:"company_id" gorm:"not null;index"`
-	InvoiceID  *uint     `json:"invoice_id" gorm:"index"`
-	Invoice    *Invoice  `json:"invoice,omitempty" gorm:"foreignKey:InvoiceID"`
-	ContractID *uint     `json:"contract_id" gorm:"index"`
-	Contract   *Contract `json:"contract,omitempty" gorm:"foreignKey:ContractID"`
+	AdminAccountID uint      `json:"admin_account_id" gorm:"not null;index"`
+	CompanyID      uint      `json:"company_id" gorm:"not null;index"`
+	InvoiceID      *uint     `json:"invoice_id" gorm:"index"`
+	Invoice        *Invoice  `json:"invoice,omitempty" gorm:"foreignKey:InvoiceID"`
+	ContractID     *uint     `json:"contract_id" gorm:"index"`
+	Contract       *Contract `json:"contract,omitempty" gorm:"foreignKey:ContractID"`
 
 	// Информация об операции
 	Operation   string          `json:"operation" gorm:"not null;type:varchar(50)"` // invoice_created, payment_received, invoice_cancelled
@@ -155,7 +157,8 @@ type BillingSettings struct {
 	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
 
 	// Связь с компанией
-	CompanyID uint `json:"company_id" gorm:"uniqueIndex;not null"`
+	AdminAccountID uint `json:"admin_account_id" gorm:"not null;index"`
+	CompanyID      uint `json:"company_id" gorm:"not null;index"`
 
 	// Настройки генерации счетов
 	AutoGenerateInvoices   bool `json:"auto_generate_invoices" gorm:"default:true"`
@@ -176,9 +179,9 @@ type BillingSettings struct {
 	InvoiceNumberFormat string `json:"invoice_number_format" gorm:"default:'%s-%04d';type:varchar(20)"` // Формат номера счета
 
 	// Настройки нумерации договоров
-	ContractNumberingMethod string `json:"contract_numbering_method" gorm:"default:'manual';type:varchar(20)"` // manual, numerator, bitrix24
-	ContractDefaultNumeratorID *uint `json:"contract_default_numerator_id" gorm:"index"` // ID нумератора по умолчанию
-	Bitrix24DealNumberField   string `json:"bitrix24_deal_number_field" gorm:"type:varchar(50)"` // Код поля номера договора в Bitrix24 (например, UF_CRM_CONTRACT_NUMBER)
+	ContractNumberingMethod    string `json:"contract_numbering_method" gorm:"default:'manual';type:varchar(20)"` // manual, numerator, bitrix24
+	ContractDefaultNumeratorID *uint  `json:"contract_default_numerator_id" gorm:"index"`                         // ID нумератора по умолчанию
+	Bitrix24DealNumberField    string `json:"bitrix24_deal_number_field" gorm:"type:varchar(50)"`                 // Код поля номера договора в Bitrix24 (например, UF_CRM_CONTRACT_NUMBER)
 
 	// Дополнительные настройки
 	Currency              string `json:"currency" gorm:"default:'RUB';type:varchar(3)"`

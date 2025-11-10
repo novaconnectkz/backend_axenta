@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -181,4 +182,96 @@ func GetCurrentToken(c *gin.Context) string {
 		}
 	}
 	return ""
+}
+
+// GetAdminAccountID извлекает accountId партнера (администратора) из контекста запроса
+func GetAdminAccountID(c *gin.Context) (uint, error) {
+	if cachedID, exists := c.Get("admin_account_id"); exists {
+		if id, ok := cachedID.(uint); ok && id > 0 {
+			return id, nil
+		}
+	}
+
+	var adminID uint
+
+	// 1. Пробуем получить из информации о текущем пользователе
+	if user := GetCurrentUser(c); user != nil {
+		switch value := user["accountId"].(type) {
+		case float64:
+			if value > 0 {
+				adminID = uint(value)
+			}
+		case int:
+			if value > 0 {
+				adminID = uint(value)
+			}
+		case string:
+			if parsed, err := strconv.ParseUint(value, 10, 64); err == nil && parsed > 0 {
+				adminID = uint(parsed)
+			}
+		}
+
+		if adminID == 0 {
+			// Некоторые ответы могут содержать account_id
+			if value, ok := user["account_id"]; ok {
+				switch v := value.(type) {
+				case float64:
+					if v > 0 {
+						adminID = uint(v)
+					}
+				case int:
+					if v > 0 {
+						adminID = uint(v)
+					}
+				case string:
+					if parsed, err := strconv.ParseUint(v, 10, 64); err == nil && parsed > 0 {
+						adminID = uint(parsed)
+					}
+				}
+			}
+		}
+	}
+
+	// 2. Пробуем получить из заголовков
+	if adminID == 0 {
+		headerCandidates := []string{
+			"X-Admin-ID",
+			"X-Account-ID",
+			"X-Axenta-Account",
+		}
+
+		for _, header := range headerCandidates {
+			if value := c.GetHeader(header); value != "" {
+				if parsed, err := strconv.ParseUint(value, 10, 64); err == nil && parsed > 0 {
+					adminID = uint(parsed)
+					break
+				}
+			}
+		}
+	}
+
+	// 3. Пробуем получить из query параметров
+	if adminID == 0 {
+		queryCandidates := []string{
+			"admin_id",
+			"account_id",
+			"axenta_account_id",
+		}
+
+		for _, param := range queryCandidates {
+			if value := c.Query(param); value != "" {
+				if parsed, err := strconv.ParseUint(value, 10, 64); err == nil && parsed > 0 {
+					adminID = uint(parsed)
+					break
+				}
+			}
+		}
+	}
+
+	if adminID == 0 {
+		return 0, fmt.Errorf("не удалось определить accountId администратора Axenta")
+	}
+
+	c.Set("admin_account_id", adminID)
+	return adminID, nil
 }

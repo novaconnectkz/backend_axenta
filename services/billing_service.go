@@ -2,7 +2,9 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"backend_axenta/database"
@@ -15,13 +17,15 @@ import (
 
 // BillingService предоставляет функции для работы с биллингом
 type BillingService struct {
-	db *gorm.DB
+	db             *gorm.DB
+	adminAccountID uint
 }
 
 // NewBillingService создает новый экземпляр BillingService
-func NewBillingService() *BillingService {
+func NewBillingService(adminAccountID uint) *BillingService {
 	return &BillingService{
-		db: database.DB,
+		db:             database.DB,
+		adminAccountID: adminAccountID,
 	}
 }
 
@@ -61,22 +65,62 @@ type InvoiceItemData struct {
 func (bs *BillingService) CalculateBillingForContract(contractID uint, periodStart, periodEnd time.Time) (*BillingCalculationResult, error) {
 	// Получаем договор с тарифным планом
 	var contract models.Contract
-	if err := bs.db.Preload("TariffPlan").First(&contract, contractID).Error; err != nil {
+	if err := bs.db.
+		Preload("TariffPlan").
+		Where("id = ? AND admin_account_id = ?", contractID, bs.adminAccountID).
+		First(&contract).Error; err != nil {
 		return nil, fmt.Errorf("договор не найден: %w", err)
 	}
 
 	// Получаем настройки биллинга для компании
 	var settings models.BillingSettings
-	if err := bs.db.Where("company_id = ?", contract.CompanyID).First(&settings).Error; err != nil {
-		// Создаем настройки по умолчанию, если их нет
-		settings = models.BillingSettings{
-			CompanyID:               contract.CompanyID,
-			DefaultTaxRate:          decimal.NewFromFloat(20),
-			TaxIncluded:             false,
-			EnableInactiveDiscounts: true,
-			InactiveDiscountRatio:   decimal.NewFromFloat(0.5),
+	if err := bs.db.
+		Where("company_id = ? AND admin_account_id = ?", contract.CompanyID, bs.adminAccountID).
+		First(&settings).Error; err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("ошибка получения настроек биллинга: %w", err)
 		}
-		bs.db.Create(&settings)
+
+		// Пробуем найти настройки для компании без учета admin_account_id
+		var companySettings models.BillingSettings
+		if err := bs.db.Where("company_id = ?", contract.CompanyID).First(&companySettings).Error; err == nil {
+			if companySettings.AdminAccountID != bs.adminAccountID {
+				companySettings.AdminAccountID = bs.adminAccountID
+				if saveErr := bs.db.Save(&companySettings).Error; saveErr != nil {
+					return nil, fmt.Errorf("ошибка обновления настроек биллинга: %w", saveErr)
+				}
+			}
+			settings = companySettings
+		} else if errors.Is(err, gorm.ErrRecordNotFound) {
+			// Создаем настройки по умолчанию, если их нет вообще
+			settings = models.BillingSettings{
+				AdminAccountID:          bs.adminAccountID,
+				CompanyID:               contract.CompanyID,
+				DefaultTaxRate:          decimal.NewFromFloat(20),
+				TaxIncluded:             false,
+				EnableInactiveDiscounts: true,
+				InactiveDiscountRatio:   decimal.NewFromFloat(0.5),
+			}
+			if createErr := bs.db.Create(&settings).Error; createErr != nil {
+				if isUniqueConstraintError(createErr) {
+					if err := bs.db.Where("company_id = ?", contract.CompanyID).First(&companySettings).Error; err == nil {
+						if companySettings.AdminAccountID != bs.adminAccountID {
+							companySettings.AdminAccountID = bs.adminAccountID
+							if saveErr := bs.db.Save(&companySettings).Error; saveErr != nil {
+								return nil, fmt.Errorf("ошибка обновления настроек биллинга: %w", saveErr)
+							}
+						}
+						settings = companySettings
+					} else {
+						return nil, fmt.Errorf("ошибка получения настроек биллинга после конфликта: %w", err)
+					}
+				} else {
+					return nil, fmt.Errorf("ошибка создания настроек биллинга: %w", createErr)
+				}
+			}
+		} else {
+			return nil, fmt.Errorf("ошибка получения настроек биллинга: %w", err)
+		}
 	}
 
 	// Получаем объекты по договору
@@ -117,7 +161,9 @@ func (bs *BillingService) CalculateBillingForContract(contractID uint, periodSta
 
 	// Получаем тарифный план
 	tariffPlan := &models.TariffPlan{}
-	if err := bs.db.First(tariffPlan, contract.TariffPlanID).Error; err != nil {
+	if err := bs.db.
+		Where("id = ? AND admin_account_id = ?", contract.TariffPlanID, bs.adminAccountID).
+		First(tariffPlan).Error; err != nil {
 		return nil, fmt.Errorf("тарифный план не найден: %w", err)
 	}
 
@@ -232,15 +278,15 @@ func (bs *BillingService) CalculateBillingForContract(contractID uint, periodSta
 			UnitPrice:   oldDiscountAmount.Neg(),
 			Amount:      oldDiscountAmount.Neg(),
 		})
-		
+
 		discountedAmount = discountedAmount.Sub(oldDiscountAmount)
 	}
 
 	// Проверяем минимальную оплату (min_commit) для тарифных компонентов
 	var tariffComponents []models.TariffComponent
-	if err := bs.db.Where("tariff_plan_id = ? AND is_active = true AND deleted_at IS NULL", contract.TariffPlanID).
+	if err := bs.db.Where("tariff_plan_id = ? AND admin_account_id = ? AND is_active = true AND deleted_at IS NULL", contract.TariffPlanID, bs.adminAccountID).
 		Find(&tariffComponents).Error; err == nil {
-		
+
 		for _, component := range tariffComponents {
 			if component.MinCommit.GreaterThan(decimal.Zero) {
 				// Находим позиции, связанные с этим компонентом
@@ -334,14 +380,17 @@ func (bs *BillingService) GenerateInvoiceForContract(contractID uint, periodStar
 
 	// Получаем настройки биллинга
 	var settings models.BillingSettings
-	if err := bs.db.Where("company_id = ?", calculation.CompanyID).First(&settings).Error; err != nil {
+	if err := bs.db.
+		Where("company_id = ? AND admin_account_id = ?", calculation.CompanyID, bs.adminAccountID).
+		First(&settings).Error; err != nil {
 		return nil, fmt.Errorf("настройки биллинга не найдены: %w", err)
 	}
 
 	// Генерируем номер счета
 	var lastInvoice models.Invoice
 	var sequenceNumber int
-	if err := bs.db.Where("company_id = ? AND invoice_date >= ?", calculation.CompanyID, time.Now().Truncate(24*time.Hour).AddDate(0, 0, -time.Now().Day()+1)).
+	if err := bs.db.
+		Where("company_id = ? AND admin_account_id = ? AND invoice_date >= ?", calculation.CompanyID, bs.adminAccountID, time.Now().Truncate(24*time.Hour).AddDate(0, 0, -time.Now().Day()+1)).
 		Order("id DESC").First(&lastInvoice).Error; err == nil {
 		sequenceNumber = int(lastInvoice.ID) + 1
 	} else {
@@ -357,6 +406,7 @@ func (bs *BillingService) GenerateInvoiceForContract(contractID uint, periodStar
 		Description:        fmt.Sprintf("Оплата услуг по договору за период с %s по %s", periodStart.Format("02.01.2006"), periodEnd.Format("02.01.2006")),
 		InvoiceDate:        time.Now(),
 		DueDate:            time.Now().AddDate(0, 0, settings.InvoicePaymentTermDays),
+		AdminAccountID:     bs.adminAccountID,
 		CompanyID:          calculation.CompanyID,
 		ContractID:         &calculation.ContractID,
 		TariffPlanID:       calculation.TariffPlanID,
@@ -378,7 +428,8 @@ func (bs *BillingService) GenerateInvoiceForContract(contractID uint, periodStar
 	// Создаем позиции счета
 	for _, itemData := range calculation.Items {
 		item := &models.InvoiceItem{
-			InvoiceID:   invoice.ID,
+			InvoiceID: invoice.ID,
+			// AdminAccountID хранится в invoice, поэтому здесь не требуется отдельное поле
 			Name:        itemData.Name,
 			Description: itemData.Description,
 			ItemType:    itemData.ItemType,
@@ -397,16 +448,17 @@ func (bs *BillingService) GenerateInvoiceForContract(contractID uint, periodStar
 
 	// Создаем запись в истории биллинга
 	history := &models.BillingHistory{
-		CompanyID:   calculation.CompanyID,
-		InvoiceID:   &invoice.ID,
-		ContractID:  &calculation.ContractID,
-		Operation:   "invoice_created",
-		Amount:      calculation.TotalAmount,
-		Currency:    settings.Currency,
-		Description: fmt.Sprintf("Создан счет %s на сумму %s %s", invoice.Number, calculation.TotalAmount.String(), settings.Currency),
-		PeriodStart: &calculation.BillingPeriodStart,
-		PeriodEnd:   &calculation.BillingPeriodEnd,
-		Status:      "completed",
+		AdminAccountID: bs.adminAccountID,
+		CompanyID:      calculation.CompanyID,
+		InvoiceID:      &invoice.ID,
+		ContractID:     &calculation.ContractID,
+		Operation:      "invoice_created",
+		Amount:         calculation.TotalAmount,
+		Currency:       settings.Currency,
+		Description:    fmt.Sprintf("Создан счет %s на сумму %s %s", invoice.Number, calculation.TotalAmount.String(), settings.Currency),
+		PeriodStart:    &calculation.BillingPeriodStart,
+		PeriodEnd:      &calculation.BillingPeriodEnd,
+		Status:         "completed",
 	}
 
 	if err := bs.db.Create(history).Error; err != nil {
@@ -426,7 +478,9 @@ func (bs *BillingService) GenerateInvoiceForContract(contractID uint, periodStar
 func (bs *BillingService) ProcessPayment(invoiceID uint, amount decimal.Decimal, paymentMethod string, notes string) error {
 	// Получаем счет
 	var invoice models.Invoice
-	if err := bs.db.First(&invoice, invoiceID).Error; err != nil {
+	if err := bs.db.
+		Where("id = ? AND admin_account_id = ?", invoiceID, bs.adminAccountID).
+		First(&invoice).Error; err != nil {
 		return fmt.Errorf("счет не найден: %w", err)
 	}
 
@@ -466,14 +520,15 @@ func (bs *BillingService) ProcessPayment(invoiceID uint, amount decimal.Decimal,
 
 	// Создаем запись в истории биллинга
 	history := &models.BillingHistory{
-		CompanyID:   invoice.CompanyID,
-		InvoiceID:   &invoice.ID,
-		ContractID:  invoice.ContractID,
-		Operation:   "payment_received",
-		Amount:      amount,
-		Currency:    invoice.Currency,
-		Description: fmt.Sprintf("Получен платеж по счету %s на сумму %s %s. Способ оплаты: %s", invoice.Number, amount.String(), invoice.Currency, paymentMethod),
-		Status:      "completed",
+		AdminAccountID: bs.adminAccountID,
+		CompanyID:      invoice.CompanyID,
+		InvoiceID:      &invoice.ID,
+		ContractID:     invoice.ContractID,
+		Operation:      "payment_received",
+		Amount:         amount,
+		Currency:       invoice.Currency,
+		Description:    fmt.Sprintf("Получен платеж по счету %s на сумму %s %s. Способ оплаты: %s", invoice.Number, amount.String(), invoice.Currency, paymentMethod),
+		Status:         "completed",
 	}
 
 	if notes != "" {
@@ -494,12 +549,15 @@ func (bs *BillingService) GetBillingHistory(companyID uuid.UUID, limit, offset i
 	var total int64
 
 	// Подсчитываем общее количество записей
-	if err := bs.db.Model(&models.BillingHistory{}).Where("company_id = ?", companyID).Count(&total).Error; err != nil {
+	if err := bs.db.Model(&models.BillingHistory{}).
+		Where("company_id = ? AND admin_account_id = ?", companyID, bs.adminAccountID).
+		Count(&total).Error; err != nil {
 		return nil, 0, fmt.Errorf("ошибка подсчета записей истории: %w", err)
 	}
 
 	// Получаем записи с пагинацией
-	query := bs.db.Where("company_id = ?", companyID).
+	query := bs.db.
+		Where("company_id = ? AND admin_account_id = ?", companyID, bs.adminAccountID).
 		Preload("Invoice").
 		Preload("Contract").
 		Order("created_at DESC")
@@ -521,6 +579,7 @@ func (bs *BillingService) GetBillingHistory(companyID uuid.UUID, limit, offset i
 // GetOverdueInvoices возвращает просроченные счета
 func (bs *BillingService) GetOverdueInvoices(companyID *uint) ([]models.Invoice, error) {
 	query := bs.db.Where("due_date < ? AND status NOT IN ?", time.Now(), []string{"paid", "cancelled"}).
+		Where("admin_account_id = ?", bs.adminAccountID).
 		Preload("Contract").
 		Preload("TariffPlan").
 		Order("due_date ASC")
@@ -541,7 +600,9 @@ func (bs *BillingService) GetOverdueInvoices(companyID *uint) ([]models.Invoice,
 func (bs *BillingService) CancelInvoice(invoiceID uint, reason string) error {
 	// Получаем счет
 	var invoice models.Invoice
-	if err := bs.db.First(&invoice, invoiceID).Error; err != nil {
+	if err := bs.db.
+		Where("id = ? AND admin_account_id = ?", invoiceID, bs.adminAccountID).
+		First(&invoice).Error; err != nil {
 		return fmt.Errorf("счет не найден: %w", err)
 	}
 
@@ -564,14 +625,15 @@ func (bs *BillingService) CancelInvoice(invoiceID uint, reason string) error {
 
 	// Создаем запись в истории биллинга
 	history := &models.BillingHistory{
-		CompanyID:   invoice.CompanyID,
-		InvoiceID:   &invoice.ID,
-		ContractID:  invoice.ContractID,
-		Operation:   "invoice_cancelled",
-		Amount:      invoice.TotalAmount,
-		Currency:    invoice.Currency,
-		Description: fmt.Sprintf("Отменен счет %s. Причина: %s", invoice.Number, reason),
-		Status:      "completed",
+		AdminAccountID: bs.adminAccountID,
+		CompanyID:      invoice.CompanyID,
+		InvoiceID:      &invoice.ID,
+		ContractID:     invoice.ContractID,
+		Operation:      "invoice_cancelled",
+		Amount:         invoice.TotalAmount,
+		Currency:       invoice.Currency,
+		Description:    fmt.Sprintf("Отменен счет %s. Причина: %s", invoice.Number, reason),
+		Status:         "completed",
 	}
 
 	if err := bs.db.Create(history).Error; err != nil {
@@ -588,10 +650,10 @@ func (bs *BillingService) CancelInvoice(invoiceID uint, reason string) error {
 //   - prefix: префикс номера (например, "INV", "СЧТ")
 //
 // Функция:
-//   1. Ищет существующую последовательность для countryCode и prefix
-//   2. Если не найдена, создает новую с дефолтным шаблоном "%s-%04d"
-//   3. Инкрементирует LastNumber
-//   4. Возвращает сгенерированный номер по шаблону
+//  1. Ищет существующую последовательность для countryCode и prefix
+//  2. Если не найдена, создает новую с дефолтным шаблоном "%s-%04d"
+//  3. Инкрементирует LastNumber
+//  4. Возвращает сгенерированный номер по шаблону
 func (bs *BillingService) NextInvoiceNumber(countryCode, prefix string) (string, error) {
 	if countryCode == "" {
 		countryCode = "RU" // По умолчанию Россия
@@ -609,10 +671,10 @@ func (bs *BillingService) NextInvoiceNumber(countryCode, prefix string) (string,
 		sequence = models.InvoiceSequence{
 			CountryCode: countryCode,
 			Prefix:      prefix,
-			Pattern:      "%s-%04d", // Дефолтный шаблон
-			LastNumber:   0,
-			Description:  fmt.Sprintf("Последовательность для %s, префикс %s", countryCode, prefix),
-			IsActive:     true,
+			Pattern:     "%s-%04d", // Дефолтный шаблон
+			LastNumber:  0,
+			Description: fmt.Sprintf("Последовательность для %s, префикс %s", countryCode, prefix),
+			IsActive:    true,
 		}
 		if err := bs.db.Create(&sequence).Error; err != nil {
 			return "", fmt.Errorf("ошибка создания последовательности: %w", err)
@@ -660,4 +722,16 @@ func (bs *BillingService) NextInvoiceNumber(countryCode, prefix string) (string,
 	invoiceNumber := fmt.Sprintf(sequence.Pattern, prefix, newNumber)
 
 	return invoiceNumber, nil
+}
+
+func isUniqueConstraintError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	errMsg := err.Error()
+	return strings.Contains(errMsg, "duplicate key") ||
+		strings.Contains(errMsg, "UNIQUE constraint") ||
+		strings.Contains(errMsg, "unique constraint") ||
+		strings.Contains(errMsg, "already exists")
 }
