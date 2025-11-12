@@ -494,6 +494,13 @@ func main() {
 	// Создаем middleware для локальной авторизации (используется в других местах)
 	_ = middleware.NewLocalAuthMiddleware(jwtService)
 
+	// Подключаем Axenta авторизацию и мультитенантность до регистрации маршрутов
+	apiGroup.Use(
+		authMiddleware.RequireAuth(),
+		tenantMiddleware.SetTenant(),
+	)
+	log.Println("✅ Axenta Cloud authentication enabled for /api/auth endpoints (with multitenancy)")
+
 	// Отдельная группа для CMS endpoints без проверки Axenta токенов
 	log.Println("🔧 Registering CMS endpoints without Axenta authentication...")
 	cmsGroup := r.Group("/api/cms")
@@ -513,11 +520,6 @@ func main() {
 	cmsGroup.POST("/accounts/change_account/", accountsHandler.MoveAccount)
 
 	log.Println("✅ CMS endpoints registered without Axenta authentication")
-
-	// Включаем Axenta Cloud авторизацию для auth группы (без мультитенантности)
-	apiGroup.Use(authMiddleware.RequireAuth())
-	apiGroup.Use(tenantMiddleware.SetTenant())
-	log.Println("✅ Axenta Cloud authentication enabled for /api/auth endpoints (with multitenancy)")
 
 	// Объекты (с аутентификацией) - проксирование к Axenta Cloud
 	log.Println("🔧 Registering Axenta Cloud proxy endpoints...")

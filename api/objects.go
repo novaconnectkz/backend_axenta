@@ -6,7 +6,13 @@ import (
 	"backend_axenta/models"
 	"backend_axenta/services"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -657,11 +663,67 @@ func PermanentDeleteObject(c *gin.Context) {
 		return
 	}
 
+	token := resolveRequestToken(c)
+	if token == "" {
+		log.Printf("⚠️ Permanent delete: authorization token not found for object %d, using local fallback only", id)
+	}
+
+	// Пробуем удалить объект через Axenta Cloud API, если токен доступен
+	if token != "" {
+		statusCode, body, axentaErr := deleteObjectFromAxentaTrash(token, id)
+		if axentaErr != nil {
+			log.Printf("❌ Axenta Cloud permanent delete error (object %d): %v", id, axentaErr)
+			c.JSON(http.StatusBadGateway, gin.H{
+				"status": "error",
+				"error":  "Не удалось связаться с Axenta Cloud для удаления объекта",
+			})
+			return
+		}
+
+		switch statusCode {
+		case http.StatusOK, http.StatusNoContent:
+			if err := deleteLocalTrashObjectIfExists(tenantDB, id); err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				log.Printf("⚠️ Не удалось удалить объект %d из локальной БД после успешного удаления в Axenta Cloud: %v", id, err)
+			}
+
+			c.JSON(200, gin.H{
+				"status":  "success",
+				"message": "Объект окончательно удален",
+			})
+			return
+		case http.StatusNotFound:
+			if err := deleteLocalTrashObjectIfExists(tenantDB, id); err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				log.Printf("⚠️ Не удалось удалить объект %d из локальной БД после ответа 404 от Axenta Cloud: %v", id, err)
+			}
+
+			c.JSON(200, gin.H{
+				"status":  "success",
+				"message": "Объект уже был удален",
+			})
+			return
+		default:
+			message := strings.TrimSpace(body)
+			if message == "" {
+				message = fmt.Sprintf("Axenta Cloud вернул код %d", statusCode)
+			}
+
+			c.JSON(statusCode, gin.H{
+				"status": "error",
+				"error":  message,
+			})
+			return
+		}
+	}
+
 	// Ищем удаленный объект
 	var object models.Object
 	if err := tenantDB.Unscoped().Where("id = ? AND deleted_at IS NOT NULL", id).First(&object).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			c.JSON(404, gin.H{"status": "error", "error": "Удаленный объект не найден"})
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("ℹ️ Permanent delete: объект %d уже отсутствует в локальной корзине", id)
+			c.JSON(200, gin.H{
+				"status":  "success",
+				"message": "Объект уже был удален",
+			})
 		} else {
 			c.JSON(500, gin.H{"status": "error", "error": "Ошибка поиска удаленного объекта: " + err.Error()})
 		}
@@ -675,6 +737,72 @@ func PermanentDeleteObject(c *gin.Context) {
 	}
 
 	c.JSON(200, gin.H{"status": "success", "message": "Объект окончательно удален"})
+}
+
+// deleteObjectFromAxentaTrash отправляет запрос на окончательное удаление объекта в Axenta Cloud
+func deleteObjectFromAxentaTrash(token string, objectID int) (int, string, error) {
+	axentaURL := fmt.Sprintf("https://axenta.cloud/api/cms/trash/%d/", objectID)
+
+	req, err := http.NewRequest(http.MethodDelete, axentaURL, nil)
+	if err != nil {
+		return 0, "", err
+	}
+
+	req.Header.Set("Authorization", "Token "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, "", err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return resp.StatusCode, "", err
+	}
+
+	return resp.StatusCode, string(body), nil
+}
+
+// deleteLocalTrashObjectIfExists удаляет объект из локальной БД, если он присутствует в корзине
+func deleteLocalTrashObjectIfExists(db *gorm.DB, objectID int) error {
+	if db == nil {
+		return nil
+	}
+
+	var object models.Object
+	if err := db.Unscoped().Where("id = ? AND deleted_at IS NOT NULL", objectID).First(&object).Error; err != nil {
+		return err
+	}
+
+	return db.Unscoped().Delete(&object).Error
+}
+
+// resolveRequestToken пытается извлечь токен авторизации из контекста или заголовков
+func resolveRequestToken(c *gin.Context) string {
+	if token := middleware.GetCurrentToken(c); token != "" {
+		return token
+	}
+
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		authHeader = c.GetHeader("authorization")
+	}
+
+	if authHeader == "" {
+		return ""
+	}
+
+	if strings.HasPrefix(authHeader, "Token ") {
+		return strings.TrimPrefix(authHeader, "Token ")
+	}
+	if strings.HasPrefix(authHeader, "Bearer ") {
+		return strings.TrimPrefix(authHeader, "Bearer ")
+	}
+
+	return strings.TrimSpace(authHeader)
 }
 
 // GetObjectTemplates получает список шаблонов объектов
