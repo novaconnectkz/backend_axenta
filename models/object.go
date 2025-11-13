@@ -38,7 +38,7 @@ type Object struct {
 	CompanyID uint     `json:"company_id" gorm:"not null;index"`
 	Company   *Company `json:"company,omitempty" gorm:"foreignKey:CompanyID"`
 
-	ContractID uint      `json:"contract_id" gorm:"not null;index"`
+	ContractID *uint     `json:"contract_id" gorm:"index"` // Опциональное поле для обратной совместимости
 	Contract   *Contract `json:"contract,omitempty" gorm:"foreignKey:ContractID"`
 
 	TemplateID *uint           `json:"template_id"`

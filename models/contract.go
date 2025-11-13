@@ -64,8 +64,9 @@ type Contract struct {
 	ExternalID string `json:"external_id" gorm:"type:varchar(100)"` // ID во внешних системах (1С, Битрикс24)
 
 	// Связи
-	Appendices []ContractAppendix `json:"appendices,omitempty" gorm:"foreignKey:ContractID"`
-	Objects    []Object           `json:"objects,omitempty" gorm:"foreignKey:ContractID"`
+	Appendices     []ContractAppendix `json:"appendices,omitempty" gorm:"foreignKey:ContractID"`
+	Objects        []Object           `json:"objects,omitempty" gorm:"foreignKey:ContractID"` // Прямая связь (для обратной совместимости)
+	ContractObjects []ContractObject  `json:"contract_objects,omitempty" gorm:"foreignKey:ContractID"` // Связи через junction table
 }
 
 // TableName задает имя таблицы для модели Contract

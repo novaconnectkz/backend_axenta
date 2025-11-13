@@ -150,7 +150,7 @@ func CreateObject(c *gin.Context) {
 		c.JSON(400, gin.H{"status": "error", "error": "ID компании обязателен"})
 		return
 	}
-	if object.ContractID == 0 {
+	if object.ContractID == nil || *object.ContractID == 0 {
 		c.JSON(400, gin.H{"status": "error", "error": "ID договора обязателен"})
 		return
 	}
@@ -298,7 +298,7 @@ func UpdateObject(c *gin.Context) {
 	if updates.Status != "" && updates.Status != existingObject.Status {
 		existingObject.Status = updates.Status
 	}
-	if updates.ContractID != 0 && updates.ContractID != existingObject.ContractID {
+	if updates.ContractID != nil && *updates.ContractID != 0 && (existingObject.ContractID == nil || *updates.ContractID != *existingObject.ContractID) {
 		// Проверяем существование нового договора
 		var contract models.Contract
 		if err := tenantDB.First(&contract, updates.ContractID).Error; err != nil {

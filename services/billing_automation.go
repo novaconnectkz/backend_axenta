@@ -109,7 +109,7 @@ func (bas *BillingAutomationService) ProcessScheduledDeletions() error {
 	for _, obj := range objectsToDelete {
 		// Создаем запись в истории биллинга о плановом удалении
 		history := &models.BillingHistory{
-			ContractID:  &obj.ContractID,
+			ContractID:  obj.ContractID, // ContractID теперь *uint, не нужно брать адрес
 			Operation:   "object_scheduled_deletion",
 			Amount:      decimal.Zero,
 			Currency:    "RUB",
@@ -119,7 +119,11 @@ func (bas *BillingAutomationService) ProcessScheduledDeletions() error {
 
 		// Получаем CompanyID из договора
 		var contract models.Contract
-		if err := bas.db.Where("id = ? AND admin_account_id = ?", obj.ContractID, bas.adminAccountID).
+		// Проверяем, что ContractID не nil
+		if obj.ContractID == nil {
+			continue
+		}
+		if err := bas.db.Where("id = ? AND admin_account_id = ?", *obj.ContractID, bas.adminAccountID).
 			First(&contract).Error; err == nil {
 			history.CompanyID = contract.CompanyID
 			history.AdminAccountID = bas.adminAccountID

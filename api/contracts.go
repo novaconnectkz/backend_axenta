@@ -68,6 +68,12 @@ func GetContracts(c *gin.Context) {
 		log.Printf("✅ Используем tenant DB для получения договоров")
 	}
 
+	// Убеждаемся, что таблица contract_objects существует
+	if err := ensureContractObjectsTable(tenantDB); err != nil {
+		log.Printf("⚠️ Не удалось создать таблицу contract_objects: %v", err)
+		// Продолжаем работу, но объекты не будут подсчитаны
+	}
+
 	var contracts []models.Contract
 
 	// Базовый запрос для фильтрации (без Preload для подсчета)
@@ -129,19 +135,14 @@ func GetContracts(c *gin.Context) {
 		return
 	}
 
-	// Оптимизированный запрос с Preload только для отображаемых данных
-	// TariffPlan - это BillingPlan, находится в public схеме
-	// Appendices находятся в той же tenant схеме, что и договоры
-	query := baseQuery.Preload("Appendices", func(db *gorm.DB) *gorm.DB {
-		// Appendices находятся в той же tenant схеме
-		return db.Select("id, title, created_at")
-	})
+	// Оптимизированный запрос без Preload для Appendices (таблица может отсутствовать)
 	// TariffPlan загружаем отдельно, так как он в public схеме
+	// Appendices не загружаем, так как таблица contract_appendices может отсутствовать в tenant схеме
 	// Objects не загружаем через Preload, так как они в tenant схеме, а не в public
 	// Их можно загрузить отдельно при необходимости
 
 	// Получаем договоры с пагинацией
-	if err := query.Offset(offset).Limit(limit).Find(&contracts).Error; err != nil {
+	if err := baseQuery.Offset(offset).Limit(limit).Find(&contracts).Error; err != nil {
 		log.Printf("❌ Ошибка при получении договоров: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
@@ -168,6 +169,109 @@ func GetContracts(c *gin.Context) {
 			} else {
 				log.Printf("⚠️ Не удалось загрузить TariffPlan ID=%d для договора %d: %v", contracts[i].TariffPlanID, contracts[i].ID, err)
 			}
+		}
+
+		// Подсчитываем количество объектов для каждого договора через junction table
+		var objectsCount int64
+		if err := tenantDB.Model(&models.ContractObject{}).Where("contract_id = ? AND status = ?", contracts[i].ID, "active").Count(&objectsCount).Error; err == nil {
+			// Загружаем связи для договора
+			var contractObjects []models.ContractObject
+			if err := tenantDB.Where("contract_id = ? AND status = ?", contracts[i].ID, "active").Find(&contractObjects).Error; err == nil {
+				// Создаем массив объектов для обратной совместимости
+				// Заполняем его объектами из junction table, чтобы фронтенд мог получить количество через objects.length
+				objects := make([]models.Object, len(contractObjects))
+				
+				// Получаем токен для запросов к Axenta Cloud API (если нужно)
+				authHeader := c.GetHeader("Authorization")
+				var userToken string
+				if authHeader != "" {
+					if strings.HasPrefix(authHeader, "Token ") {
+						userToken = strings.TrimPrefix(authHeader, "Token ")
+					} else if strings.HasPrefix(authHeader, "Bearer ") {
+						userToken = strings.TrimPrefix(authHeader, "Bearer ")
+					} else {
+						userToken = authHeader
+					}
+				}
+				
+				for j, co := range contractObjects {
+					// Пытаемся загрузить название объекта из соответствующей схемы
+					objectName := fmt.Sprintf("Объект #%d", co.ObjectID)
+					objectFound := false
+					
+					if co.ObjectSchema != "" {
+						// Подключаемся к схеме объекта для загрузки названия
+						objectTenantDB, err := database.ConnectToTenant(co.ObjectSchema)
+						if err == nil {
+							var object models.Object
+							if err := objectTenantDB.Select("id, name").Where("id = ?", co.ObjectID).First(&object).Error; err == nil {
+								if object.Name != "" {
+									objectName = object.Name
+									objectFound = true
+									log.Printf("✅ Загружено название объекта %d из схемы %s: %s", co.ObjectID, co.ObjectSchema, objectName)
+								} else {
+									log.Printf("⚠️ Объект %d найден в схеме %s, но название пустое", co.ObjectID, co.ObjectSchema)
+								}
+							} else {
+								log.Printf("⚠️ Не удалось загрузить объект %d из схемы %s: %v", co.ObjectID, co.ObjectSchema, err)
+							}
+						} else {
+							log.Printf("⚠️ Не удалось подключиться к схеме %s для объекта %d: %v", co.ObjectSchema, co.ObjectID, err)
+						}
+					} else {
+						// Если схема не указана, пробуем загрузить из текущей tenant схемы
+						var object models.Object
+						if err := tenantDB.Select("id, name").Where("id = ? AND company_id = ?", co.ObjectID, co.ObjectCompanyID).First(&object).Error; err == nil {
+							if object.Name != "" {
+								objectName = object.Name
+								objectFound = true
+								log.Printf("✅ Загружено название объекта %d из текущей схемы: %s", co.ObjectID, objectName)
+							} else {
+								log.Printf("⚠️ Объект %d найден в текущей схеме, но название пустое", co.ObjectID)
+							}
+						} else {
+							log.Printf("⚠️ Не удалось загрузить объект %d из текущей схемы: %v", co.ObjectID, err)
+						}
+					}
+					
+					// Если объект не найден в локальной БД, пробуем загрузить из Axenta Cloud API
+					if !objectFound && userToken != "" && co.ObjectCompanyID > 0 {
+						log.Printf("🔍 Объект %d не найден в локальной БД, пробуем загрузить из Axenta Cloud для account_id %d", co.ObjectID, co.ObjectCompanyID)
+						axentaObjects, err := fetchObjectsFromAxentaCloud(userToken, int(co.ObjectCompanyID), []uint{co.ObjectID})
+						if err == nil && len(axentaObjects) > 0 {
+							for _, axentaObj := range axentaObjects {
+								if axentaObj.ID == int(co.ObjectID) && axentaObj.Name != "" {
+									objectName = axentaObj.Name
+									objectFound = true
+									log.Printf("✅ Загружено название объекта %d из Axenta Cloud: %s", co.ObjectID, objectName)
+									break
+								}
+							}
+						} else {
+							log.Printf("⚠️ Не удалось загрузить объект %d из Axenta Cloud: %v", co.ObjectID, err)
+						}
+					}
+					
+					// Создаем объект с ID и названием для отображения
+					objects[j] = models.Object{
+						ID:        co.ObjectID,
+						CompanyID: co.ObjectCompanyID,
+						Name:      objectName,
+					}
+				}
+				contracts[i].Objects = objects
+				// Сохраняем информацию о связях в ContractObjects
+				contracts[i].ContractObjects = contractObjects
+				log.Printf("✅ Договор %d: найдено %d объектов через junction table", contracts[i].ID, objectsCount)
+			} else {
+				log.Printf("⚠️ Не удалось загрузить связи для договора %d: %v", contracts[i].ID, err)
+				// Создаем пустой массив для обратной совместимости
+				contracts[i].Objects = make([]models.Object, 0)
+			}
+		} else {
+			log.Printf("⚠️ Не удалось подсчитать объекты для договора %d: %v", contracts[i].ID, err)
+			// Создаем пустой массив для обратной совместимости
+			contracts[i].Objects = make([]models.Object, 0)
 		}
 	}
 
@@ -212,8 +316,8 @@ func GetContract(c *gin.Context) {
 
 	var contract models.Contract
 	if err := tenantDB.
-		Preload("Appendices").
-		Preload("Objects").
+		// Preload("Appendices") - убрано, так как таблица contract_appendices может отсутствовать
+		// Preload("Objects") - убрано, так как Objects загружаются отдельно при необходимости
 		Where("id = ? AND admin_account_id = ?", uint(contractID), adminAccountID).
 		First(&contract).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -509,8 +613,147 @@ func CreateContract(c *gin.Context) {
 		log.Printf("✅ Используем tenant DB для создания договора")
 	}
 
+	// ПРОВЕРКА ОБЪЕКТОВ ДО СОЗДАНИЯ ДОГОВОРА
+	// Если объекты уже привязаны к другому договору с тем же тарифным планом, не создаем договор
+	selectedObjectIDs := request.ObjectIDs
+	if len(selectedObjectIDs) > 0 {
+		log.Printf("🔍 Проверяем объекты перед созданием договора: %v", selectedObjectIDs)
+		
+		// Убеждаемся, что таблица contract_objects существует для проверки
+		if err := ensureContractObjectsTable(tenantDB); err != nil {
+			log.Printf("⚠️ Не удалось создать таблицу contract_objects для проверки: %v", err)
+		}
+
+		// Определяем targetAccountID для проверки
+		var targetAccountID uint
+		if request.AccountID != nil && *request.AccountID > 0 {
+			targetAccountID = *request.AccountID
+		} else {
+			targetAccountID = contract.CompanyID
+		}
+
+		// Получаем информацию о компании для определения схемы
+		var company models.Company
+		publicDB := database.DB.Session(&gorm.Session{})
+		if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
+			log.Printf("⚠️ Не удалось переключиться на схему public: %v", err)
+		}
+		
+		if err := publicDB.First(&company, targetAccountID).Error; err != nil {
+			log.Printf("⚠️ Компания с ID %d не найдена: %v", targetAccountID, err)
+		}
+
+		// Проверяем каждый объект на конфликты
+		var validationErrors []string
+		contractStartDate := contract.StartDate
+		contractEndDate := contract.EndDate
+		currentTariffPlanID := contract.TariffPlanID
+
+		for _, objectID := range selectedObjectIDs {
+			// Проверяем, не привязан ли объект к другому активному договору с пересекающимися сроками
+			var existingAttachments []models.ContractObject
+			if err := tenantDB.Where("object_id = ? AND object_company_id = ? AND status = ?", 
+				objectID, targetAccountID, "active").Find(&existingAttachments).Error; err == nil {
+				
+				for _, existing := range existingAttachments {
+					// Проверяем пересечение сроков
+					hasOverlap := !contractStartDate.After(existing.EndDate) && !existing.StartDate.After(contractEndDate)
+					
+					if hasOverlap {
+						// Получаем информацию о конфликтующем договоре для проверки тарифных планов
+						var conflictingContract models.Contract
+						if err := tenantDB.First(&conflictingContract, existing.ContractID).Error; err != nil {
+							log.Printf("⚠️ Не удалось загрузить договор %d для проверки тарифного плана: %v", existing.ContractID, err)
+							validationErrors = append(validationErrors, fmt.Sprintf(
+								"Объект %d уже привязан к другому договору (ID: %d) на период %s - %s. Повторная привязка возможна только на другой срок без пересечений.",
+								objectID, existing.ContractID,
+								existing.StartDate.Format("2006-01-02"), existing.EndDate.Format("2006-01-02")))
+							continue
+						}
+
+						conflictingTariffPlanID := conflictingContract.TariffPlanID
+						
+						log.Printf("🔍 Проверка тарифных планов перед созданием договора: новый договор (TariffPlanID=%d), конфликтующий договор %d (TariffPlanID=%d)",
+							currentTariffPlanID, conflictingContract.ID, conflictingTariffPlanID)
+
+						// Если у одного или обоих договоров нет тарифного плана, блокируем создание
+						if currentTariffPlanID == 0 || conflictingTariffPlanID == 0 {
+							log.Printf("⚠️ У одного из договоров отсутствует тарифный план (новый: %d, конфликтующий: %d), блокируем создание договора",
+								currentTariffPlanID, conflictingTariffPlanID)
+							validationErrors = append(validationErrors, fmt.Sprintf(
+								"Объект %d уже привязан к договору %s (ID: %d) на период %s - %s. Не удалось проверить тарифные планы договоров. Повторная привязка возможна только на другой срок без пересечений.",
+								objectID, conflictingContract.Number, conflictingContract.ID,
+								existing.StartDate.Format("2006-01-02"), existing.EndDate.Format("2006-01-02")))
+							continue
+						}
+
+						// Если тарифные планы одинаковые - блокируем создание договора
+						if currentTariffPlanID == conflictingTariffPlanID {
+							// Загружаем информацию о тарифном плане для более подробного сообщения
+							var tariffPlan models.BillingPlan
+							tariffPlanName := fmt.Sprintf("ID: %d", currentTariffPlanID)
+							if adminAccountID > 0 {
+								publicDB := database.DB.Session(&gorm.Session{})
+								if err := publicDB.Exec("SET search_path TO public").Error; err == nil {
+									if err := publicDB.Where("id = ? AND admin_account_id = ?", currentTariffPlanID, adminAccountID).First(&tariffPlan).Error; err == nil {
+										tariffPlanName = tariffPlan.Name
+									}
+								}
+							}
+
+							log.Printf("❌ Объект %d уже привязан к договору %s (ID: %d) с тем же тарифным планом '%s' (ID: %d) на период %s - %s. Договор не будет создан.",
+								objectID, conflictingContract.Number, conflictingContract.ID, tariffPlanName, currentTariffPlanID,
+								existing.StartDate.Format("2006-01-02"), existing.EndDate.Format("2006-01-02"))
+							
+							validationErrors = append(validationErrors, fmt.Sprintf(
+								"Объект %d уже привязан к договору %s (ID: %d) с тарифным планом '%s' на период %s - %s. Объект не может быть привязан к другому договору с тем же тарифным планом.",
+								objectID, conflictingContract.Number, conflictingContract.ID, tariffPlanName,
+								existing.StartDate.Format("2006-01-02"), existing.EndDate.Format("2006-01-02")))
+						}
+						// Если тарифные планы разные - разрешаем создание договора (даже если сроки пересекаются)
+					}
+				}
+			}
+		}
+
+		// Если есть ошибки валидации, не создаем договор
+		if len(validationErrors) > 0 {
+			log.Printf("❌ Обнаружены конфликты при проверке объектов. Договор не будет создан. Ошибок: %d", len(validationErrors))
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error",
+				"error":  "Не удалось создать договор: объекты уже привязаны к другим договорам с тем же тарифным планом",
+				"details": validationErrors,
+			})
+			return
+		}
+		log.Printf("✅ Проверка объектов завершена успешно, конфликтов не обнаружено")
+	}
+
+	// Удаляем foreign key constraint для tariff_plan_id в tenant схеме, если он существует
+	// Тарифные планы находятся в основной схеме (public), а не в tenant схеме
+	// Поэтому foreign key constraint не может работать между схемами
+	if err := tenantDB.Exec(`
+		DO $$
+		BEGIN
+			-- Пытаемся удалить foreign key constraint, если он существует
+			IF EXISTS (
+				SELECT 1 FROM information_schema.table_constraints 
+				WHERE constraint_name = 'fk_contracts_tariff_plan' 
+				AND table_schema = current_schema()
+				AND table_name = 'contracts'
+			) THEN
+				ALTER TABLE contracts DROP CONSTRAINT fk_contracts_tariff_plan;
+				RAISE NOTICE 'Foreign key constraint fk_contracts_tariff_plan удален';
+			END IF;
+		END $$;
+	`).Error; err != nil {
+		// Игнорируем ошибку, если constraint не существует
+		log.Printf("ℹ️ Не удалось удалить foreign key constraint (возможно, его нет): %v", err)
+	}
+
 	// Создаем договор в tenant схеме, явно указывая только поля, которые есть в БД
 	// Используем Omit() чтобы избежать ошибок с несуществующими колонками
+	// TariffPlan не включаем, так как foreign key не работает между схемами
 	if err := tenantDB.Omit("SellerCountryCode", "BuyerCountryCode", "NDSRateOverride", "TariffPlan", "Appendices", "Objects").Create(&contract).Error; err != nil {
 		log.Printf("❌ Ошибка при создании договора: %v", err)
 		log.Printf("📋 Тип ошибки: %T", err)
@@ -536,46 +779,222 @@ func CreateContract(c *gin.Context) {
 
 	log.Printf("✅ Договор успешно создан с ID=%d", contract.ID)
 
-	// Привязываем объекты только выбранной компании
-	targetCompanyID := contract.CompanyID
-	selectedObjectIDs := request.ObjectIDs
-
-	if request.AccountID != nil && *request.AccountID > 0 {
-		if *request.AccountID != targetCompanyID {
-			log.Printf("⚠️ AccountID %d не совпадает с CompanyID договора %d, возвращаем ошибку", *request.AccountID, targetCompanyID)
-			c.JSON(http.StatusBadRequest, gin.H{
-				"status": "error",
-				"error":  "account_id не соответствует компании договора",
-			})
-			return
-		}
+	// Убеждаемся, что таблица contract_objects существует перед привязкой объектов
+	if err := ensureContractObjectsTable(tenantDB); err != nil {
+		log.Printf("⚠️ Не удалось создать таблицу contract_objects: %v", err)
+		// Продолжаем работу, но объекты не будут привязаны
+	} else {
+		log.Printf("✅ Таблица contract_objects проверена/создана")
 	}
 
+	// Привязываем объекты из целевой компании (account_id), а не из компании-создателя
+	// account_id - это ID учетной записи из Axenta Cloud, объекты которой привязываются
+	var targetAccountID uint
+	if request.AccountID != nil && *request.AccountID > 0 {
+		targetAccountID = *request.AccountID
+		log.Printf("ℹ️ AccountID %d указан для привязки объектов из Axenta Cloud", targetAccountID)
+	} else {
+		// Если account_id не указан, используем company_id договора (fallback)
+		targetAccountID = contract.CompanyID
+		log.Printf("⚠️ AccountID не указан, используем CompanyID договора: %d", targetAccountID)
+	}
+
+	// selectedObjectIDs уже объявлен выше при проверке
 	attachedCount := int64(0)
+	var objectErrors []string // Ошибки привязки объектов (объявляем здесь для использования в ответе)
+
+	// Получаем информацию о компании для определения схемы
+	var company models.Company
+	publicDB := database.DB.Session(&gorm.Session{})
+	if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
+		log.Printf("⚠️ Не удалось переключиться на схему public: %v", err)
+	}
+	
+	if err := publicDB.First(&company, targetAccountID).Error; err != nil {
+		log.Printf("⚠️ Компания с ID %d не найдена: %v", targetAccountID, err)
+	}
+
 	if len(selectedObjectIDs) > 0 {
-		log.Printf("🔗 Привязываем выбранные объекты %v к договору %d", selectedObjectIDs, contract.ID)
-		res := tenantDB.Model(&models.Object{}).
-			Where("company_id = ?", targetCompanyID).
-			Where("id IN ?", selectedObjectIDs).
-			Update("contract_id", contract.ID)
-		if res.Error != nil {
-			log.Printf("⚠️ Ошибка привязки выбранных объектов к договору %d: %v", contract.ID, res.Error)
+		log.Printf("🔗 Привязываем выбранные объекты %v к договору %d из account_id %d через Axenta Cloud API", selectedObjectIDs, contract.ID, targetAccountID)
+		
+		// Получаем токен из заголовка Authorization для запроса к Axenta Cloud API
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			log.Printf("⚠️ Заголовок Authorization не найден, объекты не будут привязаны")
 		} else {
-			attachedCount = res.RowsAffected
-			if attachedCount != int64(len(selectedObjectIDs)) {
-				log.Printf("⚠️ Не все объекты привязаны: ожидалось %d, обновлено %d", len(selectedObjectIDs), attachedCount)
+			// Извлекаем токен из заголовка
+			var userToken string
+			if strings.HasPrefix(authHeader, "Token ") {
+				userToken = strings.TrimPrefix(authHeader, "Token ")
+			} else if strings.HasPrefix(authHeader, "Bearer ") {
+				userToken = strings.TrimPrefix(authHeader, "Bearer ")
+			} else {
+				userToken = authHeader
+			}
+
+			// Получаем объекты из Axenta Cloud API для проверки их существования
+			axentaObjects, err := fetchObjectsFromAxentaCloud(userToken, int(targetAccountID), selectedObjectIDs)
+			if err != nil {
+				log.Printf("⚠️ Ошибка получения объектов из Axenta Cloud API для account_id %d: %v", targetAccountID, err)
+				log.Printf("ℹ️ Продолжаем привязку объектов без проверки через API")
+			} else {
+				log.Printf("✅ Получено %d объектов из Axenta Cloud API для account_id %d", len(axentaObjects), targetAccountID)
+			}
+
+			// Создаем записи в junction table для каждого объекта
+			for _, objectID := range selectedObjectIDs {
+				// Проверяем, существует ли объект в Axenta Cloud (если удалось получить список)
+				if len(axentaObjects) > 0 {
+					objectExists := false
+					for _, axentaObj := range axentaObjects {
+						if axentaObj.ID == int(objectID) {
+							objectExists = true
+							break
+						}
+					}
+					if !objectExists {
+						log.Printf("⚠️ Объект %d не найден в Axenta Cloud для account_id %d, пропускаем", objectID, targetAccountID)
+						objectErrors = append(objectErrors, fmt.Sprintf("Объект %d не найден в Axenta Cloud", objectID))
+						continue
+					}
+				}
+
+				// Проверяем, не существует ли уже такая связь с этим договором
+				var existingSameContract models.ContractObject
+				if err := tenantDB.Where("contract_id = ? AND object_id = ? AND object_company_id = ?", 
+					contract.ID, objectID, targetAccountID).First(&existingSameContract).Error; err == nil {
+					log.Printf("ℹ️ Связь между договором %d и объектом %d уже существует, пропускаем", contract.ID, objectID)
+					attachedCount++
+					continue
+				}
+
+				// Проверяем, не привязан ли объект к другому активному договору с пересекающимися сроками
+				// Объект может быть привязан к разным договорам только если у них разные тарифные планы
+				var existingAttachments []models.ContractObject
+				skipObject := false
+				contractStartDate := contract.StartDate
+				contractEndDate := contract.EndDate
+
+				if err := tenantDB.Where("object_id = ? AND object_company_id = ? AND status = ?", 
+					objectID, targetAccountID, "active").Find(&existingAttachments).Error; err == nil {
+					
+					for _, existing := range existingAttachments {
+						// Если это тот же договор, пропускаем проверку
+						if existing.ContractID == contract.ID {
+							continue
+						}
+						
+						// Проверяем пересечение сроков
+						// Периоды пересекаются, если start1 <= end2 && start2 <= end1
+						hasOverlap := !contractStartDate.After(existing.EndDate) && !existing.StartDate.After(contractEndDate)
+						
+						if hasOverlap {
+							// Получаем информацию о конфликтующем договоре для проверки тарифных планов
+							var conflictingContract models.Contract
+							if err := tenantDB.First(&conflictingContract, existing.ContractID).Error; err != nil {
+								log.Printf("⚠️ Не удалось загрузить договор %d для проверки тарифного плана: %v", existing.ContractID, err)
+								objectErrors = append(objectErrors, fmt.Sprintf(
+									"Объект %d уже привязан к другому договору (ID: %d) на период %s - %s. Повторная привязка возможна только на другой срок без пересечений.",
+									objectID, existing.ContractID,
+									existing.StartDate.Format("2006-01-02"), existing.EndDate.Format("2006-01-02")))
+								skipObject = true
+								break
+							}
+
+							// Проверяем тарифные планы обоих договоров
+							currentTariffPlanID := contract.TariffPlanID
+							conflictingTariffPlanID := conflictingContract.TariffPlanID
+							
+							log.Printf("🔍 Проверка тарифных планов при создании договора: новый договор %d (TariffPlanID=%d), конфликтующий договор %d (TariffPlanID=%d)",
+								contract.ID, currentTariffPlanID, conflictingContract.ID, conflictingTariffPlanID)
+
+							// Если у одного или обоих договоров нет тарифного плана, блокируем создание связи
+							if currentTariffPlanID == 0 || conflictingTariffPlanID == 0 {
+								log.Printf("⚠️ У одного из договоров отсутствует тарифный план (новый: %d, конфликтующий: %d), блокируем создание связи",
+									currentTariffPlanID, conflictingTariffPlanID)
+								objectErrors = append(objectErrors, fmt.Sprintf(
+									"Объект %d уже привязан к договору %s (ID: %d) на период %s - %s. Не удалось проверить тарифные планы договоров. Повторная привязка возможна только на другой срок без пересечений.",
+									objectID, conflictingContract.Number, conflictingContract.ID,
+									existing.StartDate.Format("2006-01-02"), existing.EndDate.Format("2006-01-02")))
+								skipObject = true
+								break
+							}
+
+							// Если тарифные планы одинаковые - блокируем создание связи
+							if currentTariffPlanID == conflictingTariffPlanID {
+								// Загружаем информацию о тарифном плане для более подробного сообщения
+								var tariffPlan models.BillingPlan
+								tariffPlanName := fmt.Sprintf("ID: %d", currentTariffPlanID)
+								if adminAccountID > 0 {
+									publicDB := database.DB.Session(&gorm.Session{})
+									if err := publicDB.Exec("SET search_path TO public").Error; err == nil {
+										if err := publicDB.Where("id = ? AND admin_account_id = ?", currentTariffPlanID, adminAccountID).First(&tariffPlan).Error; err == nil {
+											tariffPlanName = tariffPlan.Name
+										}
+									}
+								}
+
+								log.Printf("❌ Объект %d уже привязан к договору %s (ID: %d) с тем же тарифным планом '%s' (ID: %d) на период %s - %s",
+									objectID, conflictingContract.Number, conflictingContract.ID, tariffPlanName, currentTariffPlanID,
+									existing.StartDate.Format("2006-01-02"), existing.EndDate.Format("2006-01-02"))
+								
+								objectErrors = append(objectErrors, fmt.Sprintf(
+									"Объект %d уже привязан к договору %s (ID: %d) с тарифным планом '%s' на период %s - %s. Объект не может быть привязан к другому договору с тем же тарифным планом.",
+									objectID, conflictingContract.Number, conflictingContract.ID, tariffPlanName,
+									existing.StartDate.Format("2006-01-02"), existing.EndDate.Format("2006-01-02")))
+								skipObject = true
+								break
+							}
+
+							// Если тарифные планы разные - разрешаем создание связи
+							// (даже если сроки пересекаются, это допустимо для разных тарифных планов)
+							log.Printf("✅ Тарифные планы разные (новый: %d, конфликтующий: %d), разрешаем создание связи даже при пересечении сроков",
+								currentTariffPlanID, conflictingTariffPlanID)
+							// Не устанавливаем skipObject = true, продолжаем создание связи
+						}
+					}
+				}
+
+				// Если объект нужно пропустить (уже привязан к другому договору с тем же тарифным планом)
+				if skipObject {
+					continue // Пропускаем привязку этого объекта
+				}
+
+				// Создаем связь в junction table (в схеме договора)
+				contractObject := models.ContractObject{
+					ContractID:      contract.ID,
+					ObjectID:        objectID,
+					ObjectCompanyID: targetAccountID,
+					ObjectSchema:    company.DatabaseSchema,
+					Status:          "active",
+					StartDate:       contract.StartDate, // Используем сроки договора
+					EndDate:         contract.EndDate,   // Используем сроки договора
+				}
+
+				if err := tenantDB.Create(&contractObject).Error; err != nil {
+					log.Printf("⚠️ Ошибка создания связи для объекта %d: %v", objectID, err)
+					objectErrors = append(objectErrors, fmt.Sprintf("Ошибка привязки объекта %d: %v", objectID, err))
+				} else {
+					attachedCount++
+					log.Printf("✅ Создана связь: договор %d <-> объект %d (account_id %d, схема %s)", contract.ID, objectID, targetAccountID, company.DatabaseSchema)
+				}
+			}
+
+			// Если есть ошибки привязки объектов, логируем их
+			if len(objectErrors) > 0 {
+				log.Printf("⚠️ При привязке объектов к договору %d возникло %d ошибок", contract.ID, len(objectErrors))
 			}
 		}
-	} else {
-		log.Printf("ℹ️ Список object_ids пуст, привязываем все объекты компании %d", targetCompanyID)
-		res := tenantDB.Model(&models.Object{}).
-			Where("company_id = ?", targetCompanyID).
-			Update("contract_id", contract.ID)
-		if res.Error != nil {
-			log.Printf("⚠️ Ошибка массовой привязки объектов к договору %d: %v", contract.ID, res.Error)
+		
+		if attachedCount != int64(len(selectedObjectIDs)) {
+			log.Printf("⚠️ Не все объекты привязаны: ожидалось %d, создано %d", len(selectedObjectIDs), attachedCount)
 		} else {
-			attachedCount = res.RowsAffected
+			log.Printf("✅ Привязано %d объектов к договору %d через junction table", attachedCount, contract.ID)
 		}
+	} else {
+		log.Printf("ℹ️ Список object_ids пуст, объекты не привязываются автоматически. Используйте endpoint AttachObjectsToContract для привязки объектов.")
+		// НЕ привязываем все объекты автоматически - это может привести к неожиданному поведению
+		// Пользователь должен явно указать, какие объекты привязать
 	}
 
 	log.Printf("📊 Итог привязки объектов к договору %d: обновлено %d записей", contract.ID, attachedCount)
@@ -601,10 +1020,26 @@ func CreateContract(c *gin.Context) {
 		scheduler.SyncAdminAsync(adminAccountID)
 	}
 
-	c.JSON(http.StatusCreated, gin.H{
+	// Формируем ответ с информацией об ошибках привязки объектов, если они есть
+	response := gin.H{
 		"status": "success",
 		"data":   contract,
-	})
+	}
+
+	// Если есть ошибки привязки объектов, добавляем их в ответ
+	if len(selectedObjectIDs) > 0 {
+		// Проверяем, были ли объекты успешно привязаны
+		if attachedCount < int64(len(selectedObjectIDs)) {
+			// Если не все объекты привязаны, это может быть из-за ошибок
+			response["warning"] = fmt.Sprintf("Не все объекты привязаны: привязано %d из %d", attachedCount, len(selectedObjectIDs))
+		}
+		// Добавляем ошибки, если они есть
+		if len(objectErrors) > 0 {
+			response["object_errors"] = objectErrors
+		}
+	}
+
+	c.JSON(http.StatusCreated, response)
 }
 
 // UpdateContract обновляет существующий договор
@@ -717,15 +1152,41 @@ func DeleteContract(c *gin.Context) {
 		return
 	}
 
-	// Отвязываем все объекты от договора перед удалением
-	// Обновляем contract_id на 0 для всех объектов этого договора
-	if err := tenantDB.Model(&models.Object{}).Where("contract_id = ?", contract.ID).Update("contract_id", 0).Error; err != nil {
+	// 1. Отвязываем все объекты от договора перед удалением
+	// Обновляем contract_id на NULL для всех объектов этого договора
+	if err := tenantDB.Model(&models.Object{}).Where("contract_id = ?", contract.ID).UpdateColumn("contract_id", gorm.Expr("NULL")).Error; err != nil {
 		log.Printf("⚠️ Не удалось отвязать объекты от договора %d: %v", contract.ID, err)
 		// Продолжаем удаление договора даже если не удалось отвязать объекты
+	} else {
+		log.Printf("✅ Объекты отвязаны от договора %d", contract.ID)
 	}
 
-	// Удаляем договор из tenant схемы
-	if err := tenantDB.Delete(&contract).Error; err != nil {
+	// 2. Удаляем связи из junction table
+	if err := tenantDB.Where("contract_id = ?", contract.ID).Delete(&models.ContractObject{}).Error; err != nil {
+		log.Printf("⚠️ Не удалось отвязать объекты от договора %d через junction table: %v", contract.ID, err)
+		// Продолжаем удаление договора даже если не удалось отвязать объекты
+	} else {
+		log.Printf("✅ Связи объектов с договором %d удалены из junction table", contract.ID)
+	}
+
+	// 3. Удаляем приложения к договору (пробуем в tenant схеме)
+	if err := tenantDB.Where("contract_id = ?", contract.ID).Delete(&models.ContractAppendix{}).Error; err != nil {
+		log.Printf("⚠️ Не удалось удалить приложения к договору %d из tenant схемы: %v (возможно, таблица отсутствует)", contract.ID, err)
+		// Пробуем удалить из public схемы
+		publicDB := database.DB.Session(&gorm.Session{})
+		if err := publicDB.Exec("SET search_path TO public").Error; err == nil {
+			if err := publicDB.Where("contract_id = ?", contract.ID).Delete(&models.ContractAppendix{}).Error; err != nil {
+				log.Printf("⚠️ Не удалось удалить приложения к договору %d из public схемы: %v", contract.ID, err)
+			} else {
+				log.Printf("✅ Приложения к договору %d удалены из public схемы", contract.ID)
+			}
+		}
+	} else {
+		log.Printf("✅ Приложения к договору %d удалены из tenant схемы", contract.ID)
+	}
+
+	// 4. Удаляем договор из tenant схемы (жесткое удаление)
+	if err := tenantDB.Unscoped().Delete(&contract).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  "Ошибка при удалении договора",
@@ -986,20 +1447,364 @@ func ensureContractNumeratorTable(db *gorm.DB) error {
 	}
 
 	migrator := db.Migrator()
-	if migrator.HasTable(&models.ContractNumerator{}) {
-		return nil
-	}
-
-	log.Printf("ensureContractNumeratorTable: таблица contract_numerators отсутствует, пытаемся создать через AutoMigrate")
-	if err := db.AutoMigrate(&models.ContractNumerator{}); err != nil {
-		if strings.Contains(err.Error(), "already exists") {
+	tableExists := migrator.HasTable(&models.ContractNumerator{})
+	
+	if !tableExists {
+		log.Printf("ensureContractNumeratorTable: таблица contract_numerators отсутствует, пытаемся создать через AutoMigrate")
+		if err := db.AutoMigrate(&models.ContractNumerator{}); err != nil {
+			if strings.Contains(err.Error(), "already exists") {
+				// Таблица уже существует, но AutoMigrate не смог её создать
+				// Продолжаем проверку колонок
+			} else {
+				return err
+			}
+		} else {
+			log.Printf("ensureContractNumeratorTable: таблица contract_numerators успешно создана")
 			return nil
 		}
-		return err
 	}
 
-	log.Printf("ensureContractNumeratorTable: таблица contract_numerators успешно создана")
+	// ВСЕГДА проверяем наличие колонки admin_account_id через прямой SQL запрос
+	// Это более надежно, чем migrator.HasColumn, который может кэшировать результат
+	// Проверяем в текущей схеме (tenant схеме)
+	var columnExists bool
+	var currentSchema string
+	// Получаем текущую схему
+	if err := db.Raw("SELECT current_schema()").Scan(&currentSchema).Error; err != nil {
+		log.Printf("ensureContractNumeratorTable: не удалось получить текущую схему: %v, используем 'public'", err)
+		currentSchema = "public"
+	} else {
+		log.Printf("ensureContractNumeratorTable: текущая схема: %s", currentSchema)
+	}
+	
+	checkQuery := `
+		SELECT EXISTS (
+			SELECT 1 
+			FROM information_schema.columns 
+			WHERE table_schema = current_schema()
+			AND table_name = 'contract_numerators' 
+			AND column_name = 'admin_account_id'
+		)
+	`
+	if err := db.Raw(checkQuery).Scan(&columnExists).Error; err != nil {
+		log.Printf("ensureContractNumeratorTable: ошибка при проверке колонки admin_account_id: %v", err)
+		// Пробуем альтернативный способ проверки
+		var count int64
+		if err2 := db.Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_name = 'contract_numerators' AND column_name = 'admin_account_id'").Scan(&count).Error; err2 == nil {
+			columnExists = count > 0
+		} else {
+			log.Printf("ensureContractNumeratorTable: альтернативная проверка также не удалась: %v", err2)
+			// Если проверка не удалась, пробуем добавить колонку (если её нет, будет ошибка, которую обработаем)
+			columnExists = false
+		}
+	}
+
+	if !columnExists {
+		log.Printf("ensureContractNumeratorTable: колонка admin_account_id отсутствует, добавляем её")
+		// Добавляем колонку admin_account_id
+		// Сначала пробуем с DEFAULT для существующих записей
+		if err := db.Exec("ALTER TABLE contract_numerators ADD COLUMN admin_account_id BIGINT NOT NULL DEFAULT 0").Error; err != nil {
+			// Если не удалось добавить с DEFAULT (возможно, есть NULL значения или колонка уже существует), пробуем без NOT NULL
+			log.Printf("ensureContractNumeratorTable: не удалось добавить с NOT NULL DEFAULT, пробуем без NOT NULL: %v", err)
+			// Проверяем, не существует ли колонка уже (может быть добавлена параллельно)
+			var existsAfterError bool
+			if err2 := db.Raw(checkQuery).Scan(&existsAfterError).Error; err2 == nil && existsAfterError {
+				log.Printf("ensureContractNumeratorTable: колонка admin_account_id уже существует после ошибки")
+			} else {
+				// Пробуем добавить без NOT NULL
+				if err2 := db.Exec("ALTER TABLE contract_numerators ADD COLUMN admin_account_id BIGINT").Error; err2 != nil {
+					// Проверяем еще раз, может быть колонка уже существует
+					var existsCheck bool
+					if err3 := db.Raw(checkQuery).Scan(&existsCheck).Error; err3 == nil && existsCheck {
+						log.Printf("ensureContractNumeratorTable: колонка admin_account_id уже существует")
+					} else {
+						return fmt.Errorf("не удалось добавить колонку admin_account_id: %v (первая попытка: %v)", err2, err)
+					}
+				} else {
+					// Обновляем существующие записи
+					if err := db.Exec("UPDATE contract_numerators SET admin_account_id = 0 WHERE admin_account_id IS NULL").Error; err != nil {
+						log.Printf("ensureContractNumeratorTable: предупреждение - не удалось обновить NULL значения: %v", err)
+					}
+					// Делаем колонку NOT NULL
+					if err := db.Exec("ALTER TABLE contract_numerators ALTER COLUMN admin_account_id SET NOT NULL").Error; err != nil {
+						log.Printf("ensureContractNumeratorTable: предупреждение - не удалось установить NOT NULL: %v", err)
+					}
+					if err := db.Exec("ALTER TABLE contract_numerators ALTER COLUMN admin_account_id SET DEFAULT 0").Error; err != nil {
+						log.Printf("ensureContractNumeratorTable: предупреждение - не удалось установить DEFAULT: %v", err)
+					}
+				}
+			}
+		}
+		// Проверяем, что колонка действительно добавлена
+		var verifyExists bool
+		if err := db.Raw(checkQuery).Scan(&verifyExists).Error; err == nil && verifyExists {
+			log.Printf("ensureContractNumeratorTable: ✅ колонка admin_account_id успешно добавлена и проверена")
+			// Добавляем индекс для admin_account_id
+			if err := db.Exec("CREATE INDEX IF NOT EXISTS idx_contract_numerators_admin_account_id ON contract_numerators(admin_account_id)").Error; err != nil {
+				log.Printf("ensureContractNumeratorTable: предупреждение - не удалось создать индекс для admin_account_id: %v", err)
+			}
+		} else {
+			log.Printf("ensureContractNumeratorTable: ⚠️ ВНИМАНИЕ! Колонка admin_account_id не найдена после попытки добавления")
+			if err != nil {
+				log.Printf("ensureContractNumeratorTable: ошибка проверки: %v", err)
+			}
+			// Пробуем еще раз добавить колонку (без IF NOT EXISTS для совместимости)
+			// Проверяем еще раз перед добавлением
+			var lastCheck bool
+			if err := db.Raw(checkQuery).Scan(&lastCheck).Error; err == nil && !lastCheck {
+				if err := db.Exec("ALTER TABLE contract_numerators ADD COLUMN admin_account_id BIGINT DEFAULT 0").Error; err != nil {
+					// Игнорируем ошибку, если колонка уже существует
+					if !strings.Contains(err.Error(), "already exists") && !strings.Contains(err.Error(), "duplicate") {
+						log.Printf("ensureContractNumeratorTable: ⚠️ не удалось добавить колонку при повторной попытке: %v", err)
+					}
+				}
+			}
+		}
+	} else {
+		log.Printf("ensureContractNumeratorTable: колонка admin_account_id уже существует")
+	}
+	
+	// Финальная проверка перед возвратом
+	var finalCheck bool
+	if err := db.Raw(checkQuery).Scan(&finalCheck).Error; err == nil {
+		if !finalCheck {
+			log.Printf("ensureContractNumeratorTable: ❌ КРИТИЧЕСКАЯ ОШИБКА! Колонка admin_account_id отсутствует после всех попыток!")
+			return fmt.Errorf("не удалось добавить колонку admin_account_id в таблицу contract_numerators")
+		}
+		log.Printf("ensureContractNumeratorTable: ✅ финальная проверка: колонка admin_account_id существует")
+	} else {
+		log.Printf("ensureContractNumeratorTable: ⚠️ не удалось выполнить финальную проверку: %v", err)
+	}
+
+	// Убеждаемся, что таблица соответствует модели (добавляем другие отсутствующие колонки)
+	if err := db.AutoMigrate(&models.ContractNumerator{}); err != nil {
+		// Игнорируем ошибки о существующих колонках
+		if !strings.Contains(err.Error(), "already exists") && !strings.Contains(err.Error(), "duplicate") {
+			log.Printf("ensureContractNumeratorTable: предупреждение при AutoMigrate: %v", err)
+		}
+	}
+
 	return nil
+}
+
+// ensureContractObjectsTable проверяет и создает таблицу contract_objects если её нет
+func ensureContractObjectsTable(db *gorm.DB) error {
+	if db == nil {
+		return fmt.Errorf("tenant DB is nil")
+	}
+	migrator := db.Migrator()
+	if !migrator.HasTable(&models.ContractObject{}) {
+		log.Printf("ensureContractObjectsTable: таблица contract_objects отсутствует, пытаемся создать через SQL")
+		
+		// Создаем таблицу вручную через SQL, чтобы избежать проблем с foreign keys
+		createTableSQL := `
+			CREATE TABLE IF NOT EXISTS contract_objects (
+				id BIGSERIAL PRIMARY KEY,
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				deleted_at TIMESTAMP,
+				contract_id BIGINT NOT NULL,
+				object_id BIGINT NOT NULL,
+				object_company_id BIGINT NOT NULL,
+				object_schema VARCHAR(100) NOT NULL,
+				attached_at TIMESTAMP,
+				status VARCHAR(20) NOT NULL DEFAULT 'active',
+				notes TEXT,
+				start_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				end_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				CONSTRAINT fk_contract_objects_contract FOREIGN KEY (contract_id) REFERENCES contracts(id) ON DELETE CASCADE
+			);
+			CREATE INDEX IF NOT EXISTS idx_contract_objects_contract_id ON contract_objects(contract_id);
+			CREATE INDEX IF NOT EXISTS idx_contract_objects_object_id ON contract_objects(object_id);
+			CREATE INDEX IF NOT EXISTS idx_contract_objects_object_company_id ON contract_objects(object_company_id);
+			CREATE INDEX IF NOT EXISTS idx_contract_objects_deleted_at ON contract_objects(deleted_at);
+		`
+		
+		if err := db.Exec(createTableSQL).Error; err != nil {
+			log.Printf("⚠️ Ошибка создания таблицы contract_objects через SQL: %v", err)
+			// Пробуем через AutoMigrate как fallback
+			if err2 := db.AutoMigrate(&models.ContractObject{}); err2 != nil {
+				return fmt.Errorf("ошибка создания таблицы contract_objects (SQL: %v, AutoMigrate: %w)", err, err2)
+			}
+			log.Printf("ensureContractObjectsTable: таблица contract_objects создана через AutoMigrate (fallback)")
+		} else {
+			log.Printf("ensureContractObjectsTable: таблица contract_objects успешно создана через SQL")
+		}
+	} else {
+		// Таблица существует, проверяем наличие колонок start_date и end_date
+		// Если их нет, добавляем их
+		migrator := db.Migrator()
+		hasStartDate := migrator.HasColumn(&models.ContractObject{}, "start_date")
+		hasEndDate := migrator.HasColumn(&models.ContractObject{}, "end_date")
+		
+		if !hasStartDate || !hasEndDate {
+			log.Printf("ensureContractObjectsTable: добавляем недостающие колонки start_date и end_date")
+			if !hasStartDate {
+				if err := db.Exec("ALTER TABLE contract_objects ADD COLUMN IF NOT EXISTS start_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP").Error; err != nil {
+					log.Printf("⚠️ Ошибка добавления колонки start_date: %v", err)
+				} else {
+					log.Printf("✅ Колонка start_date добавлена")
+				}
+			}
+			if !hasEndDate {
+				if err := db.Exec("ALTER TABLE contract_objects ADD COLUMN IF NOT EXISTS end_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP").Error; err != nil {
+					log.Printf("⚠️ Ошибка добавления колонки end_date: %v", err)
+				} else {
+					log.Printf("✅ Колонка end_date добавлена")
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// AxentaCloudObject представляет объект из Axenta Cloud API (копия из axenta_proxy.go для использования в contracts.go)
+type axentaCloudObjectForContract struct {
+	ID                  int      `json:"id"`
+	Name                string   `json:"name"`
+	UniqueID            string   `json:"uniqueId"`
+	CreatorName         string   `json:"creatorName"`
+	CreatorID           int      `json:"creatorId"`
+	CreatorIsActive     bool     `json:"creatorIsActive"`
+	AccountID           int      `json:"accountId"`
+	AccountName         string   `json:"accountName"`
+	AccountType         string   `json:"accountType"`
+	AccountIsActive     bool     `json:"accountIsActive"`
+	PhoneNumbers        []string `json:"phoneNumbers"`
+	DeviceTypeName      string   `json:"deviceTypeName"`
+	LastMessageDatetime string   `json:"lastMessageDatetime"`
+	CreatedAt           string   `json:"createdAt"`
+	DeletedAt           string   `json:"deletedAt"`
+	IsActive            bool     `json:"isActive"`
+	CurrentUserAccess   []string `json:"currentUserAccess"`
+}
+
+// fetchObjectsFromAxentaCloud получает объекты из Axenta Cloud API по accountId и проверяет наличие указанных objectIDs
+func fetchObjectsFromAxentaCloud(token string, accountID int, objectIDs []uint) ([]axentaCloudObjectForContract, error) {
+	if token == "" {
+		return nil, fmt.Errorf("токен не предоставлен")
+	}
+
+	// Формируем URL для запроса объектов по accountId
+	// Запрашиваем все объекты accountId, чтобы проверить наличие указанных objectIDs
+	axentaURL := fmt.Sprintf("https://axenta.cloud/api/cms/objects/?accountId=%d&per_page=200", accountID)
+
+	// Создаем HTTP клиент с таймаутом
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	// Создаем запрос
+	req, err := http.NewRequest("GET", axentaURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка создания запроса: %w", err)
+	}
+
+	// Устанавливаем заголовки
+	req.Header.Set("Authorization", "Token "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	// Выполняем запрос
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка запроса к Axenta Cloud: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Проверяем статус ответа
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("ошибка получения объектов (статус %d): %s", resp.StatusCode, string(body))
+	}
+
+	// Читаем ответ
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка чтения ответа: %w", err)
+	}
+
+	// Парсим ответ
+	var axentaResponse struct {
+		Count    int                          `json:"count"`
+		Next     *string                      `json:"next"`
+		Previous *string                      `json:"previous"`
+		Results  []axentaCloudObjectForContract `json:"results"`
+	}
+
+	if err := json.Unmarshal(body, &axentaResponse); err != nil {
+		return nil, fmt.Errorf("ошибка парсинга ответа: %w", err)
+	}
+
+	// Если есть следующая страница, получаем все объекты
+	allObjects := axentaResponse.Results
+	nextURL := axentaResponse.Next
+
+	for nextURL != nil && *nextURL != "" {
+		req, err := http.NewRequest("GET", *nextURL, nil)
+		if err != nil {
+			log.Printf("⚠️ Ошибка создания запроса для следующей страницы: %v", err)
+			break
+		}
+
+		req.Header.Set("Authorization", "Token "+token)
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := client.Do(req)
+		if err != nil {
+			log.Printf("⚠️ Ошибка запроса следующей страницы: %v", err)
+			break
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			log.Printf("⚠️ Ошибка получения следующей страницы (статус %d)", resp.StatusCode)
+			break
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			log.Printf("⚠️ Ошибка чтения следующей страницы: %v", err)
+			break
+		}
+
+		var nextResponse struct {
+			Count    int                          `json:"count"`
+			Next     *string                      `json:"next"`
+			Previous *string                      `json:"previous"`
+			Results  []axentaCloudObjectForContract `json:"results"`
+		}
+
+		if err := json.Unmarshal(body, &nextResponse); err != nil {
+			log.Printf("⚠️ Ошибка парсинга следующей страницы: %v", err)
+			break
+		}
+
+		allObjects = append(allObjects, nextResponse.Results...)
+		nextURL = nextResponse.Next
+	}
+
+	log.Printf("✅ Получено %d объектов из Axenta Cloud API для account_id %d", len(allObjects), accountID)
+
+	// Фильтруем только те объекты, которые указаны в objectIDs
+	if len(objectIDs) > 0 {
+		filteredObjects := make([]axentaCloudObjectForContract, 0)
+		objectIDMap := make(map[int]bool)
+		for _, id := range objectIDs {
+			objectIDMap[int(id)] = true
+		}
+
+		for _, obj := range allObjects {
+			if objectIDMap[obj.ID] {
+				filteredObjects = append(filteredObjects, obj)
+			}
+		}
+
+		log.Printf("✅ Отфильтровано %d объектов из %d запрошенных", len(filteredObjects), len(objectIDs))
+		return filteredObjects, nil
+	}
+
+	return allObjects, nil
 }
 
 // GetContractNumerators получает список нумераторов для компании
@@ -1558,6 +2363,15 @@ func CreateContractNumerator(c *gin.Context) {
 		return
 	}
 
+	// Получаем admin_account_id из контекста
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		log.Printf("CreateContractNumerator: ⚠️ не удалось получить admin_account_id: %v, используем 0\n", err)
+		adminAccountID = 0
+	} else {
+		log.Printf("CreateContractNumerator: получен admin_account_id: %d\n", adminAccountID)
+	}
+
 	// Если это нумератор по умолчанию, снимаем флаг с других
 	if numerator.IsDefault {
 		log.Printf("CreateContractNumerator: снимаем флаг is_default с других нумераторов\n")
@@ -1571,6 +2385,10 @@ func CreateContractNumerator(c *gin.Context) {
 		log.Printf("CreateContractNumerator: КРИТИЧЕСКАЯ ОШИБКА! numerator.CompanyID = 0 перед сохранением, устанавливаем из companyID=%d\n", companyID)
 		numerator.CompanyID = companyID
 	}
+
+	// Устанавливаем admin_account_id
+	numerator.AdminAccountID = adminAccountID
+	log.Printf("CreateContractNumerator: установлен AdminAccountID=%d\n", numerator.AdminAccountID)
 
 	log.Printf("CreateContractNumerator: сохраняем нумератор в tenant DB (company_id=%d)\n", numerator.CompanyID)
 	log.Printf("CreateContractNumerator: данные перед сохранением: Name=%s, Prefix=%s, Template=%s, CompanyID=%d\n",
@@ -2260,6 +3078,24 @@ func GenerateContractNumber(c *gin.Context) {
 
 // AttachObjectsToContract привязывает объекты к договору
 func AttachObjectsToContract(c *gin.Context) {
+	// Получаем tenant DB для договора
+	tenantDBForContract := middleware.GetTenantDB(c)
+	if tenantDBForContract == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка подключения к базе данных",
+		})
+		return
+	}
+
+	// Убеждаемся, что таблица contract_objects существует
+	if err := ensureContractObjectsTable(tenantDBForContract); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("Ошибка подготовки таблицы contract_objects: %v", err),
+		})
+		return
+	}
 	log.Printf("🔗 [START] AttachObjectsToContract вызван: path=%s, method=%s", c.Request.URL.Path, c.Request.Method)
 	log.Printf("🔍 Content-Type: %s, Content-Length: %s", c.Request.Header.Get("Content-Type"), c.Request.Header.Get("Content-Length"))
 
@@ -2278,7 +3114,7 @@ func AttachObjectsToContract(c *gin.Context) {
 
 	// Проверяем существование договора
 	// Используем БД из контекста (установленную middleware для компании-создателя)
-	tenantDBForContract := middleware.GetTenantDB(c)
+	// tenantDBForContract уже объявлен выше, используем его
 	if tenantDBForContract == nil {
 		// Fallback: используем основную БД
 		tenantDBForContract = database.DB
@@ -2300,7 +3136,14 @@ func AttachObjectsToContract(c *gin.Context) {
 		}
 		return
 	}
-	log.Printf("✅ Договор найден: ID=%d, CompanyID=%d (создатель)", contract.ID, contract.CompanyID)
+	log.Printf("✅ Договор найден: ID=%d, CompanyID=%d (создатель), TariffPlanID=%d", contract.ID, contract.CompanyID, contract.TariffPlanID)
+
+	// Получаем adminAccountID для работы с тарифными планами
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		log.Printf("⚠️ Не удалось получить adminAccountID: %v", err)
+		// Продолжаем выполнение, но проверка тарифных планов может не работать
+	}
 
 	// Парсим данные запроса
 	var requestData struct {
@@ -2675,7 +3518,7 @@ func AttachObjectsToContract(c *gin.Context) {
 											Status:      "active",
 											IsActive:    foundAxentaObj.IsActive,
 											CompanyID:   objectCompanyID,   // Используем целевую компанию (account_id)
-											ContractID:  contract.ID,       // Устанавливаем ID договора сразу
+											ContractID:  &contract.ID,       // Устанавливаем ID договора сразу
 											LocationID:  defaultLocationID, // Используем найденную или созданную локацию
 											Settings:    "{}",              // Валидный JSON для jsonb поля
 											ExternalID:  externalIDStr,     // Сохраняем ID из Axenta Cloud как строку
@@ -2734,7 +3577,8 @@ func AttachObjectsToContract(c *gin.Context) {
 											log.Printf("⚠️ Объект с external_id=%s уже существует в БД целевой компании (локальный ID=%d, CompanyID=%d), обновляем ContractID на %d",
 												externalIDStr, existingSyncedObject.ID, existingSyncedObject.CompanyID, contract.ID)
 											// Обновляем ContractID
-											existingSyncedObject.ContractID = contract.ID
+											contractID := contract.ID
+											existingSyncedObject.ContractID = &contractID
 											if err := tenantDB.Save(&existingSyncedObject).Error; err == nil {
 												log.Printf("✅ Объект обновлен: локальный ID=%d, CompanyID=%d, ContractID=%d",
 													existingSyncedObject.ID, existingSyncedObject.CompanyID, existingSyncedObject.ContractID)
@@ -2781,7 +3625,11 @@ func AttachObjectsToContract(c *gin.Context) {
 			}
 		}
 
-		log.Printf("✅ Объект %d найден: CompanyID=%d, ContractID=%d, Schema=%s", objectID, object.CompanyID, object.ContractID,
+		contractIDStr := "nil"
+		if object.ContractID != nil {
+			contractIDStr = fmt.Sprintf("%d", *object.ContractID)
+		}
+		log.Printf("✅ Объект %d найден: CompanyID=%d, ContractID=%s, Schema=%s", objectID, object.CompanyID, contractIDStr,
 			func() string {
 				if objectDB == tenantDBForContract {
 					return "company-creator"
@@ -2791,7 +3639,7 @@ func AttachObjectsToContract(c *gin.Context) {
 
 		// Проверяем, что объект принадлежит целевой компании (account_id)
 		// Если объект уже привязан к этому договору, пропускаем проверку CompanyID
-		if object.ContractID == contract.ID && object.ContractID != 0 {
+		if object.ContractID != nil && *object.ContractID == contract.ID {
 			log.Printf("✅ Объект %d уже привязан к договору %d, пропускаем проверку CompanyID", objectID, contract.ID)
 		} else if object.CompanyID != accountID {
 			// Если объект найден в схеме компании-создателя, но не принадлежит целевой компании,
@@ -2825,7 +3673,7 @@ func AttachObjectsToContract(c *gin.Context) {
 						Status:      object.Status,
 						IsActive:    object.IsActive,
 						CompanyID:   accountID,         // Используем целевую компанию
-						ContractID:  0,                 // Временно 0, обновим после создания
+						ContractID:  nil,               // Временно nil, обновим после создания
 						LocationID:  object.LocationID, // Используем ту же локацию
 						Settings:    object.Settings,
 						ExternalID:  object.ExternalID, // Сохраняем external_id
@@ -2863,7 +3711,8 @@ func AttachObjectsToContract(c *gin.Context) {
 							// Продолжаем с ContractID=0
 						} else {
 							log.Printf("✅ ContractID обновлен на %d", contract.ID)
-							newObjectForTarget.ContractID = contract.ID
+							contractID := contract.ID
+							newObjectForTarget.ContractID = &contractID
 						}
 						object = newObjectForTarget
 						objectDB = tenantDB
@@ -2879,8 +3728,9 @@ func AttachObjectsToContract(c *gin.Context) {
 						// (договор находится в другой схеме). Используем существующий объект из схемы компании-создателя
 						// и просто обновляем его ContractID, если он еще не привязан
 						log.Printf("⚠️ Используем объект из схемы компании-создателя, обновляем ContractID на %d", contract.ID)
-						if object.ContractID != contract.ID {
-							object.ContractID = contract.ID
+						contractID := contract.ID
+						if object.ContractID == nil || *object.ContractID != contract.ID {
+							object.ContractID = &contractID
 							if err := objectDB.Model(&object).Update("contract_id", contract.ID).Error; err == nil {
 								log.Printf("✅ ContractID объекта обновлен на %d", contract.ID)
 								updatedCount++
@@ -2945,17 +3795,138 @@ func AttachObjectsToContract(c *gin.Context) {
 			}
 		}
 
-		// Привязываем объект к договору в той же БД, где он был найден
-		if objectDB == nil {
-			objectDB = tenantDB // Fallback на tenantDB
+		// Привязываем объект к договору через junction table
+		// Определяем схему объекта
+		var objectSchema string
+		if objectDB == tenantDBForContract {
+			// Объект в схеме компании-создателя
+			var creatorCompany models.Company
+			if err := publicDB.First(&creatorCompany, contract.CompanyID).Error; err == nil {
+				objectSchema = creatorCompany.DatabaseSchema
+			}
+		} else {
+			// Объект в схеме целевой компании
+			objectSchema = company.DatabaseSchema
 		}
-		log.Printf("🔗 Привязываем объект %d к договору %d в БД", objectID, contractIDUint)
-		if err := objectDB.Model(&object).Update("contract_id", uint(contractIDUint)).Error; err != nil {
-			log.Printf("❌ Ошибка привязки объекта %d: %v", objectID, err)
+
+		// Проверяем, не привязан ли объект к другому активному договору с пересекающимися сроками
+		// Объект может быть привязан только к одному договору на определенный период
+		// Повторная привязка возможна только на другой срок (без пересечений)
+		var existingAttachments []models.ContractObject
+		skipObject := false
+		
+		if err := tenantDBForContract.Where("object_id = ? AND object_company_id = ? AND status = ?", 
+			objectID, object.CompanyID, "active").Find(&existingAttachments).Error; err == nil {
+			
+			// Проверяем пересечение сроков с существующими привязками
+			contractStartDate := contract.StartDate
+			contractEndDate := contract.EndDate
+			
+			for _, existing := range existingAttachments {
+				// Если это тот же договор, пропускаем проверку
+				if existing.ContractID == uint(contractIDUint) {
+					log.Printf("ℹ️ Связь между договором %d и объектом %d уже существует, пропускаем", contractIDUint, objectID)
+					updatedCount++
+					skipObject = true
+					break
+				}
+				
+				// Проверяем пересечение сроков
+				// Периоды пересекаются, если start1 <= end2 && start2 <= end1
+				hasOverlap := !contractStartDate.After(existing.EndDate) && !existing.StartDate.After(contractEndDate)
+				
+				if hasOverlap {
+					// Получаем информацию о конфликтующем договоре для проверки тарифных планов
+					var conflictingContract models.Contract
+					if err := tenantDBForContract.First(&conflictingContract, existing.ContractID).Error; err != nil {
+						log.Printf("⚠️ Не удалось загрузить договор %d для проверки тарифного плана: %v", existing.ContractID, err)
+						// Если не удалось загрузить договор, блокируем создание связи по умолчанию
+						errorMessages = append(errorMessages, fmt.Sprintf(
+							"Объект %d уже привязан к другому договору (ID: %d) на период %s - %s. Повторная привязка возможна только на другой срок без пересечений.",
+							objectID, existing.ContractID,
+							existing.StartDate.Format("2006-01-02"), existing.EndDate.Format("2006-01-02")))
+						skipObject = true
+						break
+					}
+
+					// Проверяем тарифные планы обоих договоров
+					currentTariffPlanID := contract.TariffPlanID
+					conflictingTariffPlanID := conflictingContract.TariffPlanID
+					
+					log.Printf("🔍 Проверка тарифных планов: текущий договор %d (TariffPlanID=%d), конфликтующий договор %d (TariffPlanID=%d)",
+						contract.ID, currentTariffPlanID, conflictingContract.ID, conflictingTariffPlanID)
+
+					// Если у одного или обоих договоров нет тарифного плана, блокируем создание связи
+					if currentTariffPlanID == 0 || conflictingTariffPlanID == 0 {
+						log.Printf("⚠️ У одного из договоров отсутствует тарифный план (текущий: %d, конфликтующий: %d), блокируем создание связи",
+							currentTariffPlanID, conflictingTariffPlanID)
+						errorMessages = append(errorMessages, fmt.Sprintf(
+							"Объект %d уже привязан к договору %s (ID: %d) на период %s - %s. Не удалось проверить тарифные планы договоров. Повторная привязка возможна только на другой срок без пересечений.",
+							objectID, conflictingContract.Number, conflictingContract.ID,
+							existing.StartDate.Format("2006-01-02"), existing.EndDate.Format("2006-01-02")))
+						skipObject = true
+						break
+					}
+
+					// Если тарифные планы одинаковые - блокируем создание связи
+					if currentTariffPlanID == conflictingTariffPlanID {
+						// Загружаем информацию о тарифном плане для более подробного сообщения
+						var tariffPlan models.BillingPlan
+						tariffPlanName := fmt.Sprintf("ID: %d", currentTariffPlanID)
+						if adminAccountID > 0 {
+							publicDB := database.DB.Session(&gorm.Session{})
+							if err := publicDB.Exec("SET search_path TO public").Error; err == nil {
+								if err := publicDB.Where("id = ? AND admin_account_id = ?", currentTariffPlanID, adminAccountID).First(&tariffPlan).Error; err == nil {
+									tariffPlanName = tariffPlan.Name
+								}
+							}
+						}
+
+						log.Printf("❌ Объект %d уже привязан к договору %s (ID: %d) с тем же тарифным планом '%s' (ID: %d) на период %s - %s",
+							objectID, conflictingContract.Number, conflictingContract.ID, tariffPlanName, currentTariffPlanID,
+							existing.StartDate.Format("2006-01-02"), existing.EndDate.Format("2006-01-02"))
+						
+						errorMessages = append(errorMessages, fmt.Sprintf(
+							"Объект %d уже привязан к договору %s (ID: %d) с тарифным планом '%s' на период %s - %s. Объект не может быть привязан к другому договору с тем же тарифным планом.",
+							objectID, conflictingContract.Number, conflictingContract.ID, tariffPlanName,
+							existing.StartDate.Format("2006-01-02"), existing.EndDate.Format("2006-01-02")))
+						skipObject = true
+						break
+					}
+
+					// Если тарифные планы разные - разрешаем создание связи
+					// (даже если сроки пересекаются, это допустимо для разных тарифных планов)
+					log.Printf("✅ Тарифные планы разные (текущий: %d, конфликтующий: %d), разрешаем создание связи даже при пересечении сроков",
+						currentTariffPlanID, conflictingTariffPlanID)
+					// Не устанавливаем skipObject = true, продолжаем создание связи
+				}
+			}
+		}
+		
+		// Если объект нужно пропустить (уже привязан к этому договору или есть конфликт сроков)
+		if skipObject {
+			continue // Пропускаем привязку этого объекта
+		}
+
+		// Создаем связь в junction table (в схеме договора)
+		contractObject := models.ContractObject{
+			ContractID:      uint(contractIDUint),
+			ObjectID:        objectID,
+			ObjectCompanyID: object.CompanyID,
+			ObjectSchema:    objectSchema,
+			Status:          "active",
+			StartDate:       contract.StartDate, // Используем сроки договора
+			EndDate:         contract.EndDate,   // Используем сроки договора
+		}
+
+		log.Printf("🔗 Привязываем объект %d к договору %d через junction table (схема объекта: %s)", objectID, contractIDUint, objectSchema)
+		if err := tenantDBForContract.Create(&contractObject).Error; err != nil {
+			log.Printf("❌ Ошибка создания связи для объекта %d: %v", objectID, err)
 			errorMessages = append(errorMessages, fmt.Sprintf("Ошибка привязки объекта %d: %v", objectID, err))
 			continue
 		}
 
+		log.Printf("✅ Создана связь: договор %d <-> объект %d (схема %s)", contractIDUint, objectID, objectSchema)
 		updatedCount++
 	}
 
@@ -3035,7 +4006,7 @@ func DetachObjectFromContract(c *gin.Context) {
 	}
 
 	// Проверяем, что объект привязан к указанному договору
-	if object.ContractID != uint(contractIDUint) {
+	if object.ContractID == nil || *object.ContractID != uint(contractIDUint) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
 			"error":  "Объект не привязан к указанному договору",

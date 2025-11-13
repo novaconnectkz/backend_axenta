@@ -419,6 +419,7 @@ func (tm *TenantMiddleware) runTenantMigrations(tenantDB *gorm.DB) error {
 		&models.TariffPlan{},
 		&models.Contract{},
 		&models.ContractAppendix{},
+		&models.ContractObject{}, // Junction table для связи договоров и объектов из разных схем
 		&models.ContractNumerator{},
 		&models.Subscription{},
 	}
