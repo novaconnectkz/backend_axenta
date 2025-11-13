@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/xuri/excelize/v2"
 	"gorm.io/gorm"
 )
 
@@ -1502,4 +1503,327 @@ func GetUsersStatsOptimizedFromAxentaCloud(c *gin.Context) {
 			"by_role":  axentaResponse["by_role"],
 		},
 	})
+}
+
+// ExportObjectsToXLSX экспортирует список объектов в формат XLSX
+func ExportObjectsToXLSX(c *gin.Context) {
+	log.Printf("📊 Начало экспорта объектов в XLSX")
+	log.Printf("📊 URL запроса: %s", c.Request.URL.String())
+	log.Printf("📊 Метод: %s", c.Request.Method)
+
+	// Получаем токен пользователя из заголовка Authorization
+	authHeader := c.GetHeader("Authorization")
+	log.Printf("📊 Authorization header присутствует: %v", authHeader != "")
+	if authHeader == "" {
+		log.Printf("❌ Токен авторизации не предоставлен")
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  "Токен авторизации не предоставлен",
+		})
+		return
+	}
+
+	// Извлекаем токен из заголовка
+	var userToken string
+	if strings.HasPrefix(authHeader, "Token ") {
+		userToken = strings.TrimPrefix(authHeader, "Token ")
+		log.Printf("📊 Токен извлечен из формата 'Token'")
+	} else if strings.HasPrefix(authHeader, "Bearer ") {
+		userToken = strings.TrimPrefix(authHeader, "Bearer ")
+		log.Printf("📊 Токен извлечен из формата 'Bearer'")
+	} else {
+		headerPreview := authHeader
+		if len(authHeader) > 20 {
+			headerPreview = authHeader[:20] + "..."
+		}
+		log.Printf("❌ Неверный формат токена авторизации: %s", headerPreview)
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  "Неверный формат токена авторизации",
+		})
+		return
+	}
+
+	if userToken == "" {
+		log.Printf("❌ Токен пустой после извлечения")
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  "Токен не может быть пустым",
+		})
+		return
+	}
+
+	log.Printf("📊 Токен успешно извлечен, длина: %d", len(userToken))
+
+	// Получаем все объекты с учетом фильтров (собираем все страницы)
+	var allObjects []AxentaCloudObject
+	page := 1
+	perPage := 1000 // Большой размер страницы для уменьшения количества запросов
+
+	for {
+		// Формируем URL для Axenta Cloud API
+		axentaURL := fmt.Sprintf("https://axenta.cloud/api/cms/objects/?page=%d&per_page=%d&ordering=name", page, perPage)
+
+		// Добавляем дополнительные фильтры, если они переданы
+		if accountId := c.Query("accountId"); accountId != "" {
+			axentaURL += "&accountId=" + accountId
+		}
+		if accountName := c.Query("accountName"); accountName != "" {
+			axentaURL += "&accountName=" + url.QueryEscape(accountName)
+		}
+		if creatorName := c.Query("creatorName"); creatorName != "" {
+			axentaURL += "&creatorName=" + url.QueryEscape(creatorName)
+		}
+		if deviceTypeName := c.Query("deviceTypeName"); deviceTypeName != "" {
+			axentaURL += "&deviceTypeName=" + url.QueryEscape(deviceTypeName)
+		}
+		if uniqueId := c.Query("uniqueId"); uniqueId != "" {
+			axentaURL += "&uniqueId=" + url.QueryEscape(uniqueId)
+		}
+		if status := c.Query("status"); status != "" {
+			axentaURL += "&status=" + url.QueryEscape(status)
+		}
+		if objectType := c.Query("type"); objectType != "" {
+			axentaURL += "&type=" + url.QueryEscape(objectType)
+		}
+		if search := c.Query("search"); search != "" {
+			axentaURL += "&search=" + url.QueryEscape(search)
+			log.Printf("📊 Добавлен фильтр search: %s", search)
+		}
+		// Игнорируем параметр format, если он передан (он не нужен для Axenta Cloud API)
+		if format := c.Query("format"); format != "" {
+			log.Printf("📊 Параметр format игнорируется: %s", format)
+		}
+		if contractId := c.Query("contract_id"); contractId != "" {
+			axentaURL += "&contract_id=" + contractId
+		}
+		if isActive := c.Query("is_active"); isActive != "" {
+			axentaURL += "&is_active=" + isActive
+		}
+
+		// Создаем запрос к Axenta Cloud
+		log.Printf("📊 Запрос к Axenta Cloud: %s", axentaURL)
+		req, err := http.NewRequest("GET", axentaURL, nil)
+		if err != nil {
+			log.Printf("❌ Ошибка создания запроса к Axenta Cloud: %v", err)
+			c.Header("Content-Type", "application/json")
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error",
+				"error":  "Ошибка создания запроса к Axenta Cloud: " + err.Error(),
+			})
+			return
+		}
+
+		// Добавляем заголовки авторизации
+		req.Header.Set("Authorization", "Token "+userToken)
+		req.Header.Set("Content-Type", "application/json")
+
+		// Выполняем запрос
+		client := &http.Client{Timeout: 30 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			log.Printf("❌ Ошибка запроса к Axenta Cloud: %v", err)
+			c.Header("Content-Type", "application/json")
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error",
+				"error":  "Ошибка запроса к Axenta Cloud: " + err.Error(),
+			})
+			return
+		}
+
+		// Читаем ответ
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			log.Printf("❌ Ошибка чтения ответа от Axenta Cloud: %v", err)
+			c.Header("Content-Type", "application/json")
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error",
+				"error":  "Ошибка чтения ответа от Axenta Cloud: " + err.Error(),
+			})
+			return
+		}
+
+		// Проверяем статус ответа
+		if resp.StatusCode != http.StatusOK {
+			log.Printf("❌ Ошибка от Axenta Cloud API (статус %d): %s", resp.StatusCode, string(body))
+			// При ошибке возвращаем JSON, но фронтенд ожидает blob
+			// Поэтому нужно вернуть правильный формат ошибки
+			c.Header("Content-Type", "application/json")
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error",
+				"error":  fmt.Sprintf("Ошибка от Axenta Cloud API (статус %d): %s", resp.StatusCode, string(body)),
+			})
+			return
+		}
+
+		// Парсим ответ
+		var axentaResponse AxentaCloudResponse
+		if err := json.Unmarshal(body, &axentaResponse); err != nil {
+			log.Printf("❌ Ошибка парсинга ответа от Axenta Cloud: %v, тело ответа: %s", err, string(body))
+			c.Header("Content-Type", "application/json")
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error",
+				"error":  "Ошибка парсинга ответа от Axenta Cloud: " + err.Error(),
+			})
+			return
+		}
+
+		// Добавляем объекты текущей страницы
+		allObjects = append(allObjects, axentaResponse.Results...)
+
+		// Если нет следующей страницы, прекращаем цикл
+		if axentaResponse.Next == nil || len(axentaResponse.Results) == 0 {
+			break
+		}
+
+		page++
+	}
+
+	log.Printf("📊 Получено объектов для экспорта: %d", len(allObjects))
+
+	// Создаем новый Excel файл
+	f := excelize.NewFile()
+	defer func() {
+		if err := f.Close(); err != nil {
+			log.Printf("⚠️ Ошибка закрытия Excel файла: %v", err)
+		}
+	}()
+
+	sheetName := "Объекты"
+	f.SetSheetName("Sheet1", sheetName)
+
+	// Определяем заголовки
+	headers := []string{
+		"ID",
+		"Название",
+		"Уникальный ID",
+		"Тип устройства",
+		"Аккаунт",
+		"Тип аккаунта",
+		"Создатель",
+		"Телефоны",
+		"Последнее сообщение",
+		"Дата создания",
+		"Дата удаления",
+		"Активен",
+		"Права доступа",
+	}
+
+	// Записываем заголовки
+	styleHeader, err := f.NewStyle(&excelize.Style{
+		Font: &excelize.Font{
+			Bold: true,
+		},
+		Fill: excelize.Fill{
+			Type:    "pattern",
+			Color:   []string{"#E0E0E0"},
+			Pattern: 1,
+		},
+		Alignment: &excelize.Alignment{
+			Horizontal: "center",
+			Vertical:   "center",
+		},
+	})
+	if err != nil {
+		log.Printf("⚠️ Ошибка создания стиля заголовка: %v", err)
+	}
+
+	for i, header := range headers {
+		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
+		f.SetCellValue(sheetName, cell, header)
+		if styleHeader > 0 {
+			f.SetCellStyle(sheetName, cell, cell, styleHeader)
+		}
+	}
+
+	// Записываем данные
+	for rowIdx, obj := range allObjects {
+		row := rowIdx + 2 // Начинаем с 2 строки (после заголовков)
+
+		// Форматируем данные
+		phones := strings.Join(obj.PhoneNumbers, ", ")
+		accessRights := strings.Join(obj.CurrentUserAccess, ", ")
+		isActive := "Да"
+		if !obj.IsActive {
+			isActive = "Нет"
+		}
+
+		// Записываем значения
+		f.SetCellValue(sheetName, fmt.Sprintf("A%d", row), obj.ID)
+		f.SetCellValue(sheetName, fmt.Sprintf("B%d", row), obj.Name)
+		f.SetCellValue(sheetName, fmt.Sprintf("C%d", row), obj.UniqueID)
+		f.SetCellValue(sheetName, fmt.Sprintf("D%d", row), obj.DeviceTypeName)
+		f.SetCellValue(sheetName, fmt.Sprintf("E%d", row), obj.AccountName)
+		f.SetCellValue(sheetName, fmt.Sprintf("F%d", row), obj.AccountType)
+		f.SetCellValue(sheetName, fmt.Sprintf("G%d", row), obj.CreatorName)
+		f.SetCellValue(sheetName, fmt.Sprintf("H%d", row), phones)
+		f.SetCellValue(sheetName, fmt.Sprintf("I%d", row), obj.LastMessageDatetime)
+		f.SetCellValue(sheetName, fmt.Sprintf("J%d", row), obj.CreatedAt)
+		f.SetCellValue(sheetName, fmt.Sprintf("K%d", row), obj.DeletedAt)
+		f.SetCellValue(sheetName, fmt.Sprintf("L%d", row), isActive)
+		f.SetCellValue(sheetName, fmt.Sprintf("M%d", row), accessRights)
+	}
+
+	// Устанавливаем ширину колонок
+	columnWidths := map[string]float64{
+		"A": 10, // ID
+		"B": 30, // Название
+		"C": 20, // Уникальный ID
+		"D": 20, // Тип устройства
+		"E": 25, // Аккаунт
+		"F": 15, // Тип аккаунта
+		"G": 20, // Создатель
+		"H": 25, // Телефоны
+		"I": 20, // Последнее сообщение
+		"J": 20, // Дата создания
+		"K": 20, // Дата удаления
+		"L": 10, // Активен
+		"M": 30, // Права доступа
+	}
+
+	for col, width := range columnWidths {
+		f.SetColWidth(sheetName, col, col, width)
+	}
+
+	// Добавляем автофильтр
+	if len(allObjects) > 0 {
+		endCell := fmt.Sprintf("M%d", len(allObjects)+1)
+		if err := f.AutoFilter(sheetName, "A1:"+endCell, []excelize.AutoFilterOptions{}); err != nil {
+			log.Printf("⚠️ Ошибка добавления автофильтра: %v", err)
+		}
+	}
+
+	// Замораживаем первую строку (заголовки)
+	if err := f.SetPanes(sheetName, &excelize.Panes{
+		Freeze:      true,
+		YSplit:      1,
+		TopLeftCell: "A2",
+		ActivePane:  "bottomLeft",
+	}); err != nil {
+		log.Printf("⚠️ Ошибка заморозки строки: %v", err)
+	}
+
+	// Генерируем имя файла с датой и временем
+	fileName := fmt.Sprintf("objects_export_%s.xlsx", time.Now().Format("20060102_150405"))
+
+	// Устанавливаем заголовки для скачивания файла
+	c.Header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", fileName))
+	c.Header("Content-Transfer-Encoding", "binary")
+
+	// Сохраняем файл во временный буфер
+	buffer, err := f.WriteToBuffer()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка создания Excel файла: " + err.Error(),
+		})
+		return
+	}
+
+	log.Printf("✅ Экспорт завершен. Экспортировано объектов: %d", len(allObjects))
+
+	// Отправляем файл
+	c.Data(http.StatusOK, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer.Bytes())
 }

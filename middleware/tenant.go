@@ -36,10 +36,18 @@ func (tm *TenantMiddleware) SetTenant() gin.HandlerFunc {
 			return
 		}
 
+		// Логируем для отладки экспорта
+		if strings.Contains(c.Request.URL.Path, "/objects/export") {
+			log.Printf("🔍 SetTenant: обработка запроса экспорта: %s", c.Request.URL.Path)
+		}
+
 		// Получаем компанию из различных источников
 		company, err := tm.extractCompany(c)
 		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{
+			if strings.Contains(c.Request.URL.Path, "/objects/export") {
+				log.Printf("❌ SetTenant: ошибка извлечения компании для экспорта: %v", err)
+			}
+			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "error",
 				"error":  "Не удалось определить компанию: " + err.Error(),
 			})
@@ -48,7 +56,10 @@ func (tm *TenantMiddleware) SetTenant() gin.HandlerFunc {
 		}
 
 		if company == nil {
-			c.JSON(http.StatusUnauthorized, gin.H{
+			if strings.Contains(c.Request.URL.Path, "/objects/export") {
+				log.Printf("❌ SetTenant: компания не найдена для экспорта")
+			}
+			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "error",
 				"error":  "Компания не найдена",
 			})
