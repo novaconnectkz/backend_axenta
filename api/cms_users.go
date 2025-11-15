@@ -19,6 +19,55 @@ import (
 	"gorm.io/gorm"
 )
 
+// getAccountIDFromToken получает account_id из токена через Axenta API
+func getAccountIDFromToken(token string) uint {
+	if token == "" {
+		return 0
+	}
+
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	req, err := http.NewRequest("GET", "https://axenta.cloud/api/current_user/", nil)
+	if err != nil {
+		return 0
+	}
+
+	req.Header.Set("Authorization", "Token "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return 0
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0
+	}
+
+	// Парсим ответ для получения информации о пользователе
+	var userData map[string]interface{}
+	if err := json.Unmarshal(body, &userData); err != nil {
+		return 0
+	}
+
+	// Ищем accountId в ответе
+	if accountID, ok := userData["accountId"].(float64); ok {
+		return uint(accountID)
+	}
+
+	if accountID, ok := userData["accountId"].(string); ok {
+		if id, err := strconv.ParseUint(accountID, 10, 32); err == nil {
+			return uint(id)
+		}
+	}
+
+	return 0
+}
+
 // CmsUserCreateRequest представляет запрос на создание CMS пользователя
 type CmsUserCreateRequest struct {
 	Name             string                 `json:"name" binding:"required"`
@@ -802,17 +851,30 @@ func CreateCmsUserWithCurrentToken(c *gin.Context) {
 		return
 	}
 
+	// Получаем account_id из токена для фильтрации
+	accountID := getAccountIDFromToken(requestToken)
+	
 	// Создаем сервис для работы с токенами пользователей
 	userTokenService := services.NewUserTokenService(db)
 
-	// Находим пользователя по токену из заголовка
+	// Находим пользователя по токену из заголовка с фильтрацией по account_id
 	var currentUser models.User
-	if err := db.Where("id IN (SELECT user_id FROM user_tokens WHERE token = ? AND is_active = ?)", requestToken, true).First(&currentUser).Error; err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"status": "error",
-			"error":  "User not found or token invalid",
-		})
-		return
+	if accountID > 0 {
+		if err := db.Where("id IN (SELECT user_id FROM user_tokens WHERE token = ? AND is_active = ? AND account_id = ?)", requestToken, true, accountID).First(&currentUser).Error; err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"status": "error",
+				"error":  "User not found or token invalid",
+			})
+			return
+		}
+	} else {
+		if err := db.Where("id IN (SELECT user_id FROM user_tokens WHERE token = ? AND is_active = ?)", requestToken, true).First(&currentUser).Error; err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"status": "error",
+				"error":  "User not found or token invalid",
+			})
+			return
+		}
 	}
 
 	// Получаем сохраненный токен пользователя для Axenta Cloud
@@ -828,10 +890,10 @@ func CreateCmsUserWithCurrentToken(c *gin.Context) {
 	// Используем сохраненный токен для создания пользователя в Axenta Cloud
 	currentToken := userToken.Token
 
-	// Получаем accountId из переменной окружения
-	accountID := os.Getenv("AXENTA_DEFAULT_ACCOUNT_ID")
-	if accountID == "" {
-		accountID = "1" // Значение по умолчанию
+	// Получаем accountId из переменной окружения (используем для создания пользователя в Axenta)
+	defaultAccountID := os.Getenv("AXENTA_DEFAULT_ACCOUNT_ID")
+	if defaultAccountID == "" {
+		defaultAccountID = "1" // Значение по умолчанию
 	}
 
 	// Начинаем транзакцию
@@ -963,7 +1025,7 @@ func CreateCmsUserWithCurrentToken(c *gin.Context) {
 		CreatorName:             user.Name,
 		LastLogin:               nil,
 		CreationDatetime:        user.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		AccountID:               accountID,
+		AccountID:               defaultAccountID,
 		AccountName:             "Default Account",
 		AccountType:             "partner",
 		AccountIsActive:         true,
@@ -1283,12 +1345,21 @@ func LoginAs(c *gin.Context) {
 	// Получаем базу данных
 	db := database.DB
 
+	// Получаем account_id из токена для фильтрации
+	accountID := getAccountIDFromToken(requestToken)
+
 	// Создаем сервис для работы с токенами пользователей
 	userTokenService := services.NewUserTokenService(db)
 
-	// Находим пользователя по токену из заголовка
+	// Находим пользователя по токену из заголовка с фильтрацией по account_id
 	var currentUser models.User
-	if err := db.Where("id IN (SELECT user_id FROM user_tokens WHERE token = ? AND is_active = ?)", requestToken, true).First(&currentUser).Error; err != nil {
+	var err error
+	if accountID > 0 {
+		err = db.Where("id IN (SELECT user_id FROM user_tokens WHERE token = ? AND is_active = ? AND account_id = ?)", requestToken, true, accountID).First(&currentUser).Error
+	} else {
+		err = db.Where("id IN (SELECT user_id FROM user_tokens WHERE token = ? AND is_active = ?)", requestToken, true).First(&currentUser).Error
+	}
+	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"status": "error",
 			"error":  "User not found or token invalid",

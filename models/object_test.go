@@ -63,7 +63,7 @@ func TestObjectModel(t *testing.T) {
 			SerialNumber: "SN123456",
 			Status:       "active",
 			IsActive:     true,
-			ContractID:   contract.ID,
+			ContractID:   &contract.ID,
 			LocationID:   location.ID,
 			Settings:     `{"monitoring": {"interval": 60, "alerts": true}}`,
 			Tags:         []string{"test", "vehicle", "moscow"},
@@ -109,7 +109,7 @@ func TestObjectModel(t *testing.T) {
 			Name:       "Объект 1",
 			Type:       "equipment",
 			IMEI:       "unique123456789",
-			ContractID: contract.ID,
+			ContractID: &contract.ID,
 			IsActive:   true,
 		}
 		err = db.Create(&object1).Error
@@ -120,7 +120,7 @@ func TestObjectModel(t *testing.T) {
 			Name:       "Объект 2",
 			Type:       "equipment",
 			IMEI:       "unique123456789",
-			ContractID: contract.ID,
+			ContractID: &contract.ID,
 			IsActive:   true,
 		}
 		err = db.Create(&object2).Error
@@ -176,7 +176,7 @@ func TestObjectModel(t *testing.T) {
 			Name:       "Объект со связями",
 			Type:       "vehicle",
 			IMEI:       "relations123456",
-			ContractID: contract.ID,
+			ContractID: &contract.ID,
 			LocationID: location.ID,
 			TemplateID: &objectTemplate.ID,
 			IsActive:   true,
@@ -231,7 +231,7 @@ func TestObjectModel(t *testing.T) {
 			Name:              "Объект для удаления",
 			Type:              "asset",
 			IMEI:              "delete123456789",
-			ContractID:        contract.ID,
+			ContractID:        &contract.ID,
 			Status:            "scheduled_delete",
 			ScheduledDeleteAt: &scheduledDelete,
 			IsActive:          false,
@@ -275,7 +275,7 @@ func TestObjectModel(t *testing.T) {
 			Name:       "Активный объект",
 			Type:       "vehicle",
 			IMEI:       "activity123456",
-			ContractID: contract.ID,
+			ContractID: &contract.ID,
 			IsActive:   true,
 		}
 		err = db.Create(&object).Error

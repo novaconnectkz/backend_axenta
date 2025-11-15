@@ -107,7 +107,7 @@ func createReportTestData(t *testing.T, db *gorm.DB) {
 			PhoneNumber: "+7123456789",
 			Status:      "active",
 			IsActive:    true,
-			ContractID:  contract.ID,
+			ContractID:  &contract.ID,
 			LocationID:  location.ID,
 		},
 		{
@@ -117,7 +117,7 @@ func createReportTestData(t *testing.T, db *gorm.DB) {
 			PhoneNumber: "+7123456790",
 			Status:      "inactive",
 			IsActive:    false,
-			ContractID:  contract.ID,
+			ContractID:  &contract.ID,
 			LocationID:  location.ID,
 		},
 	}

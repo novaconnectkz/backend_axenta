@@ -442,14 +442,14 @@ func TestSchemaIsolation(t *testing.T) {
 			Username: "user1@company1.com",
 			Email:    "user1@company1.com",
 			Password: "password1",
-			RoleID:   role1.ID,
+			RoleID:   &role1.ID,
 			IsActive: true,
 		}
 		user2 := User{
 			Username: "user2@company2.com",
 			Email:    "user2@company2.com",
 			Password: "password2",
-			RoleID:   role2.ID,
+			RoleID:   &role2.ID,
 			IsActive: true,
 		}
 

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"backend_axenta/middleware"
 	"backend_axenta/models"
 	"backend_axenta/services"
 	"backend_axenta/types"
@@ -30,6 +31,7 @@ func NewAxentaIntegrationAPI(db *gorm.DB) *AxentaIntegrationAPI {
 
 // RegisterRoutes регистрирует маршруты для API интеграции с Axenta
 func (api *AxentaIntegrationAPI) RegisterRoutes(r *gin.RouterGroup) {
+	log.Println("🔧 Registering Axenta integration routes...")
 	axenta := r.Group("/axenta")
 	{
 		// Настройка интеграции
@@ -50,6 +52,7 @@ func (api *AxentaIntegrationAPI) RegisterRoutes(r *gin.RouterGroup) {
 		axenta.PUT("/errors/:id/resolve", api.ResolveError)
 		axenta.GET("/status", api.GetIntegrationStatus)
 	}
+	log.Println("✅ Axenta integration routes registered: /api/axenta/*")
 }
 
 // AxentaSetupIntegrationRequest запрос на настройку интеграции с Axenta
@@ -65,8 +68,14 @@ type AxentaSetupIntegrationRequest struct {
 
 // SetupIntegration настраивает интеграцию с Axenta Cloud
 func (api *AxentaIntegrationAPI) SetupIntegration(c *gin.Context) {
-	// Для демонстрации используем фиксированный company_id = 1
-	companyID := uint(1)
+	companyID := middleware.GetCompanyID(c)
+	
+	// Проверяем, что компания определена (обязательно для безопасности)
+	if companyID == 0 {
+		log.Printf("❌ ОШИБКА БЕЗОПАСНОСТИ: GetCompanyID вернул 0 для запроса настройки Axenta интеграции")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Не удалось определить компанию. Обратитесь к администратору."})
+		return
+	}
 
 	var req AxentaSetupIntegrationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -140,8 +149,14 @@ func (api *AxentaIntegrationAPI) SetupIntegration(c *gin.Context) {
 
 // UpdateIntegration обновляет настройки интеграции с Axenta Cloud
 func (api *AxentaIntegrationAPI) UpdateIntegration(c *gin.Context) {
-	// Для демонстрации используем фиксированный company_id = 1
-	companyID := uint(1)
+	companyID := middleware.GetCompanyID(c)
+	
+	// Проверяем, что компания определена (обязательно для безопасности)
+	if companyID == 0 {
+		log.Printf("❌ ОШИБКА БЕЗОПАСНОСТИ: GetCompanyID вернул 0 для запроса обновления Axenta интеграции")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Не удалось определить компанию. Обратитесь к администратору."})
+		return
+	}
 
 	var req AxentaSetupIntegrationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -189,8 +204,14 @@ func (api *AxentaIntegrationAPI) UpdateIntegration(c *gin.Context) {
 // GetIntegrationConfig получает конфигурацию интеграции
 func (api *AxentaIntegrationAPI) GetIntegrationConfig(c *gin.Context) {
 	log.Printf("🚀 GetIntegrationConfig вызвана!")
-	// Для демонстрации используем фиксированный company_id = 1
-	companyID := uint(1)
+	companyID := middleware.GetCompanyID(c)
+	
+	// Проверяем, что компания определена (обязательно для безопасности)
+	if companyID == 0 {
+		log.Printf("❌ ОШИБКА БЕЗОПАСНОСТИ: GetCompanyID вернул 0 для запроса конфигурации Axenta интеграции")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Не удалось определить компанию. Обратитесь к администратору."})
+		return
+	}
 
 	var integration models.Integration
 	if err := api.db.Where("company_id = ? AND integration_type = ?", companyID, "axenta_cloud").First(&integration).Error; err != nil {
@@ -228,8 +249,14 @@ func (api *AxentaIntegrationAPI) GetIntegrationConfig(c *gin.Context) {
 
 // DeleteIntegration удаляет интеграцию с Axenta Cloud
 func (api *AxentaIntegrationAPI) DeleteIntegration(c *gin.Context) {
-	// Для демонстрации используем фиксированный company_id = 1
-	companyID := uint(1)
+	companyID := middleware.GetCompanyID(c)
+	
+	// Проверяем, что компания определена (обязательно для безопасности)
+	if companyID == 0 {
+		log.Printf("❌ ОШИБКА БЕЗОПАСНОСТИ: GetCompanyID вернул 0 для запроса удаления Axenta интеграции")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Не удалось определить компанию. Обратитесь к администратору."})
+		return
+	}
 
 	if err := api.db.Where("company_id = ? AND integration_type = ?", companyID, "axenta_cloud").Delete(&models.Integration{}).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка удаления интеграции"})
@@ -241,8 +268,14 @@ func (api *AxentaIntegrationAPI) DeleteIntegration(c *gin.Context) {
 
 // TestConnection тестирует подключение к Axenta Cloud
 func (api *AxentaIntegrationAPI) TestConnection(c *gin.Context) {
-	// Для демонстрации используем фиксированный company_id = 1
-	companyID := uint(1)
+	companyID := middleware.GetCompanyID(c)
+	
+	// Проверяем, что компания определена (обязательно для безопасности)
+	if companyID == 0 {
+		log.Printf("❌ ОШИБКА БЕЗОПАСНОСТИ: GetCompanyID вернул 0 для запроса тестирования Axenta интеграции")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Не удалось определить компанию. Обратитесь к администратору."})
+		return
+	}
 
 	if err := api.axentaService.TestConnection(c.Request.Context(), companyID); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -261,8 +294,14 @@ func (api *AxentaIntegrationAPI) TestConnection(c *gin.Context) {
 
 // SyncObjects синхронизирует объекты с Axenta Cloud
 func (api *AxentaIntegrationAPI) SyncObjects(c *gin.Context) {
-	// Для демонстрации используем фиксированный company_id = 1
-	companyID := uint(1)
+	companyID := middleware.GetCompanyID(c)
+	
+	// Проверяем, что компания определена (обязательно для безопасности)
+	if companyID == 0 {
+		log.Printf("❌ ОШИБКА БЕЗОПАСНОСТИ: GetCompanyID вернул 0 для запроса синхронизации Axenta")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Не удалось определить компанию. Обратитесь к администратору."})
+		return
+	}
 
 	if err := api.axentaService.SyncObjects(c.Request.Context(), companyID); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -279,8 +318,14 @@ func (api *AxentaIntegrationAPI) SyncObjects(c *gin.Context) {
 
 // ScheduleAutoSync планирует автоматическую синхронизацию
 func (api *AxentaIntegrationAPI) ScheduleAutoSync(c *gin.Context) {
-	// Для демонстрации используем фиксированный company_id = 1
-	companyID := uint(1)
+	companyID := middleware.GetCompanyID(c)
+	
+	// Проверяем, что компания определена (обязательно для безопасности)
+	if companyID == 0 {
+		log.Printf("❌ ОШИБКА БЕЗОПАСНОСТИ: GetCompanyID вернул 0 для запроса планирования синхронизации Axenta")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Не удалось определить компанию. Обратитесь к администратору."})
+		return
+	}
 
 	if err := api.axentaService.ScheduleAutoSync(c.Request.Context(), companyID); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -297,8 +342,14 @@ func (api *AxentaIntegrationAPI) ScheduleAutoSync(c *gin.Context) {
 
 // GetIntegrationErrors получает список ошибок интеграции
 func (api *AxentaIntegrationAPI) GetIntegrationErrors(c *gin.Context) {
-	// Для демонстрации используем фиксированный company_id = 1
-	companyID := uint(1)
+	companyID := middleware.GetCompanyID(c)
+	
+	// Проверяем, что компания определена (обязательно для безопасности)
+	if companyID == 0 {
+		log.Printf("❌ ОШИБКА БЕЗОПАСНОСТИ: GetCompanyID вернул 0 для запроса ошибок Axenta интеграции")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Не удалось определить компанию. Обратитесь к администратору."})
+		return
+	}
 
 	errors, err := api.axentaService.GetIntegrationErrors(c.Request.Context(), companyID)
 	if err != nil {
@@ -313,8 +364,14 @@ func (api *AxentaIntegrationAPI) GetIntegrationErrors(c *gin.Context) {
 
 // ResolveError отмечает ошибку как решенную
 func (api *AxentaIntegrationAPI) ResolveError(c *gin.Context) {
-	// Для демонстрации используем фиксированный company_id = 1
-	companyID := uint(1)
+	companyID := middleware.GetCompanyID(c)
+	
+	// Проверяем, что компания определена (обязательно для безопасности)
+	if companyID == 0 {
+		log.Printf("❌ ОШИБКА БЕЗОПАСНОСТИ: GetCompanyID вернул 0 для запроса решения ошибки Axenta интеграции")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Не удалось определить компанию. Обратитесь к администратору."})
+		return
+	}
 	errorID := c.Param("id")
 
 	if err := api.axentaService.ResolveError(c.Request.Context(), companyID, errorID); err != nil {
@@ -332,8 +389,14 @@ func (api *AxentaIntegrationAPI) ResolveError(c *gin.Context) {
 
 // GetIntegrationStatus получает статус интеграции
 func (api *AxentaIntegrationAPI) GetIntegrationStatus(c *gin.Context) {
-	// Для демонстрации используем фиксированный company_id = 1
-	companyID := uint(1)
+	companyID := middleware.GetCompanyID(c)
+	
+	// Проверяем, что компания определена (обязательно для безопасности)
+	if companyID == 0 {
+		log.Printf("❌ ОШИБКА БЕЗОПАСНОСТИ: GetCompanyID вернул 0 для запроса статуса Axenta интеграции")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Не удалось определить компанию. Обратитесь к администратору."})
+		return
+	}
 
 	// Проверяем наличие интеграции
 	var integration models.Integration

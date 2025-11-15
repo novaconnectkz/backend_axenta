@@ -146,7 +146,7 @@ func TestObjectTemplateModel(t *testing.T) {
 			Name:       "Грузовик 1",
 			Type:       "truck",
 			IMEI:       "truck123456789",
-			ContractID: contract.ID,
+			ContractID: &contract.ID,
 			TemplateID: &template.ID,
 			IsActive:   true,
 		}
@@ -154,7 +154,7 @@ func TestObjectTemplateModel(t *testing.T) {
 			Name:       "Грузовик 2",
 			Type:       "truck",
 			IMEI:       "truck987654321",
-			ContractID: contract.ID,
+			ContractID: &contract.ID,
 			TemplateID: &template.ID,
 			IsActive:   true,
 		}

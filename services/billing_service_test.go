@@ -206,25 +206,25 @@ func TestBillingService_CalculateBillingForContract(t *testing.T) {
 			Name:       "Active Object 1",
 			Status:     "active",
 			IsActive:   true,
-			ContractID: contract.ID,
+			ContractID: &contract.ID,
 		},
 		{
 			Name:       "Active Object 2",
 			Status:     "active",
 			IsActive:   true,
-			ContractID: contract.ID,
+			ContractID: &contract.ID,
 		},
 		{
 			Name:       "Active Object 3",
 			Status:     "active",
 			IsActive:   true,
-			ContractID: contract.ID,
+			ContractID: &contract.ID,
 		},
 		{
 			Name:       "Inactive Object 1",
 			Status:     "inactive",
 			IsActive:   false,
-			ContractID: contract.ID,
+			ContractID: &contract.ID,
 		},
 	}
 
@@ -324,13 +324,13 @@ func TestBillingService_GenerateInvoiceForContract(t *testing.T) {
 			Name:       "Active Object 1",
 			Status:     "active",
 			IsActive:   true,
-			ContractID: contract.ID,
+			ContractID: &contract.ID,
 		},
 		{
 			Name:       "Active Object 2",
 			Status:     "active",
 			IsActive:   true,
-			ContractID: contract.ID,
+			ContractID: &contract.ID,
 		},
 	}
 
@@ -673,11 +673,11 @@ func TestBillingService_MinCommit(t *testing.T) {
 	// Объекты: 5 * 50 = 250
 	// Итого: 750 < 1000 (min_commit)
 	objects := []models.Object{
-		{Name: "Object 1", Status: "active", IsActive: true, ContractID: contract.ID},
-		{Name: "Object 2", Status: "active", IsActive: true, ContractID: contract.ID},
-		{Name: "Object 3", Status: "active", IsActive: true, ContractID: contract.ID},
-		{Name: "Object 4", Status: "active", IsActive: true, ContractID: contract.ID},
-		{Name: "Object 5", Status: "active", IsActive: true, ContractID: contract.ID},
+		{Name: "Object 1", Status: "active", IsActive: true, ContractID: &contract.ID},
+		{Name: "Object 2", Status: "active", IsActive: true, ContractID: &contract.ID},
+		{Name: "Object 3", Status: "active", IsActive: true, ContractID: &contract.ID},
+		{Name: "Object 4", Status: "active", IsActive: true, ContractID: &contract.ID},
+		{Name: "Object 5", Status: "active", IsActive: true, ContractID: &contract.ID},
 	}
 
 	for _, obj := range objects {
@@ -801,11 +801,11 @@ func TestBillingService_MinCommit_NotApplied(t *testing.T) {
 	// Объекты: 5 * 100 = 500
 	// Итого: 1300 > 1000 (min_commit), доплата не нужна
 	objects := []models.Object{
-		{Name: "Object 1", Status: "active", IsActive: true, ContractID: contract.ID},
-		{Name: "Object 2", Status: "active", IsActive: true, ContractID: contract.ID},
-		{Name: "Object 3", Status: "active", IsActive: true, ContractID: contract.ID},
-		{Name: "Object 4", Status: "active", IsActive: true, ContractID: contract.ID},
-		{Name: "Object 5", Status: "active", IsActive: true, ContractID: contract.ID},
+		{Name: "Object 1", Status: "active", IsActive: true, ContractID: &contract.ID},
+		{Name: "Object 2", Status: "active", IsActive: true, ContractID: &contract.ID},
+		{Name: "Object 3", Status: "active", IsActive: true, ContractID: &contract.ID},
+		{Name: "Object 4", Status: "active", IsActive: true, ContractID: &contract.ID},
+		{Name: "Object 5", Status: "active", IsActive: true, ContractID: &contract.ID},
 	}
 
 	for _, obj := range objects {
@@ -881,8 +881,8 @@ func TestBillingService_Idempotency(t *testing.T) {
 	db.Create(contract)
 
 	objects := []models.Object{
-		{Name: "Object 1", Status: "active", IsActive: true, ContractID: contract.ID},
-		{Name: "Object 2", Status: "active", IsActive: true, ContractID: contract.ID},
+		{Name: "Object 1", Status: "active", IsActive: true, ContractID: &contract.ID},
+		{Name: "Object 2", Status: "active", IsActive: true, ContractID: &contract.ID},
 	}
 
 	for _, obj := range objects {

@@ -133,7 +133,7 @@ func TestMultiTenantObjectsAPI(t *testing.T) {
 		Name:        "Object from Company 1",
 		Description: "This object belongs to company 1",
 		IsActive:    true,
-		ContractID:  contract1.ID,
+		ContractID:  &contract1.ID,
 	}
 	err = tenantDB1.Create(&object1).Error
 	require.NoError(t, err)
@@ -143,7 +143,7 @@ func TestMultiTenantObjectsAPI(t *testing.T) {
 		Name:        "Object from Company 2",
 		Description: "This object belongs to company 2",
 		IsActive:    true,
-		ContractID:  contract2.ID,
+		ContractID:  &contract2.ID,
 	}
 	err = tenantDB2.Create(&object2).Error
 	require.NoError(t, err)
@@ -354,7 +354,7 @@ func TestConcurrentTenantAccess(t *testing.T) {
 			Name:        fmt.Sprintf("Company1_Object_%d", i),
 			Description: "Object for company 1",
 			IsActive:    true,
-			ContractID:  contract1.ID,
+			ContractID:  &contract1.ID,
 		}
 		tenantDB1.Create(&object1)
 
@@ -362,7 +362,7 @@ func TestConcurrentTenantAccess(t *testing.T) {
 			Name:        fmt.Sprintf("Company2_Object_%d", i),
 			Description: "Object for company 2",
 			IsActive:    true,
-			ContractID:  contract2.ID,
+			ContractID:  &contract2.ID,
 		}
 		tenantDB2.Create(&object2)
 	}

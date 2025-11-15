@@ -982,9 +982,10 @@ func main() {
 	// Статистика склада
 	apiGroup.GET("/warehouse/statistics", warehouseAPI.GetWarehouseStatistics)
 
-	// Группа для интеграций (без мультитенантности)
+	// Группа для интеграций (с мультитенантностью для изоляции данных между компаниями)
 	integrationsGroup := r.Group("/api")
 	integrationsGroup.Use(authMiddleware.RequireAuth())
+	integrationsGroup.Use(tenantMiddleware.SetTenant()) // Добавляем мультитенантность для изоляции данных
 
 	// Интеграция с 1С
 	oneCAPI := api.NewOneCIntegrationAPI()
@@ -993,6 +994,10 @@ func main() {
 	// Интеграция с Axenta Cloud
 	axentaAPI := api.NewAxentaIntegrationAPI(database.DB)
 	axentaAPI.RegisterRoutes(integrationsGroup)
+
+	// Интеграция с NovaConnect
+	novaconnectAPI := api.NewNovaConnectIntegrationAPI(database.DB)
+	novaconnectAPI.RegisterRoutes(integrationsGroup)
 
 	// Система отчетности
 	reportService := services.NewReportService(database.DB)

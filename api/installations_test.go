@@ -83,7 +83,7 @@ func createInstallationTestData(db *gorm.DB) (models.Object, models.Installer, m
 		Name:       "Тестовый объект",
 		Type:       "vehicle",
 		IMEI:       "123456789012345",
-		ContractID: contract.ID,
+		ContractID: &contract.ID,
 		LocationID: location.ID,
 	}
 	db.Create(&object)

@@ -189,7 +189,7 @@ func TestCalculateContractCost(t *testing.T) {
 		Name:       "Объект 1",
 		Type:       "vehicle",
 		IMEI:       "123456789012345",
-		ContractID: contract.ID,
+		ContractID: &contract.ID,
 		IsActive:   true,
 		Status:     "active",
 	}
@@ -197,7 +197,7 @@ func TestCalculateContractCost(t *testing.T) {
 		Name:       "Объект 2",
 		Type:       "equipment",
 		IMEI:       "123456789012346",
-		ContractID: contract.ID,
+		ContractID: &contract.ID,
 		IsActive:   false, // Неактивный объект
 		Status:     "inactive",
 	}
@@ -205,7 +205,7 @@ func TestCalculateContractCost(t *testing.T) {
 		Name:       "Объект 3",
 		Type:       "asset",
 		IMEI:       "123456789012347",
-		ContractID: contract.ID,
+		ContractID: &contract.ID,
 		IsActive:   true,
 		Status:     "active",
 	}

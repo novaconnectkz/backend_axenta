@@ -201,7 +201,7 @@ func TestEquipmentModel(t *testing.T) {
 			Name:       "Объект с оборудованием",
 			Type:       "vehicle",
 			IMEI:       "object123456789",
-			ContractID: contract.ID,
+			ContractID: &contract.ID,
 			IsActive:   true,
 		}
 		err = db.Create(&object).Error
@@ -344,7 +344,7 @@ func TestLocationModel(t *testing.T) {
 			Name:       "Объект в Казани 1",
 			Type:       "vehicle",
 			IMEI:       "kazan123456789",
-			ContractID: contract.ID,
+			ContractID: &contract.ID,
 			LocationID: location.ID,
 			IsActive:   true,
 		}
@@ -352,7 +352,7 @@ func TestLocationModel(t *testing.T) {
 			Name:       "Объект в Казани 2",
 			Type:       "equipment",
 			IMEI:       "kazan987654321",
-			ContractID: contract.ID,
+			ContractID: &contract.ID,
 			LocationID: location.ID,
 			IsActive:   true,
 		}
@@ -594,7 +594,7 @@ func TestInstallationModel(t *testing.T) {
 			Name:       "Объект для монтажа",
 			Type:       "vehicle",
 			IMEI:       "install123456789",
-			ContractID: contract.ID,
+			ContractID: &contract.ID,
 			IsActive:   true,
 		}
 		err = db.Create(&object).Error
@@ -663,7 +663,7 @@ func TestInstallationModel(t *testing.T) {
 			Name:       "Объект статуса",
 			Type:       "equipment",
 			IMEI:       "status123456789",
-			ContractID: contract.ID,
+			ContractID: &contract.ID,
 			IsActive:   true,
 		}
 		err = db.Create(&object).Error
@@ -754,7 +754,7 @@ func TestInstallationModel(t *testing.T) {
 			Name:       "Объект связей монтажа",
 			Type:       "asset",
 			IMEI:       "relations123456",
-			ContractID: contract.ID,
+			ContractID: &contract.ID,
 			IsActive:   true,
 		}
 		err = db.Create(&object).Error
@@ -855,7 +855,7 @@ func TestInstallationModel(t *testing.T) {
 			Name:       "Объект качества",
 			Type:       "vehicle",
 			IMEI:       "quality123456789",
-			ContractID: contract.ID,
+			ContractID: &contract.ID,
 			IsActive:   true,
 		}
 		err = db.Create(&object).Error
