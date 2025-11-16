@@ -59,6 +59,10 @@ func main() {
 	// Инициализируем сервис интеграции с 1С
 	api.InitOneCService()
 	log.Println("✅ 1C Integration Service initialized successfully")
+	
+	// Инициализируем сервис интеграции с Telegram
+	api.InitTelegramService()
+	log.Println("✅ Telegram Integration Service initialized successfully")
 
 	// Инициализируем сервис синхронизации Axenta
 	axentaSyncService := services.NewAxentaSyncService(database.DB)
@@ -160,6 +164,10 @@ func main() {
 		c.JSON(200, gin.H{"status": "success", "message": "pong"})
 	})
 	r.POST("/api/auth/login", api.Login)
+	
+	// Документация по интеграциям (публичный доступ)
+	r.GET("/docs/TELEGRAM_INTEGRATION.md", api.GetTelegramIntegrationDocs)
+	r.GET("/api/docs/telegram", api.GetTelegramIntegrationDocs) // Альтернативный маршрут
 
 	// Публичные тестовые endpoints для отладки ролей
 	r.GET("/api/debug/roles", api.TestRolesCreation)
@@ -998,6 +1006,10 @@ func main() {
 	// Интеграция с NovaConnect
 	novaconnectAPI := api.NewNovaConnectIntegrationAPI(database.DB)
 	novaconnectAPI.RegisterRoutes(integrationsGroup)
+
+	// Интеграция с Telegram
+	telegramAPI := api.NewTelegramIntegrationAPI()
+	telegramAPI.RegisterRoutes(integrationsGroup)
 
 	// Система отчетности
 	reportService := services.NewReportService(database.DB)
