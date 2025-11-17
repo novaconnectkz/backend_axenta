@@ -56,6 +56,10 @@ type Contract struct {
 	Status   string `json:"status" gorm:"default:'draft';type:varchar(20)"` // draft, active, expired, cancelled, suspended
 	IsActive bool   `json:"is_active" gorm:"default:true"`
 
+	// Настройки автоматической пролонгации
+	IsAutoRenew        bool `json:"is_auto_renew" gorm:"default:true"`         // Автоматическая пролонгация договора
+	ContractPeriodMonths *int `json:"contract_period_months" gorm:"default:NULL"` // Период договора в месяцах (если NULL, используется период из тарифа)
+
 	// Настройки уведомлений
 	NotifyBefore int `json:"notify_before" gorm:"default:30"` // За сколько дней уведомлять об истечении
 

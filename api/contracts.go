@@ -379,8 +379,10 @@ type CreateContractRequestRaw struct {
 	TariffPlanID uint `json:"tariff_plan_id"`
 
 	// Статус и прочее
-	Status string `json:"status"`
-	Notes  string `json:"notes"`
+	Status              string `json:"status"`
+	IsAutoRenew         *bool  `json:"is_auto_renew"`
+	ContractPeriodMonths *int   `json:"contract_period_months"`
+	Notes               string `json:"notes"`
 
 	AccountID *uint `json:"account_id"` // ID учетной записи Axenta для автоматической привязки объектов
 }
@@ -467,10 +469,22 @@ func CreateContract(c *gin.Context) {
 		ClientAddress:  rawRequest.ClientAddress,
 		StartDate:      startDate,
 		EndDate:        endDate,
-		TariffPlanID:   rawRequest.TariffPlanID,
-		Status:         rawRequest.Status,
-		Notes:          rawRequest.Notes,
-		AdminAccountID: adminAccountID,
+		TariffPlanID:        rawRequest.TariffPlanID,
+		Status:              rawRequest.Status,
+		IsAutoRenew:         true, // По умолчанию включена
+		ContractPeriodMonths: nil, // По умолчанию используется период из тарифа
+		Notes:               rawRequest.Notes,
+		AdminAccountID:      adminAccountID,
+	}
+
+	// Устанавливаем IsAutoRenew, если передан
+	if rawRequest.IsAutoRenew != nil {
+		contract.IsAutoRenew = *rawRequest.IsAutoRenew
+	}
+
+	// Устанавливаем ContractPeriodMonths, если передан и больше 0
+	if rawRequest.ContractPeriodMonths != nil && *rawRequest.ContractPeriodMonths > 0 {
+		contract.ContractPeriodMonths = rawRequest.ContractPeriodMonths
 	}
 
 	request := CreateContractRequest{

@@ -379,18 +379,19 @@ func (bas *BillingAutomationService) GenerateMonthlyReports(year int, month int)
 	return nil
 }
 
-// AutoRenewMonthlyContracts автоматически продлевает месячные договоры
-// Продлевает договоры с тарифным планом billing_period = "monthly" и статусом "active"
-// Продлевает end_date на +1 месяц, если end_date уже наступил или близок (в течение 2 дней)
+// AutoRenewMonthlyContracts автоматически продлевает договоры с включенной автопролонгацией
+// Продлевает договоры со статусом "active" и is_auto_renew = true
+// Продлевает end_date на указанный период (contract_period_months или период из тарифа)
+// если end_date уже наступил или близок (в течение 2 дней)
 func (bas *BillingAutomationService) AutoRenewMonthlyContracts() error {
 	now := time.Now()
 	// Проверяем договоры, у которых end_date уже наступил или наступит в течение 2 дней
 	renewalThreshold := now.AddDate(0, 0, 2)
 
-	// Получаем все активные договоры, которые нужно продлить
+	// Получаем все активные договоры с включенной автопролонгацией, которые нужно продлить
 	var contracts []models.Contract
-	if err := bas.db.Where("status = ? AND is_active = ? AND end_date <= ? AND admin_account_id = ?",
-		"active", true, renewalThreshold, bas.adminAccountID).
+	if err := bas.db.Where("status = ? AND is_active = ? AND is_auto_renew = ? AND end_date <= ? AND admin_account_id = ?",
+		"active", true, true, renewalThreshold, bas.adminAccountID).
 		Preload("TariffPlan").
 		Find(&contracts).Error; err != nil {
 		return fmt.Errorf("ошибка получения договоров для пролонгации: %w", err)
@@ -411,20 +412,38 @@ func (bas *BillingAutomationService) AutoRenewMonthlyContracts() error {
 			continue
 		}
 
-		// Проверяем, что тарифный план месячный
-		if contract.TariffPlan.BillingPeriod != "monthly" {
-			skippedCount++
-			continue
-		}
-
 		// Проверяем, что договор еще активен (на случай, если статус изменился)
 		if contract.Status != "active" || !contract.IsActive {
 			skippedCount++
 			continue
 		}
 
-		// Продлеваем договор на +1 месяц от текущей end_date
-		newEndDate := contract.EndDate.AddDate(0, 1, 0)
+		// Проверяем, включена ли автоматическая пролонгация
+		if !contract.IsAutoRenew {
+			skippedCount++
+			log.Printf("⏭️ Договор %s (ID: %d) пропущен: автоматическая пролонгация отключена", contract.Number, contract.ID)
+			continue
+		}
+
+		// Определяем период продления
+		var renewalMonths int
+		if contract.ContractPeriodMonths != nil && *contract.ContractPeriodMonths > 0 {
+			// Используем период из договора
+			renewalMonths = *contract.ContractPeriodMonths
+		} else {
+			// Используем период из тарифа
+			if contract.TariffPlan.BillingPeriod == "monthly" {
+				renewalMonths = 1
+			} else if contract.TariffPlan.BillingPeriod == "yearly" {
+				renewalMonths = 12
+			} else {
+				// Для one-time или других типов используем 1 месяц по умолчанию
+				renewalMonths = 1
+			}
+		}
+
+		// Продлеваем договор на указанное количество месяцев от текущей end_date
+		newEndDate := contract.EndDate.AddDate(0, renewalMonths, 0)
 
 		// Обновляем end_date договора
 		if err := bas.db.Model(&contract).Update("end_date", newEndDate).Error; err != nil {
@@ -440,7 +459,7 @@ func (bas *BillingAutomationService) AutoRenewMonthlyContracts() error {
 			Operation:      "contract_auto_renewed",
 			Amount:         decimal.Zero,
 			Currency:       contract.Currency,
-			Description:    fmt.Sprintf("Автоматическая пролонгация договора %s на 1 месяц. Новый срок действия: %s", contract.Number, newEndDate.Format("02.01.2006")),
+			Description:    fmt.Sprintf("Автоматическая пролонгация договора %s на %d месяц(а/ев). Новый срок действия: %s", contract.Number, renewalMonths, newEndDate.Format("02.01.2006")),
 			Status:         "completed",
 		}
 
