@@ -32,7 +32,7 @@ type ContractObject struct {
 	// Объект может быть привязан к одному договору на определенный период
 	// Повторная привязка возможна только на другой срок (без пересечений)
 	StartDate time.Time  `json:"start_date" gorm:"not null"` // Дата начала привязки (обычно совпадает с StartDate договора)
-	EndDate   time.Time  `json:"end_date" gorm:"not null"`   // Дата окончания привязки (обычно совпадает с EndDate договора)
+	EndDate   *time.Time `json:"end_date" gorm:"default:NULL"`   // Дата окончания привязки (опционально, обычно совпадает с EndDate договора)
 }
 
 // TableName задает имя таблицы для модели ContractObject
@@ -49,9 +49,7 @@ func (co *ContractObject) BeforeCreate(tx *gorm.DB) error {
 	if co.StartDate.IsZero() {
 		co.StartDate = now
 	}
-	if co.EndDate.IsZero() {
-		co.EndDate = now.AddDate(1, 0, 0) // По умолчанию 1 год
-	}
+	// EndDate опционален - будет установлен через подписку, не устанавливаем автоматически
 	
 	return nil
 }
@@ -60,6 +58,11 @@ func (co *ContractObject) BeforeCreate(tx *gorm.DB) error {
 func (co *ContractObject) HasDateOverlap(other *ContractObject) bool {
 	// Проверяем пересечение периодов: [start1, end1] и [start2, end2]
 	// Периоды пересекаются, если start1 <= end2 && start2 <= end1
-	return !co.StartDate.After(other.EndDate) && !other.StartDate.After(co.EndDate)
+	// Если у одного из объектов нет end_date, проверяем только пересечение с началом
+	if co.EndDate == nil || other.EndDate == nil {
+		// Если у одного из объектов нет end_date, считаем что пересечения нет (период будет установлен через подписку)
+		return false
+	}
+	return !co.StartDate.After(*other.EndDate) && !other.StartDate.After(*co.EndDate)
 }
 

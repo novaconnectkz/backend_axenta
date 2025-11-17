@@ -36,14 +36,16 @@ func GetContracts(c *gin.Context) {
 
 	// Проверяем demo-режим
 	if isDemoMode(c) {
+		startDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		endDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 		demoContracts := []models.Contract{
 			{
 				ID:         24,
 				Number:     "DOG-2024-001",
 				Title:      "Договор с ООО Логистика Плюс",
 				ClientName: "ООО Логистика Плюс",
-				StartDate:  time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
-				EndDate:    time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+				StartDate:  &startDate,
+				EndDate:    &endDate,
 				Status:     "active",
 				Currency:   "RUB",
 			},
@@ -418,13 +420,14 @@ func CreateContract(c *gin.Context) {
 	}
 
 	// Парсим даты из строк
-	var startDate, endDate time.Time
+	var startDate *time.Time
+	var endDate *time.Time
 
 	if rawRequest.StartDateStr != "" {
-		startDate, err = time.Parse(time.RFC3339, rawRequest.StartDateStr)
+		parsedStartDate, err := time.Parse(time.RFC3339, rawRequest.StartDateStr)
 		if err != nil {
 			// Пробуем альтернативный формат
-			startDate, err = time.Parse("2006-01-02T15:04:05.000Z", rawRequest.StartDateStr)
+			parsedStartDate, err = time.Parse("2006-01-02T15:04:05.000Z", rawRequest.StartDateStr)
 			if err != nil {
 				log.Printf("⚠️ Не удалось распарсить start_date: %v, значение: %s", err, rawRequest.StartDateStr)
 				c.JSON(http.StatusBadRequest, gin.H{
@@ -434,14 +437,17 @@ func CreateContract(c *gin.Context) {
 				return
 			}
 		}
-		log.Printf("✅ Распарсили start_date: %v", startDate)
+		startDate = &parsedStartDate
+		log.Printf("✅ Распарсили start_date: %v", *startDate)
+	} else {
+		log.Printf("ℹ️ start_date не передан - будет установлен через подписку")
 	}
 
 	if rawRequest.EndDateStr != "" {
-		endDate, err = time.Parse(time.RFC3339, rawRequest.EndDateStr)
+		parsedEndDate, err := time.Parse(time.RFC3339, rawRequest.EndDateStr)
 		if err != nil {
 			// Пробуем альтернативный формат
-			endDate, err = time.Parse("2006-01-02T15:04:05.000Z", rawRequest.EndDateStr)
+			parsedEndDate, err = time.Parse("2006-01-02T15:04:05.000Z", rawRequest.EndDateStr)
 			if err != nil {
 				log.Printf("⚠️ Не удалось распарсить end_date: %v, значение: %s", err, rawRequest.EndDateStr)
 				c.JSON(http.StatusBadRequest, gin.H{
@@ -451,11 +457,20 @@ func CreateContract(c *gin.Context) {
 				return
 			}
 		}
-		log.Printf("✅ Распарсили end_date: %v", endDate)
+		endDate = &parsedEndDate
+		log.Printf("✅ Распарсили end_date: %v", *endDate)
+	} else {
+		log.Printf("ℹ️ end_date не передан - будет установлен через подписку")
 	}
 
 	// Создаем структуру Contract из rawRequest
 	// Поля SellerCountryCode, BuyerCountryCode, NDSRateOverride помечены gorm:"-" и будут автоматически игнорироваться
+	// Устанавливаем статус: если передан в запросе - используем его, иначе по умолчанию "draft"
+	contractStatus := rawRequest.Status
+	if contractStatus == "" {
+		contractStatus = "draft" // По умолчанию черновик, после привязки подписки станет "active"
+	}
+	
 	contract := models.Contract{
 		Number:         rawRequest.Number,
 		Title:          rawRequest.Title,
@@ -470,7 +485,7 @@ func CreateContract(c *gin.Context) {
 		StartDate:      startDate,
 		EndDate:        endDate,
 		TariffPlanID:   nil, // Тарифный план будет привязан через подписку
-		Status:              "draft", // По умолчанию черновик, после привязки подписки станет "active"
+		Status:         contractStatus,
 		IsAutoRenew:         true, // По умолчанию включена
 		ContractPeriodMonths: nil, // По умолчанию используется период из тарифа
 		Notes:               rawRequest.Notes,
@@ -522,25 +537,17 @@ func CreateContract(c *gin.Context) {
 		return
 	}
 
-	log.Printf("📅 Проверка дат: StartDate=%v (IsZero=%v), EndDate=%v (IsZero=%v)",
-		contract.StartDate, contract.StartDate.IsZero(), contract.EndDate, contract.EndDate.IsZero())
-
-	if contract.StartDate.IsZero() {
-		log.Printf("⚠️ StartDate is zero")
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status": "error",
-			"error":  "Дата начала договора обязательна",
-		})
-		return
+	// StartDate и EndDate опциональны - будут установлены через подписку
+	if contract.StartDate != nil {
+		log.Printf("✅ StartDate установлен: %v", *contract.StartDate)
+	} else {
+		log.Printf("ℹ️ StartDate не установлен - будет установлен через подписку")
 	}
 
-	if contract.EndDate.IsZero() {
-		log.Printf("⚠️ EndDate is zero")
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status": "error",
-			"error":  "Дата окончания договора обязательна",
-		})
-		return
+	if contract.EndDate != nil {
+		log.Printf("✅ EndDate установлен: %v", *contract.EndDate)
+	} else {
+		log.Printf("ℹ️ EndDate не установлен - будет установлен через подписку")
 	}
 
 	// Тарифный план опционален - будет привязан через подписку
@@ -561,9 +568,7 @@ func CreateContract(c *gin.Context) {
 	}
 
 	// Устанавливаем значения по умолчанию
-	if contract.Status == "" {
-		contract.Status = "active"
-	}
+	// Статус уже установлен выше (из запроса или "draft" по умолчанию)
 	if contract.Currency == "" {
 		contract.Currency = "RUB"
 	}
@@ -584,23 +589,26 @@ func CreateContract(c *gin.Context) {
 				contract.TotalAmount = tariffPlan.Price
 
 				// Если есть период, умножаем на количество периодов
-				duration := contract.EndDate.Sub(contract.StartDate)
-				days := int(duration.Hours() / 24)
+				// StartDate и EndDate опциональны, поэтому расчет стоимости будет выполнен при создании подписки
+				if contract.StartDate != nil && contract.EndDate != nil {
+					duration := contract.EndDate.Sub(*contract.StartDate)
+					days := int(duration.Hours() / 24)
 
-				// Рассчитываем количество месяцев (более точный расчет)
-				var months int
-				if days > 0 {
-					// Округляем до ближайшего месяца
-					months = days / 30
-					if months == 0 {
+					// Рассчитываем количество месяцев (более точный расчет)
+					var months int
+					if days > 0 {
+						// Округляем до ближайшего месяца
+						months = days / 30
+						if months == 0 {
+							months = 1 // Минимум 1 месяц
+						}
+					} else {
 						months = 1 // Минимум 1 месяц
 					}
-				} else {
-					months = 1 // Минимум 1 месяц
-				}
 
-				if months > 0 {
-					contract.TotalAmount = contract.TotalAmount.Mul(decimal.NewFromInt(int64(months)))
+					if months > 0 {
+						contract.TotalAmount = contract.TotalAmount.Mul(decimal.NewFromInt(int64(months)))
+					}
 				}
 			}
 		}
@@ -668,7 +676,7 @@ func CreateContract(c *gin.Context) {
 		// Проверяем каждый объект на конфликты
 		var validationErrors []string
 		contractStartDate := contract.StartDate
-		contractEndDate := contract.EndDate
+		var contractEndDate *time.Time = contract.EndDate
 		var currentTariffPlanID uint = 0
 		if contract.TariffPlanID != nil {
 			currentTariffPlanID = *contract.TariffPlanID
@@ -682,17 +690,39 @@ func CreateContract(c *gin.Context) {
 				
 				for _, existing := range existingAttachments {
 					// Проверяем пересечение сроков
-					hasOverlap := !contractStartDate.After(existing.EndDate) && !existing.StartDate.After(contractEndDate)
+					// Если у нового договора нет start_date или end_date, пропускаем проверку пересечений (период будет установлен через подписку)
+					var hasOverlap bool
+					if contractStartDate == nil || contractEndDate == nil {
+						// Если у нового договора нет start_date или end_date, считаем что пересечения нет
+						hasOverlap = false
+					} else if contractEndDate != nil && existing.EndDate != nil {
+						hasOverlap = !contractStartDate.After(*existing.EndDate) && !existing.StartDate.After(*contractEndDate)
+					} else if contractEndDate != nil && existing.EndDate == nil {
+						// Если у существующей привязки нет end_date, считаем что пересечения нет
+						hasOverlap = false
+					} else if contractEndDate == nil {
+						// Если у нового договора нет end_date, проверяем только пересечение с началом существующей привязки
+						if existing.EndDate != nil {
+							hasOverlap = !contractStartDate.After(*existing.EndDate)
+						} else {
+							// Если у обоих нет end_date, считаем что пересечения нет
+							hasOverlap = false
+						}
+					}
 					
 					if hasOverlap {
 						// Получаем информацию о конфликтующем договоре для проверки тарифных планов
 						var conflictingContract models.Contract
 						if err := tenantDB.First(&conflictingContract, existing.ContractID).Error; err != nil {
 							log.Printf("⚠️ Не удалось загрузить договор %d для проверки тарифного плана: %v", existing.ContractID, err)
+							endDateStr := "не установлена"
+							if existing.EndDate != nil {
+								endDateStr = existing.EndDate.Format("2006-01-02")
+							}
 							validationErrors = append(validationErrors, fmt.Sprintf(
 								"Объект %d уже привязан к другому договору (ID: %d) на период %s - %s. Повторная привязка возможна только на другой срок без пересечений.",
 								objectID, existing.ContractID,
-								existing.StartDate.Format("2006-01-02"), existing.EndDate.Format("2006-01-02")))
+								existing.StartDate.Format("2006-01-02"), endDateStr))
 							continue
 						}
 
@@ -709,10 +739,14 @@ func CreateContract(c *gin.Context) {
 						if (currentTariffPlanID == 0 && conflictingTariffPlanID > 0) || (currentTariffPlanID > 0 && conflictingTariffPlanID == 0) {
 							log.Printf("⚠️ У одного из договоров отсутствует тарифный план (новый: %d, конфликтующий: %d), блокируем создание договора",
 								currentTariffPlanID, conflictingTariffPlanID)
+							endDateStr := "не установлена"
+							if existing.EndDate != nil {
+								endDateStr = existing.EndDate.Format("2006-01-02")
+							}
 							validationErrors = append(validationErrors, fmt.Sprintf(
 								"Объект %d уже привязан к договору %s (ID: %d) на период %s - %s. Не удалось проверить тарифные планы договоров. Повторная привязка возможна только на другой срок без пересечений.",
 								objectID, conflictingContract.Number, conflictingContract.ID,
-								existing.StartDate.Format("2006-01-02"), existing.EndDate.Format("2006-01-02")))
+								existing.StartDate.Format("2006-01-02"), endDateStr))
 							continue
 						}
 
@@ -730,14 +764,18 @@ func CreateContract(c *gin.Context) {
 								}
 							}
 
+							endDateStr := "не установлена"
+							if existing.EndDate != nil {
+								endDateStr = existing.EndDate.Format("2006-01-02")
+							}
 							log.Printf("❌ Объект %d уже привязан к договору %s (ID: %d) с тем же тарифным планом '%s' (ID: %d) на период %s - %s. Договор не будет создан.",
 								objectID, conflictingContract.Number, conflictingContract.ID, tariffPlanName, currentTariffPlanID,
-								existing.StartDate.Format("2006-01-02"), existing.EndDate.Format("2006-01-02"))
+								existing.StartDate.Format("2006-01-02"), endDateStr)
 							
 							validationErrors = append(validationErrors, fmt.Sprintf(
 								"Объект %d уже привязан к договору %s (ID: %d) с тарифным планом '%s' на период %s - %s. Объект не может быть привязан к другому договору с тем же тарифным планом.",
 								objectID, conflictingContract.Number, conflictingContract.ID, tariffPlanName,
-								existing.StartDate.Format("2006-01-02"), existing.EndDate.Format("2006-01-02")))
+								existing.StartDate.Format("2006-01-02"), endDateStr))
 						}
 						// Если тарифные планы разные - разрешаем создание договора (даже если сроки пересекаются)
 					}
@@ -984,7 +1022,7 @@ contractCreated:
 				var existingAttachments []models.ContractObject
 				skipObject := false
 				contractStartDate := contract.StartDate
-				contractEndDate := contract.EndDate
+				var contractEndDate *time.Time = contract.EndDate
 
 				if err := tenantDB.Where("object_id = ? AND object_company_id = ? AND status = ?", 
 					objectID, targetAccountID, "active").Find(&existingAttachments).Error; err == nil {
@@ -997,17 +1035,39 @@ contractCreated:
 						
 						// Проверяем пересечение сроков
 						// Периоды пересекаются, если start1 <= end2 && start2 <= end1
-						hasOverlap := !contractStartDate.After(existing.EndDate) && !existing.StartDate.After(contractEndDate)
+						// Если у нового договора нет start_date или end_date, пропускаем проверку пересечений (период будет установлен через подписку)
+						var hasOverlap bool
+						if contractStartDate == nil || contractEndDate == nil {
+							// Если у нового договора нет start_date или end_date, считаем что пересечения нет
+							hasOverlap = false
+						} else if contractEndDate != nil && existing.EndDate != nil {
+							hasOverlap = !contractStartDate.After(*existing.EndDate) && !existing.StartDate.After(*contractEndDate)
+						} else if contractEndDate != nil && existing.EndDate == nil {
+							// Если у существующей привязки нет end_date, считаем что пересечения нет
+							hasOverlap = false
+						} else if contractEndDate == nil {
+							// Если у нового договора нет end_date, проверяем только пересечение с началом существующей привязки
+							if existing.EndDate != nil {
+								hasOverlap = !contractStartDate.After(*existing.EndDate)
+							} else {
+								// Если у обоих нет end_date, считаем что пересечения нет
+								hasOverlap = false
+							}
+						}
 						
 						if hasOverlap {
 							// Получаем информацию о конфликтующем договоре для проверки тарифных планов
 							var conflictingContract models.Contract
 							if err := tenantDB.First(&conflictingContract, existing.ContractID).Error; err != nil {
 								log.Printf("⚠️ Не удалось загрузить договор %d для проверки тарифного плана: %v", existing.ContractID, err)
+								endDateStr := "не установлена"
+								if existing.EndDate != nil {
+									endDateStr = existing.EndDate.Format("2006-01-02")
+								}
 								objectErrors = append(objectErrors, fmt.Sprintf(
 									"Объект %d уже привязан к другому договору (ID: %d) на период %s - %s. Повторная привязка возможна только на другой срок без пересечений.",
 									objectID, existing.ContractID,
-									existing.StartDate.Format("2006-01-02"), existing.EndDate.Format("2006-01-02")))
+									existing.StartDate.Format("2006-01-02"), endDateStr))
 								skipObject = true
 								break
 							}
@@ -1030,10 +1090,14 @@ contractCreated:
 							if (currentTariffPlanID == 0 && conflictingTariffPlanID > 0) || (currentTariffPlanID > 0 && conflictingTariffPlanID == 0) {
 								log.Printf("⚠️ У одного из договоров отсутствует тарифный план (новый: %d, конфликтующий: %d), блокируем создание связи",
 									currentTariffPlanID, conflictingTariffPlanID)
+								endDateStr := "не установлена"
+								if existing.EndDate != nil {
+									endDateStr = existing.EndDate.Format("2006-01-02")
+								}
 								objectErrors = append(objectErrors, fmt.Sprintf(
 									"Объект %d уже привязан к договору %s (ID: %d) на период %s - %s. Не удалось проверить тарифные планы договоров. Повторная привязка возможна только на другой срок без пересечений.",
 									objectID, conflictingContract.Number, conflictingContract.ID,
-									existing.StartDate.Format("2006-01-02"), existing.EndDate.Format("2006-01-02")))
+									existing.StartDate.Format("2006-01-02"), endDateStr))
 								skipObject = true
 								break
 							}
@@ -1052,14 +1116,18 @@ contractCreated:
 									}
 								}
 
+								endDateStr := "не установлена"
+								if existing.EndDate != nil {
+									endDateStr = existing.EndDate.Format("2006-01-02")
+								}
 								log.Printf("❌ Объект %d уже привязан к договору %s (ID: %d) с тем же тарифным планом '%s' (ID: %d) на период %s - %s",
 									objectID, conflictingContract.Number, conflictingContract.ID, tariffPlanName, currentTariffPlanID,
-									existing.StartDate.Format("2006-01-02"), existing.EndDate.Format("2006-01-02"))
+									existing.StartDate.Format("2006-01-02"), endDateStr)
 								
 								objectErrors = append(objectErrors, fmt.Sprintf(
 									"Объект %d уже привязан к договору %s (ID: %d) с тарифным планом '%s' на период %s - %s. Объект не может быть привязан к другому договору с тем же тарифным планом.",
 									objectID, conflictingContract.Number, conflictingContract.ID, tariffPlanName,
-									existing.StartDate.Format("2006-01-02"), existing.EndDate.Format("2006-01-02")))
+									existing.StartDate.Format("2006-01-02"), endDateStr))
 								skipObject = true
 								break
 							}
@@ -1079,13 +1147,18 @@ contractCreated:
 				}
 
 				// Создаем связь в junction table (в схеме договора)
+				// Если у договора нет start_date, используем текущую дату (период будет установлен через подписку)
+				objStartDate := time.Now()
+				if contract.StartDate != nil {
+					objStartDate = *contract.StartDate
+				}
 				contractObject := models.ContractObject{
 					ContractID:      contract.ID,
 					ObjectID:        objectID,
 					ObjectCompanyID: targetAccountID,
 					ObjectSchema:    company.DatabaseSchema,
 					Status:          "active",
-					StartDate:       contract.StartDate, // Используем сроки договора
+					StartDate:       objStartDate, // Используем сроки договора или текущую дату
 					EndDate:         contract.EndDate,   // Используем сроки договора
 				}
 
@@ -3944,7 +4017,7 @@ func AttachObjectsToContract(c *gin.Context) {
 			
 			// Проверяем пересечение сроков с существующими привязками
 			contractStartDate := contract.StartDate
-			contractEndDate := contract.EndDate
+			var contractEndDate *time.Time = contract.EndDate
 			
 			for _, existing := range existingAttachments {
 				// Если это тот же договор, пропускаем проверку
@@ -3957,7 +4030,25 @@ func AttachObjectsToContract(c *gin.Context) {
 				
 				// Проверяем пересечение сроков
 				// Периоды пересекаются, если start1 <= end2 && start2 <= end1
-				hasOverlap := !contractStartDate.After(existing.EndDate) && !existing.StartDate.After(contractEndDate)
+				// Если у договора нет start_date или end_date, пропускаем проверку пересечений (период будет установлен через подписку)
+				var hasOverlap bool
+				if contractStartDate == nil || contractEndDate == nil {
+					// Если у нового договора нет start_date или end_date, считаем что пересечения нет
+					hasOverlap = false
+				} else if contractEndDate != nil && existing.EndDate != nil {
+					hasOverlap = !contractStartDate.After(*existing.EndDate) && !existing.StartDate.After(*contractEndDate)
+				} else if contractEndDate != nil && existing.EndDate == nil {
+					// Если у существующей привязки нет end_date, считаем что пересечения нет
+					hasOverlap = false
+				} else if contractEndDate == nil {
+					// Если у нового договора нет end_date, проверяем только пересечение с началом существующей привязки
+					if existing.EndDate != nil {
+						hasOverlap = !contractStartDate.After(*existing.EndDate)
+					} else {
+						// Если у обоих нет end_date, считаем что пересечения нет
+						hasOverlap = false
+					}
+				}
 				
 				if hasOverlap {
 					// Получаем информацию о конфликтующем договоре для проверки тарифных планов
@@ -4041,13 +4132,19 @@ func AttachObjectsToContract(c *gin.Context) {
 		}
 
 		// Создаем связь в junction table (в схеме договора)
+		// Создаем связь в junction table (в схеме создателя договора)
+		// Если у договора нет start_date, используем текущую дату (период будет установлен через подписку)
+		objStartDate := time.Now()
+		if contract.StartDate != nil {
+			objStartDate = *contract.StartDate
+		}
 		contractObject := models.ContractObject{
 			ContractID:      uint(contractIDUint),
 			ObjectID:        objectID,
 			ObjectCompanyID: object.CompanyID,
 			ObjectSchema:    objectSchema,
 			Status:          "active",
-			StartDate:       contract.StartDate, // Используем сроки договора
+			StartDate:       objStartDate, // Используем сроки договора или текущую дату
 			EndDate:         contract.EndDate,   // Используем сроки договора
 		}
 

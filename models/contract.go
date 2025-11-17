@@ -35,8 +35,8 @@ type Contract struct {
 	ClientAddress string `json:"client_address" gorm:"type:text"`
 
 	// Даты договора
-	StartDate time.Time  `json:"start_date" gorm:"not null"`
-	EndDate   time.Time  `json:"end_date" gorm:"not null"`
+	StartDate *time.Time `json:"start_date" gorm:"default:NULL"` // Опционально, будет установлено через подписку
+	EndDate   *time.Time `json:"end_date" gorm:"default:NULL"`   // Опционально, будет установлено через подписку
 	SignedAt  *time.Time `json:"signed_at"`
 
 	// Тарификация (опционально, будет привязан через подписку)
@@ -80,17 +80,26 @@ func (Contract) TableName() string {
 
 // IsExpired проверяет, истек ли договор
 func (c *Contract) IsExpired() bool {
-	return time.Now().After(c.EndDate)
+	if c.EndDate == nil {
+		return false // Если дата окончания не установлена, договор не истек
+	}
+	return time.Now().After(*c.EndDate)
 }
 
 // IsExpiringSoon проверяет, истекает ли договор скоро
 func (c *Contract) IsExpiringSoon() bool {
+	if c.EndDate == nil {
+		return false // Если дата окончания не установлена, договор не истекает скоро
+	}
 	notifyDate := c.EndDate.AddDate(0, 0, -c.NotifyBefore)
 	return time.Now().After(notifyDate) && !c.IsExpired()
 }
 
 // GetDaysUntilExpiry возвращает количество дней до истечения договора
 func (c *Contract) GetDaysUntilExpiry() int {
+	if c.EndDate == nil {
+		return 0 // Если дата окончания не установлена, возвращаем 0
+	}
 	if c.IsExpired() {
 		return 0
 	}
