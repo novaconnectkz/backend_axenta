@@ -39,8 +39,8 @@ type Contract struct {
 	EndDate   time.Time  `json:"end_date" gorm:"not null"`
 	SignedAt  *time.Time `json:"signed_at"`
 
-	// Тарификация
-	TariffPlanID uint        `json:"tariff_plan_id" gorm:"not null"`
+	// Тарификация (опционально, будет привязан через подписку)
+	TariffPlanID *uint       `json:"tariff_plan_id" gorm:"default:NULL"`
 	TariffPlan   BillingPlan `json:"tariff_plan" gorm:"foreignKey:TariffPlanID"`
 
 	// Стоимость
@@ -56,9 +56,9 @@ type Contract struct {
 	Status   string `json:"status" gorm:"default:'draft';type:varchar(20)"` // draft, active, expired, cancelled, suspended
 	IsActive bool   `json:"is_active" gorm:"default:true"`
 
-	// Настройки автоматической пролонгации
-	IsAutoRenew        bool `json:"is_auto_renew" gorm:"default:true"`         // Автоматическая пролонгация договора
-	ContractPeriodMonths *int `json:"contract_period_months" gorm:"default:NULL"` // Период договора в месяцах (если NULL, используется период из тарифа)
+	// Настройки автоматической пролонгации (настраиваются через подписку)
+	IsAutoRenew        bool `json:"is_auto_renew" gorm:"-"`         // Автоматическая пролонгация договора (настраивается через подписку)
+	ContractPeriodMonths *int `json:"contract_period_months" gorm:"-"` // Период договора в месяцах (настраивается через подписку)
 
 	// Настройки уведомлений
 	NotifyBefore int `json:"notify_before" gorm:"default:30"` // За сколько дней уведомлять об истечении

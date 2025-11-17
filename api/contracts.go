@@ -158,16 +158,16 @@ func GetContracts(c *gin.Context) {
 	}
 
 	for i := range contracts {
-		if contracts[i].TariffPlanID > 0 {
+		if contracts[i].TariffPlanID != nil && *contracts[i].TariffPlanID > 0 {
 			var billingPlan models.BillingPlan
 			if err := publicDB.
 				Select("id, name, price, currency, billing_period").
-				Where("id = ? AND admin_account_id = ?", contracts[i].TariffPlanID, adminAccountID).
+				Where("id = ? AND admin_account_id = ?", *contracts[i].TariffPlanID, adminAccountID).
 				First(&billingPlan).Error; err == nil {
 				// TariffPlan в модели Contract - это BillingPlan, просто присваиваем
 				contracts[i].TariffPlan = billingPlan
 			} else {
-				log.Printf("⚠️ Не удалось загрузить TariffPlan ID=%d для договора %d: %v", contracts[i].TariffPlanID, contracts[i].ID, err)
+				log.Printf("⚠️ Не удалось загрузить TariffPlan ID=%d для договора %d: %v", *contracts[i].TariffPlanID, contracts[i].ID, err)
 			}
 		}
 
@@ -334,14 +334,14 @@ func GetContract(c *gin.Context) {
 		return
 	}
 
-	if contract.TariffPlanID > 0 {
+	if contract.TariffPlanID != nil && *contract.TariffPlanID > 0 {
 		publicDB := database.DB.Session(&gorm.Session{})
 		if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
 			log.Printf("⚠️ Не удалось переключиться на public: %v", err)
 		} else {
 			var billingPlan models.BillingPlan
 			if err := publicDB.
-				Where("id = ? AND admin_account_id = ?", contract.TariffPlanID, adminAccountID).
+				Where("id = ? AND admin_account_id = ?", *contract.TariffPlanID, adminAccountID).
 				First(&billingPlan).Error; err == nil {
 				contract.TariffPlan = billingPlan
 			}
@@ -375,8 +375,8 @@ type CreateContractRequestRaw struct {
 	StartDateStr string `json:"start_date"`
 	EndDateStr   string `json:"end_date"`
 
-	// Тарификация
-	TariffPlanID uint `json:"tariff_plan_id"`
+	// Тарификация (опционально, будет привязан через подписку)
+	TariffPlanID *uint `json:"tariff_plan_id"`
 
 	// Статус и прочее
 	Status              string `json:"status"`
@@ -469,8 +469,8 @@ func CreateContract(c *gin.Context) {
 		ClientAddress:  rawRequest.ClientAddress,
 		StartDate:      startDate,
 		EndDate:        endDate,
-		TariffPlanID:        rawRequest.TariffPlanID,
-		Status:              rawRequest.Status,
+		TariffPlanID:   nil, // Тарифный план будет привязан через подписку
+		Status:              "draft", // По умолчанию черновик, после привязки подписки станет "active"
 		IsAutoRenew:         true, // По умолчанию включена
 		ContractPeriodMonths: nil, // По умолчанию используется период из тарифа
 		Notes:               rawRequest.Notes,
@@ -522,14 +522,6 @@ func CreateContract(c *gin.Context) {
 		return
 	}
 
-	if contract.TariffPlanID == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status": "error",
-			"error":  "Тарифный план обязателен",
-		})
-		return
-	}
-
 	log.Printf("📅 Проверка дат: StartDate=%v (IsZero=%v), EndDate=%v (IsZero=%v)",
 		contract.StartDate, contract.StartDate.IsZero(), contract.EndDate, contract.EndDate.IsZero())
 
@@ -551,19 +543,22 @@ func CreateContract(c *gin.Context) {
 		return
 	}
 
-	// Проверяем существование тарифного плана
-	log.Printf("🔍 Поиск тарифного плана с ID=%d для admin_account_id=%d", contract.TariffPlanID, adminAccountID)
-	var tariffPlan models.BillingPlan
-	if err := database.DB.Where("id = ? AND admin_account_id = ?", contract.TariffPlanID, adminAccountID).
-		First(&tariffPlan).Error; err != nil {
-		log.Printf("❌ Тарифный план не найден: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status": "error",
-			"error":  fmt.Sprintf("Тарифный план не найден: %v", err),
-		})
-		return
+	// Тарифный план опционален - будет привязан через подписку
+	// Если передан, проверяем его существование
+	if contract.TariffPlanID != nil && *contract.TariffPlanID > 0 {
+		log.Printf("🔍 Поиск тарифного плана с ID=%d для admin_account_id=%d", *contract.TariffPlanID, adminAccountID)
+		var tariffPlan models.BillingPlan
+		if err := database.DB.Where("id = ? AND admin_account_id = ?", *contract.TariffPlanID, adminAccountID).
+			First(&tariffPlan).Error; err != nil {
+			log.Printf("❌ Тарифный план не найден: %v", err)
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error",
+				"error":  fmt.Sprintf("Тарифный план не найден: %v", err),
+			})
+			return
+		}
+		log.Printf("✅ Тарифный план найден: ID=%d, Name=%s, Price=%v", tariffPlan.ID, tariffPlan.Name, tariffPlan.Price)
 	}
-	log.Printf("✅ Тарифный план найден: ID=%d, Name=%s, Price=%v", tariffPlan.ID, tariffPlan.Name, tariffPlan.Price)
 
 	// Устанавливаем значения по умолчанию
 	if contract.Status == "" {
@@ -576,36 +571,49 @@ func CreateContract(c *gin.Context) {
 		contract.NotifyBefore = 30
 	}
 
-	// Рассчитываем общую стоимость на основе тарифного плана
+	// Рассчитываем общую стоимость на основе тарифного плана (если он передан)
 	// Инициализируем TotalAmount если он не был передан или равен нулю
 	if contract.TotalAmount.IsZero() {
-		// Базовая стоимость из тарифного плана
-		contract.TotalAmount = tariffPlan.Price
+		// Если тарифный план передан, используем его цену
+		if contract.TariffPlanID != nil && *contract.TariffPlanID > 0 {
+			// Загружаем тарифный план для расчета стоимости
+			var tariffPlan models.BillingPlan
+			if err := database.DB.Where("id = ? AND admin_account_id = ?", *contract.TariffPlanID, adminAccountID).
+				First(&tariffPlan).Error; err == nil {
+				// Базовая стоимость из тарифного плана
+				contract.TotalAmount = tariffPlan.Price
 
-		// Если есть период, умножаем на количество периодов
-		duration := contract.EndDate.Sub(contract.StartDate)
-		days := int(duration.Hours() / 24)
+				// Если есть период, умножаем на количество периодов
+				duration := contract.EndDate.Sub(contract.StartDate)
+				days := int(duration.Hours() / 24)
 
-		// Рассчитываем количество месяцев (более точный расчет)
-		var months int
-		if days > 0 {
-			// Округляем до ближайшего месяца
-			months = days / 30
-			if months == 0 {
-				months = 1 // Минимум 1 месяц
+				// Рассчитываем количество месяцев (более точный расчет)
+				var months int
+				if days > 0 {
+					// Округляем до ближайшего месяца
+					months = days / 30
+					if months == 0 {
+						months = 1 // Минимум 1 месяц
+					}
+				} else {
+					months = 1 // Минимум 1 месяц
+				}
+
+				if months > 0 {
+					contract.TotalAmount = contract.TotalAmount.Mul(decimal.NewFromInt(int64(months)))
+				}
 			}
-		} else {
-			months = 1 // Минимум 1 месяц
 		}
-
-		if months > 0 {
-			contract.TotalAmount = contract.TotalAmount.Mul(decimal.NewFromInt(int64(months)))
-		}
+		// Если тарифный план не передан, TotalAmount остается нулевым (будет установлен через подписку)
 	}
 
 	// Логируем данные перед созданием
-	log.Printf("📋 Создание договора: Number=%s, Title=%s, CompanyID=%d, TariffPlanID=%d, StartDate=%v, EndDate=%v, TotalAmount=%v",
-		contract.Number, contract.Title, contract.CompanyID, contract.TariffPlanID, contract.StartDate, contract.EndDate, contract.TotalAmount)
+	tariffPlanIDStr := "nil"
+	if contract.TariffPlanID != nil {
+		tariffPlanIDStr = fmt.Sprintf("%d", *contract.TariffPlanID)
+	}
+	log.Printf("📋 Создание договора: Number=%s, Title=%s, CompanyID=%d, TariffPlanID=%s, StartDate=%v, EndDate=%v, TotalAmount=%v",
+		contract.Number, contract.Title, contract.CompanyID, tariffPlanIDStr, contract.StartDate, contract.EndDate, contract.TotalAmount)
 
 	// Пытаемся создать договор с обработкой ошибок
 	defer func() {
@@ -661,7 +669,10 @@ func CreateContract(c *gin.Context) {
 		var validationErrors []string
 		contractStartDate := contract.StartDate
 		contractEndDate := contract.EndDate
-		currentTariffPlanID := contract.TariffPlanID
+		var currentTariffPlanID uint = 0
+		if contract.TariffPlanID != nil {
+			currentTariffPlanID = *contract.TariffPlanID
+		}
 
 		for _, objectID := range selectedObjectIDs {
 			// Проверяем, не привязан ли объект к другому активному договору с пересекающимися сроками
@@ -685,13 +696,17 @@ func CreateContract(c *gin.Context) {
 							continue
 						}
 
-						conflictingTariffPlanID := conflictingContract.TariffPlanID
+						var conflictingTariffPlanID uint = 0
+						if conflictingContract.TariffPlanID != nil {
+							conflictingTariffPlanID = *conflictingContract.TariffPlanID
+						}
 						
 						log.Printf("🔍 Проверка тарифных планов перед созданием договора: новый договор (TariffPlanID=%d), конфликтующий договор %d (TariffPlanID=%d)",
 							currentTariffPlanID, conflictingContract.ID, conflictingTariffPlanID)
 
-						// Если у одного или обоих договоров нет тарифного плана, блокируем создание
-						if currentTariffPlanID == 0 || conflictingTariffPlanID == 0 {
+						// Если у обоих договоров нет тарифного плана - разрешаем (тарифы будут привязаны через подписку)
+						// Если у одного есть, а у другого нет - блокируем для безопасности
+						if (currentTariffPlanID == 0 && conflictingTariffPlanID > 0) || (currentTariffPlanID > 0 && conflictingTariffPlanID == 0) {
 							log.Printf("⚠️ У одного из договоров отсутствует тарифный план (новый: %d, конфликтующий: %d), блокируем создание договора",
 								currentTariffPlanID, conflictingTariffPlanID)
 							validationErrors = append(validationErrors, fmt.Sprintf(
@@ -701,8 +716,8 @@ func CreateContract(c *gin.Context) {
 							continue
 						}
 
-						// Если тарифные планы одинаковые - блокируем создание договора
-						if currentTariffPlanID == conflictingTariffPlanID {
+						// Если тарифные планы одинаковые и оба заданы - блокируем создание договора
+						if currentTariffPlanID > 0 && conflictingTariffPlanID > 0 && currentTariffPlanID == conflictingTariffPlanID {
 							// Загружаем информацию о тарифном плане для более подробного сообщения
 							var tariffPlan models.BillingPlan
 							tariffPlanName := fmt.Sprintf("ID: %d", currentTariffPlanID)
@@ -765,14 +780,80 @@ func CreateContract(c *gin.Context) {
 		log.Printf("ℹ️ Не удалось удалить foreign key constraint (возможно, его нет): %v", err)
 	}
 
+	// Удаляем NOT NULL ограничение для tariff_plan_id, если оно существует
+	// Тарифный план опционален и будет привязан через подписку
+	if err := tenantDB.Exec(`
+		DO $$
+		BEGIN
+			-- Проверяем, есть ли NOT NULL ограничение на tariff_plan_id
+			IF EXISTS (
+				SELECT 1 FROM information_schema.columns 
+				WHERE table_schema = current_schema()
+				AND table_name = 'contracts'
+				AND column_name = 'tariff_plan_id'
+				AND is_nullable = 'NO'
+			) THEN
+				ALTER TABLE contracts ALTER COLUMN tariff_plan_id DROP NOT NULL;
+				RAISE NOTICE 'NOT NULL ограничение для tariff_plan_id удалено';
+			END IF;
+		END $$;
+	`).Error; err != nil {
+		// Игнорируем ошибку, если constraint не существует
+		log.Printf("ℹ️ Не удалось удалить NOT NULL ограничение для tariff_plan_id (возможно, его нет): %v", err)
+	}
+
 	// Создаем договор в tenant схеме, явно указывая только поля, которые есть в БД
 	// Используем Omit() чтобы избежать ошибок с несуществующими колонками
 	// TariffPlan не включаем, так как foreign key не работает между схемами
-	if err := tenantDB.Omit("SellerCountryCode", "BuyerCountryCode", "NDSRateOverride", "TariffPlan", "Appendices", "Objects").Create(&contract).Error; err != nil {
+	// Временно устанавливаем IsAutoRenew и ContractPeriodMonths в nil, так как эти колонки могут отсутствовать в БД
+	contract.IsAutoRenew = false
+	contract.ContractPeriodMonths = nil
+	if err := tenantDB.Omit("SellerCountryCode", "BuyerCountryCode", "NDSRateOverride", "TariffPlan", "Appendices", "Objects", "IsAutoRenew", "ContractPeriodMonths").Create(&contract).Error; err != nil {
 		log.Printf("❌ Ошибка при создании договора: %v", err)
 		log.Printf("📋 Тип ошибки: %T", err)
-		log.Printf("📋 Данные договора: Number=%s, Title=%s, CompanyID=%d, TariffPlanID=%d, StartDate=%v, EndDate=%v, TotalAmount=%v",
-			contract.Number, contract.Title, contract.CompanyID, contract.TariffPlanID, contract.StartDate, contract.EndDate, contract.TotalAmount)
+		tariffPlanIDStr := "nil"
+		if contract.TariffPlanID != nil {
+			tariffPlanIDStr = fmt.Sprintf("%d", *contract.TariffPlanID)
+		}
+		log.Printf("📋 Данные договора: Number=%s, Title=%s, CompanyID=%d, TariffPlanID=%s, StartDate=%v, EndDate=%v, TotalAmount=%v",
+			contract.Number, contract.Title, contract.CompanyID, tariffPlanIDStr, contract.StartDate, contract.EndDate, contract.TotalAmount)
+
+		// Проверяем, не связана ли ошибка с NOT NULL ограничением на tariff_plan_id
+		errorStr := err.Error()
+		log.Printf("🔍 Анализ ошибки БД: %s", errorStr)
+		
+		// Проверяем различные варианты ошибок, связанных с tariff_plan_id
+		if strings.Contains(errorStr, "tariff_plan_id") && 
+		   (strings.Contains(errorStr, "null") || 
+		    strings.Contains(errorStr, "NOT NULL") ||
+		    strings.Contains(errorStr, "violates not-null constraint") ||
+		    strings.Contains(errorStr, "null value in column")) {
+			log.Printf("⚠️ Обнаружена ошибка NOT NULL для tariff_plan_id, пытаемся исправить...")
+			// Пытаемся еще раз удалить NOT NULL ограничение
+			if fixErr := tenantDB.Exec("ALTER TABLE contracts ALTER COLUMN tariff_plan_id DROP NOT NULL").Error; fixErr != nil {
+				log.Printf("⚠️ Не удалось удалить NOT NULL ограничение: %v", fixErr)
+			} else {
+				log.Printf("✅ NOT NULL ограничение удалено, повторяем создание договора...")
+				// Повторяем попытку создания
+				if retryErr := tenantDB.Omit("SellerCountryCode", "BuyerCountryCode", "NDSRateOverride", "TariffPlan", "Appendices", "Objects", "IsAutoRenew", "ContractPeriodMonths").Create(&contract).Error; retryErr != nil {
+					log.Printf("❌ Ошибка при повторной попытке создания договора: %v", retryErr)
+					c.JSON(http.StatusInternalServerError, gin.H{
+						"status":  "error",
+						"error":   fmt.Sprintf("Ошибка при создании договора: %v", retryErr),
+						"details": retryErr.Error(),
+					})
+					return
+				}
+				// Успешно создано при повторной попытке
+				goto contractCreated
+			}
+		}
+		
+		// Если ошибка не связана с NOT NULL, но содержит упоминание о тарифном плане,
+		// возможно это ошибка валидации или constraint - логируем для отладки
+		if strings.Contains(errorStr, "tariff") || strings.Contains(errorStr, "plan") {
+			log.Printf("⚠️ Ошибка связана с тарифным планом, но не с NOT NULL: %s", errorStr)
+		}
 
 		// Проверяем тип ошибки
 		if gorm.ErrDuplicatedKey != nil {
@@ -780,8 +861,22 @@ func CreateContract(c *gin.Context) {
 		}
 
 		// Возвращаем детальную ошибку
+		// Если ошибка связана с NOT NULL для tariff_plan_id, но мы не смогли её исправить,
+		// возвращаем понятное сообщение
 		errorMsg := fmt.Sprintf("Ошибка при создании договора: %v", err)
 		details := err.Error()
+		
+		// Проверяем, не связана ли ошибка с тарифным планом
+		if strings.Contains(details, "tariff_plan_id") || strings.Contains(details, "tariff") {
+			// Если это ошибка NOT NULL, но мы не смогли её исправить, возвращаем понятное сообщение
+			if strings.Contains(details, "null") || strings.Contains(details, "NOT NULL") {
+				errorMsg = "Ошибка базы данных: поле tariff_plan_id имеет ограничение NOT NULL. Попробуйте применить миграцию или обратитесь к администратору."
+			} else {
+				// Если ошибка связана с тарифным планом, но не с NOT NULL, возвращаем общее сообщение
+				// НО НЕ "Тарифный план обязателен", так как тарифный план опционален
+				errorMsg = fmt.Sprintf("Ошибка при создании договора, связанная с тарифным планом: %v", err)
+			}
+		}
 
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
@@ -790,6 +885,8 @@ func CreateContract(c *gin.Context) {
 		})
 		return
 	}
+
+contractCreated:
 
 	log.Printf("✅ Договор успешно создан с ID=%d", contract.ID)
 
@@ -916,14 +1013,21 @@ func CreateContract(c *gin.Context) {
 							}
 
 							// Проверяем тарифные планы обоих договоров
-							currentTariffPlanID := contract.TariffPlanID
-							conflictingTariffPlanID := conflictingContract.TariffPlanID
+							var currentTariffPlanID uint = 0
+							if contract.TariffPlanID != nil {
+								currentTariffPlanID = *contract.TariffPlanID
+							}
+							var conflictingTariffPlanID uint = 0
+							if conflictingContract.TariffPlanID != nil {
+								conflictingTariffPlanID = *conflictingContract.TariffPlanID
+							}
 							
 							log.Printf("🔍 Проверка тарифных планов при создании договора: новый договор %d (TariffPlanID=%d), конфликтующий договор %d (TariffPlanID=%d)",
 								contract.ID, currentTariffPlanID, conflictingContract.ID, conflictingTariffPlanID)
 
-							// Если у одного или обоих договоров нет тарифного плана, блокируем создание связи
-							if currentTariffPlanID == 0 || conflictingTariffPlanID == 0 {
+							// Если у обоих договоров нет тарифного плана - разрешаем (тарифы будут привязаны через подписку)
+							// Если у одного есть, а у другого нет - блокируем для безопасности
+							if (currentTariffPlanID == 0 && conflictingTariffPlanID > 0) || (currentTariffPlanID > 0 && conflictingTariffPlanID == 0) {
 								log.Printf("⚠️ У одного из договоров отсутствует тарифный план (новый: %d, конфликтующий: %d), блокируем создание связи",
 									currentTariffPlanID, conflictingTariffPlanID)
 								objectErrors = append(objectErrors, fmt.Sprintf(
@@ -934,8 +1038,8 @@ func CreateContract(c *gin.Context) {
 								break
 							}
 
-							// Если тарифные планы одинаковые - блокируем создание связи
-							if currentTariffPlanID == conflictingTariffPlanID {
+							// Если тарифные планы одинаковые и оба заданы - блокируем создание связи
+							if currentTariffPlanID > 0 && conflictingTariffPlanID > 0 && currentTariffPlanID == conflictingTariffPlanID {
 								// Загружаем информацию о тарифном плане для более подробного сообщения
 								var tariffPlan models.BillingPlan
 								tariffPlanName := fmt.Sprintf("ID: %d", currentTariffPlanID)
@@ -1018,12 +1122,12 @@ func CreateContract(c *gin.Context) {
 		log.Printf("⚠️ Не удалось загрузить объекты договора %d: %v", contract.ID, err)
 	}
 
-	if contract.TariffPlanID > 0 {
+	if contract.TariffPlanID != nil && *contract.TariffPlanID > 0 {
 		publicDB := database.DB.Session(&gorm.Session{})
 		if err := publicDB.Exec("SET search_path TO public").Error; err == nil {
 			var billingPlan models.BillingPlan
 			if err := publicDB.
-				Where("id = ? AND admin_account_id = ?", contract.TariffPlanID, adminAccountID).
+				Where("id = ? AND admin_account_id = ?", *contract.TariffPlanID, adminAccountID).
 				First(&billingPlan).Error; err == nil {
 				contract.TariffPlan = billingPlan
 			}
@@ -1093,15 +1197,21 @@ func UpdateContract(c *gin.Context) {
 		return
 	}
 
-	// Проверяем тарифный план если он изменился
-	if updateData.TariffPlanID != 0 && updateData.TariffPlanID != contract.TariffPlanID {
-		var tariffPlan models.BillingPlan
-		if err := database.DB.Where("id = ? AND admin_account_id = ?", updateData.TariffPlanID, adminAccountID).First(&tariffPlan).Error; err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"status": "error",
-				"error":  "Тарифный план не найден",
-			})
-			return
+	// Проверяем тарифный план если он изменился (опционально, будет привязан через подписку)
+	if updateData.TariffPlanID != nil && *updateData.TariffPlanID > 0 {
+		var contractTariffPlanID uint = 0
+		if contract.TariffPlanID != nil {
+			contractTariffPlanID = *contract.TariffPlanID
+		}
+		if *updateData.TariffPlanID != contractTariffPlanID {
+			var tariffPlan models.BillingPlan
+			if err := database.DB.Where("id = ? AND admin_account_id = ?", *updateData.TariffPlanID, adminAccountID).First(&tariffPlan).Error; err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"status": "error",
+					"error":  "Тарифный план не найден",
+				})
+				return
+			}
 		}
 	}
 
@@ -1119,12 +1229,12 @@ func UpdateContract(c *gin.Context) {
 		log.Printf("⚠️ Не удалось загрузить обновленные данные договора %d: %v", contract.ID, err)
 	}
 
-	if contract.TariffPlanID > 0 {
+	if contract.TariffPlanID != nil && *contract.TariffPlanID > 0 {
 		publicDB := database.DB.Session(&gorm.Session{})
 		if err := publicDB.Exec("SET search_path TO public").Error; err == nil {
 			var billingPlan models.BillingPlan
 			if err := publicDB.
-				Where("id = ? AND admin_account_id = ?", contract.TariffPlanID, adminAccountID).
+				Where("id = ? AND admin_account_id = ?", *contract.TariffPlanID, adminAccountID).
 				First(&billingPlan).Error; err == nil {
 				contract.TariffPlan = billingPlan
 			}
@@ -3867,13 +3977,21 @@ func AttachObjectsToContract(c *gin.Context) {
 					currentTariffPlanID := contract.TariffPlanID
 					conflictingTariffPlanID := conflictingContract.TariffPlanID
 					
+					var currentID, conflictingID uint
+					if currentTariffPlanID != nil {
+						currentID = *currentTariffPlanID
+					}
+					if conflictingTariffPlanID != nil {
+						conflictingID = *conflictingTariffPlanID
+					}
+					
 					log.Printf("🔍 Проверка тарифных планов: текущий договор %d (TariffPlanID=%d), конфликтующий договор %d (TariffPlanID=%d)",
-						contract.ID, currentTariffPlanID, conflictingContract.ID, conflictingTariffPlanID)
+						contract.ID, currentID, conflictingContract.ID, conflictingID)
 
 					// Если у одного или обоих договоров нет тарифного плана, блокируем создание связи
-					if currentTariffPlanID == 0 || conflictingTariffPlanID == 0 {
+					if currentTariffPlanID == nil || *currentTariffPlanID == 0 || conflictingTariffPlanID == nil || *conflictingTariffPlanID == 0 {
 						log.Printf("⚠️ У одного из договоров отсутствует тарифный план (текущий: %d, конфликтующий: %d), блокируем создание связи",
-							currentTariffPlanID, conflictingTariffPlanID)
+							currentID, conflictingID)
 						errorMessages = append(errorMessages, fmt.Sprintf(
 							"Объект %d уже привязан к договору %s (ID: %d) на период %s - %s. Не удалось проверить тарифные планы договоров. Повторная привязка возможна только на другой срок без пересечений.",
 							objectID, conflictingContract.Number, conflictingContract.ID,

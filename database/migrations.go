@@ -867,7 +867,7 @@ func createInvoiceTablesViaSQL() error {
 			due_date TIMESTAMP WITH TIME ZONE NOT NULL,
 			company_id BIGINT NOT NULL,
 			contract_id BIGINT,
-			tariff_plan_id BIGINT NOT NULL,
+			tariff_plan_id BIGINT,
 			billing_period_start TIMESTAMP WITH TIME ZONE NOT NULL,
 			billing_period_end TIMESTAMP WITH TIME ZONE NOT NULL,
 			subtotal_amount DECIMAL(15,2) NOT NULL,

@@ -407,7 +407,7 @@ func (bas *BillingAutomationService) AutoRenewMonthlyContracts() error {
 
 	for _, contract := range contracts {
 		// Проверяем, что у договора есть тарифный план
-		if contract.TariffPlanID == 0 {
+		if contract.TariffPlanID == nil || *contract.TariffPlanID == 0 {
 			skippedCount++
 			continue
 		}

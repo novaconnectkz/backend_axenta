@@ -663,8 +663,8 @@ func CreateSubscription(c *gin.Context) {
 			return
 		}
 
-		// Проверяем, что у договора есть доступ к тарифам (если tariff_plan_id = 0, значит нет прав)
-		if contract.TariffPlanID == 0 {
+		// Проверяем, что у договора есть доступ к тарифам (если tariff_plan_id = nil или 0, значит нет прав)
+		if contract.TariffPlanID == nil || *contract.TariffPlanID == 0 {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "error",
 				"error":  "Нет прав на тарифы в этом договоре",
@@ -765,6 +765,27 @@ func CreateSubscription(c *gin.Context) {
 			"error":  "Ошибка при создании подписки",
 		})
 		return
+	}
+
+	// Если подписка создана для договора, автоматически переводим его в статус "active"
+	if data.ContractID != nil && *data.ContractID > 0 {
+		var contract models.Contract
+		// Проверяем, что договор существует и принадлежит этому admin_account
+		if err := database.DB.Where("id = ? AND admin_account_id = ?", *data.ContractID, adminAccountID).
+			First(&contract).Error; err == nil {
+			// Если договор в статусе "draft" (черновик), переводим в "active" (активный)
+			if contract.Status == "draft" {
+				contract.Status = "active"
+				if err := database.DB.Save(&contract).Error; err != nil {
+					log.Printf("⚠️ Не удалось обновить статус договора %d на 'active': %v", contract.ID, err)
+				} else {
+					log.Printf("✅ Договор %d (№%s) автоматически переведен в статус 'active' после создания подписки", 
+						contract.ID, contract.Number)
+				}
+			}
+		} else {
+			log.Printf("⚠️ Не удалось найти договор %d для обновления статуса: %v", *data.ContractID, err)
+		}
 	}
 
 	// Загружаем связанные данные для ответа

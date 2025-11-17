@@ -146,11 +146,16 @@ func (bs *BillingService) CalculateBillingForContract(contractID uint, periodSta
 		}
 	}
 
+	// Проверяем, что у договора есть тарифный план
+	if contract.TariffPlanID == nil {
+		return nil, fmt.Errorf("у договора не указан тарифный план")
+	}
+
 	// Создаем результат расчета
 	result := &BillingCalculationResult{
 		CompanyID:          contract.CompanyID,
 		ContractID:         contractID,
-		TariffPlanID:       contract.TariffPlanID,
+		TariffPlanID:       *contract.TariffPlanID,
 		BillingPeriodStart: periodStart,
 		BillingPeriodEnd:   periodEnd,
 		ActiveObjects:      activeCount,
@@ -237,11 +242,11 @@ func (bs *BillingService) CalculateBillingForContract(contractID uint, periodSta
 	discountedAmount, discountApplications, err := discountService.ApplyDiscounts(
 		ctx,
 		subtotal,
-		nil,                    // objectID - можно добавить по объектам отдельно
-		&contract.TariffPlanID, // tariffID
-		nil,                    // subscriptionID
-		nil,                    // appendixID
-		&contractID,            // contractID
+		nil,                // objectID - можно добавить по объектам отдельно
+		contract.TariffPlanID, // tariffID
+		nil,                // subscriptionID
+		nil,                // appendixID
+		&contractID,        // contractID
 		periodStart,
 	)
 

@@ -1185,7 +1185,7 @@ func applyContractTariff(db *gorm.DB, object *models.Object) error {
 	}
 
 	// Если у договора нет тарифного плана, пропускаем
-	if contract.TariffPlanID == 0 {
+	if contract.TariffPlanID == nil || *contract.TariffPlanID == 0 {
 		return nil
 	}
 
