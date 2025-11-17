@@ -1968,6 +1968,37 @@ func ActivateScheduledSubscriptions(c *gin.Context) {
 	})
 }
 
+// AutoRenewMonthlyContracts автоматически продлевает месячные договоры
+// Продлевает договоры с тарифным планом billing_period = "monthly" и статусом "active"
+// Продлевает end_date на +1 месяц, если end_date уже наступил или близок
+func AutoRenewMonthlyContracts(c *gin.Context) {
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	// Создаем сервис автоматизации биллинга
+	automationService := services.NewBillingAutomationService(adminAccountID)
+
+	// Автоматически продлеваем месячные договоры
+	if err := automationService.AutoRenewMonthlyContracts(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Автоматическая пролонгация месячных договоров выполнена",
+	})
+}
+
 // GetBillingStatistics получает статистику биллинга
 func GetBillingStatistics(c *gin.Context) {
 	adminAccountID, err := middleware.GetAdminAccountID(c)

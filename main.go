@@ -828,6 +828,7 @@ func main() {
 	apiGroup.POST("/billing/auto-generate", api.AutoGenerateInvoices)
 	apiGroup.POST("/billing/process-deletions", api.ProcessScheduledDeletions)
 	apiGroup.POST("/billing/activate-scheduled", api.ActivateScheduledSubscriptions)
+	apiGroup.POST("/billing/auto-renew-monthly", api.AutoRenewMonthlyContracts)
 	apiGroup.GET("/billing/statistics", api.GetBillingStatistics)
 	apiGroup.GET("/billing/invoices/period", api.GetInvoicesByPeriod)
 

@@ -2,6 +2,7 @@ package services
 
 import (
 	"fmt"
+	"log"
 	"time"
 
 	"backend_axenta/database"
@@ -373,6 +374,92 @@ func (bas *BillingAutomationService) GenerateMonthlyReports(year int, month int)
 				fmt.Printf("Ошибка создания записи в истории для компании %d: %v\n", company.ID, err)
 			}
 		*/
+	}
+
+	return nil
+}
+
+// AutoRenewMonthlyContracts автоматически продлевает месячные договоры
+// Продлевает договоры с тарифным планом billing_period = "monthly" и статусом "active"
+// Продлевает end_date на +1 месяц, если end_date уже наступил или близок (в течение 2 дней)
+func (bas *BillingAutomationService) AutoRenewMonthlyContracts() error {
+	now := time.Now()
+	// Проверяем договоры, у которых end_date уже наступил или наступит в течение 2 дней
+	renewalThreshold := now.AddDate(0, 0, 2)
+
+	// Получаем все активные договоры, которые нужно продлить
+	var contracts []models.Contract
+	if err := bas.db.Where("status = ? AND is_active = ? AND end_date <= ? AND admin_account_id = ?",
+		"active", true, renewalThreshold, bas.adminAccountID).
+		Preload("TariffPlan").
+		Find(&contracts).Error; err != nil {
+		return fmt.Errorf("ошибка получения договоров для пролонгации: %w", err)
+	}
+
+	if len(contracts) == 0 {
+		return nil // Нет договоров для продления
+	}
+
+	renewedCount := 0
+	skippedCount := 0
+	errors := make([]error, 0)
+
+	for _, contract := range contracts {
+		// Проверяем, что у договора есть тарифный план
+		if contract.TariffPlanID == 0 {
+			skippedCount++
+			continue
+		}
+
+		// Проверяем, что тарифный план месячный
+		if contract.TariffPlan.BillingPeriod != "monthly" {
+			skippedCount++
+			continue
+		}
+
+		// Проверяем, что договор еще активен (на случай, если статус изменился)
+		if contract.Status != "active" || !contract.IsActive {
+			skippedCount++
+			continue
+		}
+
+		// Продлеваем договор на +1 месяц от текущей end_date
+		newEndDate := contract.EndDate.AddDate(0, 1, 0)
+
+		// Обновляем end_date договора
+		if err := bas.db.Model(&contract).Update("end_date", newEndDate).Error; err != nil {
+			errors = append(errors, fmt.Errorf("ошибка продления договора %s (ID: %d): %w", contract.Number, contract.ID, err))
+			continue
+		}
+
+		// Создаем запись в истории биллинга о пролонгации
+		history := &models.BillingHistory{
+			AdminAccountID: bas.adminAccountID,
+			CompanyID:      contract.CompanyID,
+			ContractID:     &contract.ID,
+			Operation:      "contract_auto_renewed",
+			Amount:         decimal.Zero,
+			Currency:       contract.Currency,
+			Description:    fmt.Sprintf("Автоматическая пролонгация договора %s на 1 месяц. Новый срок действия: %s", contract.Number, newEndDate.Format("02.01.2006")),
+			Status:         "completed",
+		}
+
+		if err := bas.db.Create(history).Error; err != nil {
+			// Логируем ошибку, но не прерываем процесс
+			log.Printf("⚠️ Ошибка создания записи в истории для договора %d: %v", contract.ID, err)
+		}
+
+		renewedCount++
+		log.Printf("✅ Договор %s (ID: %d) продлен до %s", contract.Number, contract.ID, newEndDate.Format("02.01.2006"))
+	}
+
+	if len(errors) > 0 {
+		return fmt.Errorf("пролонгация завершена с ошибками. Продлено договоров: %d, пропущено: %d, ошибок: %d. Первая ошибка: %v",
+			renewedCount, skippedCount, len(errors), errors[0])
+	}
+
+	if renewedCount > 0 {
+		log.Printf("✅ Автоматическая пролонгация завершена. Продлено договоров: %d, пропущено: %d", renewedCount, skippedCount)
 	}
 
 	return nil
