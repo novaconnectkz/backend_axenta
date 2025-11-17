@@ -553,7 +553,7 @@ func CreateContract(c *gin.Context) {
 
 	// Устанавливаем значения по умолчанию
 	if contract.Status == "" {
-		contract.Status = "draft"
+		contract.Status = "active"
 	}
 	if contract.Currency == "" {
 		contract.Currency = "RUB"
