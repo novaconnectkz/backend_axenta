@@ -619,17 +619,20 @@ func GetSubscriptions(c *gin.Context) {
 
 // CreateSubscriptionData представляет данные для создания подписки
 type CreateSubscriptionData struct {
-	CompanyID                  uint   `json:"company_id" binding:"required"`
-	BillingPlanID              uint   `json:"billing_plan_id" binding:"required"`
-	StartDate                  string `json:"start_date"`
-	StartTime                  string `json:"start_time"` // Время начала (HH:MM)
-	EndDate                    string `json:"end_date"`
-	Status                     string `json:"status"`
-	IsAutoRenew                bool   `json:"is_auto_renew"`
-	PaymentMethod              string `json:"payment_method"`
-	ContractID                 *uint  `json:"contract_id"`
-	SplitPeriod                bool   `json:"split_period"`
-	TransferFromSubscriptionID *uint  `json:"transfer_from_subscription_id"`
+	CompanyID                  uint    `json:"company_id" binding:"required"`
+	BillingPlanID              uint    `json:"billing_plan_id" binding:"required"`
+	StartDate                  string  `json:"start_date"`
+	StartTime                  string  `json:"start_time"` // Время начала (HH:MM)
+	EndDate                    string  `json:"end_date"`
+	Status                     string  `json:"status"`
+	IsAutoRenew                bool    `json:"is_auto_renew"`
+	PaymentMethod              string  `json:"payment_method"`
+	ContractID                 *uint   `json:"contract_id"`
+	SplitPeriod                bool    `json:"split_period"`
+	TransferFromSubscriptionID *uint   `json:"transfer_from_subscription_id"`
+	AccountID                  *uint   `json:"account_id"`                  // Учетная запись (опционально)
+	ObjectIDs                  []uint  `json:"object_ids"`                  // Список ID объектов (опционально)
+	ContractPeriodMonths       *int    `json:"contract_period_months"`       // Период подписки в месяцах (опционально)
 }
 
 // CreateSubscription создает новую подписку
@@ -646,12 +649,16 @@ func CreateSubscription(c *gin.Context) {
 	var data CreateSubscriptionData
 
 	if err := c.ShouldBindJSON(&data); err != nil {
+		log.Printf("❌ Ошибка биндинга JSON данных: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
-			"error":  "Неверный формат данных",
+			"error":  fmt.Sprintf("Неверный формат данных: %v", err),
 		})
 		return
 	}
+
+	log.Printf("📥 CreateSubscription: получены данные: company_id=%d, billing_plan_id=%d, contract_id=%v, account_id=%v, object_ids=%v, contract_period_months=%v",
+		data.CompanyID, data.BillingPlanID, data.ContractID, data.AccountID, data.ObjectIDs, data.ContractPeriodMonths)
 
 	// Валидация обязательных полей
 	if data.CompanyID == 0 {
@@ -670,10 +677,16 @@ func CreateSubscription(c *gin.Context) {
 		return
 	}
 
-	// Проверяем существование тарифного плана
+	// Проверяем существование тарифного плана (billing_plans тоже в схеме public)
 	var plan models.BillingPlan
-	if err := database.DB.Where("id = ? AND admin_account_id = ?", data.BillingPlanID, adminAccountID).
+	planDB := database.DB.Session(&gorm.Session{})
+	if err := planDB.Exec("SET search_path TO public").Error; err != nil {
+		log.Printf("CreateSubscription: ошибка установки search_path для проверки плана: %v\n", err)
+	}
+	if err := planDB.Where("id = ? AND admin_account_id = ?", data.BillingPlanID, adminAccountID).
 		First(&plan).Error; err != nil {
+		log.Printf("❌ Тарифный план не найден: billing_plan_id=%d, admin_account_id=%d, ошибка: %v", 
+			data.BillingPlanID, adminAccountID, err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
 			"error":  "Тарифный план не найден",
@@ -781,11 +794,25 @@ func CreateSubscription(c *gin.Context) {
 		}
 	}
 
+	// Если указан contract_period_months, вычисляем end_date на основе периода
+	if data.ContractPeriodMonths != nil && *data.ContractPeriodMonths > 0 && endDate == nil {
+		calculatedEndDate := startDate.AddDate(0, *data.ContractPeriodMonths, 0)
+		endDate = &calculatedEndDate
+		log.Printf("📅 Вычислена дата окончания на основе contract_period_months=%d: %v", *data.ContractPeriodMonths, endDate)
+	}
+
 	// Если разбит период для месячного тарифа, устанавливаем конец месяца
 	if data.SplitPeriod && plan.BillingPeriod == "monthly" {
 		// Конец месяца для даты начала
 		lastDayOfMonth := time.Date(startDate.Year(), startDate.Month()+1, 0, 23, 59, 59, 0, startDate.Location())
 		endDate = &lastDayOfMonth
+		log.Printf("📅 Установлена дата окончания (конец месяца) для split_period: %v", endDate)
+	}
+
+	// Устанавливаем значение по умолчанию для PaymentMethod, если оно пустое
+	paymentMethod := data.PaymentMethod
+	if paymentMethod == "" {
+		paymentMethod = ""
 	}
 
 	// Создаем подписку
@@ -798,11 +825,11 @@ func CreateSubscription(c *gin.Context) {
 		EndDate:        endDate,
 		Status:         status,
 		IsAutoRenew:    data.IsAutoRenew,
-		PaymentMethod:  data.PaymentMethod,
+		PaymentMethod:  paymentMethod,
 	}
 
 	// Вычисляем дату следующего платежа
-	if subscription.NextPaymentDate == nil && plan.BillingPeriod != "one-time" {
+	if plan.BillingPeriod != "one-time" {
 		var nextPayment time.Time
 		switch plan.BillingPeriod {
 		case "monthly":
@@ -810,29 +837,55 @@ func CreateSubscription(c *gin.Context) {
 				// Если период разбит, следующая оплата после конца текущего периода
 				nextPayment = (*endDate).AddDate(0, 0, 1)
 			} else {
-				nextPayment = subscription.StartDate.AddDate(0, 1, 0)
+				nextPayment = startDate.AddDate(0, 1, 0)
 			}
 		case "yearly":
-			nextPayment = subscription.StartDate.AddDate(1, 0, 0)
+			nextPayment = startDate.AddDate(1, 0, 0)
 		default:
-			nextPayment = subscription.StartDate.AddDate(0, 1, 0)
+			nextPayment = startDate.AddDate(0, 1, 0)
 		}
 		subscription.NextPaymentDate = &nextPayment
+		log.Printf("📅 Вычислена дата следующего платежа: %v (период: %s)", nextPayment, plan.BillingPeriod)
 	}
 
-	log.Printf("📝 Создаем подписку: company_id=%d, billing_plan_id=%d, contract_id=%v, start_date=%v",
-		data.CompanyID, data.BillingPlanID, data.ContractID, startDate)
+	log.Printf("📝 Создаем подписку: company_id=%d, billing_plan_id=%d, contract_id=%v, start_date=%v, end_date=%v, status=%s, is_auto_renew=%v, payment_method=%s",
+		data.CompanyID, data.BillingPlanID, data.ContractID, startDate, endDate, status, data.IsAutoRenew, data.PaymentMethod)
+	log.Printf("📝 Данные подписки: AdminAccountID=%d, CompanyID=%d, BillingPlanID=%d, ContractID=%v, StartDate=%v, EndDate=%v, Status=%s, IsAutoRenew=%v, PaymentMethod=%s, NextPaymentDate=%v",
+		subscription.AdminAccountID, subscription.CompanyID, subscription.BillingPlanID, subscription.ContractID, subscription.StartDate, subscription.EndDate, subscription.Status, subscription.IsAutoRenew, subscription.PaymentMethod, subscription.NextPaymentDate)
 
-	if err := database.DB.Create(&subscription).Error; err != nil {
-		log.Printf("❌ Ошибка создания подписки в БД: %v", err)
+	// Работаем в схеме public, где хранится таблица subscriptions
+	db := database.DB.Session(&gorm.Session{})
+	if err := db.Exec("SET search_path TO public").Error; err != nil {
+		log.Printf("CreateSubscription: ошибка установки search_path: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Ошибка при создании подписки",
+			"error":  "Ошибка подключения к базе данных",
+		})
+		return
+	}
+
+	if err := db.Create(&subscription).Error; err != nil {
+		log.Printf("❌ Ошибка создания подписки в БД: %v", err)
+		log.Printf("❌ Детали ошибки: SQL State: %v, Error: %v", err, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("Ошибка при создании подписки: %v", err),
 		})
 		return
 	}
 
 	log.Printf("✅ Подписка создана: id=%d", subscription.ID)
+
+	// Обработка account_id и object_ids (если указаны)
+	if data.AccountID != nil && *data.AccountID > 0 {
+		log.Printf("📋 Подписка связана с учетной записью: account_id=%d", *data.AccountID)
+		// TODO: Сохранить связь подписки с учетной записью, если требуется
+	}
+
+	if len(data.ObjectIDs) > 0 {
+		log.Printf("📋 Подписка связана с объектами: object_ids=%v", data.ObjectIDs)
+		// TODO: Сохранить связь подписки с объектами, если требуется
+	}
 
 	// Если подписка создана для договора, автоматически переводим его в статус "active"
 	if data.ContractID != nil && *data.ContractID > 0 {
@@ -861,10 +914,17 @@ func CreateSubscription(c *gin.Context) {
 		}
 	}
 
-	// Загружаем связанные данные для ответа
-	database.DB.Preload("BillingPlan", "admin_account_id = ?", adminAccountID).
+	// Загружаем связанные данные для ответа (используем ту же сессию с установленным search_path)
+	// Убеждаемся, что search_path установлен перед Preload
+	if err := db.Exec("SET search_path TO public").Error; err != nil {
+		log.Printf("⚠️ Ошибка установки search_path перед Preload: %v", err)
+	}
+	if err := db.Preload("BillingPlan", "admin_account_id = ?", adminAccountID).
 		Where("id = ? AND admin_account_id = ?", subscription.ID, adminAccountID).
-		First(&subscription)
+		First(&subscription).Error; err != nil {
+		log.Printf("⚠️ Ошибка загрузки подписки с BillingPlan: %v", err)
+		// Не возвращаем ошибку, так как подписка уже создана
+	}
 
 	c.JSON(http.StatusCreated, gin.H{
 		"status": "success",
