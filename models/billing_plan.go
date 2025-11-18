@@ -59,6 +59,8 @@ type Subscription struct {
 	CompanyID      uint        `json:"company_id" gorm:"not null;index"`
 	BillingPlanID  uint        `json:"billing_plan_id" gorm:"not null"`
 	BillingPlan    BillingPlan `json:"billing_plan" gorm:"foreignKey:BillingPlanID"`
+	ContractID     *uint       `json:"contract_id" gorm:"index"` // Договор, к которому привязана подписка
+	Contract       *Contract   `json:"contract,omitempty" gorm:"foreignKey:ContractID;references:ID"` // Lazy loading
 
 	// Период подписки
 	StartDate time.Time  `json:"start_date" gorm:"not null"`

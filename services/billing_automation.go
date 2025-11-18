@@ -158,17 +158,15 @@ func (bas *BillingAutomationService) ProcessScheduledDeletions() error {
 	return nil
 }
 
-// ActivateScheduledSubscriptions активирует запланированные подписки, которые должны начаться сегодня
+// ActivateScheduledSubscriptions активирует запланированные подписки, которые должны начаться сейчас
 func (bas *BillingAutomationService) ActivateScheduledSubscriptions() error {
-	// Получаем текущую дату (начало дня)
+	// Получаем текущую дату и время
 	now := time.Now()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	tomorrow := today.AddDate(0, 0, 1)
 
-	// Получаем подписки со статусом "scheduled", которые должны активироваться сегодня
+	// Получаем подписки со статусом "scheduled", которые должны активироваться сейчас
 	var subscriptions []models.Subscription
-	if err := bas.db.Where("status = ? AND start_date >= ? AND start_date < ? AND admin_account_id = ?",
-		"scheduled", today, tomorrow, bas.adminAccountID).
+	if err := bas.db.Where("status = ? AND start_date <= ? AND admin_account_id = ?",
+		"scheduled", now, bas.adminAccountID).
 		Find(&subscriptions).Error; err != nil {
 		return fmt.Errorf("ошибка получения запланированных подписок: %w", err)
 	}

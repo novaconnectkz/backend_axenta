@@ -582,6 +582,34 @@ func GetSubscriptions(c *gin.Context) {
 		return
 	}
 
+	log.Printf("📊 GetSubscriptions: Найдено подписок в БД: %d (admin_account_id=%d, company_id=%d)",
+		len(subscriptions), adminAccountID, companyID)
+	if len(subscriptions) > 0 {
+		log.Printf("📋 GetSubscriptions: Первая подписка: id=%d, billing_plan_id=%d, contract_id=%v, status=%s",
+			subscriptions[0].ID, subscriptions[0].BillingPlanID, subscriptions[0].ContractID, subscriptions[0].Status)
+	}
+
+	// Загружаем информацию о договорах для подписок (из tenant-схемы)
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB != nil {
+		for i := range subscriptions {
+			if subscriptions[i].ContractID != nil {
+				var contract models.Contract
+				if err := tenantDB.Where("id = ? AND admin_account_id = ?", *subscriptions[i].ContractID, adminAccountID).
+					First(&contract).Error; err == nil {
+					subscriptions[i].Contract = &contract
+					log.Printf("✅ Загружен договор для подписки: subscription_id=%d, contract_id=%d, client_name=%s",
+						subscriptions[i].ID, contract.ID, contract.ClientName)
+				} else {
+					log.Printf("⚠️ Не удалось загрузить договор для подписки: subscription_id=%d, contract_id=%d, ошибка: %v",
+						subscriptions[i].ID, *subscriptions[i].ContractID, err)
+				}
+			}
+		}
+	}
+
+	log.Printf("✅ GetSubscriptions: Возвращаем %d подписок клиенту", len(subscriptions))
+
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
 		"data":   subscriptions,
@@ -594,6 +622,7 @@ type CreateSubscriptionData struct {
 	CompanyID                  uint   `json:"company_id" binding:"required"`
 	BillingPlanID              uint   `json:"billing_plan_id" binding:"required"`
 	StartDate                  string `json:"start_date"`
+	StartTime                  string `json:"start_time"` // Время начала (HH:MM)
 	EndDate                    string `json:"end_date"`
 	Status                     string `json:"status"`
 	IsAutoRenew                bool   `json:"is_auto_renew"`
@@ -654,23 +683,39 @@ func CreateSubscription(c *gin.Context) {
 
 	// Проверяем права на тарифы по договору, если указан contract_id
 	if data.ContractID != nil {
+		// Получаем tenant DB для работы с договорами
+		tenantDB := middleware.GetTenantDB(c)
+		if tenantDB == nil {
+			log.Printf("⚠️ Не удалось получить tenant DB из контекста, используем основную БД")
+			tenantDB = database.DB
+		}
+		
 		var contract models.Contract
-		if err := database.DB.Where("id = ? AND admin_account_id = ?", *data.ContractID, adminAccountID).
+		if err := tenantDB.Where("id = ? AND admin_account_id = ?", *data.ContractID, adminAccountID).
 			First(&contract).Error; err != nil {
+			log.Printf("❌ Договор не найден: contract_id=%d, admin_account_id=%d, ошибка: %v", *data.ContractID, adminAccountID, err)
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "error",
 				"error":  "Договор не найден",
 			})
 			return
 		}
+		
+		log.Printf("✅ Договор найден: id=%d, number=%s, tariff_plan_id=%v", contract.ID, contract.Number, contract.TariffPlanID)
 
-		// Проверяем, что у договора есть доступ к тарифам (если tariff_plan_id = nil или 0, значит нет прав)
+		// Если у договора нет tariff_plan_id, устанавливаем его из billing_plan_id
 		if contract.TariffPlanID == nil || *contract.TariffPlanID == 0 {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"status": "error",
-				"error":  "Нет прав на тарифы в этом договоре",
-			})
-			return
+			log.Printf("📝 У договора нет tariff_plan_id, устанавливаем из billing_plan_id=%d", data.BillingPlanID)
+			contract.TariffPlanID = &data.BillingPlanID
+			if err := tenantDB.Save(&contract).Error; err != nil {
+				log.Printf("❌ Ошибка сохранения tariff_plan_id в договоре: %v", err)
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"status": "error",
+					"error":  "Ошибка обновления договора",
+				})
+				return
+			}
+			log.Printf("✅ tariff_plan_id установлен в договоре id=%d", contract.ID)
 		}
 	}
 
@@ -697,20 +742,34 @@ func CreateSubscription(c *gin.Context) {
 			return
 		}
 		startDate = parsedDate
+		
+		// Если указано время начала, добавляем его
+		if data.StartTime != "" {
+			// Парсим время в формате HH:MM
+			timeParts := strings.Split(data.StartTime, ":")
+			if len(timeParts) == 2 {
+				hour, errH := strconv.Atoi(timeParts[0])
+				minute, errM := strconv.Atoi(timeParts[1])
+				if errH == nil && errM == nil && hour >= 0 && hour < 24 && minute >= 0 && minute < 60 {
+					// Устанавливаем время
+					startDate = time.Date(startDate.Year(), startDate.Month(), startDate.Day(), hour, minute, 0, 0, startDate.Location())
+				}
+			}
+		}
 	} else {
 		startDate = time.Now()
 	}
 
-	// Определяем статус: если дата начала в будущем, устанавливаем "scheduled"
+	// Определяем статус: если дата/время начала в будущем, устанавливаем "scheduled"
 	status := data.Status
 	now := time.Now()
-	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	startOfDayStartDate := time.Date(startDate.Year(), startDate.Month(), startDate.Day(), 0, 0, 0, 0, startDate.Location())
-
-	if startOfDayStartDate.After(startOfDay) {
+	
+	if startDate.After(now) {
 		status = "scheduled"
+		log.Printf("📅 Дата/время начала в будущем (%v > %v), статус = scheduled", startDate, now)
 	} else if status == "" {
 		status = "active"
+		log.Printf("✅ Дата/время начала не в будущем (%v <= %v), статус = active", startDate, now)
 	}
 
 	// Обработка разбиения периода (если указано)
@@ -734,6 +793,7 @@ func CreateSubscription(c *gin.Context) {
 		AdminAccountID: adminAccountID,
 		CompanyID:      data.CompanyID,
 		BillingPlanID:  data.BillingPlanID,
+		ContractID:     data.ContractID, // Сохраняем contract_id
 		StartDate:      startDate,
 		EndDate:        endDate,
 		Status:         status,
@@ -760,7 +820,11 @@ func CreateSubscription(c *gin.Context) {
 		subscription.NextPaymentDate = &nextPayment
 	}
 
+	log.Printf("📝 Создаем подписку: company_id=%d, billing_plan_id=%d, contract_id=%v, start_date=%v",
+		data.CompanyID, data.BillingPlanID, data.ContractID, startDate)
+
 	if err := database.DB.Create(&subscription).Error; err != nil {
+		log.Printf("❌ Ошибка создания подписки в БД: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  "Ошибка при создании подписки",
@@ -768,24 +832,32 @@ func CreateSubscription(c *gin.Context) {
 		return
 	}
 
+	log.Printf("✅ Подписка создана: id=%d", subscription.ID)
+
 	// Если подписка создана для договора, автоматически переводим его в статус "active"
 	if data.ContractID != nil && *data.ContractID > 0 {
-		var contract models.Contract
-		// Проверяем, что договор существует и принадлежит этому admin_account
-		if err := database.DB.Where("id = ? AND admin_account_id = ?", *data.ContractID, adminAccountID).
-			First(&contract).Error; err == nil {
-			// Если договор в статусе "draft" (черновик), переводим в "active" (активный)
-			if contract.Status == "draft" {
-				contract.Status = "active"
-				if err := database.DB.Save(&contract).Error; err != nil {
-					log.Printf("⚠️ Не удалось обновить статус договора %d на 'active': %v", contract.ID, err)
-				} else {
-					log.Printf("✅ Договор %d (№%s) автоматически переведен в статус 'active' после создания подписки", 
-						contract.ID, contract.Number)
-				}
-			}
+		// Получаем tenant DB для работы с договорами
+		tenantDB := middleware.GetTenantDB(c)
+		if tenantDB == nil {
+			log.Printf("⚠️ Не удалось получить tenant DB для обновления договора")
 		} else {
-			log.Printf("⚠️ Не удалось найти договор %d для обновления статуса: %v", *data.ContractID, err)
+			var contract models.Contract
+			// Проверяем, что договор существует и принадлежит этому admin_account
+			if err := tenantDB.Where("id = ? AND admin_account_id = ?", *data.ContractID, adminAccountID).
+				First(&contract).Error; err == nil {
+				// Если договор в статусе "draft" (черновик), переводим в "active" (активный)
+				if contract.Status == "draft" {
+					contract.Status = "active"
+					if err := tenantDB.Save(&contract).Error; err != nil {
+						log.Printf("⚠️ Не удалось обновить статус договора %d на 'active': %v", contract.ID, err)
+					} else {
+						log.Printf("✅ Договор %d (№%s) автоматически переведен в статус 'active' после создания подписки", 
+							contract.ID, contract.Number)
+					}
+				}
+			} else {
+				log.Printf("⚠️ Не удалось найти договор %d для обновления статуса: %v", *data.ContractID, err)
+			}
 		}
 	}
 
