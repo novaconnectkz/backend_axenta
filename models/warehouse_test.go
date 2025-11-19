@@ -183,13 +183,15 @@ func TestEquipmentModel(t *testing.T) {
 		err := db.Create(&billingPlan).Error
 		require.NoError(t, err)
 
+		startDate := time.Now()
+		endDate := time.Now().AddDate(1, 0, 0)
 		contract := Contract{
 			Number:       "EQUIPMENT-CONTRACT-001",
 			Title:        "Договор для оборудования",
 			ClientName:   "ООО Оборудование",
-			StartDate:    time.Now(),
-			EndDate:      time.Now().AddDate(1, 0, 0),
-			TariffPlanID: billingPlan.ID,
+			StartDate:    &startDate,
+			EndDate:      &endDate,
+			TariffPlanID: &billingPlan.ID,
 			TotalAmount:  decimal.NewFromFloat(12000.0),
 			Status:       "active",
 			IsActive:     true,
@@ -325,13 +327,15 @@ func TestLocationModel(t *testing.T) {
 		err = db.Create(&billingPlan).Error
 		require.NoError(t, err)
 
+		startDate := time.Now()
+		endDate := time.Now().AddDate(1, 0, 0)
 		contract := Contract{
 			Number:       "LOCATION-CONTRACT-001",
 			Title:        "Договор для локации",
 			ClientName:   "ООО Локация",
-			StartDate:    time.Now(),
-			EndDate:      time.Now().AddDate(1, 0, 0),
-			TariffPlanID: billingPlan.ID,
+			StartDate:    &startDate,
+			EndDate:      &endDate,
+			TariffPlanID: &billingPlan.ID,
 			TotalAmount:  decimal.NewFromFloat(9600.0),
 			Status:       "active",
 			IsActive:     true,
@@ -576,13 +580,15 @@ func TestInstallationModel(t *testing.T) {
 		err := db.Create(&billingPlan).Error
 		require.NoError(t, err)
 
+		startDate := time.Now()
+		endDate := time.Now().AddDate(1, 0, 0)
 		contract := Contract{
 			Number:       "INSTALL-CONTRACT-001",
 			Title:        "Договор для монтажа",
 			ClientName:   "ООО Монтаж",
-			StartDate:    time.Now(),
-			EndDate:      time.Now().AddDate(1, 0, 0),
-			TariffPlanID: billingPlan.ID,
+			StartDate:    &startDate,
+			EndDate:      &endDate,
+			TariffPlanID: &billingPlan.ID,
 			TotalAmount:  decimal.NewFromFloat(14400.0),
 			Status:       "active",
 			IsActive:     true,
@@ -645,13 +651,15 @@ func TestInstallationModel(t *testing.T) {
 		err := db.Create(&billingPlan).Error
 		require.NoError(t, err)
 
+		startDate := time.Now()
+		endDate := time.Now().AddDate(1, 0, 0)
 		contract := Contract{
 			Number:       "STATUS-CONTRACT-001",
 			Title:        "Договор статуса",
 			ClientName:   "ООО Статус",
-			StartDate:    time.Now(),
-			EndDate:      time.Now().AddDate(1, 0, 0),
-			TariffPlanID: billingPlan.ID,
+			StartDate:    &startDate,
+			EndDate:      &endDate,
+			TariffPlanID: &billingPlan.ID,
 			TotalAmount:  decimal.NewFromFloat(12000.0),
 			Status:       "active",
 			IsActive:     true,
@@ -736,13 +744,15 @@ func TestInstallationModel(t *testing.T) {
 		err := db.Create(&billingPlan).Error
 		require.NoError(t, err)
 
+		startDate := time.Now()
+		endDate := time.Now().AddDate(1, 0, 0)
 		contract := Contract{
 			Number:       "RELATIONS-INSTALL-001",
 			Title:        "Договор связей монтажа",
 			ClientName:   "ООО Связи Монтажа",
-			StartDate:    time.Now(),
-			EndDate:      time.Now().AddDate(1, 0, 0),
-			TariffPlanID: billingPlan.ID,
+			StartDate:    &startDate,
+			EndDate:      &endDate,
+			TariffPlanID: &billingPlan.ID,
 			TotalAmount:  decimal.NewFromFloat(18000.0),
 			Status:       "active",
 			IsActive:     true,
@@ -837,13 +847,15 @@ func TestInstallationModel(t *testing.T) {
 		err := db.Create(&billingPlan).Error
 		require.NoError(t, err)
 
+		startDate := time.Now()
+		endDate := time.Now().AddDate(1, 0, 0)
 		contract := Contract{
 			Number:       "QUALITY-CONTRACT-001",
 			Title:        "Договор качества",
 			ClientName:   "ООО Качество",
-			StartDate:    time.Now(),
-			EndDate:      time.Now().AddDate(1, 0, 0),
-			TariffPlanID: billingPlan.ID,
+			StartDate:    &startDate,
+			EndDate:      &endDate,
+			TariffPlanID: &billingPlan.ID,
 			TotalAmount:  decimal.NewFromFloat(10800.0),
 			Status:       "active",
 			IsActive:     true,

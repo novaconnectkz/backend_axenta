@@ -95,13 +95,15 @@ func createTestData(t *testing.T, db *gorm.DB) (models.Contract, models.ObjectTe
 	require.NoError(t, err)
 
 	// Создаем договор
+	startDate := time.Now()
+	endDate := time.Now().AddDate(1, 0, 0)
 	contract := models.Contract{
 		Number:       "TEST-001",
 		Title:        "Тестовый договор",
 		ClientName:   "ООО Тест",
-		StartDate:    time.Now(),
-		EndDate:      time.Now().AddDate(1, 0, 0),
-		TariffPlanID: billingPlan.ID,
+		StartDate:    &startDate,
+		EndDate:      &endDate,
+		TariffPlanID: &billingPlan.ID,
 		TotalAmount:  decimal.NewFromFloat(12000.0),
 		Status:       "active",
 		IsActive:     true,

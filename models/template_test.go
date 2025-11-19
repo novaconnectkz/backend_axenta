@@ -127,13 +127,15 @@ func TestObjectTemplateModel(t *testing.T) {
 		err = db.Create(&billingPlan).Error
 		require.NoError(t, err)
 
+		startDate := time.Now()
+		endDate := time.Now().AddDate(1, 0, 0)
 		contract := Contract{
 			Number:       "TEMPLATE-CONTRACT-001",
 			Title:        "Договор для шаблона",
 			ClientName:   "ООО Шаблон",
-			StartDate:    time.Now(),
-			EndDate:      time.Now().AddDate(1, 0, 0),
-			TariffPlanID: billingPlan.ID,
+			StartDate:    &startDate,
+			EndDate:      &endDate,
+			TariffPlanID: &billingPlan.ID,
 			TotalAmount:  decimal.NewFromFloat(24000.0),
 			Status:       "active",
 			IsActive:     true,

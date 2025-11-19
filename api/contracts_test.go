@@ -40,6 +40,8 @@ func TestCreateContract(t *testing.T) {
 	router.POST("/contracts", CreateContract)
 
 	// Тестовые данные договора
+	startDate := time.Now()
+	endDate := time.Now().AddDate(1, 0, 0) // Год от текущей даты
 	contract := models.Contract{
 		Number:       "TEST-001",
 		Title:        "Тестовый договор",
@@ -47,9 +49,9 @@ func TestCreateContract(t *testing.T) {
 		ClientINN:    "1234567890",
 		ClientEmail:  "test@example.com",
 		ClientPhone:  "+7 (999) 123-45-67",
-		StartDate:    time.Now(),
-		EndDate:      time.Now().AddDate(1, 0, 0), // Год от текущей даты
-		TariffPlanID: tariffPlan.ID,
+		StartDate:    &startDate,
+		EndDate:      &endDate,
+		TariffPlanID: &tariffPlan.ID,
 		Status:       "draft",
 		Currency:     "RUB",
 		TotalAmount:  decimal.NewFromFloat(12000.0), // 1000 * 12 месяцев
@@ -100,13 +102,17 @@ func TestGetContracts(t *testing.T) {
 	database.DB.Create(&tariffPlan)
 
 	// Создаем тестовые договоры
+	startDate1 := time.Now()
+	endDate1 := time.Now().AddDate(1, 0, 0)
+	startDate2 := time.Now()
+	endDate2 := time.Now().AddDate(1, 0, 0)
 	contract1 := models.Contract{
 		Number:       "TEST-001",
 		Title:        "Договор 1",
 		ClientName:   "Клиент 1",
-		StartDate:    time.Now(),
-		EndDate:      time.Now().AddDate(1, 0, 0),
-		TariffPlanID: tariffPlan.ID,
+		StartDate:    &startDate1,
+		EndDate:      &endDate1,
+		TariffPlanID: &tariffPlan.ID,
 		Status:       "active",
 		Currency:     "RUB",
 		TotalAmount:  decimal.NewFromFloat(12000.0),
@@ -115,9 +121,9 @@ func TestGetContracts(t *testing.T) {
 		Number:       "TEST-002",
 		Title:        "Договор 2",
 		ClientName:   "Клиент 2",
-		StartDate:    time.Now(),
-		EndDate:      time.Now().AddDate(1, 0, 0),
-		TariffPlanID: tariffPlan.ID,
+		StartDate:    &startDate2,
+		EndDate:      &endDate2,
+		TariffPlanID: &tariffPlan.ID,
 		Status:       "draft",
 		Currency:     "RUB",
 		TotalAmount:  decimal.NewFromFloat(12000.0),
@@ -171,13 +177,15 @@ func TestCalculateContractCost(t *testing.T) {
 	database.DB.Create(&tariffPlan)
 
 	// Создаем договор
+	startDate := time.Now()
+	endDate := time.Now().AddDate(1, 0, 0)
 	contract := models.Contract{
 		Number:       "TEST-001",
 		Title:        "Договор для расчета",
 		ClientName:   "Тест Клиент",
-		StartDate:    time.Now(),
-		EndDate:      time.Now().AddDate(1, 0, 0),
-		TariffPlanID: tariffPlan.ID,
+		StartDate:    &startDate,
+		EndDate:      &endDate,
+		TariffPlanID: &tariffPlan.ID,
 		Status:       "active",
 		Currency:     "RUB",
 		TotalAmount:  decimal.NewFromFloat(6000.0),
@@ -272,13 +280,15 @@ func TestContractAppendices(t *testing.T) {
 	}
 	database.DB.Create(&tariffPlan)
 
+	startDate := time.Now()
+	endDate := time.Now().AddDate(1, 0, 0)
 	contract := models.Contract{
 		Number:       "TEST-001",
 		Title:        "Основной договор",
 		ClientName:   "Тест Клиент",
-		StartDate:    time.Now(),
-		EndDate:      time.Now().AddDate(1, 0, 0),
-		TariffPlanID: tariffPlan.ID,
+		StartDate:    &startDate,
+		EndDate:      &endDate,
+		TariffPlanID: &tariffPlan.ID,
 		Status:       "active",
 		Currency:     "RUB",
 		TotalAmount:  decimal.NewFromFloat(12000.0),

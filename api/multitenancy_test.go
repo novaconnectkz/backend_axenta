@@ -102,14 +102,18 @@ func TestMultiTenantObjectsAPI(t *testing.T) {
 	company2, tenantDB2 := createTestCompanyWithData(t, db, "TestCompany2", "tenant_objects2")
 
 	// Создаем контракты для компаний
+	startDate1 := time.Now()
+	endDate1 := time.Now().AddDate(1, 0, 0)
+	startDate2 := time.Now()
+	endDate2 := time.Now().AddDate(1, 0, 0)
 	contract1 := models.Contract{
 		Number:      "TEST-001",
 		Title:       "Test Contract 1",
 		Description: "Test contract for company 1",
 		CompanyID:   company1.ID,
 		ClientName:  "Test Client 1",
-		StartDate:   time.Now(),
-		EndDate:     time.Now().AddDate(1, 0, 0),
+		StartDate:   &startDate1,
+		EndDate:     &endDate1,
 		Status:      "active",
 	}
 	err := tenantDB1.Create(&contract1).Error
@@ -121,8 +125,8 @@ func TestMultiTenantObjectsAPI(t *testing.T) {
 		Description: "Test contract for company 2",
 		CompanyID:   company2.ID,
 		ClientName:  "Test Client 2",
-		StartDate:   time.Now(),
-		EndDate:     time.Now().AddDate(1, 0, 0),
+		StartDate:   &startDate2,
+		EndDate:     &endDate2,
 		Status:      "active",
 	}
 	err = tenantDB2.Create(&contract2).Error
@@ -324,14 +328,18 @@ func TestConcurrentTenantAccess(t *testing.T) {
 	company2, tenantDB2 := createTestCompanyWithData(t, db, "ConcurrentCompany2", "tenant_concurrent2")
 
 	// Создаем контракты для компаний
+	startDate1 := time.Now()
+	endDate1 := time.Now().AddDate(1, 0, 0)
+	startDate2 := time.Now()
+	endDate2 := time.Now().AddDate(1, 0, 0)
 	contract1 := models.Contract{
 		Number:      "PERF-001",
 		Title:       "Performance Test Contract 1",
 		Description: "Performance test contract for company 1",
 		CompanyID:   company1.ID,
 		ClientName:  "Performance Client 1",
-		StartDate:   time.Now(),
-		EndDate:     time.Now().AddDate(1, 0, 0),
+		StartDate:   &startDate1,
+		EndDate:     &endDate1,
 		Status:      "active",
 	}
 	tenantDB1.Create(&contract1)
@@ -342,8 +350,8 @@ func TestConcurrentTenantAccess(t *testing.T) {
 		Description: "Performance test contract for company 2",
 		CompanyID:   company2.ID,
 		ClientName:  "Performance Client 2",
-		StartDate:   time.Now(),
-		EndDate:     time.Now().AddDate(1, 0, 0),
+		StartDate:   &startDate2,
+		EndDate:     &endDate2,
 		Status:      "active",
 	}
 	tenantDB2.Create(&contract2)

@@ -36,13 +36,15 @@ func TestObjectModel(t *testing.T) {
 		err = db.Create(&billingPlan).Error
 		require.NoError(t, err)
 
+		startDate := time.Now()
+		endDate := time.Now().AddDate(1, 0, 0)
 		contract := Contract{
 			Number:       "TEST-001",
 			Title:        "Тестовый договор",
 			ClientName:   "ООО Тест",
-			StartDate:    time.Now(),
-			EndDate:      time.Now().AddDate(1, 0, 0),
-			TariffPlanID: billingPlan.ID,
+			StartDate:    &startDate,
+			EndDate:      &endDate,
+			TariffPlanID: &billingPlan.ID,
 			TotalAmount:  decimal.NewFromFloat(12000.0),
 			Status:       "active",
 			IsActive:     true,
@@ -90,13 +92,15 @@ func TestObjectModel(t *testing.T) {
 		err := db.Create(&billingPlan).Error
 		require.NoError(t, err)
 
+		startDate := time.Now()
+		endDate := time.Now().AddDate(1, 0, 0)
 		contract := Contract{
 			Number:       "UNIQUE-001",
 			Title:        "Договор для уникальности",
 			ClientName:   "ООО Уникальность",
-			StartDate:    time.Now(),
-			EndDate:      time.Now().AddDate(1, 0, 0),
-			TariffPlanID: billingPlan.ID,
+			StartDate:    &startDate,
+			EndDate:      &endDate,
+			TariffPlanID: &billingPlan.ID,
 			TotalAmount:  decimal.NewFromFloat(6000.0),
 			Status:       "active",
 			IsActive:     true,
@@ -148,13 +152,15 @@ func TestObjectModel(t *testing.T) {
 		err = db.Create(&billingPlan).Error
 		require.NoError(t, err)
 
+		startDate := time.Now()
+		endDate := time.Now().AddDate(1, 0, 0)
 		contract := Contract{
 			Number:       "RELATIONS-001",
 			Title:        "Договор для связей",
 			ClientName:   "ООО Связи",
-			StartDate:    time.Now(),
-			EndDate:      time.Now().AddDate(1, 0, 0),
-			TariffPlanID: billingPlan.ID,
+			StartDate:    &startDate,
+			EndDate:      &endDate,
+			TariffPlanID: &billingPlan.ID,
 			TotalAmount:  decimal.NewFromFloat(24000.0),
 			Status:       "active",
 			IsActive:     true,
@@ -211,13 +217,15 @@ func TestObjectModel(t *testing.T) {
 		err := db.Create(&billingPlan).Error
 		require.NoError(t, err)
 
+		startDate := time.Now()
+		endDate := time.Now().AddDate(1, 0, 0)
 		contract := Contract{
 			Number:       "DELETE-001",
 			Title:        "Договор для удаления",
 			ClientName:   "ООО Удаление",
-			StartDate:    time.Now(),
-			EndDate:      time.Now().AddDate(1, 0, 0),
-			TariffPlanID: billingPlan.ID,
+			StartDate:    &startDate,
+			EndDate:      &endDate,
+			TariffPlanID: &billingPlan.ID,
 			TotalAmount:  decimal.NewFromFloat(1200.0),
 			Status:       "active",
 			IsActive:     true,
@@ -256,13 +264,15 @@ func TestObjectModel(t *testing.T) {
 		err := db.Create(&billingPlan).Error
 		require.NoError(t, err)
 
+		startDate := time.Now()
+		endDate := time.Now().AddDate(1, 0, 0)
 		contract := Contract{
 			Number:       "ACTIVITY-001",
 			Title:        "Договор активности",
 			ClientName:   "ООО Активность",
-			StartDate:    time.Now(),
-			EndDate:      time.Now().AddDate(1, 0, 0),
-			TariffPlanID: billingPlan.ID,
+			StartDate:    &startDate,
+			EndDate:      &endDate,
+			TariffPlanID: &billingPlan.ID,
 			TotalAmount:  decimal.NewFromFloat(1800.0),
 			Status:       "active",
 			IsActive:     true,
@@ -328,10 +338,10 @@ func TestContractModel(t *testing.T) {
 			ClientEmail:   "client@example.com",
 			ClientPhone:   "+7-495-123-45-67",
 			ClientAddress: "г. Москва, ул. Тверская, д. 1",
-			StartDate:     startDate,
-			EndDate:       endDate,
+			StartDate:     &startDate,
+			EndDate:       &endDate,
 			SignedAt:      &signedAt,
-			TariffPlanID:  billingPlan.ID,
+			TariffPlanID:  &billingPlan.ID,
 			TotalAmount:   decimal.NewFromFloat(18000.0),
 			Currency:      "RUB",
 			Status:        "active",
@@ -362,13 +372,15 @@ func TestContractModel(t *testing.T) {
 		require.NoError(t, err)
 
 		// Создаем первый договор
+		startDate1 := time.Now()
+		endDate1 := time.Now().AddDate(1, 0, 0)
 		contract1 := Contract{
 			Number:       "UNIQUE-CONTRACT-001",
 			Title:        "Первый договор",
 			ClientName:   "ООО Первый",
-			StartDate:    time.Now(),
-			EndDate:      time.Now().AddDate(1, 0, 0),
-			TariffPlanID: billingPlan.ID,
+			StartDate:    &startDate1,
+			EndDate:      &endDate1,
+			TariffPlanID: &billingPlan.ID,
 			TotalAmount:  decimal.NewFromFloat(9600.0),
 			Status:       "active",
 			IsActive:     true,
@@ -377,13 +389,15 @@ func TestContractModel(t *testing.T) {
 		require.NoError(t, err)
 
 		// Попытка создать договор с тем же номером
+		startDate2 := time.Now()
+		endDate2 := time.Now().AddDate(1, 0, 0)
 		contract2 := Contract{
 			Number:       "UNIQUE-CONTRACT-001",
 			Title:        "Второй договор",
 			ClientName:   "ООО Второй",
-			StartDate:    time.Now(),
-			EndDate:      time.Now().AddDate(1, 0, 0),
-			TariffPlanID: billingPlan.ID,
+			StartDate:    &startDate2,
+			EndDate:      &endDate2,
+			TariffPlanID: &billingPlan.ID,
 			TotalAmount:  decimal.NewFromFloat(9600.0),
 			Status:       "active",
 			IsActive:     true,
@@ -405,13 +419,15 @@ func TestContractModel(t *testing.T) {
 		require.NoError(t, err)
 
 		// Создаем истекший договор
+		expiredStartDate := time.Now().AddDate(-2, 0, 0)
+		expiredEndDate := time.Now().AddDate(-1, 0, 0)
 		expiredContract := Contract{
 			Number:       "EXPIRED-001",
 			Title:        "Истекший договор",
 			ClientName:   "ООО Истекший",
-			StartDate:    time.Now().AddDate(-2, 0, 0),
-			EndDate:      time.Now().AddDate(-1, 0, 0),
-			TariffPlanID: billingPlan.ID,
+			StartDate:    &expiredStartDate,
+			EndDate:      &expiredEndDate,
+			TariffPlanID: &billingPlan.ID,
 			TotalAmount:  decimal.NewFromFloat(14400.0),
 			Status:       "expired",
 			IsActive:     false,
@@ -426,13 +442,15 @@ func TestContractModel(t *testing.T) {
 		assert.Equal(t, 0, expiredContract.GetDaysUntilExpiry())
 
 		// Создаем договор, который скоро истечет
+		expiringStartDate := time.Now().AddDate(-11, 0, 0)
+		expiringEndDate := time.Now().AddDate(0, 0, 15) // Истекает через 15 дней
 		expiringContract := Contract{
 			Number:       "EXPIRING-001",
 			Title:        "Истекающий договор",
 			ClientName:   "ООО Истекающий",
-			StartDate:    time.Now().AddDate(-11, 0, 0),
-			EndDate:      time.Now().AddDate(0, 0, 15), // Истекает через 15 дней
-			TariffPlanID: billingPlan.ID,
+			StartDate:    &expiringStartDate,
+			EndDate:      &expiringEndDate,
+			TariffPlanID: &billingPlan.ID,
 			TotalAmount:  decimal.NewFromFloat(14400.0),
 			Status:       "active",
 			IsActive:     true,
@@ -447,13 +465,15 @@ func TestContractModel(t *testing.T) {
 		assert.Equal(t, 15, expiringContract.GetDaysUntilExpiry())
 
 		// Создаем активный договор
+		activeStartDate := time.Now().AddDate(-6, 0, 0)
+		activeEndDate := time.Now().AddDate(0, 6, 0) // Истекает через 6 месяцев
 		activeContract := Contract{
 			Number:       "ACTIVE-001",
 			Title:        "Активный договор",
 			ClientName:   "ООО Активный",
-			StartDate:    time.Now().AddDate(-6, 0, 0),
-			EndDate:      time.Now().AddDate(0, 6, 0), // Истекает через 6 месяцев
-			TariffPlanID: billingPlan.ID,
+			StartDate:    &activeStartDate,
+			EndDate:      &activeEndDate,
+			TariffPlanID: &billingPlan.ID,
 			TotalAmount:  decimal.NewFromFloat(14400.0),
 			Status:       "active",
 			IsActive:     true,
@@ -484,13 +504,15 @@ func TestContractModel(t *testing.T) {
 		require.NoError(t, err)
 
 		// Создаем договор с тарифным планом
+		startDate := time.Now()
+		endDate := time.Now().AddDate(1, 0, 0)
 		contract := Contract{
 			Number:       "PREMIUM-001",
 			Title:        "Премиум договор",
 			ClientName:   "ООО Премиум",
-			StartDate:    time.Now(),
-			EndDate:      time.Now().AddDate(1, 0, 0),
-			TariffPlanID: billingPlan.ID,
+			StartDate:    &startDate,
+			EndDate:      &endDate,
+			TariffPlanID: &billingPlan.ID,
 			TotalAmount:  decimal.NewFromFloat(30000.0),
 			Status:       "active",
 			IsActive:     true,
@@ -520,13 +542,15 @@ func TestContractModel(t *testing.T) {
 		require.NoError(t, err)
 
 		// Создаем договор
+		startDate := time.Now()
+		endDate := time.Now().AddDate(1, 0, 0)
 		contract := Contract{
 			Number:       "APPENDIX-001",
 			Title:        "Договор с приложениями",
 			ClientName:   "ООО Приложения",
-			StartDate:    time.Now(),
-			EndDate:      time.Now().AddDate(1, 0, 0),
-			TariffPlanID: billingPlan.ID,
+			StartDate:    &startDate,
+			EndDate:      &endDate,
+			TariffPlanID: &billingPlan.ID,
 			TotalAmount:  decimal.NewFromFloat(12000.0),
 			Status:       "active",
 			IsActive:     true,
@@ -590,13 +614,15 @@ func TestContractAppendixModel(t *testing.T) {
 		err := db.Create(&billingPlan).Error
 		require.NoError(t, err)
 
+		startDate := time.Now()
+		endDate := time.Now().AddDate(1, 0, 0)
 		contract := Contract{
 			Number:       "MAIN-CONTRACT-001",
 			Title:        "Основной договор",
 			ClientName:   "ООО Основной",
-			StartDate:    time.Now(),
-			EndDate:      time.Now().AddDate(1, 0, 0),
-			TariffPlanID: billingPlan.ID,
+			StartDate:    &startDate,
+			EndDate:      &endDate,
+			TariffPlanID: &billingPlan.ID,
 			TotalAmount:  decimal.NewFromFloat(18000.0),
 			Status:       "active",
 			IsActive:     true,
@@ -641,13 +667,15 @@ func TestContractAppendixModel(t *testing.T) {
 		err := db.Create(&billingPlan).Error
 		require.NoError(t, err)
 
+		startDate := time.Now()
+		endDate := time.Now().AddDate(1, 0, 0)
 		contract := Contract{
 			Number:       "EXPIRY-CONTRACT-001",
 			Title:        "Договор для истечения",
 			ClientName:   "ООО Истечение",
-			StartDate:    time.Now(),
-			EndDate:      time.Now().AddDate(1, 0, 0),
-			TariffPlanID: billingPlan.ID,
+			StartDate:    &startDate,
+			EndDate:      &endDate,
+			TariffPlanID: &billingPlan.ID,
 			TotalAmount:  decimal.NewFromFloat(12000.0),
 			Status:       "active",
 			IsActive:     true,
@@ -706,13 +734,15 @@ func TestContractAppendixModel(t *testing.T) {
 		err := db.Create(&billingPlan).Error
 		require.NoError(t, err)
 
+		startDate := time.Now()
+		endDate := time.Now().AddDate(1, 0, 0)
 		contract := Contract{
 			Number:       "RELATION-CONTRACT-001",
 			Title:        "Договор для связи",
 			ClientName:   "ООО Связь",
-			StartDate:    time.Now(),
-			EndDate:      time.Now().AddDate(1, 0, 0),
-			TariffPlanID: billingPlan.ID,
+			StartDate:    &startDate,
+			EndDate:      &endDate,
+			TariffPlanID: &billingPlan.ID,
 			TotalAmount:  decimal.NewFromFloat(9600.0),
 			Status:       "active",
 			IsActive:     true,

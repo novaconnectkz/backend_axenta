@@ -538,13 +538,15 @@ func TestSchemaIsolation(t *testing.T) {
 		require.NoError(t, err)
 
 		// Создаем договор с использованием тарифного плана
+		startDate := time.Now()
+		endDate := time.Now().AddDate(1, 0, 0)
 		contract := Contract{
 			Number:       "TEST-001",
 			Title:        "Test Contract",
 			ClientName:   "Test Client",
-			StartDate:    time.Now(),
-			EndDate:      time.Now().AddDate(1, 0, 0),
-			TariffPlanID: tenantPlan.ID,
+			StartDate:    &startDate,
+			EndDate:      &endDate,
+			TariffPlanID: &tenantPlan.ID,
 			TotalAmount:  decimal.NewFromFloat(18000.0),
 			Status:       "active",
 			IsActive:     true,

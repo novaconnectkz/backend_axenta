@@ -188,13 +188,15 @@ func TestBillingService_CalculateBillingForContract(t *testing.T) {
 	}
 	db.Create(tariffPlan)
 
+	startDate := time.Now().AddDate(0, -1, 0)
+	endDate := time.Now().AddDate(1, 0, 0)
 	contract := &models.Contract{
 		Number:       "TEST-001",
 		Title:        "Test Contract",
 		ClientName:   "Test Client",
-		StartDate:    time.Now().AddDate(0, -1, 0),
-		EndDate:      time.Now().AddDate(1, 0, 0),
-		TariffPlanID: tariffPlan.ID,
+		StartDate:    &startDate,
+		EndDate:      &endDate,
+		TariffPlanID: &tariffPlan.ID,
 		CompanyID:    company.ID,
 		Status:       "active",
 	}
@@ -306,13 +308,15 @@ func TestBillingService_GenerateInvoiceForContract(t *testing.T) {
 	}
 	db.Create(tariffPlan)
 
+	startDate := time.Now().AddDate(0, -1, 0)
+	endDate := time.Now().AddDate(1, 0, 0)
 	contract := &models.Contract{
 		Number:       "TEST-001",
 		Title:        "Test Contract",
 		ClientName:   "Test Client",
-		StartDate:    time.Now().AddDate(0, -1, 0),
-		EndDate:      time.Now().AddDate(1, 0, 0),
-		TariffPlanID: tariffPlan.ID,
+		StartDate:    &startDate,
+		EndDate:      &endDate,
+		TariffPlanID: &tariffPlan.ID,
 		CompanyID:    company.ID,
 		Status:       "active",
 	}
@@ -656,13 +660,15 @@ func TestBillingService_MinCommit(t *testing.T) {
 	}
 	db.Create(tariffComponent)
 
+	startDate := time.Now().AddDate(0, -1, 0)
+	endDate := time.Now().AddDate(1, 0, 0)
 	contract := &models.Contract{
 		Number:       "TEST-MIN-001",
 		Title:        "Test Contract with Min Commit",
 		ClientName:   "Test Client",
-		StartDate:    time.Now().AddDate(0, -1, 0),
-		EndDate:      time.Now().AddDate(1, 0, 0),
-		TariffPlanID: tariffPlan.ID,
+		StartDate:    &startDate,
+		EndDate:      &endDate,
+		TariffPlanID: &tariffPlan.ID,
 		CompanyID:    company.ID,
 		Status:       "active",
 	}
@@ -784,13 +790,15 @@ func TestBillingService_MinCommit_NotApplied(t *testing.T) {
 	}
 	db.Create(tariffComponent)
 
+	startDate := time.Now().AddDate(0, -1, 0)
+	endDate := time.Now().AddDate(1, 0, 0)
 	contract := &models.Contract{
 		Number:       "TEST-MIN-002",
 		Title:        "Test Contract without Min Commit",
 		ClientName:   "Test Client",
-		StartDate:    time.Now().AddDate(0, -1, 0),
-		EndDate:      time.Now().AddDate(1, 0, 0),
-		TariffPlanID: tariffPlan.ID,
+		StartDate:    &startDate,
+		EndDate:      &endDate,
+		TariffPlanID: &tariffPlan.ID,
 		CompanyID:    company.ID,
 		Status:       "active",
 	}
@@ -868,13 +876,15 @@ func TestBillingService_Idempotency(t *testing.T) {
 	}
 	db.Create(tariffPlan)
 
+	startDate := time.Now().AddDate(0, -1, 0)
+	endDate := time.Now().AddDate(1, 0, 0)
 	contract := &models.Contract{
 		Number:       "TEST-IDEMP-001",
 		Title:        "Test Contract for Idempotency",
 		ClientName:   "Test Client",
-		StartDate:    time.Now().AddDate(0, -1, 0),
-		EndDate:      time.Now().AddDate(1, 0, 0),
-		TariffPlanID: tariffPlan.ID,
+		StartDate:    &startDate,
+		EndDate:      &endDate,
+		TariffPlanID: &tariffPlan.ID,
 		CompanyID:    company.ID,
 		Status:       "active",
 	}

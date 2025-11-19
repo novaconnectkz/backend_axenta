@@ -67,13 +67,15 @@ func createInstallationTestData(db *gorm.DB) (models.Object, models.Installer, m
 	db.Create(&billingPlan)
 
 	// Создаем договор
+	startDate := time.Now()
+	endDate := time.Now().AddDate(1, 0, 0)
 	contract := models.Contract{
 		Number:       "TEST-001",
 		Title:        "Тестовый договор",
 		ClientName:   "Тестовый клиент",
-		StartDate:    time.Now(),
-		EndDate:      time.Now().AddDate(1, 0, 0),
-		TariffPlanID: billingPlan.ID,
+		StartDate:    &startDate,
+		EndDate:      &endDate,
+		TariffPlanID: &billingPlan.ID,
 		CompanyID:    company.ID,
 	}
 	db.Create(&contract)

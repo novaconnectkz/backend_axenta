@@ -87,11 +87,13 @@ func createReportTestData(t *testing.T, db *gorm.DB) {
 	require.NoError(t, db.Create(&location).Error)
 
 	// Создаем договор
+	startDate := time.Now().AddDate(0, -1, 0)
+	endDate := time.Now().AddDate(1, 0, 0)
 	contract := models.Contract{
 		Number:      "TEST-001",
 		ClientName:  "Test Client",
-		StartDate:   time.Now().AddDate(0, -1, 0),
-		EndDate:     time.Now().AddDate(1, 0, 0),
+		StartDate:   &startDate,
+		EndDate:     &endDate,
 		Status:      "active",
 		TotalAmount: decimal.NewFromFloat(10000.0),
 		CompanyID:   1,
