@@ -762,6 +762,10 @@ func main() {
 	apiGroup.DELETE("/contracts/:id/objects/:object_id", api.DetachObjectFromContract)
 	log.Printf("✅ Зарегистрирован DELETE /api/auth/contracts/:id/objects/:object_id -> DetachObjectFromContract")
 
+	// Синхронизация договора с подпиской
+	apiGroup.POST("/contracts/:id/sync-from-subscription", api.SyncContractFromSubscription)
+	log.Printf("✅ Зарегистрирован POST /api/auth/contracts/:id/sync-from-subscription -> SyncContractFromSubscription")
+
 	// Общие роуты для договоров
 	apiGroup.GET("/contracts", api.GetContracts)
 	apiGroup.GET("/contracts/:id", api.GetContract)
@@ -823,6 +827,10 @@ func main() {
 	// Настройки биллинга
 	apiGroup.GET("/billing/settings", api.GetBillingSettings)
 	apiGroup.PUT("/billing/settings", api.UpdateBillingSettings)
+
+	// Системные настройки
+	apiGroup.GET("/system/settings", api.GetSystemSettings)
+	apiGroup.PUT("/system/settings", api.UpdateSystemSettings)
 
 	// Автоматизация биллинга
 	apiGroup.POST("/billing/auto-generate", api.AutoGenerateInvoices)
@@ -1016,7 +1024,13 @@ func main() {
 	reportService := services.NewReportService(database.DB)
 	reportSchedulerService := services.NewReportSchedulerService(database.DB, reportService, nil) // notificationService временно отключен
 	reportsAPI := api.NewReportsAPI(database.DB, reportService, reportSchedulerService)
-	reportsAPI.RegisterRoutes(apiGroup)
+	// Регистрируем маршруты отчетов в группе /api (не /api/auth)
+	reportsAPIGroup := r.Group("/api")
+	reportsAPIGroup.Use(
+		authMiddleware.RequireAuth(),
+		tenantMiddleware.SetTenant(),
+	)
+	reportsAPI.RegisterRoutes(reportsAPIGroup)
 
 	// Запускаем планировщик отчетов
 	go func() {

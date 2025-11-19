@@ -433,6 +433,12 @@ func (tm *TenantMiddleware) runTenantMigrations(tenantDB *gorm.DB) error {
 		&models.ContractObject{}, // Junction table для связи договоров и объектов из разных схем
 		&models.ContractNumerator{},
 		&models.Subscription{},
+
+		// Отчеты
+		&models.Report{},
+		&models.ReportTemplate{},
+		&models.ReportSchedule{},
+		&models.ReportExecution{},
 	}
 
 	if err := tenantDB.AutoMigrate(tenantModels...); err != nil {

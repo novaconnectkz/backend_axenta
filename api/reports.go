@@ -1,6 +1,7 @@
 package api
 
 import (
+	"backend_axenta/database"
 	"backend_axenta/models"
 	"backend_axenta/services"
 	"encoding/json"
@@ -425,6 +426,7 @@ type CreateReportTemplateRequest struct {
 	Name        string                 `json:"name" binding:"required"`
 	Description string                 `json:"description"`
 	Type        models.ReportType      `json:"type" binding:"required"`
+	System      string                 `json:"system"` // Система шаблона (axenta, bitrix24, onec)
 	Config      map[string]interface{} `json:"config"`
 	SQLQuery    string                 `json:"sql_query"`
 	Parameters  map[string]interface{} `json:"parameters"`
@@ -437,19 +439,71 @@ type CreateReportTemplateRequest struct {
 func (ra *ReportsAPI) GetReportTemplates(c *gin.Context) {
 	companyID := getCompanyID(c)
 	userID := getUserID(c)
+	
+	fmt.Printf("GetReportTemplates: companyID=%d, userID=%d\n", companyID, userID)
+
+	// Используем tenant DB из контекста
+	tenantDB := database.GetTenantDB(c)
+	if tenantDB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Tenant database not available"})
+		return
+	}
+
+	// Получаем имя схемы из контекста
+	schemaName, exists := c.Get("schema_name")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Schema name not found in context"})
+		return
+	}
+	schemaNameStr := schemaName.(string)
+
+	// Устанавливаем search_path явно
+	if err := tenantDB.Exec(fmt.Sprintf("SET search_path TO %s", schemaNameStr)).Error; err != nil {
+		fmt.Printf("GetReportTemplates: failed to set search_path to %s: %v\n", schemaNameStr, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to set database schema: " + err.Error()})
+		return
+	}
+
+	// Убеждаемся, что таблица существует
+	if err := tenantDB.AutoMigrate(&models.ReportTemplate{}); err != nil {
+		fmt.Printf("GetReportTemplates: failed to migrate ReportTemplate: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to initialize templates table: " + err.Error()})
+		return
+	}
 
 	var templates []models.ReportTemplate
-	query := ra.db.Where("company_id = ? AND (is_public = ? OR created_by_id = ?)", companyID, true, userID)
+	query := tenantDB.Where("company_id = ? AND (is_public = ? OR created_by_id = ?)", companyID, true, userID)
 
 	if reportType := c.Query("type"); reportType != "" {
 		query = query.Where("type = ?", reportType)
 	}
 
 	if err := query.Preload("CreatedBy").Order("name").Find(&templates).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch templates"})
+		fmt.Printf("GetReportTemplates database error: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch templates: " + err.Error()})
 		return
 	}
 
+	// Фильтруем по system, если указан (system хранится в config)
+	if system := c.Query("system"); system != "" {
+		filteredTemplates := []models.ReportTemplate{}
+		for _, template := range templates {
+			var config map[string]interface{}
+			if template.Config != "" {
+				if err := json.Unmarshal([]byte(template.Config), &config); err == nil {
+					// Проверяем system в config или в корне шаблона
+					if configSystem, ok := config["system"].(string); ok && configSystem == system {
+						filteredTemplates = append(filteredTemplates, template)
+					}
+				} else {
+					fmt.Printf("GetReportTemplates: failed to unmarshal config for template %d: %v\n", template.ID, err)
+				}
+			}
+		}
+		templates = filteredTemplates
+	}
+
+	fmt.Printf("GetReportTemplates: returning %d templates\n", len(templates))
 	c.JSON(http.StatusOK, templates)
 }
 
@@ -457,17 +511,119 @@ func (ra *ReportsAPI) GetReportTemplates(c *gin.Context) {
 func (ra *ReportsAPI) CreateReportTemplate(c *gin.Context) {
 	var req CreateReportTemplateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request data: " + err.Error()})
 		return
 	}
+	
+	// Логируем запрос для отладки
+	fmt.Printf("CreateReportTemplate: Name=%s, Type=%s, System=%s\n", req.Name, req.Type, req.System)
 
 	companyID := getCompanyID(c)
 	userID := getUserID(c)
+	
+	// Проверяем, что companyID и userID установлены
+	if companyID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Company ID not found in context"})
+		return
+	}
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User ID not found in context"})
+		return
+	}
+	
+	fmt.Printf("CreateReportTemplate: companyID=%d, userID=%d\n", companyID, userID)
 
-	configJSON, _ := json.Marshal(req.Config)
-	parametersJSON, _ := json.Marshal(req.Parameters)
-	headersJSON, _ := json.Marshal(req.Headers)
-	formattingJSON, _ := json.Marshal(req.Formatting)
+	// Используем tenant DB из контекста
+	tenantDB := database.GetTenantDB(c)
+	if tenantDB == nil {
+		fmt.Printf("CreateReportTemplate: ERROR - tenantDB is nil\n")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Tenant database not available"})
+		return
+	}
+	fmt.Printf("CreateReportTemplate: tenantDB obtained\n")
+
+	// Получаем имя схемы из контекста
+	schemaName, exists := c.Get("schema_name")
+	if !exists {
+		fmt.Printf("CreateReportTemplate: ERROR - schema_name not found in context\n")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Schema name not found in context"})
+		return
+	}
+	schemaNameStr := schemaName.(string)
+	fmt.Printf("CreateReportTemplate: schema_name=%s\n", schemaNameStr)
+
+	// Создаем новое подключение к схеме для миграции
+	// Это гарантирует, что search_path установлен правильно
+	migrationDB, err := database.ConnectToTenant(schemaNameStr)
+	if err != nil {
+		fmt.Printf("CreateReportTemplate: failed to connect to tenant schema %s: %v\n", schemaNameStr, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to connect to tenant schema: " + err.Error()})
+		return
+	}
+	fmt.Printf("CreateReportTemplate: migrationDB connected to schema %s\n", schemaNameStr)
+
+	// Убеждаемся, что схема существует
+	fmt.Printf("CreateReportTemplate: creating schema if not exists...\n")
+	if err := migrationDB.Exec(fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", schemaNameStr)).Error; err != nil {
+		fmt.Printf("CreateReportTemplate: failed to create schema %s: %v\n", schemaNameStr, err)
+		// Не прерываем выполнение, возможно схема уже существует
+	} else {
+		fmt.Printf("CreateReportTemplate: schema check/creation successful\n")
+	}
+
+	// Убеждаемся, что таблица существует
+	fmt.Printf("CreateReportTemplate: attempting to migrate ReportTemplate in schema %s...\n", schemaNameStr)
+	if err := migrationDB.AutoMigrate(&models.ReportTemplate{}); err != nil {
+		fmt.Printf("CreateReportTemplate: failed to migrate ReportTemplate: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to initialize templates table: " + err.Error()})
+		return
+	}
+	fmt.Printf("CreateReportTemplate: migration successful\n")
+
+	// Добавляем system в config, если указан
+	config := req.Config
+	if config == nil {
+		config = make(map[string]interface{})
+	}
+	if req.System != "" {
+		config["system"] = req.System
+	}
+
+	configJSON, err := json.Marshal(config)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to marshal config: " + err.Error()})
+		return
+	}
+	
+	parameters := req.Parameters
+	if parameters == nil {
+		parameters = make(map[string]interface{})
+	}
+	parametersJSON, err := json.Marshal(parameters)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to marshal parameters: " + err.Error()})
+		return
+	}
+	
+	headers := req.Headers
+	if headers == nil {
+		headers = []string{}
+	}
+	headersJSON, err := json.Marshal(headers)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to marshal headers: " + err.Error()})
+		return
+	}
+	
+	formatting := req.Formatting
+	if formatting == nil {
+		formatting = make(map[string]interface{})
+	}
+	formattingJSON, err := json.Marshal(formatting)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to marshal formatting: " + err.Error()})
+		return
+	}
 
 	template := models.ReportTemplate{
 		Name:        req.Name,
@@ -484,10 +640,13 @@ func (ra *ReportsAPI) CreateReportTemplate(c *gin.Context) {
 		CompanyID:   companyID,
 	}
 
-	if err := ra.db.Create(&template).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create template"})
+	if err := tenantDB.Create(&template).Error; err != nil {
+		fmt.Printf("Database error creating template: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create template: " + err.Error()})
 		return
 	}
+	
+	fmt.Printf("Template created successfully: ID=%d, Name=%s\n", template.ID, template.Name)
 
 	c.JSON(http.StatusCreated, template)
 }

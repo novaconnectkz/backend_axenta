@@ -168,6 +168,8 @@ type BillingSettings struct {
 	// Настройки налогов
 	DefaultTaxRate decimal.Decimal `json:"default_tax_rate" gorm:"type:decimal(5,2);default:20"` // НДС по умолчанию
 	TaxIncluded    bool            `json:"tax_included" gorm:"default:false"`                    // НДС включен в цену
+	VATRatePreset  string          `json:"vat_rate_preset" gorm:"type:varchar(20);default:'russia'"` // Пресет ставки НДС: russia, kazakhstan, none, custom
+	VATRateCustom  decimal.Decimal `json:"vat_rate_custom" gorm:"type:decimal(5,2);default:20"` // Своя ставка НДС (используется при VATRatePreset = custom)
 
 	// Настройки уведомлений
 	NotifyBeforeInvoice int `json:"notify_before_invoice" gorm:"default:3"` // За сколько дней уведомлять о выставлении счета

@@ -80,7 +80,11 @@ func GetContracts(c *gin.Context) {
 
 	// Базовый запрос для фильтрации (без Preload для подсчета)
 	// Используем tenant DB, так как договоры находятся в tenant схеме
+	// GORM автоматически исключает записи с deleted_at (soft delete)
 	baseQuery := tenantDB.Model(&models.Contract{}).Where("admin_account_id = ?", adminAccountID)
+	
+	// Логируем запрос для отладки
+	log.Printf("🔍 GetContracts: admin_account_id=%d, tenantDB=%v", adminAccountID, tenantDB != nil)
 
 	// Фильтрация по статусу
 	if status := c.Query("status"); status != "" {
@@ -130,12 +134,14 @@ func GetContracts(c *gin.Context) {
 	// Получаем общее количество (без Preload)
 	var total int64
 	if err := baseQuery.Count(&total).Error; err != nil {
+		log.Printf("❌ Ошибка подсчета договоров: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  "Ошибка при подсчете договоров",
 		})
 		return
 	}
+	log.Printf("📊 GetContracts: найдено договоров в БД: %d (admin_account_id=%d)", total, adminAccountID)
 
 	// Оптимизированный запрос без Preload для Appendices (таблица может отсутствовать)
 	// TariffPlan загружаем отдельно, так как он в public схеме
@@ -152,6 +158,10 @@ func GetContracts(c *gin.Context) {
 		})
 		return
 	}
+	log.Printf("📋 GetContracts: загружено договоров: %d (page=%d, limit=%d, offset=%d)", len(contracts), page, limit, offset)
+	if len(contracts) > 0 {
+		log.Printf("📋 GetContracts: первый договор: ID=%d, Number=%s, Status=%s", contracts[0].ID, contracts[0].Number, contracts[0].Status)
+	}
 
 	// Загружаем TariffPlan (BillingPlan) для каждого договора отдельно (он в public схеме)
 	publicDB := database.DB.Session(&gorm.Session{})
@@ -159,121 +169,144 @@ func GetContracts(c *gin.Context) {
 		log.Printf("⚠️ Не удалось переключиться на public: %v", err)
 	}
 
+	// Собираем уникальные ID тарифных планов для batch-загрузки
+	tariffPlanIDs := make(map[uint]bool)
 	for i := range contracts {
 		if contracts[i].TariffPlanID != nil && *contracts[i].TariffPlanID > 0 {
-			var billingPlan models.BillingPlan
-			if err := publicDB.
-				Select("id, name, price, currency, billing_period").
-				Where("id = ? AND admin_account_id = ?", *contracts[i].TariffPlanID, adminAccountID).
-				First(&billingPlan).Error; err == nil {
-				// TariffPlan в модели Contract - это BillingPlan, просто присваиваем
-				contracts[i].TariffPlan = billingPlan
-			} else {
-				log.Printf("⚠️ Не удалось загрузить TariffPlan ID=%d для договора %d: %v", *contracts[i].TariffPlanID, contracts[i].ID, err)
+			tariffPlanIDs[*contracts[i].TariffPlanID] = true
+		}
+	}
+
+	// Загружаем все тарифные планы одним запросом
+	tariffPlansMap := make(map[uint]models.BillingPlan)
+	if len(tariffPlanIDs) > 0 {
+		var tariffPlanIDsList []uint
+		for id := range tariffPlanIDs {
+			tariffPlanIDsList = append(tariffPlanIDsList, id)
+		}
+		var billingPlans []models.BillingPlan
+		if err := publicDB.
+			Select("id, name, price, currency, billing_period").
+			Where("id IN ? AND admin_account_id = ?", tariffPlanIDsList, adminAccountID).
+			Find(&billingPlans).Error; err == nil {
+			for _, plan := range billingPlans {
+				tariffPlansMap[plan.ID] = plan
+			}
+		}
+	}
+
+	// Собираем ID договоров для batch-загрузки объектов
+	contractIDs := make([]uint, len(contracts))
+	for i := range contracts {
+		contractIDs[i] = contracts[i].ID
+	}
+
+	// Загружаем все связи объектов одним запросом
+	var allContractObjects []models.ContractObject
+	if len(contractIDs) > 0 {
+		if err := tenantDB.Select("id, contract_id, object_id, object_company_id, object_schema, status").
+			Where("contract_id IN ? AND status = ?", contractIDs, "active").
+			Find(&allContractObjects).Error; err != nil {
+			log.Printf("⚠️ Не удалось загрузить связи объектов: %v", err)
+		}
+	}
+
+	// Группируем объекты по договорам
+	objectsByContract := make(map[uint][]models.ContractObject)
+	for _, co := range allContractObjects {
+		objectsByContract[co.ContractID] = append(objectsByContract[co.ContractID], co)
+	}
+
+	// Собираем все уникальные ObjectID и CompanyID для batch-загрузки названий из Axenta Cloud
+	type ObjectKey struct {
+		ObjectID  uint
+		CompanyID uint
+	}
+	objectKeysSet := make(map[ObjectKey]bool)
+	for _, co := range allContractObjects {
+		objectKeysSet[ObjectKey{ObjectID: co.ObjectID, CompanyID: co.ObjectCompanyID}] = true
+	}
+
+	// Загружаем названия объектов из Axenta Cloud (batch)
+	objectNamesMap := make(map[ObjectKey]string)
+	if len(objectKeysSet) > 0 {
+		// Получаем токен пользователя для запроса к Axenta Cloud
+		authHeader := c.GetHeader("Authorization")
+		var userToken string
+		if strings.HasPrefix(authHeader, "Token ") {
+			userToken = strings.TrimPrefix(authHeader, "Token ")
+		} else if strings.HasPrefix(authHeader, "Bearer ") {
+			userToken = strings.TrimPrefix(authHeader, "Bearer ")
+		} else {
+			userToken = authHeader
+		}
+
+		// Группируем объекты по CompanyID для batch-запросов
+		objectsByCompany := make(map[uint][]uint)
+		for key := range objectKeysSet {
+			objectsByCompany[key.CompanyID] = append(objectsByCompany[key.CompanyID], key.ObjectID)
+		}
+
+		// Загружаем объекты по компаниям
+		if userToken != "" {
+			for companyID, objectIDs := range objectsByCompany {
+				if len(objectIDs) > 50 {
+					// Если объектов слишком много, берем только первые 50
+					objectIDs = objectIDs[:50]
+				}
+				
+				axentaObjects, err := fetchObjectsFromAxentaCloud(userToken, int(companyID), objectIDs)
+				if err != nil {
+					log.Printf("⚠️ Не удалось загрузить названия объектов для компании %d: %v", companyID, err)
+					// Используем плейсхолдеры для этой компании
+					for _, objectID := range objectIDs {
+						objectNamesMap[ObjectKey{ObjectID: objectID, CompanyID: companyID}] = fmt.Sprintf("Объект #%d", objectID)
+					}
+				} else {
+					// Сохраняем названия в карту
+					for _, obj := range axentaObjects {
+						objectNamesMap[ObjectKey{ObjectID: uint(obj.ID), CompanyID: companyID}] = obj.Name
+					}
+					log.Printf("✅ Загружено %d названий объектов для компании %d", len(axentaObjects), companyID)
+				}
+			}
+		} else {
+			log.Printf("⚠️ Токен пользователя не найден, используем плейсхолдеры для названий объектов")
+			for key := range objectKeysSet {
+				objectNamesMap[key] = fmt.Sprintf("Объект #%d", key.ObjectID)
+			}
+		}
+	}
+
+	// Присваиваем тарифные планы и объекты договорам
+	for i := range contracts {
+		// Присваиваем тарифный план
+		if contracts[i].TariffPlanID != nil && *contracts[i].TariffPlanID > 0 {
+			if plan, ok := tariffPlansMap[*contracts[i].TariffPlanID]; ok {
+				contracts[i].TariffPlan = plan
 			}
 		}
 
-		// Подсчитываем количество объектов для каждого договора через junction table
-		var objectsCount int64
-		if err := tenantDB.Model(&models.ContractObject{}).Where("contract_id = ? AND status = ?", contracts[i].ID, "active").Count(&objectsCount).Error; err == nil {
-			// Загружаем связи для договора
-			var contractObjects []models.ContractObject
-			if err := tenantDB.Where("contract_id = ? AND status = ?", contracts[i].ID, "active").Find(&contractObjects).Error; err == nil {
-				// Создаем массив объектов для обратной совместимости
-				// Заполняем его объектами из junction table, чтобы фронтенд мог получить количество через objects.length
-				objects := make([]models.Object, len(contractObjects))
-				
-				// Получаем токен для запросов к Axenta Cloud API (если нужно)
-				authHeader := c.GetHeader("Authorization")
-				var userToken string
-				if authHeader != "" {
-					if strings.HasPrefix(authHeader, "Token ") {
-						userToken = strings.TrimPrefix(authHeader, "Token ")
-					} else if strings.HasPrefix(authHeader, "Bearer ") {
-						userToken = strings.TrimPrefix(authHeader, "Bearer ")
-					} else {
-						userToken = authHeader
-					}
+		// Присваиваем объекты с названиями
+		if contractObjects, ok := objectsByContract[contracts[i].ID]; ok {
+			objects := make([]models.Object, len(contractObjects))
+			for j, co := range contractObjects {
+				key := ObjectKey{ObjectID: co.ObjectID, CompanyID: co.ObjectCompanyID}
+				name := objectNamesMap[key]
+				if name == "" {
+					name = fmt.Sprintf("Объект #%d", co.ObjectID)
 				}
-				
-				for j, co := range contractObjects {
-					// Пытаемся загрузить название объекта из соответствующей схемы
-					objectName := fmt.Sprintf("Объект #%d", co.ObjectID)
-					objectFound := false
-					
-					if co.ObjectSchema != "" {
-						// Подключаемся к схеме объекта для загрузки названия
-						objectTenantDB, err := database.ConnectToTenant(co.ObjectSchema)
-						if err == nil {
-							var object models.Object
-							if err := objectTenantDB.Select("id, name").Where("id = ?", co.ObjectID).First(&object).Error; err == nil {
-								if object.Name != "" {
-									objectName = object.Name
-									objectFound = true
-									log.Printf("✅ Загружено название объекта %d из схемы %s: %s", co.ObjectID, co.ObjectSchema, objectName)
-								} else {
-									log.Printf("⚠️ Объект %d найден в схеме %s, но название пустое", co.ObjectID, co.ObjectSchema)
-								}
-							} else {
-								log.Printf("⚠️ Не удалось загрузить объект %d из схемы %s: %v", co.ObjectID, co.ObjectSchema, err)
-							}
-						} else {
-							log.Printf("⚠️ Не удалось подключиться к схеме %s для объекта %d: %v", co.ObjectSchema, co.ObjectID, err)
-						}
-					} else {
-						// Если схема не указана, пробуем загрузить из текущей tenant схемы
-						var object models.Object
-						if err := tenantDB.Select("id, name").Where("id = ? AND company_id = ?", co.ObjectID, co.ObjectCompanyID).First(&object).Error; err == nil {
-							if object.Name != "" {
-								objectName = object.Name
-								objectFound = true
-								log.Printf("✅ Загружено название объекта %d из текущей схемы: %s", co.ObjectID, objectName)
-							} else {
-								log.Printf("⚠️ Объект %d найден в текущей схеме, но название пустое", co.ObjectID)
-							}
-						} else {
-							log.Printf("⚠️ Не удалось загрузить объект %d из текущей схемы: %v", co.ObjectID, err)
-						}
-					}
-					
-					// Если объект не найден в локальной БД, пробуем загрузить из Axenta Cloud API
-					if !objectFound && userToken != "" && co.ObjectCompanyID > 0 {
-						log.Printf("🔍 Объект %d не найден в локальной БД, пробуем загрузить из Axenta Cloud для account_id %d", co.ObjectID, co.ObjectCompanyID)
-						axentaObjects, err := fetchObjectsFromAxentaCloud(userToken, int(co.ObjectCompanyID), []uint{co.ObjectID})
-						if err == nil && len(axentaObjects) > 0 {
-							for _, axentaObj := range axentaObjects {
-								if axentaObj.ID == int(co.ObjectID) && axentaObj.Name != "" {
-									objectName = axentaObj.Name
-									objectFound = true
-									log.Printf("✅ Загружено название объекта %d из Axenta Cloud: %s", co.ObjectID, objectName)
-									break
-								}
-							}
-						} else {
-							log.Printf("⚠️ Не удалось загрузить объект %d из Axenta Cloud: %v", co.ObjectID, err)
-						}
-					}
-					
-					// Создаем объект с ID и названием для отображения
-					objects[j] = models.Object{
-						ID:        co.ObjectID,
-						CompanyID: co.ObjectCompanyID,
-						Name:      objectName,
-					}
+				objects[j] = models.Object{
+					ID:        co.ObjectID,
+					CompanyID: co.ObjectCompanyID,
+					Name:      name,
 				}
-				contracts[i].Objects = objects
-				// Сохраняем информацию о связях в ContractObjects
-				contracts[i].ContractObjects = contractObjects
-				log.Printf("✅ Договор %d: найдено %d объектов через junction table", contracts[i].ID, objectsCount)
-			} else {
-				log.Printf("⚠️ Не удалось загрузить связи для договора %d: %v", contracts[i].ID, err)
-				// Создаем пустой массив для обратной совместимости
-				contracts[i].Objects = make([]models.Object, 0)
 			}
+			contracts[i].Objects = objects
+			contracts[i].ContractObjects = contractObjects
 		} else {
-			log.Printf("⚠️ Не удалось подсчитать объекты для договора %d: %v", contracts[i].ID, err)
-			// Создаем пустой массив для обратной совместимости
 			contracts[i].Objects = make([]models.Object, 0)
+			contracts[i].ContractObjects = make([]models.ContractObject, 0)
 		}
 	}
 
@@ -1190,6 +1223,50 @@ contractCreated:
 
 	log.Printf("📊 Итог привязки объектов к договору %d: обновлено %d записей", contract.ID, attachedCount)
 
+	// Пересчитываем сумму договора на основе количества объектов и тарифного плана
+	if attachedCount > 0 && contract.TariffPlanID != nil && *contract.TariffPlanID > 0 {
+		// Загружаем тарифный план
+		publicDB := database.DB.Session(&gorm.Session{})
+		if err := publicDB.Exec("SET search_path TO public").Error; err == nil {
+			var billingPlan models.BillingPlan
+			if err := publicDB.
+				Where("id = ? AND admin_account_id = ?", *contract.TariffPlanID, adminAccountID).
+				First(&billingPlan).Error; err == nil {
+				// Подсчитываем количество активных объектов
+				var objectsCount int64
+				if err := tenantDB.Model(&models.ContractObject{}).
+					Where("contract_id = ? AND status = ?", contract.ID, "active").
+					Count(&objectsCount).Error; err == nil {
+					// Рассчитываем сумму: количество объектов × цена тарифа за месяц × количество месяцев
+					months := 1 // По умолчанию 1 месяц
+					if contract.StartDate != nil && contract.EndDate != nil {
+						duration := contract.EndDate.Sub(*contract.StartDate)
+						days := int(duration.Hours() / 24)
+						if days > 0 {
+							months = days / 30
+							if months == 0 {
+								months = 1
+							}
+						}
+					}
+					
+					// Рассчитываем total_amount
+					pricePerMonth := billingPlan.Price
+					totalAmount := pricePerMonth.Mul(decimal.NewFromInt(int64(objectsCount))).Mul(decimal.NewFromInt(int64(months)))
+					
+					// Обновляем total_amount договора
+					contract.TotalAmount = totalAmount
+					if err := tenantDB.Save(&contract).Error; err != nil {
+						log.Printf("⚠️ Ошибка обновления total_amount договора %d: %v", contract.ID, err)
+					} else {
+						log.Printf("✅ Обновлена сумма договора %d: %s (объектов: %d, месяцев: %d, цена/мес: %s)",
+							contract.ID, totalAmount.String(), objectsCount, months, pricePerMonth.String())
+					}
+				}
+			}
+		}
+	}
+
 	// Загружаем связанные данные для ответа
 	if err := tenantDB.Preload("Objects").First(&contract, contract.ID).Error; err != nil {
 		log.Printf("⚠️ Не удалось загрузить объекты договора %d: %v", contract.ID, err)
@@ -1883,8 +1960,20 @@ func fetchObjectsFromAxentaCloud(token string, accountID int, objectIDs []uint) 
 	}
 
 	// Формируем URL для запроса объектов по accountId
-	// Запрашиваем все объекты accountId, чтобы проверить наличие указанных objectIDs
-	axentaURL := fmt.Sprintf("https://axenta.cloud/api/cms/objects/?accountId=%d&per_page=200", accountID)
+	// Если указаны конкретные objectIDs, запрашиваем только их (оптимизация)
+	// Иначе запрашиваем все объекты accountId
+	var axentaURL string
+	if len(objectIDs) > 0 && len(objectIDs) <= 50 {
+		// Если объектов немного (до 50), запрашиваем их по ID
+		objectIDStrs := make([]string, len(objectIDs))
+		for i, id := range objectIDs {
+			objectIDStrs[i] = fmt.Sprintf("%d", id)
+		}
+		axentaURL = fmt.Sprintf("https://axenta.cloud/api/cms/objects/?accountId=%d&id__in=%s&per_page=200", accountID, strings.Join(objectIDStrs, ","))
+	} else {
+		// Если объектов много или не указаны, запрашиваем все (но с ограничением)
+		axentaURL = fmt.Sprintf("https://axenta.cloud/api/cms/objects/?accountId=%d&per_page=200", accountID)
+	}
 
 	// Создаем HTTP клиент с таймаутом
 	client := &http.Client{
@@ -4168,6 +4257,50 @@ func AttachObjectsToContract(c *gin.Context) {
 		return
 	}
 
+	// Пересчитываем сумму договора на основе количества объектов и тарифного плана
+	if updatedCount > 0 && contract.TariffPlanID != nil && *contract.TariffPlanID > 0 {
+		// Загружаем тарифный план
+		publicDB := database.DB.Session(&gorm.Session{})
+		if err := publicDB.Exec("SET search_path TO public").Error; err == nil {
+			var billingPlan models.BillingPlan
+			if err := publicDB.
+				Where("id = ? AND admin_account_id = ?", *contract.TariffPlanID, adminAccountID).
+				First(&billingPlan).Error; err == nil {
+				// Подсчитываем количество активных объектов
+				var objectsCount int64
+				if err := tenantDBForContract.Model(&models.ContractObject{}).
+					Where("contract_id = ? AND status = ?", contract.ID, "active").
+					Count(&objectsCount).Error; err == nil {
+					// Рассчитываем сумму: количество объектов × цена тарифа за месяц × количество месяцев
+					months := 1 // По умолчанию 1 месяц
+					if contract.StartDate != nil && contract.EndDate != nil {
+						duration := contract.EndDate.Sub(*contract.StartDate)
+						days := int(duration.Hours() / 24)
+						if days > 0 {
+							months = days / 30
+							if months == 0 {
+								months = 1
+							}
+						}
+					}
+					
+					// Рассчитываем total_amount
+					pricePerMonth := billingPlan.Price
+					totalAmount := pricePerMonth.Mul(decimal.NewFromInt(int64(objectsCount))).Mul(decimal.NewFromInt(int64(months)))
+					
+					// Обновляем total_amount договора
+					contract.TotalAmount = totalAmount
+					if err := tenantDBForContract.Save(&contract).Error; err != nil {
+						log.Printf("⚠️ Ошибка обновления total_amount договора %d: %v", contract.ID, err)
+					} else {
+						log.Printf("✅ Обновлена сумма договора %d: %s (объектов: %d, месяцев: %d, цена/мес: %s)",
+							contract.ID, totalAmount.String(), objectsCount, months, pricePerMonth.String())
+					}
+				}
+			}
+		}
+	}
+
 	responseMessage := fmt.Sprintf("Успешно привязано объектов: %d", updatedCount)
 	if len(errorMessages) > 0 {
 		responseMessage += fmt.Sprintf(". Ошибок: %d", len(errorMessages))
@@ -4256,5 +4389,363 @@ func DetachObjectFromContract(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
 		"message": "Объект успешно отвязан от договора",
+	})
+}
+
+// SyncContractFromSubscription синхронизирует договор с подпиской:
+// обновляет период договора из подписки и привязывает объекты, если они указаны
+func SyncContractFromSubscription(c *gin.Context) {
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	contractIDStr := c.Param("id")
+	contractID, err := strconv.ParseUint(contractIDStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Неверный формат ID договора",
+		})
+		return
+	}
+
+	// Получаем tenant DB для работы с договорами
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка подключения к базе данных",
+		})
+		return
+	}
+
+	// Находим договор
+	var contract models.Contract
+	if err := tenantDB.Where("id = ? AND admin_account_id = ?", uint(contractID), adminAccountID).
+		First(&contract).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{
+				"status": "error",
+				"error":  "Договор не найден",
+			})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error",
+				"error":  "Ошибка поиска договора: " + err.Error(),
+			})
+		}
+		return
+	}
+
+	log.Printf("🔄 SyncContractFromSubscription: синхронизация договора %d (№%s) с подпиской", contract.ID, contract.Number)
+
+	// Находим активную подписку для этого договора
+	publicDB := database.DB.Session(&gorm.Session{})
+	if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
+		log.Printf("⚠️ Ошибка установки search_path: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка подключения к базе данных",
+		})
+		return
+	}
+
+	var subscription models.Subscription
+	if err := publicDB.Where("contract_id = ? AND admin_account_id = ? AND status IN (?, ?)", 
+		contract.ID, adminAccountID, "active", "scheduled").
+		Order("created_at DESC").
+		First(&subscription).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{
+				"status": "error",
+				"error":  "Активная подписка для этого договора не найдена",
+			})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error",
+				"error":  "Ошибка поиска подписки: " + err.Error(),
+			})
+		}
+		return
+	}
+
+	log.Printf("✅ Найдена подписка ID=%d для договора %d", subscription.ID, contract.ID)
+
+	// Обновляем период договора из подписки
+	contractUpdated := false
+	
+	// Обновляем start_date из подписки
+	if contract.StartDate == nil || !contract.StartDate.Equal(subscription.StartDate) {
+		contract.StartDate = &subscription.StartDate
+		contractUpdated = true
+		log.Printf("📅 Обновлен start_date договора %d из подписки: %v", contract.ID, subscription.StartDate)
+	}
+
+	// Обновляем end_date из подписки, если он указан
+	if subscription.EndDate != nil {
+		if contract.EndDate == nil || !contract.EndDate.Equal(*subscription.EndDate) {
+			contract.EndDate = subscription.EndDate
+			contractUpdated = true
+			log.Printf("📅 Обновлен end_date договора %d из подписки: %v", contract.ID, subscription.EndDate)
+		}
+	}
+
+	// Обновляем тарифный план, если он не установлен
+	if contract.TariffPlanID == nil || *contract.TariffPlanID == 0 {
+		contract.TariffPlanID = &subscription.BillingPlanID
+		contractUpdated = true
+		log.Printf("📋 Обновлен tariff_plan_id договора %d из подписки: %d", contract.ID, subscription.BillingPlanID)
+	}
+
+	// Сохраняем изменения договора
+	if contractUpdated {
+		if err := tenantDB.Save(&contract).Error; err != nil {
+			log.Printf("⚠️ Ошибка сохранения договора %d: %v", contract.ID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error",
+				"error":  "Ошибка обновления договора: " + err.Error(),
+			})
+			return
+		}
+		log.Printf("✅ Договор %d успешно обновлен из подписки", contract.ID)
+	} else {
+		log.Printf("ℹ️ Договор %d уже синхронизирован с подпиской", contract.ID)
+	}
+
+	// Парсим данные запроса для привязки объектов (опционально)
+	var requestData struct {
+		ObjectIDs []uint `json:"object_ids"` // Список ID объектов для привязки (опционально)
+		AccountID *uint  `json:"account_id"` // ID учетной записи (опционально)
+	}
+
+	// Пытаемся прочитать body, если он есть
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&requestData); err != nil {
+			// Игнорируем ошибку, если body пустой или невалидный
+			log.Printf("ℹ️ Не удалось распарсить body для привязки объектов: %v", err)
+		}
+	}
+
+	// Если объекты не указаны в запросе, пытаемся получить их из существующих связей договора или подписки
+	if len(requestData.ObjectIDs) == 0 {
+		log.Printf("ℹ️ Объекты не указаны в запросе, получаем их из договора %d или подписки %d", contract.ID, subscription.ID)
+		
+		// Сначала проверяем существующие связи договора (они должны были быть созданы при создании подписки)
+		var existingObjects []models.ContractObject
+		if err := tenantDB.Where("contract_id = ? AND status = ?", contract.ID, "active").
+			Find(&existingObjects).Error; err == nil && len(existingObjects) > 0 {
+			// Извлекаем object_ids из существующих связей
+			objectIDs := make([]uint, 0, len(existingObjects))
+			for _, obj := range existingObjects {
+				objectIDs = append(objectIDs, obj.ObjectID)
+			}
+			requestData.ObjectIDs = objectIDs
+			log.Printf("✅ Найдено %d существующих объектов для договора %d", len(objectIDs), contract.ID)
+		} else {
+			log.Printf("ℹ️ Существующие объекты не найдены для договора %d, проверяем подписку через assignments", contract.ID)
+			
+			// Если объектов нет в договоре, пытаемся получить их из подписки через таблицу assignments
+			var assignments []models.Assignment
+			if err := publicDB.Where("subscription_id = ? AND status = ?", subscription.ID, "active").
+				Find(&assignments).Error; err == nil && len(assignments) > 0 {
+				// Извлекаем object_ids из assignments
+				objectIDs := make([]uint, 0, len(assignments))
+				for _, assignment := range assignments {
+					objectIDs = append(objectIDs, assignment.ObjectID)
+				}
+				requestData.ObjectIDs = objectIDs
+				log.Printf("✅ Найдено %d объектов в подписке %d через assignments", len(objectIDs), subscription.ID)
+			} else {
+				log.Printf("ℹ️ Объекты не найдены в подписке %d через assignments", subscription.ID)
+			}
+		}
+	}
+
+	// Если объекты указаны (из запроса или из существующих связей), обновляем их привязку
+	if len(requestData.ObjectIDs) > 0 {
+		log.Printf("🔗 Привязываем объекты %v к договору %d через синхронизацию", requestData.ObjectIDs, contract.ID)
+		
+		// Убеждаемся, что таблица contract_objects существует
+		if err := ensureContractObjectsTable(tenantDB); err != nil {
+			log.Printf("⚠️ Не удалось создать таблицу contract_objects: %v", err)
+		} else {
+			// Определяем targetAccountID для привязки объектов
+			var targetAccountID uint
+			if requestData.AccountID != nil && *requestData.AccountID > 0 {
+				targetAccountID = *requestData.AccountID
+			} else {
+				targetAccountID = contract.CompanyID
+			}
+
+			// Получаем информацию о компании для определения схемы
+			var company models.Company
+			if err := publicDB.First(&company, targetAccountID).Error; err != nil {
+				log.Printf("⚠️ Компания с ID %d не найдена: %v", targetAccountID, err)
+			}
+
+			// Получаем токен из заголовка Authorization
+			authHeader := c.GetHeader("Authorization")
+			var userToken string
+			if authHeader != "" {
+				if strings.HasPrefix(authHeader, "Token ") {
+					userToken = strings.TrimPrefix(authHeader, "Token ")
+				} else if strings.HasPrefix(authHeader, "Bearer ") {
+					userToken = strings.TrimPrefix(authHeader, "Bearer ")
+				} else {
+					userToken = authHeader
+				}
+			}
+
+			// Получаем объекты из Axenta Cloud API для проверки (если токен есть)
+			var axentaObjects []axentaCloudObjectForContract
+			if userToken != "" {
+				axentaObjects, err = fetchObjectsFromAxentaCloud(userToken, int(targetAccountID), requestData.ObjectIDs)
+				if err != nil {
+					log.Printf("⚠️ Ошибка получения объектов из Axenta Cloud API: %v", err)
+				} else {
+					log.Printf("✅ Получено %d объектов из Axenta Cloud API", len(axentaObjects))
+				}
+			}
+
+			// Используем даты из подписки для привязки объектов
+			objStartDate := subscription.StartDate
+			var objEndDate *time.Time = subscription.EndDate
+
+			attachedCount := int64(0)
+			var objectErrors []string
+
+			// Создаем записи в junction table для каждого объекта
+			for _, objectID := range requestData.ObjectIDs {
+				// Проверяем существование объекта в Axenta Cloud (если удалось получить список)
+				if len(axentaObjects) > 0 {
+					objectExists := false
+					for _, axentaObj := range axentaObjects {
+						if axentaObj.ID == int(objectID) {
+							objectExists = true
+							break
+						}
+					}
+					if !objectExists {
+						log.Printf("⚠️ Объект %d не найден в Axenta Cloud, пропускаем", objectID)
+						objectErrors = append(objectErrors, fmt.Sprintf("Объект %d не найден в Axenta Cloud", objectID))
+						continue
+					}
+				}
+
+				// Проверяем, не существует ли уже такая связь
+				var existingSameContract models.ContractObject
+				if err := tenantDB.Where("contract_id = ? AND object_id = ? AND object_company_id = ?", 
+					contract.ID, objectID, targetAccountID).First(&existingSameContract).Error; err == nil {
+					// Обновляем даты существующей связи из подписки
+					needsUpdate := false
+					if !existingSameContract.StartDate.Equal(objStartDate) {
+						existingSameContract.StartDate = objStartDate
+						needsUpdate = true
+					}
+					if (objEndDate == nil && existingSameContract.EndDate != nil) ||
+						(objEndDate != nil && (existingSameContract.EndDate == nil || !existingSameContract.EndDate.Equal(*objEndDate))) {
+						existingSameContract.EndDate = objEndDate
+						needsUpdate = true
+					}
+					if needsUpdate {
+						if err := tenantDB.Save(&existingSameContract).Error; err != nil {
+							log.Printf("⚠️ Ошибка обновления связи для объекта %d: %v", objectID, err)
+						} else {
+							log.Printf("✅ Обновлены даты связи для объекта %d: start_date=%v, end_date=%v", objectID, objStartDate, objEndDate)
+						}
+					}
+					attachedCount++
+					continue
+				}
+
+				// Создаем связь в junction table
+				contractObject := models.ContractObject{
+					ContractID:      contract.ID,
+					ObjectID:        objectID,
+					ObjectCompanyID: targetAccountID,
+					ObjectSchema:    company.DatabaseSchema,
+					Status:          "active",
+					StartDate:       objStartDate,
+					EndDate:         objEndDate,
+				}
+
+				if err := tenantDB.Create(&contractObject).Error; err != nil {
+					log.Printf("⚠️ Ошибка создания связи для объекта %d: %v", objectID, err)
+					objectErrors = append(objectErrors, fmt.Sprintf("Ошибка привязки объекта %d: %v", objectID, err))
+				} else {
+					attachedCount++
+					log.Printf("✅ Создана связь: договор %d <-> объект %d", contract.ID, objectID)
+				}
+			}
+
+			// Логируем результаты привязки
+			if len(objectErrors) > 0 {
+				log.Printf("⚠️ При привязке объектов возникло %d ошибок", len(objectErrors))
+			}
+			if attachedCount != int64(len(requestData.ObjectIDs)) {
+				log.Printf("⚠️ Не все объекты привязаны: ожидалось %d, создано %d", len(requestData.ObjectIDs), attachedCount)
+			} else {
+				log.Printf("✅ Привязано %d объектов к договору %d", attachedCount, contract.ID)
+			}
+			
+			// Пересчитываем сумму договора на основе количества объектов и тарифного плана
+			if attachedCount > 0 && contract.TariffPlanID != nil && *contract.TariffPlanID > 0 {
+				// Загружаем тарифный план
+				if err := publicDB.Exec("SET search_path TO public").Error; err == nil {
+					var billingPlan models.BillingPlan
+					if err := publicDB.
+						Where("id = ? AND admin_account_id = ?", *contract.TariffPlanID, adminAccountID).
+						First(&billingPlan).Error; err == nil {
+						// Подсчитываем количество активных объектов
+						var objectsCount int64
+						if err := tenantDB.Model(&models.ContractObject{}).
+							Where("contract_id = ? AND status = ?", contract.ID, "active").
+							Count(&objectsCount).Error; err == nil {
+							// Рассчитываем сумму: количество объектов × цена тарифа за месяц × количество месяцев
+							months := 1 // По умолчанию 1 месяц
+							if contract.StartDate != nil && contract.EndDate != nil {
+								duration := contract.EndDate.Sub(*contract.StartDate)
+								days := int(duration.Hours() / 24)
+								if days > 0 {
+									months = days / 30
+									if months == 0 {
+										months = 1
+									}
+								}
+							}
+							
+							// Рассчитываем total_amount
+							pricePerMonth := billingPlan.Price
+							totalAmount := pricePerMonth.Mul(decimal.NewFromInt(int64(objectsCount))).Mul(decimal.NewFromInt(int64(months)))
+							
+							// Обновляем total_amount договора
+							contract.TotalAmount = totalAmount
+							if err := tenantDB.Save(&contract).Error; err != nil {
+								log.Printf("⚠️ Ошибка обновления total_amount договора %d: %v", contract.ID, err)
+							} else {
+								log.Printf("✅ Обновлена сумма договора %d: %s (объектов: %d, месяцев: %d, цена/мес: %s)",
+									contract.ID, totalAmount.String(), objectsCount, months, pricePerMonth.String())
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Загружаем обновленный договор со связями
+	if err := tenantDB.Preload("Objects").First(&contract, contract.ID).Error; err != nil {
+		log.Printf("⚠️ Ошибка загрузки договора: %v", err)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Договор успешно синхронизирован с подпиской",
+		"data":    contract,
 	})
 }

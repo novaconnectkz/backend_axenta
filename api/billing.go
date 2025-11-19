@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -610,10 +611,134 @@ func GetSubscriptions(c *gin.Context) {
 
 	log.Printf("✅ GetSubscriptions: Возвращаем %d подписок клиенту", len(subscriptions))
 
+	// Создаем ответ с объектами для каждой подписки
+	subscriptionsResponse := make([]map[string]interface{}, 0, len(subscriptions))
+	
+	// Собираем все уникальные ObjectID и CompanyID для batch-загрузки названий
+	type ObjectKey struct {
+		ObjectID  uint
+		CompanyID uint
+	}
+	objectKeysSet := make(map[ObjectKey]bool)
+	
+	// Сначала собираем все объекты из подписок
+	for _, sub := range subscriptions {
+		if sub.ContractID != nil && tenantDB != nil {
+			var contractObjects []models.ContractObject
+			if err := tenantDB.Where("contract_id = ? AND status = ?", *sub.ContractID, "active").
+				Find(&contractObjects).Error; err == nil {
+				for _, co := range contractObjects {
+					objectKeysSet[ObjectKey{ObjectID: co.ObjectID, CompanyID: co.ObjectCompanyID}] = true
+				}
+			}
+		}
+	}
+	
+	// Загружаем названия объектов из Axenta Cloud (batch)
+	objectNamesMap := make(map[ObjectKey]string)
+	if len(objectKeysSet) > 0 {
+		// Получаем токен пользователя для запроса к Axenta Cloud
+		authHeader := c.GetHeader("Authorization")
+		var userToken string
+		if strings.HasPrefix(authHeader, "Token ") {
+			userToken = strings.TrimPrefix(authHeader, "Token ")
+		} else if strings.HasPrefix(authHeader, "Bearer ") {
+			userToken = strings.TrimPrefix(authHeader, "Bearer ")
+		} else {
+			userToken = authHeader
+		}
+
+		// Группируем объекты по CompanyID для batch-запросов
+		objectsByCompany := make(map[uint][]uint)
+		for key := range objectKeysSet {
+			objectsByCompany[key.CompanyID] = append(objectsByCompany[key.CompanyID], key.ObjectID)
+		}
+
+		// Загружаем объекты по компаниям
+		if userToken != "" {
+			for companyID, objectIDs := range objectsByCompany {
+				if len(objectIDs) > 50 {
+					// Если объектов слишком много, берем только первые 50
+					objectIDs = objectIDs[:50]
+				}
+				
+				axentaObjects, err := fetchObjectsFromAxentaCloud(userToken, int(companyID), objectIDs)
+				if err != nil {
+					log.Printf("⚠️ Не удалось загрузить названия объектов для компании %d: %v", companyID, err)
+					// Используем плейсхолдеры для этой компании
+					for _, objectID := range objectIDs {
+						objectNamesMap[ObjectKey{ObjectID: objectID, CompanyID: companyID}] = fmt.Sprintf("Объект #%d", objectID)
+					}
+				} else {
+					// Сохраняем названия в карту
+					for _, obj := range axentaObjects {
+						objectNamesMap[ObjectKey{ObjectID: uint(obj.ID), CompanyID: companyID}] = obj.Name
+					}
+					log.Printf("✅ Загружено %d названий объектов для компании %d", len(axentaObjects), companyID)
+				}
+			}
+		} else {
+			log.Printf("⚠️ Токен пользователя не найден, используем плейсхолдеры для названий объектов")
+			for key := range objectKeysSet {
+				objectNamesMap[key] = fmt.Sprintf("Объект #%d", key.ObjectID)
+			}
+		}
+	}
+	
+	for _, sub := range subscriptions {
+		subMap := make(map[string]interface{})
+		
+		// Преобразуем подписку в map для добавления объектов
+		subJSON, _ := json.Marshal(sub)
+		json.Unmarshal(subJSON, &subMap)
+		
+		// Добавляем объекты, если они есть
+		if sub.ContractID != nil && tenantDB != nil {
+			var contractObjects []models.ContractObject
+			if err := tenantDB.Where("contract_id = ? AND status = ?", *sub.ContractID, "active").
+				Find(&contractObjects).Error; err == nil && len(contractObjects) > 0 {
+				objectIDs := make([]uint, 0, len(contractObjects))
+				objects := make([]map[string]interface{}, 0, len(contractObjects))
+				
+				for _, co := range contractObjects {
+					objectIDs = append(objectIDs, co.ObjectID)
+					
+					// Получаем название объекта из карты
+					key := ObjectKey{ObjectID: co.ObjectID, CompanyID: co.ObjectCompanyID}
+					name := objectNamesMap[key]
+					if name == "" {
+						name = fmt.Sprintf("Объект #%d", co.ObjectID)
+					}
+					
+					objects = append(objects, map[string]interface{}{
+						"id":         co.ObjectID,
+						"name":       name,
+						"company_id": co.ObjectCompanyID,
+					})
+				}
+				
+				subMap["object_ids"] = objectIDs
+				subMap["objects_count"] = len(objectIDs)
+				subMap["objects"] = objects
+				log.Printf("✅ Добавлено %d объектов для подписки %d", len(objectIDs), sub.ID)
+			} else {
+				subMap["object_ids"] = []uint{}
+				subMap["objects_count"] = 0
+				subMap["objects"] = []map[string]interface{}{}
+			}
+		} else {
+			subMap["object_ids"] = []uint{}
+			subMap["objects_count"] = 0
+			subMap["objects"] = []map[string]interface{}{}
+		}
+		
+		subscriptionsResponse = append(subscriptionsResponse, subMap)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
-		"data":   subscriptions,
-		"count":  len(subscriptions),
+		"data":   subscriptionsResponse,
+		"count":  len(subscriptionsResponse),
 	})
 }
 
@@ -774,15 +899,19 @@ func CreateSubscription(c *gin.Context) {
 	}
 
 	// Определяем статус: если дата/время начала в будущем, устанавливаем "scheduled"
+	// НО если статус явно передан как 'active' (например, "Запустить немедленно"), не перезаписываем его
 	status := data.Status
 	now := time.Now()
 	
-	if startDate.After(now) {
+	if startDate.After(now) && status != "active" {
+		// Если дата в будущем И статус НЕ установлен явно как 'active', делаем 'scheduled'
 		status = "scheduled"
 		log.Printf("📅 Дата/время начала в будущем (%v > %v), статус = scheduled", startDate, now)
 	} else if status == "" {
 		status = "active"
-		log.Printf("✅ Дата/время начала не в будущем (%v <= %v), статус = active", startDate, now)
+		log.Printf("✅ Дата/время начала не в будущем (%v <= %v) или статус явно установлен, статус = active", startDate, now)
+	} else if status == "active" {
+		log.Printf("✅ Статус явно установлен как 'active' (запуск немедленно), сохраняем его")
 	}
 
 	// Обработка разбиения периода (если указано)
@@ -876,18 +1005,8 @@ func CreateSubscription(c *gin.Context) {
 
 	log.Printf("✅ Подписка создана: id=%d", subscription.ID)
 
-	// Обработка account_id и object_ids (если указаны)
-	if data.AccountID != nil && *data.AccountID > 0 {
-		log.Printf("📋 Подписка связана с учетной записью: account_id=%d", *data.AccountID)
-		// TODO: Сохранить связь подписки с учетной записью, если требуется
-	}
-
-	if len(data.ObjectIDs) > 0 {
-		log.Printf("📋 Подписка связана с объектами: object_ids=%v", data.ObjectIDs)
-		// TODO: Сохранить связь подписки с объектами, если требуется
-	}
-
 	// Если подписка создана для договора, автоматически переводим его в статус "active"
+	// обновляем период из подписки и привязываем объекты, если они указаны
 	if data.ContractID != nil && *data.ContractID > 0 {
 		// Получаем tenant DB для работы с договорами
 		tenantDB := middleware.GetTenantDB(c)
@@ -898,20 +1017,225 @@ func CreateSubscription(c *gin.Context) {
 			// Проверяем, что договор существует и принадлежит этому admin_account
 			if err := tenantDB.Where("id = ? AND admin_account_id = ?", *data.ContractID, adminAccountID).
 				First(&contract).Error; err == nil {
+				// Обновляем период договора из подписки (всегда, если подписка создана для договора)
+				contractUpdated := false
+				// Всегда обновляем start_date из подписки
+				if contract.StartDate == nil || !contract.StartDate.Equal(startDate) {
+					contract.StartDate = &startDate
+					contractUpdated = true
+					log.Printf("📅 Установлен start_date договора %d из подписки: %v", contract.ID, startDate)
+				}
+				// Обновляем end_date из подписки, если он указан
+				if endDate != nil {
+					if contract.EndDate == nil || !contract.EndDate.Equal(*endDate) {
+						contract.EndDate = endDate
+						contractUpdated = true
+						log.Printf("📅 Установлен end_date договора %d из подписки: %v", contract.ID, endDate)
+					}
+				}
+
 				// Если договор в статусе "draft" (черновик), переводим в "active" (активный)
 				if contract.Status == "draft" {
 					contract.Status = "active"
+					contractUpdated = true
+				}
+
+				// Сохраняем изменения договора, если были обновления
+				if contractUpdated {
 					if err := tenantDB.Save(&contract).Error; err != nil {
-						log.Printf("⚠️ Не удалось обновить статус договора %d на 'active': %v", contract.ID, err)
+						log.Printf("⚠️ Не удалось обновить договор %d: %v", contract.ID, err)
 					} else {
-						log.Printf("✅ Договор %d (№%s) автоматически переведен в статус 'active' после создания подписки", 
-							contract.ID, contract.Number)
+						if contract.Status == "active" {
+							log.Printf("✅ Договор %d (№%s) автоматически переведен в статус 'active' после создания подписки", 
+								contract.ID, contract.Number)
+						}
+						if contract.StartDate != nil || contract.EndDate != nil {
+							log.Printf("✅ Период договора %d обновлен из подписки: start_date=%v, end_date=%v", 
+								contract.ID, contract.StartDate, contract.EndDate)
+						}
 					}
+				}
+
+				// Привязываем объекты к договору, если они указаны
+				log.Printf("🔍 Проверка привязки объектов: len(data.ObjectIDs)=%d, data.ObjectIDs=%v", len(data.ObjectIDs), data.ObjectIDs)
+				if len(data.ObjectIDs) > 0 {
+					log.Printf("🔗 Привязываем объекты %v к договору %d через подписку", data.ObjectIDs, contract.ID)
+					
+					// Убеждаемся, что таблица contract_objects существует
+					if err := ensureContractObjectsTable(tenantDB); err != nil {
+						log.Printf("⚠️ Не удалось создать таблицу contract_objects: %v", err)
+					} else {
+						// Определяем targetAccountID для привязки объектов
+						var targetAccountID uint
+						if data.AccountID != nil && *data.AccountID > 0 {
+							targetAccountID = *data.AccountID
+							log.Printf("ℹ️ AccountID %d указан для привязки объектов из Axenta Cloud", targetAccountID)
+						} else {
+							// Если account_id не указан, используем company_id договора (fallback)
+							targetAccountID = contract.CompanyID
+							log.Printf("⚠️ AccountID не указан, используем CompanyID договора: %d", targetAccountID)
+						}
+
+						// Получаем информацию о компании для определения схемы
+						var company models.Company
+						publicDB := database.DB.Session(&gorm.Session{})
+						if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
+							log.Printf("⚠️ Не удалось переключиться на схему public: %v", err)
+						}
+						
+						if err := publicDB.First(&company, targetAccountID).Error; err != nil {
+							log.Printf("⚠️ Компания с ID %d не найдена: %v", targetAccountID, err)
+						}
+
+						// Получаем токен из заголовка Authorization для запроса к Axenta Cloud API
+						authHeader := c.GetHeader("Authorization")
+						var userToken string
+						if authHeader != "" {
+							if strings.HasPrefix(authHeader, "Token ") {
+								userToken = strings.TrimPrefix(authHeader, "Token ")
+							} else if strings.HasPrefix(authHeader, "Bearer ") {
+								userToken = strings.TrimPrefix(authHeader, "Bearer ")
+							} else {
+								userToken = authHeader
+							}
+						}
+
+						// Получаем объекты из Axenta Cloud API для проверки их существования (если токен есть)
+						var axentaObjects []axentaCloudObjectForContract
+						if userToken != "" {
+							axentaObjects, err = fetchObjectsFromAxentaCloud(userToken, int(targetAccountID), data.ObjectIDs)
+							if err != nil {
+								log.Printf("⚠️ Ошибка получения объектов из Axenta Cloud API для account_id %d: %v", targetAccountID, err)
+								log.Printf("ℹ️ Продолжаем привязку объектов без проверки через API")
+							} else {
+								log.Printf("✅ Получено %d объектов из Axenta Cloud API для account_id %d", len(axentaObjects), targetAccountID)
+							}
+						}
+
+						// Используем даты из подписки для привязки объектов
+						objStartDate := startDate
+						var objEndDate *time.Time = endDate
+
+						// Если у договора есть даты, используем их
+						if contract.StartDate != nil {
+							objStartDate = *contract.StartDate
+						}
+						if contract.EndDate != nil {
+							objEndDate = contract.EndDate
+						}
+
+						attachedCount := int64(0)
+						var objectErrors []string
+
+						// Создаем записи в junction table для каждого объекта
+						for _, objectID := range data.ObjectIDs {
+							// Проверяем, существует ли объект в Axenta Cloud (если удалось получить список)
+							if len(axentaObjects) > 0 {
+								objectExists := false
+								for _, axentaObj := range axentaObjects {
+									if axentaObj.ID == int(objectID) {
+										objectExists = true
+										break
+									}
+								}
+								if !objectExists {
+									log.Printf("⚠️ Объект %d не найден в Axenta Cloud для account_id %d, пропускаем", objectID, targetAccountID)
+									objectErrors = append(objectErrors, fmt.Sprintf("Объект %d не найден в Axenta Cloud", objectID))
+									continue
+								}
+							}
+
+							// Проверяем, не существует ли уже такая связь с этим договором
+							var existingSameContract models.ContractObject
+							if err := tenantDB.Where("contract_id = ? AND object_id = ? AND object_company_id = ?", 
+								contract.ID, objectID, targetAccountID).First(&existingSameContract).Error; err == nil {
+								log.Printf("ℹ️ Связь между договором %d и объектом %d уже существует, пропускаем", contract.ID, objectID)
+								attachedCount++
+								continue
+							}
+
+							// Создаем связь в junction table
+							contractObject := models.ContractObject{
+								ContractID:      contract.ID,
+								ObjectID:        objectID,
+								ObjectCompanyID: targetAccountID,
+								ObjectSchema:    company.DatabaseSchema,
+								Status:          "active",
+								StartDate:       objStartDate,
+								EndDate:         objEndDate,
+							}
+
+							if err := tenantDB.Create(&contractObject).Error; err != nil {
+								log.Printf("⚠️ Ошибка создания связи для объекта %d: %v", objectID, err)
+								objectErrors = append(objectErrors, fmt.Sprintf("Ошибка привязки объекта %d: %v", objectID, err))
+							} else {
+								attachedCount++
+								log.Printf("✅ Создана связь: договор %d <-> объект %d (account_id %d, схема %s)", contract.ID, objectID, targetAccountID, company.DatabaseSchema)
+							}
+						}
+
+						// Логируем результаты привязки
+						if len(objectErrors) > 0 {
+							log.Printf("⚠️ При привязке объектов к договору %d возникло %d ошибок", contract.ID, len(objectErrors))
+						}
+						if attachedCount != int64(len(data.ObjectIDs)) {
+							log.Printf("⚠️ Не все объекты привязаны: ожидалось %d, создано %d", len(data.ObjectIDs), attachedCount)
+						} else {
+							log.Printf("✅ Привязано %d объектов к договору %d через подписку", attachedCount, contract.ID)
+						}
+						
+						// Пересчитываем сумму договора на основе количества объектов и тарифного плана
+						if attachedCount > 0 && contract.TariffPlanID != nil && *contract.TariffPlanID > 0 {
+							// Загружаем тарифный план
+							if err := publicDB.Exec("SET search_path TO public").Error; err == nil {
+								var billingPlan models.BillingPlan
+								if err := publicDB.
+									Where("id = ? AND admin_account_id = ?", *contract.TariffPlanID, adminAccountID).
+									First(&billingPlan).Error; err == nil {
+									// Подсчитываем количество активных объектов
+									var objectsCount int64
+									if err := tenantDB.Model(&models.ContractObject{}).
+										Where("contract_id = ? AND status = ?", contract.ID, "active").
+										Count(&objectsCount).Error; err == nil {
+										// Рассчитываем сумму: количество объектов × цена тарифа за месяц × количество месяцев
+										months := 1 // По умолчанию 1 месяц
+										if contract.StartDate != nil && contract.EndDate != nil {
+											duration := contract.EndDate.Sub(*contract.StartDate)
+											days := int(duration.Hours() / 24)
+											if days > 0 {
+												months = days / 30
+												if months == 0 {
+													months = 1
+												}
+											}
+										}
+										
+										// Рассчитываем total_amount
+										pricePerMonth := billingPlan.Price
+										totalAmount := pricePerMonth.Mul(decimal.NewFromInt(int64(objectsCount))).Mul(decimal.NewFromInt(int64(months)))
+										
+										// Обновляем total_amount договора
+										contract.TotalAmount = totalAmount
+										if err := tenantDB.Save(&contract).Error; err != nil {
+											log.Printf("⚠️ Ошибка обновления total_amount договора %d: %v", contract.ID, err)
+										} else {
+											log.Printf("✅ Обновлена сумма договора %d: %s (объектов: %d, месяцев: %d, цена/мес: %s)",
+												contract.ID, totalAmount.String(), objectsCount, months, pricePerMonth.String())
+										}
+									}
+								}
+							}
+						}
+					}
+				} else {
+					log.Printf("ℹ️ Объекты не указаны в подписке, пропускаем привязку")
 				}
 			} else {
 				log.Printf("⚠️ Не удалось найти договор %d для обновления статуса: %v", *data.ContractID, err)
 			}
 		}
+	} else if len(data.ObjectIDs) > 0 {
+		log.Printf("⚠️ Объекты указаны (%v), но contract_id не указан. Объекты не могут быть привязаны без договора", data.ObjectIDs)
 	}
 
 	// Загружаем связанные данные для ответа (используем ту же сессию с установленным search_path)
@@ -1754,6 +2078,8 @@ func GetBillingSettings(c *gin.Context) {
 				InvoicePaymentTermDays:     14,
 				DefaultTaxRate:             decimal.NewFromFloat(20),
 				TaxIncluded:                false,
+				VATRatePreset:              "russia",
+				VATRateCustom:              decimal.NewFromFloat(20),
 				NotifyBeforeInvoice:        3,
 				NotifyBeforeDue:            3,
 				NotifyOverdue:              1,
@@ -1814,6 +2140,24 @@ func GetBillingSettings(c *gin.Context) {
 				"error":  fmt.Sprintf("Ошибка получения настроек биллинга: %v", err),
 			})
 			return
+		}
+	}
+
+	// Вычисляем DefaultTaxRate на основе пресета
+	switch settings.VATRatePreset {
+	case "russia":
+		settings.DefaultTaxRate = decimal.NewFromFloat(20)
+	case "kazakhstan":
+		settings.DefaultTaxRate = decimal.NewFromFloat(12)
+	case "none":
+		settings.DefaultTaxRate = decimal.NewFromFloat(0)
+	case "custom":
+		settings.DefaultTaxRate = settings.VATRateCustom
+	default:
+		// Если пресет не установлен или неизвестен, используем существующий DefaultTaxRate или 20%
+		if settings.VATRatePreset == "" {
+			settings.VATRatePreset = "russia"
+			settings.DefaultTaxRate = decimal.NewFromFloat(20)
 		}
 	}
 
@@ -1898,6 +2242,20 @@ func UpdateBillingSettings(c *gin.Context) {
 			"error":  "Срок оплаты должен быть больше 0 дней",
 		})
 		return
+	}
+
+	// Вычисляем DefaultTaxRate на основе пресета перед обновлением
+	if updateData.VATRatePreset != "" {
+		switch updateData.VATRatePreset {
+		case "russia":
+			updateData.DefaultTaxRate = decimal.NewFromFloat(20)
+		case "kazakhstan":
+			updateData.DefaultTaxRate = decimal.NewFromFloat(12)
+		case "none":
+			updateData.DefaultTaxRate = decimal.NewFromFloat(0)
+		case "custom":
+			updateData.DefaultTaxRate = updateData.VATRateCustom
+		}
 	}
 
 	updateData.AdminAccountID = 0
