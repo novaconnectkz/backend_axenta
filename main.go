@@ -814,6 +814,11 @@ func main() {
 	apiGroup.GET("/billing/invoices/:id", api.GetInvoice)
 	apiGroup.POST("/billing/invoices/:id/payment", api.ProcessPayment)
 	apiGroup.POST("/billing/invoices/:id/cancel", api.CancelInvoice)
+	apiGroup.DELETE("/billing/invoices/:id", api.DeleteInvoice)
+	apiGroup.GET("/billing/invoice-numerators", api.GetInvoiceNumerators)
+	apiGroup.POST("/billing/invoice-numerators", api.CreateInvoiceNumerator)
+	apiGroup.PUT("/billing/invoice-numerators/:id", api.UpdateInvoiceNumerator)
+	apiGroup.DELETE("/billing/invoice-numerators/:id", api.DeleteInvoiceNumerator)
 
 	// Эндпоинты согласно roadmap (Этап 4.4)
 	apiGroup.POST("/invoices/run", api.RunInvoicesGeneration) // POST /api/invoices/run

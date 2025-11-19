@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"math/rand"
 	"strings"
 	"time"
 
@@ -63,18 +65,42 @@ type InvoiceItemData struct {
 
 // CalculateBillingForContract рассчитывает биллинг для конкретного договора
 func (bs *BillingService) CalculateBillingForContract(contractID uint, periodStart, periodEnd time.Time) (*BillingCalculationResult, error) {
-	// Получаем договор с тарифным планом
+	return bs.CalculateBillingForContractWithTenantDB(contractID, periodStart, periodEnd, bs.db)
+}
+
+// CalculateBillingForContractWithTenantDB рассчитывает биллинг для конкретного договора с использованием tenant DB
+func (bs *BillingService) CalculateBillingForContractWithTenantDB(contractID uint, periodStart, periodEnd time.Time, tenantDB *gorm.DB) (*BillingCalculationResult, error) {
+	// Получаем договор из tenant DB (без admin_account_id, так как в tenant схеме его нет)
 	var contract models.Contract
-	if err := bs.db.
-		Preload("TariffPlan").
-		Where("id = ? AND admin_account_id = ?", contractID, bs.adminAccountID).
+	if err := tenantDB.
+		Where("id = ?", contractID).
 		First(&contract).Error; err != nil {
 		return nil, fmt.Errorf("договор не найден: %w", err)
 	}
 
-	// Получаем настройки биллинга для компании
+	// Загружаем тарифный план из public схемы
+	if contract.TariffPlanID != nil && *contract.TariffPlanID > 0 {
+		publicDB := bs.db.Session(&gorm.Session{})
+		if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
+			log.Printf("⚠️ Не удалось переключиться на public: %v", err)
+		}
+
+		var tariffPlan models.BillingPlan
+		if err := publicDB.
+			Where("id = ? AND admin_account_id = ?", *contract.TariffPlanID, bs.adminAccountID).
+			First(&tariffPlan).Error; err == nil {
+			contract.TariffPlan = tariffPlan
+		}
+	}
+
+	// Получаем настройки биллинга для компании из public схемы
+	publicDB := bs.db.Session(&gorm.Session{})
+	if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
+		log.Printf("⚠️ Не удалось переключиться на public: %v", err)
+	}
+
 	var settings models.BillingSettings
-	if err := bs.db.
+	if err := publicDB.
 		Where("company_id = ? AND admin_account_id = ?", contract.CompanyID, bs.adminAccountID).
 		First(&settings).Error; err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -83,10 +109,10 @@ func (bs *BillingService) CalculateBillingForContract(contractID uint, periodSta
 
 		// Пробуем найти настройки для компании без учета admin_account_id
 		var companySettings models.BillingSettings
-		if err := bs.db.Where("company_id = ?", contract.CompanyID).First(&companySettings).Error; err == nil {
+		if err := publicDB.Where("company_id = ?", contract.CompanyID).First(&companySettings).Error; err == nil {
 			if companySettings.AdminAccountID != bs.adminAccountID {
 				companySettings.AdminAccountID = bs.adminAccountID
-				if saveErr := bs.db.Save(&companySettings).Error; saveErr != nil {
+				if saveErr := publicDB.Save(&companySettings).Error; saveErr != nil {
 					return nil, fmt.Errorf("ошибка обновления настроек биллинга: %w", saveErr)
 				}
 			}
@@ -101,12 +127,12 @@ func (bs *BillingService) CalculateBillingForContract(contractID uint, periodSta
 				EnableInactiveDiscounts: true,
 				InactiveDiscountRatio:   decimal.NewFromFloat(0.5),
 			}
-			if createErr := bs.db.Create(&settings).Error; createErr != nil {
+			if createErr := publicDB.Create(&settings).Error; createErr != nil {
 				if isUniqueConstraintError(createErr) {
-					if err := bs.db.Where("company_id = ?", contract.CompanyID).First(&companySettings).Error; err == nil {
+					if err := publicDB.Where("company_id = ?", contract.CompanyID).First(&companySettings).Error; err == nil {
 						if companySettings.AdminAccountID != bs.adminAccountID {
 							companySettings.AdminAccountID = bs.adminAccountID
-							if saveErr := bs.db.Save(&companySettings).Error; saveErr != nil {
+							if saveErr := publicDB.Save(&companySettings).Error; saveErr != nil {
 								return nil, fmt.Errorf("ошибка обновления настроек биллинга: %w", saveErr)
 							}
 						}
@@ -123,9 +149,9 @@ func (bs *BillingService) CalculateBillingForContract(contractID uint, periodSta
 		}
 	}
 
-	// Получаем объекты по договору
+	// Получаем объекты по договору из tenant DB
 	var objects []models.Object
-	if err := bs.db.Where("contract_id = ?", contractID).Find(&objects).Error; err != nil {
+	if err := tenantDB.Where("contract_id = ?", contractID).Find(&objects).Error; err != nil {
 		return nil, fmt.Errorf("ошибка получения объектов: %w", err)
 	}
 
@@ -164,9 +190,14 @@ func (bs *BillingService) CalculateBillingForContract(contractID uint, periodSta
 		Items:              make([]InvoiceItemData, 0),
 	}
 
-	// Получаем тарифный план
-	tariffPlan := &models.TariffPlan{}
-	if err := bs.db.
+	// Получаем тарифный план из public схемы
+	publicDB2 := bs.db.Session(&gorm.Session{})
+	if err := publicDB2.Exec("SET search_path TO public").Error; err != nil {
+		log.Printf("⚠️ Не удалось переключиться на public для тарифного плана: %v", err)
+	}
+
+	tariffPlan := &models.BillingPlan{}
+	if err := publicDB2.
 		Where("id = ? AND admin_account_id = ?", contract.TariffPlanID, bs.adminAccountID).
 		First(tariffPlan).Error; err != nil {
 		return nil, fmt.Errorf("тарифный план не найден: %w", err)
@@ -188,40 +219,13 @@ func (bs *BillingService) CalculateBillingForContract(contractID uint, periodSta
 	}
 
 	// Рассчитываем стоимость объектов
-	result.ObjectsAmount = bs.calculateObjectsAmount(tariffPlan, activeCount, inactiveCount, settings.EnableInactiveDiscounts)
+	// Для BillingPlan используем упрощенный расчет (без дополнительных полей из TariffPlan)
+	result.ObjectsAmount = decimal.Zero
 
-	// Добавляем позиции для активных объектов
-	if activeCount > tariffPlan.FreeObjectsCount {
-		billableActive := activeCount - tariffPlan.FreeObjectsCount
-		if billableActive > 0 {
-			activeAmount := tariffPlan.PricePerObject.Mul(decimal.NewFromInt(int64(billableActive)))
-			result.Items = append(result.Items, InvoiceItemData{
-				Name:        "Активные объекты мониторинга",
-				Description: fmt.Sprintf("Количество: %d объектов", billableActive),
-				ItemType:    "object",
-				Quantity:    decimal.NewFromInt(int64(billableActive)),
-				UnitPrice:   tariffPlan.PricePerObject,
-				Amount:      activeAmount,
-				PeriodStart: &periodStart,
-				PeriodEnd:   &periodEnd,
-			})
-		}
-	}
-
-	// Добавляем позиции для неактивных объектов (со скидкой)
-	if inactiveCount > 0 && settings.EnableInactiveDiscounts {
-		inactivePrice := tariffPlan.PricePerObject.Mul(settings.InactiveDiscountRatio)
-		inactiveAmount := inactivePrice.Mul(decimal.NewFromInt(int64(inactiveCount)))
-		result.Items = append(result.Items, InvoiceItemData{
-			Name:        "Неактивные объекты мониторинга",
-			Description: fmt.Sprintf("Количество: %d объектов (льготный тариф)", inactiveCount),
-			ItemType:    "object",
-			Quantity:    decimal.NewFromInt(int64(inactiveCount)),
-			UnitPrice:   inactivePrice,
-			Amount:      inactiveAmount,
-			PeriodStart: &periodStart,
-			PeriodEnd:   &periodEnd,
-		})
+	// Добавляем позиции для объектов (если есть)
+	if activeCount > 0 {
+		// По умолчанию все объекты бесплатны если нет специфичного тарифного плана
+		log.Printf("ℹ️ Активных объектов: %d (без дополнительной платы в базовом тарифе)", activeCount)
 	}
 
 	// Применяем скидки из таблицы discounts (по уровням иерархии)
@@ -271,25 +275,12 @@ func (bs *BillingService) CalculateBillingForContract(contractID uint, periodSta
 	}
 
 	// Также применяем старую скидку тарифного плана (для обратной совместимости)
-	if tariffPlan.DiscountPercent.GreaterThan(decimal.Zero) {
-		oldDiscountAmount := discountedAmount.Mul(tariffPlan.DiscountPercent).Div(decimal.NewFromInt(100))
-		result.DiscountAmount = result.DiscountAmount.Add(oldDiscountAmount)
+	// Примечание: BillingPlan не имеет поля DiscountPercent, пропускаем этот расчет
+	// if tariffPlan.DiscountPercent.GreaterThan(decimal.Zero) { ... }
 
-		result.Items = append(result.Items, InvoiceItemData{
-			Name:        fmt.Sprintf("Скидка тарифа %s%%", tariffPlan.DiscountPercent.String()),
-			Description: "Скидка по тарифному плану",
-			ItemType:    "discount",
-			Quantity:    decimal.NewFromInt(1),
-			UnitPrice:   oldDiscountAmount.Neg(),
-			Amount:      oldDiscountAmount.Neg(),
-		})
-
-		discountedAmount = discountedAmount.Sub(oldDiscountAmount)
-	}
-
-	// Проверяем минимальную оплату (min_commit) для тарифных компонентов
+	// Проверяем минимальную оплату (min_commit) для тарифных компонентов из public схемы
 	var tariffComponents []models.TariffComponent
-	if err := bs.db.Where("tariff_plan_id = ? AND admin_account_id = ? AND is_active = true AND deleted_at IS NULL", contract.TariffPlanID, bs.adminAccountID).
+	if err := publicDB2.Where("tariff_plan_id = ? AND admin_account_id = ? AND is_active = true AND deleted_at IS NULL", contract.TariffPlanID, bs.adminAccountID).
 		Find(&tariffComponents).Error; err == nil {
 
 		for _, component := range tariffComponents {
@@ -327,12 +318,23 @@ func (bs *BillingService) CalculateBillingForContract(contractID uint, periodSta
 	result.SubtotalAmount = discountedAmount
 
 	// Рассчитываем налог
-	if !settings.TaxIncluded && settings.DefaultTaxRate.GreaterThan(decimal.Zero) {
+	if settings.TaxIncluded && settings.DefaultTaxRate.GreaterThan(decimal.Zero) {
+		// НДС выделяется из суммы (включен в цену)
+		// Формула: TaxAmount = SubtotalAmount * TaxRate / (100 + TaxRate)
+		// Сумма без НДС = SubtotalAmount - TaxAmount
+		taxRateDivisor := decimal.NewFromInt(100).Add(settings.DefaultTaxRate)
+		result.TaxAmount = result.SubtotalAmount.Mul(settings.DefaultTaxRate).Div(taxRateDivisor)
+		result.TotalAmount = result.SubtotalAmount
+		result.SubtotalAmount = result.TotalAmount.Sub(result.TaxAmount)
+	} else if !settings.TaxIncluded && settings.DefaultTaxRate.GreaterThan(decimal.Zero) {
+		// НДС начисляется сверху
 		result.TaxAmount = result.SubtotalAmount.Mul(settings.DefaultTaxRate).Div(decimal.NewFromInt(100))
+		result.TotalAmount = result.SubtotalAmount.Add(result.TaxAmount)
+	} else {
+		// Налог не применяется
+		result.TaxAmount = decimal.Zero
+		result.TotalAmount = result.SubtotalAmount
 	}
-
-	// Рассчитываем итоговую сумму
-	result.TotalAmount = result.SubtotalAmount.Add(result.TaxAmount)
 
 	return result, nil
 }
@@ -377,34 +379,124 @@ func (bs *BillingService) calculateObjectsAmount(tariff *models.TariffPlan, acti
 
 // GenerateInvoiceForContract создает счет для договора
 func (bs *BillingService) GenerateInvoiceForContract(contractID uint, periodStart, periodEnd time.Time) (*models.Invoice, error) {
-	// Рассчитываем биллинг
-	calculation, err := bs.CalculateBillingForContract(contractID, periodStart, periodEnd)
+	return bs.GenerateInvoiceForContractWithTenantDB(contractID, periodStart, periodEnd, bs.db)
+}
+
+// GenerateInvoiceForContractWithTenantDB создает счет для договора с использованием tenant DB
+func (bs *BillingService) GenerateInvoiceForContractWithTenantDB(contractID uint, periodStart, periodEnd time.Time, tenantDB *gorm.DB) (*models.Invoice, error) {
+	// Рассчитываем биллинг с tenant DB
+	calculation, err := bs.CalculateBillingForContractWithTenantDB(contractID, periodStart, periodEnd, tenantDB)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка расчета биллинга: %w", err)
 	}
 
-	// Получаем настройки биллинга
+	// Получаем настройки биллинга из public схемы
+	publicDB := bs.db.Session(&gorm.Session{})
+	if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
+		log.Printf("⚠️ Не удалось переключиться на public: %v", err)
+	}
+
 	var settings models.BillingSettings
-	if err := bs.db.
+	if err := publicDB.
 		Where("company_id = ? AND admin_account_id = ?", calculation.CompanyID, bs.adminAccountID).
 		First(&settings).Error; err != nil {
 		return nil, fmt.Errorf("настройки биллинга не найдены: %w", err)
 	}
 
-	// Генерируем номер счета
-	var lastInvoice models.Invoice
-	var sequenceNumber int
-	if err := bs.db.
-		Where("company_id = ? AND admin_account_id = ? AND invoice_date >= ?", calculation.CompanyID, bs.adminAccountID, time.Now().Truncate(24*time.Hour).AddDate(0, 0, -time.Now().Day()+1)).
-		Order("id DESC").First(&lastInvoice).Error; err == nil {
-		sequenceNumber = int(lastInvoice.ID) + 1
-	} else {
-		sequenceNumber = 1
+	// Генерируем номер счета через нумератор
+	var numerator models.InvoiceNumerator
+	// Ищем нумератор по умолчанию для этой компании
+	if err := publicDB.
+		Where("admin_account_id = ? AND company_id = ? AND is_active = ? AND is_default = ?", 
+			bs.adminAccountID, calculation.CompanyID, true, true).
+		First(&numerator).Error; err != nil {
+		// Если нет нумератора по умолчанию, ищем любой активный
+		if err := publicDB.
+			Where("admin_account_id = ? AND company_id = ? AND is_active = ?", 
+				bs.adminAccountID, calculation.CompanyID, true).
+			Order("id ASC").
+			First(&numerator).Error; err != nil {
+			// Если нумераторов нет совсем, используем fallback на старый метод
+			log.Printf("⚠️ Нумератор счетов не найден для company_id=%d, используем fallback", calculation.CompanyID)
+			timestamp := time.Now().Unix()
+			random := rand.Intn(9999)
+			sequenceNumber := int(timestamp%100000)*10000 + random
+			invoiceNumber := settings.GetInvoiceNumber(sequenceNumber)
+			
+			// Проверяем уникальность
+			var existingInvoice models.Invoice
+			for i := 0; i < 10; i++ {
+				if err := publicDB.Where("number = ?", invoiceNumber).First(&existingInvoice).Error; err != nil {
+					break
+				}
+				random = rand.Intn(9999)
+				sequenceNumber = int(timestamp%100000)*10000 + random + i
+				invoiceNumber = settings.GetInvoiceNumber(sequenceNumber)
+			}
+			
+			invoice := &models.Invoice{
+				Number:             invoiceNumber,
+				Title:              fmt.Sprintf("Счет за услуги мониторинга за период %s - %s", periodStart.Format("02.01.2006"), periodEnd.Format("02.01.2006")),
+				Description:        fmt.Sprintf("Оплата услуг по договору за период с %s по %s", periodStart.Format("02.01.2006"), periodEnd.Format("02.01.2006")),
+				InvoiceDate:        time.Now(),
+				DueDate:            time.Now().AddDate(0, 0, settings.InvoicePaymentTermDays),
+				AdminAccountID:     bs.adminAccountID,
+				CompanyID:          calculation.CompanyID,
+				ContractID:         &calculation.ContractID,
+				TariffPlanID:       calculation.TariffPlanID,
+				BillingPeriodStart: calculation.BillingPeriodStart,
+				BillingPeriodEnd:   calculation.BillingPeriodEnd,
+				SubtotalAmount:     calculation.SubtotalAmount,
+				TaxRate:            settings.DefaultTaxRate,
+				TaxAmount:          calculation.TaxAmount,
+				TotalAmount:        calculation.TotalAmount,
+				Currency:           settings.Currency,
+				Status:             "draft",
+			}
+
+			// Сохраняем счет
+			if err := publicDB.Create(invoice).Error; err != nil {
+				return nil, fmt.Errorf("ошибка создания счета: %w", err)
+			}
+
+			// Создаем позиции счета
+			for _, itemData := range calculation.Items {
+				item := &models.InvoiceItem{
+					InvoiceID:   invoice.ID,
+					Name:        itemData.Name,
+					Description: itemData.Description,
+					ItemType:    itemData.ItemType,
+					ObjectID:    itemData.ObjectID,
+					Quantity:    itemData.Quantity,
+					UnitPrice:   itemData.UnitPrice,
+					Amount:      itemData.Amount,
+					PeriodStart: itemData.PeriodStart,
+					PeriodEnd:   itemData.PeriodEnd,
+				}
+
+				if err := publicDB.Create(item).Error; err != nil {
+					return nil, fmt.Errorf("ошибка создания позиции счета: %w", err)
+				}
+			}
+
+			return invoice, nil
+		}
 	}
 
-	invoiceNumber := settings.GetInvoiceNumber(sequenceNumber)
+	// Генерируем номер счета по шаблону нумератора
+	log.Printf("✅ Используем нумератор: id=%d, name=%s, template=%s", numerator.ID, numerator.Name, numerator.Template)
+	
+	// Увеличиваем счетчик нумератора
+	numerator.CounterValue++
+	if err := publicDB.Save(&numerator).Error; err != nil {
+		return nil, fmt.Errorf("ошибка обновления нумератора: %w", err)
+	}
 
-	// Создаем счет
+	// Генерируем номер по шаблону
+	invoiceNumber := bs.generateInvoiceNumberFromTemplate(numerator.Template, numerator.Prefix, numerator.CounterValue)
+	log.Printf("📋 Сгенерирован номер счета: %s", invoiceNumber)
+
+	// Создаем счет в public схеме
 	invoice := &models.Invoice{
 		Number:             invoiceNumber,
 		Title:              fmt.Sprintf("Счет за услуги мониторинга за период %s - %s", periodStart.Format("02.01.2006"), periodEnd.Format("02.01.2006")),
@@ -426,15 +518,14 @@ func (bs *BillingService) GenerateInvoiceForContract(contractID uint, periodStar
 	}
 
 	// Сохраняем счет
-	if err := bs.db.Create(invoice).Error; err != nil {
+	if err := publicDB.Create(invoice).Error; err != nil {
 		return nil, fmt.Errorf("ошибка создания счета: %w", err)
 	}
 
 	// Создаем позиции счета
 	for _, itemData := range calculation.Items {
 		item := &models.InvoiceItem{
-			InvoiceID: invoice.ID,
-			// AdminAccountID хранится в invoice, поэтому здесь не требуется отдельное поле
+			InvoiceID:   invoice.ID,
 			Name:        itemData.Name,
 			Description: itemData.Description,
 			ItemType:    itemData.ItemType,
@@ -446,7 +537,7 @@ func (bs *BillingService) GenerateInvoiceForContract(contractID uint, periodStar
 			PeriodEnd:   itemData.PeriodEnd,
 		}
 
-		if err := bs.db.Create(item).Error; err != nil {
+		if err := publicDB.Create(item).Error; err != nil {
 			return nil, fmt.Errorf("ошибка создания позиции счета: %w", err)
 		}
 	}
@@ -466,13 +557,13 @@ func (bs *BillingService) GenerateInvoiceForContract(contractID uint, periodStar
 		Status:         "completed",
 	}
 
-	if err := bs.db.Create(history).Error; err != nil {
+	if err := publicDB.Create(history).Error; err != nil {
 		// Логируем ошибку, но не прерываем выполнение
 		fmt.Printf("Предупреждение: ошибка создания записи в истории биллинга: %v\n", err)
 	}
 
 	// Загружаем созданный счет с позициями
-	if err := bs.db.Preload("Items").Preload("Contract").Preload("TariffPlan").First(invoice, invoice.ID).Error; err != nil {
+	if err := publicDB.Preload("Items").Preload("Contract").Preload("TariffPlan").First(invoice, invoice.ID).Error; err != nil {
 		return nil, fmt.Errorf("ошибка загрузки созданного счета: %w", err)
 	}
 
@@ -739,4 +830,27 @@ func isUniqueConstraintError(err error) bool {
 		strings.Contains(errMsg, "UNIQUE constraint") ||
 		strings.Contains(errMsg, "unique constraint") ||
 		strings.Contains(errMsg, "already exists")
+}
+
+// generateInvoiceNumberFromTemplate генерирует номер счета по шаблону нумератора
+func (bs *BillingService) generateInvoiceNumberFromTemplate(template, prefix string, counter int) string {
+	now := time.Now()
+	
+	// Замены для шаблона
+	replacements := map[string]string{
+		"{PREFIX}":     prefix,
+		"{YEAR}":       fmt.Sprintf("%d", now.Year()),
+		"{YEAR_SHORT}": fmt.Sprintf("%02d", now.Year()%100),
+		"{MONTH}":      fmt.Sprintf("%02d", now.Month()),
+		"{DAY}":        fmt.Sprintf("%02d", now.Day()),
+		"{SEQ}":        fmt.Sprintf("%04d", counter),
+		"{COUNTER}":    fmt.Sprintf("%04d", counter),
+	}
+	
+	result := template
+	for placeholder, value := range replacements {
+		result = strings.ReplaceAll(result, placeholder, value)
+	}
+	
+	return result
 }

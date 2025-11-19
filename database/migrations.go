@@ -803,6 +803,7 @@ func CreateMissingGlobalTables() error {
 	globalModels := []interface{}{
 		&models.BillingSettings{},
 		&models.ContractNumerator{},
+		&models.InvoiceNumerator{},
 		&models.InvoiceItem{},
 		&models.Invoice{},
 		&models.BillingHistory{},

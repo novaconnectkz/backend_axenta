@@ -217,3 +217,38 @@ func (bs *BillingSettings) GetInvoiceNumber(sequenceNumber int) string {
 	// Формат: PREFIX-YYYY-MM-NNNN
 	return fmt.Sprintf("%s-%d-%02d-%04d", bs.InvoiceNumberPrefix, year, month, sequenceNumber)
 }
+
+// InvoiceNumerator представляет нумератор счетов в системе
+type InvoiceNumerator struct {
+	ID        uint           `json:"id" gorm:"primarykey"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
+
+	// Связь с администратором и компанией
+	AdminAccountID uint `json:"admin_account_id" gorm:"not null;index"`
+	CompanyID      uint `json:"company_id" gorm:"not null;index"`
+
+	// Основные поля нумератора
+	Name        string `json:"name" gorm:"not null;type:varchar(100)"`     // Название нумератора
+	Prefix      string `json:"prefix" gorm:"not null;type:varchar(10)"`    // Префикс (например "INV")
+	Template    string `json:"template" gorm:"not null;type:varchar(200)"` // Шаблон номера (например "{PREFIX}-{YEAR}-{MONTH}-{SEQ}")
+	Description string `json:"description" gorm:"type:text"`               // Описание нумератора
+
+	// Счетчик для последовательных номеров
+	CounterValue int `json:"counter_value" gorm:"default:0"` // Текущее значение счетчика
+
+	// Настройки
+	IsDefault   bool   `json:"is_default" gorm:"default:false"`      // Нумератор по умолчанию
+	IsActive    bool   `json:"is_active" gorm:"default:true"`        // Активен ли нумератор
+	AutoReset   bool   `json:"auto_reset" gorm:"default:false"`      // Автоматически сбрасывать счетчик
+	ResetPeriod string `json:"reset_period" gorm:"type:varchar(20)"` // Период сброса: yearly, monthly, never
+
+	// Дополнительные поля
+	Notes string `json:"notes" gorm:"type:text"`
+}
+
+// TableName задает имя таблицы для модели InvoiceNumerator
+func (InvoiceNumerator) TableName() string {
+	return "invoice_numerators"
+}

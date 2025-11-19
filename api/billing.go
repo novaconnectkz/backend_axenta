@@ -1436,6 +1436,8 @@ func GenerateInvoice(c *gin.Context) {
 		return
 	}
 
+	log.Printf("📥 GenerateInvoice: contract_id=%d, admin_account_id=%d", contractID, adminAccountID)
+
 	// Получаем параметры из тела запроса
 	var requestData struct {
 		PeriodStart string `json:"period_start"`
@@ -1443,6 +1445,7 @@ func GenerateInvoice(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&requestData); err != nil {
+		log.Printf("❌ Ошибка парсинга JSON: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
 			"error":  "Неверный формат данных",
@@ -1450,11 +1453,14 @@ func GenerateInvoice(c *gin.Context) {
 		return
 	}
 
+	log.Printf("📅 Получены даты: period_start=%s, period_end=%s", requestData.PeriodStart, requestData.PeriodEnd)
+
 	var periodStart, periodEnd time.Time
 
 	if requestData.PeriodStart != "" && requestData.PeriodEnd != "" {
 		periodStart, err = time.Parse("2006-01-02", requestData.PeriodStart)
 		if err != nil {
+			log.Printf("❌ Ошибка парсинга period_start: %v", err)
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "error",
 				"error":  "Неверный формат period_start (ожидается YYYY-MM-DD)",
@@ -1464,6 +1470,7 @@ func GenerateInvoice(c *gin.Context) {
 
 		periodEnd, err = time.Parse("2006-01-02", requestData.PeriodEnd)
 		if err != nil {
+			log.Printf("❌ Ошибка парсинга period_end: %v", err)
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "error",
 				"error":  "Неверный формат period_end (ожидается YYYY-MM-DD)",
@@ -1475,20 +1482,34 @@ func GenerateInvoice(c *gin.Context) {
 		now := time.Now()
 		periodStart = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 		periodEnd = periodStart.AddDate(0, 1, -1)
+		log.Printf("⏰ Используются даты по умолчанию: %s - %s", periodStart.Format("2006-01-02"), periodEnd.Format("2006-01-02"))
+	}
+
+	log.Printf("✅ Период биллинга: %s - %s", periodStart.Format("2006-01-02"), periodEnd.Format("2006-01-02"))
+
+	// Получаем tenant DB для работы с договорами
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB == nil {
+		log.Printf("⚠️ Не удалось получить tenant DB из контекста, используем основную БД")
+		tenantDB = database.DB
 	}
 
 	// Создаем сервис биллинга
 	billingService := services.NewBillingService(adminAccountID)
 
 	// Генерируем счет
-	invoice, err := billingService.GenerateInvoiceForContract(uint(contractID), periodStart, periodEnd)
+	log.Printf("🔄 Генерация счета для договора %d...", contractID)
+	invoice, err := billingService.GenerateInvoiceForContractWithTenantDB(uint(contractID), periodStart, periodEnd, tenantDB)
 	if err != nil {
+		log.Printf("❌ Ошибка генерации счета: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  err.Error(),
 		})
 		return
 	}
+
+	log.Printf("✅ Счет успешно создан: %s", invoice.Number)
 
 	c.JSON(http.StatusCreated, gin.H{
 		"status": "success",
@@ -1610,13 +1631,9 @@ func GetInvoices(c *gin.Context) {
 
 	fmt.Printf("GetInvoices: найдено счетов: %d\n", total)
 
-	// Добавляем Preload только для основных записей (без Contract, так как он в tenant схеме)
-	// TariffPlan нужно загружать из billing_plans, но в модели Invoice используется TariffPlan
-	// Попробуем загрузить только Items, а TariffPlan попробуем через Join или отдельно
+	// Добавляем Preload только для Items (Contract и TariffPlan загружаем отдельно)
 	queryWithPreload := query.
-		Preload("Items").
-		Preload("Contract", "admin_account_id = ?", adminAccountID).
-		Preload("TariffPlan", "admin_account_id = ?", adminAccountID)
+		Preload("Items")
 
 	// Получаем счета с пагинацией
 	var invoices []models.Invoice
@@ -1876,6 +1893,86 @@ func CancelInvoice(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
 		"message": "Счет успешно отменен",
+	})
+}
+
+// DeleteInvoice удаляет счет
+func DeleteInvoice(c *gin.Context) {
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	id := c.Param("id")
+	invoiceID, err := strconv.ParseUint(id, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Неверный формат ID счета",
+		})
+		return
+	}
+
+	// Убеждаемся, что мы в схеме public для глобальных таблиц
+	if err := database.DB.Exec("SET search_path TO public").Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка подключения к базе данных",
+		})
+		return
+	}
+
+	// Получаем счет
+	var invoice models.Invoice
+	if err := database.DB.Where("id = ? AND admin_account_id = ?", invoiceID, adminAccountID).First(&invoice).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{
+				"status": "error",
+				"error":  "Счет не найден",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка при получении счета",
+		})
+		return
+	}
+
+	// Проверяем, можно ли удалить счет
+	if invoice.Status == "paid" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Нельзя удалить оплаченный счет",
+		})
+		return
+	}
+
+	// Удаляем сначала все позиции счета
+	if err := database.DB.Where("invoice_id = ?", invoiceID).Delete(&models.InvoiceItem{}).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка при удалении позиций счета",
+		})
+		return
+	}
+
+	// Удаляем сам счет
+	if err := database.DB.Delete(&invoice).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка при удалении счета",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Счет успешно удален",
 	})
 }
 
@@ -2664,5 +2761,303 @@ func GetInvoicesByPeriod(c *gin.Context) {
 		"status": "success",
 		"data":   invoices,
 		"count":  len(invoices),
+	})
+}
+
+// GetInvoiceNumerators получает список нумераторов счетов
+func GetInvoiceNumerators(c *gin.Context) {
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	companyIDStr := c.Query("company_id")
+	if companyIDStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Параметр company_id обязателен",
+		})
+		return
+	}
+
+	companyID, err := strconv.ParseUint(companyIDStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Неверный формат company_id",
+		})
+		return
+	}
+
+	// Убеждаемся, что мы в схеме public для глобальных таблиц
+	if err := database.DB.Exec("SET search_path TO public").Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка подключения к базе данных",
+		})
+		return
+	}
+
+	var numerators []models.InvoiceNumerator
+	if err := database.DB.
+		Where("admin_account_id = ? AND company_id = ?", adminAccountID, uint(companyID)).
+		Order("is_default DESC, name ASC").
+		Find(&numerators).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка при получении нумераторов",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data":   numerators,
+		"count":  len(numerators),
+	})
+}
+
+// CreateInvoiceNumerator создает новый нумератор счетов
+func CreateInvoiceNumerator(c *gin.Context) {
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	var input struct {
+		CompanyID   uint   `json:"company_id" binding:"required"`
+		Name        string `json:"name" binding:"required"`
+		Prefix      string `json:"prefix" binding:"required"`
+		Template    string `json:"template" binding:"required"`
+		Description string `json:"description"`
+		IsDefault   bool   `json:"is_default"`
+		IsActive    bool   `json:"is_active"`
+		AutoReset   bool   `json:"auto_reset"`
+		ResetPeriod string `json:"reset_period"`
+		Notes       string `json:"notes"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	// Убеждаемся, что мы в схеме public
+	if err := database.DB.Exec("SET search_path TO public").Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка подключения к базе данных",
+		})
+		return
+	}
+
+	// Если новый нумератор должен быть по умолчанию, снимаем флаг с других
+	if input.IsDefault {
+		database.DB.Model(&models.InvoiceNumerator{}).
+			Where("admin_account_id = ? AND company_id = ? AND is_default = ?", adminAccountID, input.CompanyID, true).
+			Update("is_default", false)
+	}
+
+	numerator := models.InvoiceNumerator{
+		AdminAccountID: adminAccountID,
+		CompanyID:      input.CompanyID,
+		Name:           input.Name,
+		Prefix:         input.Prefix,
+		Template:       input.Template,
+		Description:    input.Description,
+		IsDefault:      input.IsDefault,
+		IsActive:       input.IsActive,
+		AutoReset:      input.AutoReset,
+		ResetPeriod:    input.ResetPeriod,
+		Notes:          input.Notes,
+		CounterValue:   0,
+	}
+
+	if err := database.DB.Create(&numerator).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка при создании нумератора",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data":   numerator,
+	})
+}
+
+// UpdateInvoiceNumerator обновляет нумератор счетов
+func UpdateInvoiceNumerator(c *gin.Context) {
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	id := c.Param("id")
+	numeratorID, err := strconv.ParseUint(id, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Неверный формат ID",
+		})
+		return
+	}
+
+	var input struct {
+		Name        *string `json:"name"`
+		Prefix      *string `json:"prefix"`
+		Template    *string `json:"template"`
+		Description *string `json:"description"`
+		IsDefault   *bool   `json:"is_default"`
+		IsActive    *bool   `json:"is_active"`
+		AutoReset   *bool   `json:"auto_reset"`
+		ResetPeriod *string `json:"reset_period"`
+		Notes       *string `json:"notes"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	// Убеждаемся, что мы в схеме public
+	if err := database.DB.Exec("SET search_path TO public").Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка подключения к базе данных",
+		})
+		return
+	}
+
+	var numerator models.InvoiceNumerator
+	if err := database.DB.Where("id = ? AND admin_account_id = ?", uint(numeratorID), adminAccountID).First(&numerator).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"status": "error",
+			"error":  "Нумератор не найден",
+		})
+		return
+	}
+
+	// Если нумератор устанавливается как по умолчанию, снимаем флаг с других
+	if input.IsDefault != nil && *input.IsDefault {
+		database.DB.Model(&models.InvoiceNumerator{}).
+			Where("admin_account_id = ? AND company_id = ? AND id != ? AND is_default = ?", 
+				adminAccountID, numerator.CompanyID, uint(numeratorID), true).
+			Update("is_default", false)
+	}
+
+	// Обновляем поля
+	updates := make(map[string]interface{})
+	if input.Name != nil {
+		updates["name"] = *input.Name
+	}
+	if input.Prefix != nil {
+		updates["prefix"] = *input.Prefix
+	}
+	if input.Template != nil {
+		updates["template"] = *input.Template
+	}
+	if input.Description != nil {
+		updates["description"] = *input.Description
+	}
+	if input.IsDefault != nil {
+		updates["is_default"] = *input.IsDefault
+	}
+	if input.IsActive != nil {
+		updates["is_active"] = *input.IsActive
+	}
+	if input.AutoReset != nil {
+		updates["auto_reset"] = *input.AutoReset
+	}
+	if input.ResetPeriod != nil {
+		updates["reset_period"] = *input.ResetPeriod
+	}
+	if input.Notes != nil {
+		updates["notes"] = *input.Notes
+	}
+
+	if err := database.DB.Model(&numerator).Updates(updates).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка при обновлении нумератора",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data":   numerator,
+	})
+}
+
+// DeleteInvoiceNumerator удаляет нумератор счетов
+func DeleteInvoiceNumerator(c *gin.Context) {
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	id := c.Param("id")
+	numeratorID, err := strconv.ParseUint(id, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Неверный формат ID",
+		})
+		return
+	}
+
+	// Убеждаемся, что мы в схеме public
+	if err := database.DB.Exec("SET search_path TO public").Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка подключения к базе данных",
+		})
+		return
+	}
+
+	var numerator models.InvoiceNumerator
+	if err := database.DB.Where("id = ? AND admin_account_id = ?", uint(numeratorID), adminAccountID).First(&numerator).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"status": "error",
+			"error":  "Нумератор не найден",
+		})
+		return
+	}
+
+	if err := database.DB.Delete(&numerator).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка при удалении нумератора",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Нумератор успешно удален",
 	})
 }
