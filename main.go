@@ -2,6 +2,7 @@ package main
 
 import (
 	"backend_axenta/api"
+	"backend_axenta/audit"
 	"backend_axenta/config"
 	"backend_axenta/database"
 	"backend_axenta/handlers"
@@ -36,6 +37,42 @@ func main() {
 	// Подключаемся к базе данных
 	if err := database.ConnectDatabase(); err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
+	}
+
+	// Инициализируем аудит-логирование
+	log.Println("🔧 Initializing audit logging system...")
+	auditCfg := &audit.Config{
+		Enabled:     cfg.Audit.Enabled,
+		LogFilePath: cfg.Audit.LogFilePath,
+		LogToStdout: cfg.Audit.LogToStdout,
+		LogToFile:   cfg.Audit.LogToFile,
+		MaxFileSize: cfg.Audit.MaxFileSize,
+		MaxBackups:  cfg.Audit.MaxBackups,
+	}
+	
+	if cfg.Audit.LogToDB {
+		// Создаем таблицу для аудит-логов
+		if err := database.DB.AutoMigrate(&audit.AuditLog{}); err != nil {
+			log.Printf("Warning: Failed to create audit_logs table: %v", err)
+		} else {
+			log.Println("✅ Audit logs table created/verified")
+		}
+		
+		// Инициализируем логгер с поддержкой БД
+		dbLogger, err := audit.NewDBLogger(auditCfg, database.DB)
+		if err != nil {
+			log.Printf("Warning: Failed to initialize audit DB logger: %v", err)
+		} else {
+			audit.SetGlobalDBLogger(dbLogger)
+			log.Println("✅ Audit logging with database support initialized")
+		}
+	} else {
+		// Инициализируем базовый файловый логгер
+		if err := audit.Init(auditCfg); err != nil {
+			log.Printf("Warning: Failed to initialize audit logger: %v", err)
+		} else {
+			log.Println("✅ Audit logging initialized (file only)")
+		}
 	}
 
 	// Инициализируем Redis
@@ -113,6 +150,12 @@ func main() {
 	// Отключаем автоматические редиректы для trailing slash
 	r.RedirectTrailingSlash = false
 	r.RedirectFixedPath = false
+
+	// Добавляем audit middleware для логирования всех запросов
+	if cfg.Audit.Enabled {
+		r.Use(audit.Middleware())
+		log.Println("✅ Audit middleware enabled for all routes")
+	}
 
 	// Настройка CORS
 	corsConfig := middleware.CustomCORSConfig{
@@ -836,6 +879,11 @@ func main() {
 	// Системные настройки
 	apiGroup.GET("/system/settings", api.GetSystemSettings)
 	apiGroup.PUT("/system/settings", api.UpdateSystemSettings)
+
+	// Аудит-логи (только для авторизованных пользователей)
+	auditAPI := api.NewAuditAPI(database.DB)
+	auditAPI.RegisterRoutes(apiGroup)
+	log.Println("✅ Audit API endpoints registered at /api/auth/audit/*")
 
 	// Автоматизация биллинга
 	apiGroup.POST("/billing/auto-generate", api.AutoGenerateInvoices)

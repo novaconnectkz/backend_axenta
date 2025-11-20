@@ -37,6 +37,9 @@ type Config struct {
 	// Логирование
 	Logging LoggingConfig `json:"logging"`
 
+	// Аудит
+	Audit AuditConfig `json:"audit"`
+
 	// Внешние сервисы
 	External ExternalConfig `json:"external"`
 }
@@ -110,6 +113,16 @@ type LoggingConfig struct {
 	MaxSize    int    `json:"max_size"`
 	MaxBackups int    `json:"max_backups"`
 	MaxAge     int    `json:"max_age"`
+}
+
+type AuditConfig struct {
+	Enabled     bool   `json:"enabled"`
+	LogFilePath string `json:"log_file_path"`
+	LogToStdout bool   `json:"log_to_stdout"`
+	LogToFile   bool   `json:"log_to_file"`
+	LogToDB     bool   `json:"log_to_db"`
+	MaxFileSize int64  `json:"max_file_size"`
+	MaxBackups  int    `json:"max_backups"`
 }
 
 type ExternalConfig struct {
@@ -212,6 +225,15 @@ func LoadConfig() (*Config, error) {
 			MaxSize:    getEnvInt("LOG_MAX_SIZE", 100),
 			MaxBackups: getEnvInt("LOG_MAX_BACKUPS", 10),
 			MaxAge:     getEnvInt("LOG_MAX_AGE", 30),
+		},
+		Audit: AuditConfig{
+			Enabled:     getEnvBool("AUDIT_ENABLED", true),
+			LogFilePath: getEnv("AUDIT_LOG_FILE", "logs/audit.jsonl"),
+			LogToStdout: getEnvBool("AUDIT_LOG_TO_STDOUT", false),
+			LogToFile:   getEnvBool("AUDIT_LOG_TO_FILE", true),
+			LogToDB:     getEnvBool("AUDIT_LOG_TO_DB", true),
+			MaxFileSize: int64(getEnvInt("AUDIT_MAX_FILE_SIZE", 100)) * 1024 * 1024,
+			MaxBackups:  getEnvInt("AUDIT_MAX_BACKUPS", 10),
 		},
 		External: ExternalConfig{
 			SMTP: SMTPConfig{

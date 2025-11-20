@@ -1,6 +1,7 @@
 package api
 
 import (
+	"backend_axenta/audit"
 	"backend_axenta/database"
 	"backend_axenta/models"
 	"backend_axenta/services"
@@ -66,6 +67,10 @@ func logAuthOperation(operation, username, userID, companyID string, details map
 func Login(c *gin.Context) {
 	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		// Логируем ошибку валидации через новую систему аудита
+		audit.LogError(c, "auth.login.validation_error", err, gin.H{
+			"username": req.Username,
+		})
 		logAuthOperation("login_validation_error", req.Username, "", "", map[string]interface{}{
 			"error":      err.Error(),
 			"status":     "failed",
@@ -75,6 +80,10 @@ func Login(c *gin.Context) {
 		return
 	}
 
+	// Логируем попытку входа через новую систему аудита
+	audit.LogFromContext(c, "auth.login.attempt", gin.H{
+		"username": req.Username,
+	})
 	logAuthOperation("login_attempt", req.Username, "", "", map[string]interface{}{
 		"ip_address": c.ClientIP(),
 		"user_agent": c.GetHeader("User-Agent"),

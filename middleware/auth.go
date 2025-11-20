@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"backend_axenta/audit"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -30,6 +31,10 @@ func (am *AuthMiddleware) RequireAuth() gin.HandlerFunc {
 		}
 
 		if authHeader == "" {
+			// Логируем неудачную попытку авторизации
+			audit.LogError(c, "auth.failed", fmt.Errorf("missing authorization header"), gin.H{
+				"reason": "authorization_header_missing",
+			})
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"status": "error",
 				"error":  "Authorization header is required",
@@ -49,6 +54,10 @@ func (am *AuthMiddleware) RequireAuth() gin.HandlerFunc {
 		}
 
 		if token == "" {
+			// Логируем неудачную попытку авторизации
+			audit.LogError(c, "auth.failed", fmt.Errorf("invalid authorization format"), gin.H{
+				"reason": "invalid_token_format",
+			})
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"status": "error",
 				"error":  "Invalid authorization format",
@@ -60,6 +69,10 @@ func (am *AuthMiddleware) RequireAuth() gin.HandlerFunc {
 		// Проверяем токен через Axenta API
 		user, err := am.validateToken(token)
 		if err != nil {
+			// Логируем неудачную попытку авторизации
+			audit.LogError(c, "auth.failed", err, gin.H{
+				"reason": "token_validation_failed",
+			})
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"status": "error",
 				"error":  "Invalid or expired token: " + err.Error(),
@@ -71,6 +84,12 @@ func (am *AuthMiddleware) RequireAuth() gin.HandlerFunc {
 		// Проверяем тип аккаунта - только партнеры могут использовать API
 		if accountType, ok := user["accountType"].(string); ok {
 			if accountType != "partner" {
+				// Логируем попытку доступа неавторизованного типа аккаунта
+				audit.LogError(c, "auth.forbidden", fmt.Errorf("invalid account type"), gin.H{
+					"reason":        "account_type_not_partner",
+					"account_type":  accountType,
+					"required_type": "partner",
+				})
 				c.JSON(http.StatusForbidden, gin.H{
 					"status": "error",
 					"error":  "Доступ к API разрешен только партнерам Axenta",
@@ -87,6 +106,20 @@ func (am *AuthMiddleware) RequireAuth() gin.HandlerFunc {
 		// Сохраняем информацию о пользователе в контексте
 		c.Set("user", user)
 		c.Set("token", token)
+
+		// Логируем успешную авторизацию
+		userID := ""
+		if id, ok := user["id"]; ok {
+			userID = fmt.Sprintf("%v", id)
+		}
+		username := ""
+		if name, ok := user["username"].(string); ok {
+			username = name
+		}
+		audit.LogSuccess(c, "auth.success", gin.H{
+			"user_id":  userID,
+			"username": username,
+		})
 
 		c.Next()
 	}
