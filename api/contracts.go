@@ -38,16 +38,18 @@ func GetContracts(c *gin.Context) {
 	if isDemoMode(c) {
 		startDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 		endDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+		createdAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 		demoContracts := []models.Contract{
 			{
-				ID:         24,
-				Number:     "DOG-2024-001",
-				Title:      "Договор с ООО Логистика Плюс",
-				ClientName: "ООО Логистика Плюс",
-				StartDate:  &startDate,
-				EndDate:    &endDate,
-				Status:     "active",
-				Currency:   "RUB",
+				ID:              24,
+				Number:          "DOG-2024-001",
+				Title:           "Договор с ООО Логистика Плюс",
+				ClientName:      "ООО Логистика Плюс",
+				StartDate:       &startDate,
+				EndDate:         &endDate,
+				Status:          "active",
+				Currency:        "RUB",
+				CreatedAt:       createdAt,
 			},
 		}
 
@@ -229,6 +231,7 @@ func GetContracts(c *gin.Context) {
 
 	// Загружаем названия объектов из Axenta Cloud (batch)
 	objectNamesMap := make(map[ObjectKey]string)
+	log.Printf("🔍 Загрузка названий для %d уникальных объектов", len(objectKeysSet))
 	if len(objectKeysSet) > 0 {
 		// Получаем токен пользователя для запроса к Axenta Cloud
 		authHeader := c.GetHeader("Authorization")
@@ -240,12 +243,14 @@ func GetContracts(c *gin.Context) {
 		} else {
 			userToken = authHeader
 		}
+		log.Printf("🔑 Токен пользователя: %t (длина: %d)", userToken != "", len(userToken))
 
 		// Группируем объекты по CompanyID для batch-запросов
 		objectsByCompany := make(map[uint][]uint)
 		for key := range objectKeysSet {
 			objectsByCompany[key.CompanyID] = append(objectsByCompany[key.CompanyID], key.ObjectID)
 		}
+		log.Printf("📊 Объекты сгруппированы по компаниям: %v", objectsByCompany)
 
 		// Загружаем объекты по компаниям
 		if userToken != "" {
@@ -351,8 +356,6 @@ func GetContract(c *gin.Context) {
 
 	var contract models.Contract
 	if err := tenantDB.
-		// Preload("Appendices") - убрано, так как таблица contract_appendices может отсутствовать
-		// Preload("Objects") - убрано, так как Objects загружаются отдельно при необходимости
 		Where("id = ? AND admin_account_id = ?", uint(contractID), adminAccountID).
 		First(&contract).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -369,6 +372,7 @@ func GetContract(c *gin.Context) {
 		return
 	}
 
+	// Загружаем тарифный план
 	if contract.TariffPlanID != nil && *contract.TariffPlanID > 0 {
 		publicDB := database.DB.Session(&gorm.Session{})
 		if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
@@ -381,6 +385,91 @@ func GetContract(c *gin.Context) {
 				contract.TariffPlan = billingPlan
 			}
 		}
+	}
+
+	// Загружаем объекты через ContractObject и Axenta Cloud (аналогично GetContracts)
+	var contractObjects []models.ContractObject
+	if err := tenantDB.Select("id, contract_id, object_id, object_company_id, object_schema, status").
+		Where("contract_id = ? AND status = ?", uint(contractID), "active").
+		Find(&contractObjects).Error; err != nil {
+		log.Printf("⚠️ Не удалось загрузить связи объектов: %v", err)
+	}
+
+	// Загружаем названия объектов из Axenta Cloud
+	if len(contractObjects) > 0 {
+		// Получаем токен пользователя для запроса к Axenta Cloud
+		authHeader := c.GetHeader("Authorization")
+		var userToken string
+		if strings.HasPrefix(authHeader, "Token ") {
+			userToken = strings.TrimPrefix(authHeader, "Token ")
+		} else if strings.HasPrefix(authHeader, "Bearer ") {
+			userToken = strings.TrimPrefix(authHeader, "Bearer ")
+		} else {
+			userToken = authHeader
+		}
+
+		// Группируем объекты по CompanyID
+		objectsByCompany := make(map[uint][]uint)
+		for _, co := range contractObjects {
+			objectsByCompany[co.ObjectCompanyID] = append(objectsByCompany[co.ObjectCompanyID], co.ObjectID)
+		}
+
+		// Карта для названий объектов
+		type ObjectKey struct {
+			ObjectID  uint
+			CompanyID uint
+		}
+		objectNamesMap := make(map[ObjectKey]string)
+
+		// Загружаем объекты по компаниям
+		if userToken != "" {
+			for companyID, objectIDs := range objectsByCompany {
+				if len(objectIDs) > 50 {
+					objectIDs = objectIDs[:50]
+				}
+				
+				axentaObjects, err := fetchObjectsFromAxentaCloud(userToken, int(companyID), objectIDs)
+				if err != nil {
+					log.Printf("⚠️ Не удалось загрузить названия объектов для компании %d: %v", companyID, err)
+					// Используем плейсхолдеры
+					for _, objectID := range objectIDs {
+						objectNamesMap[ObjectKey{ObjectID: objectID, CompanyID: companyID}] = fmt.Sprintf("Объект #%d", objectID)
+					}
+				} else {
+					// Сохраняем названия в карту
+					for _, obj := range axentaObjects {
+						objectNamesMap[ObjectKey{ObjectID: uint(obj.ID), CompanyID: companyID}] = obj.Name
+					}
+					log.Printf("✅ Загружено %d названий объектов для компании %d", len(axentaObjects), companyID)
+				}
+			}
+		} else {
+			log.Printf("⚠️ Токен пользователя не найден, используем плейсхолдеры для названий объектов")
+			for _, co := range contractObjects {
+				key := ObjectKey{ObjectID: co.ObjectID, CompanyID: co.ObjectCompanyID}
+				objectNamesMap[key] = fmt.Sprintf("Объект #%d", co.ObjectID)
+			}
+		}
+
+		// Создаем массив объектов с названиями
+		objects := make([]models.Object, len(contractObjects))
+		for j, co := range contractObjects {
+			key := ObjectKey{ObjectID: co.ObjectID, CompanyID: co.ObjectCompanyID}
+			name := objectNamesMap[key]
+			if name == "" {
+				name = fmt.Sprintf("Объект #%d", co.ObjectID)
+			}
+			objects[j] = models.Object{
+				ID:        co.ObjectID,
+				CompanyID: co.ObjectCompanyID,
+				Name:      name,
+			}
+		}
+		contract.Objects = objects
+		contract.ContractObjects = contractObjects
+	} else {
+		contract.Objects = make([]models.Object, 0)
+		contract.ContractObjects = make([]models.ContractObject, 0)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -1268,7 +1357,19 @@ contractCreated:
 	}
 
 	// Загружаем связанные данные для ответа
-	if err := tenantDB.Preload("Objects").First(&contract, contract.ID).Error; err != nil {
+	// Получаем токен пользователя для загрузки названий объектов
+	authHeader := c.GetHeader("Authorization")
+	var userToken string
+	if strings.HasPrefix(authHeader, "Token ") {
+		userToken = strings.TrimPrefix(authHeader, "Token ")
+	} else if strings.HasPrefix(authHeader, "Bearer ") {
+		userToken = strings.TrimPrefix(authHeader, "Bearer ")
+	} else {
+		userToken = authHeader
+	}
+
+	// Загружаем объекты через ContractObject и Axenta Cloud
+	if err := loadContractObjectsWithNames(tenantDB, &contract, userToken); err != nil {
 		log.Printf("⚠️ Не удалось загрузить объекты договора %d: %v", contract.ID, err)
 	}
 
@@ -1375,8 +1476,25 @@ func UpdateContract(c *gin.Context) {
 	}
 
 	// Загружаем обновленные данные
-	if err := tenantDB.Preload("Appendices").Preload("Objects").First(&contract, contract.ID).Error; err != nil {
+	// Загружаем Appendices через Preload (если таблица существует)
+	if err := tenantDB.Preload("Appendices").First(&contract, contract.ID).Error; err != nil {
 		log.Printf("⚠️ Не удалось загрузить обновленные данные договора %d: %v", contract.ID, err)
+	}
+
+	// Получаем токен пользователя для загрузки названий объектов
+	authHeader := c.GetHeader("Authorization")
+	var userToken string
+	if strings.HasPrefix(authHeader, "Token ") {
+		userToken = strings.TrimPrefix(authHeader, "Token ")
+	} else if strings.HasPrefix(authHeader, "Bearer ") {
+		userToken = strings.TrimPrefix(authHeader, "Bearer ")
+	} else {
+		userToken = authHeader
+	}
+
+	// Загружаем объекты через ContractObject и Axenta Cloud
+	if err := loadContractObjectsWithNames(tenantDB, &contract, userToken); err != nil {
+		log.Printf("⚠️ Не удалось загрузить объекты договора %d: %v", contract.ID, err)
 	}
 
 	if contract.TariffPlanID != nil && *contract.TariffPlanID > 0 {
@@ -1950,7 +2068,8 @@ type axentaCloudObjectForContract struct {
 	CreatedAt           string   `json:"createdAt"`
 	DeletedAt           string   `json:"deletedAt"`
 	IsActive            bool     `json:"isActive"`
-	CurrentUserAccess   []string `json:"currentUserAccess"`
+	// CurrentUserAccess может быть числом или массивом, поэтому игнорируем его
+	// CurrentUserAccess   []string `json:"currentUserAccess"`
 }
 
 // fetchObjectsFromAxentaCloud получает объекты из Axenta Cloud API по accountId и проверяет наличие указанных objectIDs
@@ -2091,6 +2210,86 @@ func fetchObjectsFromAxentaCloud(token string, accountID int, objectIDs []uint) 
 	}
 
 	return allObjects, nil
+}
+
+// loadContractObjectsWithNames загружает объекты договора через ContractObject и получает их названия из Axenta Cloud
+func loadContractObjectsWithNames(tenantDB *gorm.DB, contract *models.Contract, userToken string) error {
+	// Загружаем связи объектов
+	var contractObjects []models.ContractObject
+	if err := tenantDB.Select("id, contract_id, object_id, object_company_id, object_schema, status").
+		Where("contract_id = ? AND status = ?", contract.ID, "active").
+		Find(&contractObjects).Error; err != nil {
+		log.Printf("⚠️ Не удалось загрузить связи объектов для договора %d: %v", contract.ID, err)
+		return err
+	}
+
+	if len(contractObjects) == 0 {
+		contract.Objects = make([]models.Object, 0)
+		contract.ContractObjects = make([]models.ContractObject, 0)
+		return nil
+	}
+
+	// Группируем объекты по CompanyID
+	objectsByCompany := make(map[uint][]uint)
+	for _, co := range contractObjects {
+		objectsByCompany[co.ObjectCompanyID] = append(objectsByCompany[co.ObjectCompanyID], co.ObjectID)
+	}
+
+	// Карта для названий объектов
+	type ObjectKey struct {
+		ObjectID  uint
+		CompanyID uint
+	}
+	objectNamesMap := make(map[ObjectKey]string)
+
+	// Загружаем объекты по компаниям
+	if userToken != "" {
+		for companyID, objectIDs := range objectsByCompany {
+			if len(objectIDs) > 50 {
+				objectIDs = objectIDs[:50]
+			}
+			
+			axentaObjects, err := fetchObjectsFromAxentaCloud(userToken, int(companyID), objectIDs)
+			if err != nil {
+				log.Printf("⚠️ Не удалось загрузить названия объектов для компании %d: %v", companyID, err)
+				// Используем плейсхолдеры
+				for _, objectID := range objectIDs {
+					objectNamesMap[ObjectKey{ObjectID: objectID, CompanyID: companyID}] = fmt.Sprintf("Объект #%d", objectID)
+				}
+			} else {
+				// Сохраняем названия в карту
+				for _, obj := range axentaObjects {
+					objectNamesMap[ObjectKey{ObjectID: uint(obj.ID), CompanyID: companyID}] = obj.Name
+				}
+				log.Printf("✅ Загружено %d названий объектов для компании %d", len(axentaObjects), companyID)
+			}
+		}
+	} else {
+		log.Printf("⚠️ Токен пользователя не найден, используем плейсхолдеры для названий объектов")
+		for _, co := range contractObjects {
+			key := ObjectKey{ObjectID: co.ObjectID, CompanyID: co.ObjectCompanyID}
+			objectNamesMap[key] = fmt.Sprintf("Объект #%d", co.ObjectID)
+		}
+	}
+
+	// Создаем массив объектов с названиями
+	objects := make([]models.Object, len(contractObjects))
+	for j, co := range contractObjects {
+		key := ObjectKey{ObjectID: co.ObjectID, CompanyID: co.ObjectCompanyID}
+		name := objectNamesMap[key]
+		if name == "" {
+			name = fmt.Sprintf("Объект #%d", co.ObjectID)
+		}
+		objects[j] = models.Object{
+			ID:        co.ObjectID,
+			CompanyID: co.ObjectCompanyID,
+			Name:      name,
+		}
+	}
+	contract.Objects = objects
+	contract.ContractObjects = contractObjects
+
+	return nil
 }
 
 // GetContractNumerators получает список нумераторов для компании
@@ -4739,8 +4938,20 @@ func SyncContractFromSubscription(c *gin.Context) {
 	}
 
 	// Загружаем обновленный договор со связями
-	if err := tenantDB.Preload("Objects").First(&contract, contract.ID).Error; err != nil {
-		log.Printf("⚠️ Ошибка загрузки договора: %v", err)
+	// Получаем токен пользователя для загрузки названий объектов
+	authHeader := c.GetHeader("Authorization")
+	var userToken string
+	if strings.HasPrefix(authHeader, "Token ") {
+		userToken = strings.TrimPrefix(authHeader, "Token ")
+	} else if strings.HasPrefix(authHeader, "Bearer ") {
+		userToken = strings.TrimPrefix(authHeader, "Bearer ")
+	} else {
+		userToken = authHeader
+	}
+
+	// Загружаем объекты через ContractObject и Axenta Cloud
+	if err := loadContractObjectsWithNames(tenantDB, &contract, userToken); err != nil {
+		log.Printf("⚠️ Ошибка загрузки объектов договора: %v", err)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
