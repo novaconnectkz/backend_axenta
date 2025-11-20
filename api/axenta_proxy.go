@@ -89,23 +89,23 @@ func shouldExcludeUserFromSearch(searchQuery string, user map[string]interface{}
 
 // AxentaCloudObject представляет объект из Axenta Cloud API
 type AxentaCloudObject struct {
-	ID                  int      `json:"id"`
-	Name                string   `json:"name"`
-	UniqueID            string   `json:"uniqueId"`
-	CreatorName         string   `json:"creatorName"`
-	CreatorID           int      `json:"creatorId"`
-	CreatorIsActive     bool     `json:"creatorIsActive"`
-	AccountID           int      `json:"accountId"`
-	AccountName         string   `json:"accountName"`
-	AccountType         string   `json:"accountType"`
-	AccountIsActive     bool     `json:"accountIsActive"`
-	PhoneNumbers        []string `json:"phoneNumbers"`
-	DeviceTypeName      string   `json:"deviceTypeName"`
-	LastMessageDatetime string   `json:"lastMessageDatetime"`
-	CreatedAt           string   `json:"createdAt"`
-	DeletedAt           string   `json:"deletedAt"`
-	IsActive            bool     `json:"isActive"`
-	CurrentUserAccess   []string `json:"currentUserAccess"`
+	ID                  int         `json:"id"`
+	Name                string      `json:"name"`
+	UniqueID            string      `json:"uniqueId"`
+	CreatorName         string      `json:"creatorName"`
+	CreatorID           int         `json:"creatorId"`
+	CreatorIsActive     bool        `json:"creatorIsActive"`
+	AccountID           int         `json:"accountId"`
+	AccountName         string      `json:"accountName"`
+	AccountType         string      `json:"accountType"`
+	AccountIsActive     bool        `json:"accountIsActive"`
+	PhoneNumbers        []string    `json:"phoneNumbers"`
+	DeviceTypeName      string      `json:"deviceTypeName"`
+	LastMessageDatetime string      `json:"lastMessageDatetime"`
+	CreatedAt           string      `json:"createdAt"`
+	DeletedAt           string      `json:"deletedAt"`
+	IsActive            bool        `json:"isActive"`
+	CurrentUserAccess   interface{} `json:"currentUserAccess"` // Может быть []string или number
 }
 
 // AxentaCloudResponse представляет ответ от Axenta Cloud API
@@ -290,6 +290,7 @@ func GetObjectsStatsFromAxentaCloud(c *gin.Context) {
 	// Получаем токен пользователя из заголовка Authorization
 	authHeader := c.GetHeader("Authorization")
 	if authHeader == "" {
+		log.Printf("❌ Токен авторизации не предоставлен")
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"status": "error",
 			"error":  "Токен авторизации не предоставлен",
@@ -304,6 +305,11 @@ func GetObjectsStatsFromAxentaCloud(c *gin.Context) {
 	} else if strings.HasPrefix(authHeader, "Bearer ") {
 		userToken = strings.TrimPrefix(authHeader, "Bearer ")
 	} else {
+		authPreview := authHeader
+		if len(authHeader) > 20 {
+			authPreview = authHeader[:20]
+		}
+		log.Printf("❌ Неверный формат токена авторизации: %s", authPreview)
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"status": "error",
 			"error":  "Неверный формат токена авторизации",
@@ -311,10 +317,14 @@ func GetObjectsStatsFromAxentaCloud(c *gin.Context) {
 		return
 	}
 
+	log.Printf("📊 Запрос статистики объектов")
+
 	// Функция для выполнения запроса к Axenta Cloud
 	makeAxentaRequest := func(url string) (*AxentaCloudResponse, error) {
+		log.Printf("🌐 Запрос к: %s", url)
 		req, err := http.NewRequest("GET", url, nil)
 		if err != nil {
+			log.Printf("❌ Ошибка создания запроса: %v", err)
 			return nil, err
 		}
 
@@ -324,20 +334,37 @@ func GetObjectsStatsFromAxentaCloud(c *gin.Context) {
 		client := &http.Client{}
 		resp, err := client.Do(req)
 		if err != nil {
+			log.Printf("❌ Ошибка выполнения запроса: %v", err)
 			return nil, err
 		}
 		defer resp.Body.Close()
 
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
+			log.Printf("❌ Ошибка чтения ответа: %v", err)
 			return nil, err
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			bodyPreview := string(body)
+			if len(body) > 200 {
+				bodyPreview = string(body[:200])
+			}
+			log.Printf("❌ Неожиданный статус %d: %s", resp.StatusCode, bodyPreview)
+			return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
 		}
 
 		var axentaResponse AxentaCloudResponse
 		if err := json.Unmarshal(body, &axentaResponse); err != nil {
+			bodyPreview := string(body)
+			if len(body) > 200 {
+				bodyPreview = string(body[:200])
+			}
+			log.Printf("❌ Ошибка парсинга JSON: %v, body: %s", err, bodyPreview)
 			return nil, err
 		}
 
+		log.Printf("✅ Успешный запрос, count=%d, results=%d", axentaResponse.Count, len(axentaResponse.Results))
 		return &axentaResponse, nil
 	}
 
@@ -350,100 +377,102 @@ func GetObjectsStatsFromAxentaCloud(c *gin.Context) {
 		})
 		return
 	}
+	log.Printf("📊 Общее количество объектов: %d", totalResponse.Count)
 
-	// Получаем количество активных объектов (предполагаем, что активные объекты имеют статус по умолчанию)
-	// Поскольку Axenta Cloud API может не поддерживать фильтрацию по статусу напрямую,
-	// получаем первую страницу объектов для анализа
-	objectsResponse, err := makeAxentaRequest("https://axenta.cloud/api/cms/objects/?page=1&per_page=100")
-	if err != nil {
-		// Если не удалось получить детальные данные, используем приблизительную статистику
-		c.JSON(http.StatusOK, gin.H{
-			"status": "success",
-			"data": gin.H{
-				"total":                totalResponse.Count,
-				"active":               int64(float64(totalResponse.Count) * 0.9), // Предполагаем 90% активных
-				"inactive":             int64(float64(totalResponse.Count) * 0.1), // Предполагаем 10% неактивных
-				"scheduled_for_delete": 0,
-				"deleted":              0,
-				"by_type": gin.H{
-					"vehicle": totalResponse.Count,
-				},
-				"by_status": gin.H{
-					"active":   int64(float64(totalResponse.Count) * 0.9),
-					"inactive": int64(float64(totalResponse.Count) * 0.1),
-				},
-			},
-		})
-		return
+	// Получаем точное количество активных объектов через фильтр
+	activeResponse, err := makeAxentaRequest("https://axenta.cloud/api/cms/objects/?page=1&per_page=1&is_active=true")
+	activeCount := int64(0)
+	if err == nil {
+		activeCount = int64(activeResponse.Count)
+		log.Printf("✅ Активных объектов через фильтр: %d", activeCount)
+	} else {
+		log.Printf("⚠️ Ошибка получения активных объектов через фильтр: %v", err)
 	}
 
-	// Анализируем полученные объекты для подсчета статистики
-	sampleActiveCount := int64(0)
-	sampleInactiveCount := int64(0)
-	scheduledForDeleteCount := int64(0)
+	// Получаем точное количество неактивных объектов через фильтр
+	inactiveResponse, err := makeAxentaRequest("https://axenta.cloud/api/cms/objects/?page=1&per_page=1&is_active=false")
+	inactiveCount := int64(0)
+	if err == nil {
+		inactiveCount = int64(inactiveResponse.Count)
+		log.Printf("✅ Неактивных объектов через фильтр: %d", inactiveCount)
+	} else {
+		log.Printf("⚠️ Ошибка получения неактивных объектов через фильтр: %v", err)
+	}
 
-	// Подсчитываем статистику на основе полученных объектов
-	if len(objectsResponse.Results) > 0 {
-		sampleSize := int64(len(objectsResponse.Results))
+	// Проверяем, работают ли фильтры
+	// Если фильтры не работают, API возвращает одинаковое количество для всех запросов
+	filtersNotWorking := (activeCount == int64(totalResponse.Count) && inactiveCount == int64(totalResponse.Count))
+	
+	if filtersNotWorking {
+		log.Printf("⚠️ Фильтры is_active не работают (active=%d, inactive=%d, total=%d), используем fallback", activeCount, inactiveCount, totalResponse.Count)
+	}
 
-		// Подсчитываем в образце, используя поле IsActive
-		for _, obj := range objectsResponse.Results {
-			if obj.IsActive {
-				sampleActiveCount++
-			} else {
-				sampleInactiveCount++
-			}
-		}
-
-		// Экстраполируем на общее количество
-		if sampleSize > 0 {
-			ratio := float64(totalResponse.Count) / float64(sampleSize)
-			activeCount := int64(float64(sampleActiveCount) * ratio)
-			inactiveCount := int64(float64(sampleInactiveCount) * ratio)
-			totalCount := int64(totalResponse.Count)
-
-			// Корректируем, чтобы сумма была равна общему количеству
-			if activeCount+inactiveCount != totalCount {
-				diff := totalCount - (activeCount + inactiveCount)
-				if diff > 0 {
-					// Добавляем разность к активным (предполагаем, что новые объекты активные)
-					activeCount += diff
+	// Если фильтры не работают, используем fallback - подсчитываем из выборки всех объектов
+	// но с большей выборкой для точности
+	if activeCount == 0 && inactiveCount == 0 || filtersNotWorking {
+		log.Printf("🔄 Фильтры не вернули результаты, используем fallback с большой выборкой")
+		// Запрашиваем большую выборку для более точного подсчета
+		objectsResponse, err := makeAxentaRequest("https://axenta.cloud/api/cms/objects/?page=1&per_page=1000")
+		if err == nil && len(objectsResponse.Results) > 0 {
+			log.Printf("📦 Получена выборка: %d объектов", len(objectsResponse.Results))
+			sampleActiveCount := int64(0)
+			sampleInactiveCount := int64(0)
+			
+			// Подсчитываем в выборке
+			for _, obj := range objectsResponse.Results {
+				if obj.IsActive {
+					sampleActiveCount++
 				} else {
-					// Убираем разность из активных
-					activeCount += diff
-					if activeCount < 0 {
-						inactiveCount += activeCount
-						activeCount = 0
-					}
+					sampleInactiveCount++
 				}
 			}
-
-			// Возвращаем реальную статистику
-			c.JSON(http.StatusOK, gin.H{
-				"status": "success",
-				"data": gin.H{
-					"total":                totalResponse.Count,
-					"active":               activeCount,
-					"inactive":             inactiveCount,
-					"scheduled_for_delete": scheduledForDeleteCount,
-					"deleted":              0,
-					"by_type": gin.H{
-						"vehicle": totalResponse.Count,
-					},
-					"by_status": gin.H{
-						"active":   activeCount,
-						"inactive": inactiveCount,
-					},
-				},
-			})
-			return
+			log.Printf("📊 В выборке: активных=%d, неактивных=%d", sampleActiveCount, sampleInactiveCount)
+			
+			// Если выборка достаточно большая, используем её
+			if int64(len(objectsResponse.Results)) >= 100 {
+				log.Printf("🔢 Выборка большая, используем экстраполяцию")
+				// Экстраполируем на общее количество
+				sampleSize := int64(len(objectsResponse.Results))
+				if sampleSize > 0 {
+					ratio := float64(totalResponse.Count) / float64(sampleSize)
+					activeCount = int64(float64(sampleActiveCount) * ratio)
+					inactiveCount = int64(float64(sampleInactiveCount) * ratio)
+					log.Printf("📈 Экстраполяция: активных=%d, неактивных=%d (ratio=%.2f)", activeCount, inactiveCount, ratio)
+					
+					// Корректируем, чтобы сумма была равна общему количеству
+					totalCount := int64(totalResponse.Count)
+					if activeCount+inactiveCount != totalCount {
+						diff := totalCount - (activeCount + inactiveCount)
+						if diff > 0 {
+							activeCount += diff
+						} else {
+							activeCount += diff
+							if activeCount < 0 {
+								inactiveCount += activeCount
+								activeCount = 0
+							}
+						}
+						log.Printf("✏️ После корректировки: активных=%d, неактивных=%d", activeCount, inactiveCount)
+					}
+				}
+			} else {
+				log.Printf("📝 Выборка маленькая, используем прямой подсчет")
+				// Если выборка маленькая, используем прямое подсчет из неё
+				activeCount = sampleActiveCount
+				inactiveCount = sampleInactiveCount
+			}
+		} else {
+			log.Printf("⚠️ Не удалось получить выборку, используем приблизительные значения")
+			// Если не удалось получить данные, используем приблизительные значения
+			totalCount := int64(totalResponse.Count)
+			activeCount = int64(float64(totalCount) * 0.95) // 95% активных
+			inactiveCount = totalCount - activeCount
 		}
 	}
 
-	// Если не удалось получить образец или он пустой, используем приблизительные значения
-	totalCount := int64(totalResponse.Count)
-	activeCount := int64(float64(totalCount) * 0.95) // 95% активных
-	inactiveCount := totalCount - activeCount
+	log.Printf("📊 Итоговая статистика: total=%d, active=%d, inactive=%d", totalResponse.Count, activeCount, inactiveCount)
+
+	scheduledForDeleteCount := int64(0)
 
 	// Возвращаем реальную статистику
 	c.JSON(http.StatusOK, gin.H{
@@ -1743,7 +1772,21 @@ func ExportObjectsToXLSX(c *gin.Context) {
 
 		// Форматируем данные
 		phones := strings.Join(obj.PhoneNumbers, ", ")
-		accessRights := strings.Join(obj.CurrentUserAccess, ", ")
+		
+		// Обрабатываем CurrentUserAccess, который может быть []string или number
+		accessRights := ""
+		if accessArray, ok := obj.CurrentUserAccess.([]interface{}); ok {
+			strArray := make([]string, len(accessArray))
+			for i, v := range accessArray {
+				strArray[i] = fmt.Sprintf("%v", v)
+			}
+			accessRights = strings.Join(strArray, ", ")
+		} else if accessStr, ok := obj.CurrentUserAccess.(string); ok {
+			accessRights = accessStr
+		} else {
+			accessRights = fmt.Sprintf("%v", obj.CurrentUserAccess)
+		}
+		
 		isActive := "Да"
 		if !obj.IsActive {
 			isActive = "Нет"
