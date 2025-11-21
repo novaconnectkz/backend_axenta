@@ -108,6 +108,27 @@ WHERE table_schema = 'public' AND table_name = 'system_settings';
 - **Backend порт**: 8080
 - **API URL**: https://api.axenta.glonass-saratov.ru
 
+#### 5. Интеграция MAX messenger (008_add_max_messenger_columns.sql)
+Добавлены колонки для интеграции с российским мессенджером MAX в таблицу `notification_settings`:
+- `max_bot_token` - токен бота MAX
+- `max_webhook_url` - URL для вебхуков
+- `max_enabled` - включен ли MAX
+- `max_use_polling` - использовать Long Polling вместо Webhook
+- `max_parse_mode` - режим парсинга сообщений (HTML, Markdown, MarkdownV2)
+
+Статус: ✅ Применено
+
+#### 6. Последовательные номера (009_add_sequential_numbers.sql)
+Добавлена колонка `sequential_number` в таблицы:
+- `public.invoices` - последовательный номер счёта в рамках компании
+- `public.subscriptions` - последовательный номер подписки в рамках компании
+
+Созданы индексы для производительности:
+- `idx_invoices_sequential_number`
+- `idx_subscriptions_sequential_number`
+
+Статус: ✅ Применено
+
 ### Примечания
 
 1. На сервере используется архитектура с tenant-схемами (multi-tenancy)
@@ -115,4 +136,5 @@ WHERE table_schema = 'public' AND table_name = 'system_settings';
 3. Все миграции применены с использованием `IF NOT EXISTS` для идемпотентности
 4. При создании новых tenant-схем необходимо применять миграцию 007
 5. Файлы миграций сохранены в `/Users/com/backend_axenta/database/migrations/`
+6. Все структурные различия между локальной и продакшен базами устранены
 
