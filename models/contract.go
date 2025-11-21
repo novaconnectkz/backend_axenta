@@ -27,12 +27,13 @@ type Contract struct {
 	CompanyID      uint `json:"company_id" gorm:"not null;index"`
 
 	// Клиент
-	ClientName    string `json:"client_name" gorm:"not null;type:varchar(200)"`
-	ClientINN     string `json:"client_inn" gorm:"type:varchar(20)"`
-	ClientKPP     string `json:"client_kpp" gorm:"type:varchar(20)"`
-	ClientEmail   string `json:"client_email" gorm:"type:varchar(100)"`
-	ClientPhone   string `json:"client_phone" gorm:"type:varchar(20)"`
-	ClientAddress string `json:"client_address" gorm:"type:text"`
+	ClientName      string `json:"client_name" gorm:"not null;type:varchar(200)"`
+	ClientShortName string `json:"client_short_name" gorm:"type:varchar(200)"` // Сокращенное название с ОПФ (для организаций)
+	ClientINN       string `json:"client_inn" gorm:"type:varchar(20)"`
+	ClientKPP       string `json:"client_kpp" gorm:"type:varchar(20)"`
+	ClientEmail     string `json:"client_email" gorm:"type:varchar(100)"`
+	ClientPhone     string `json:"client_phone" gorm:"type:varchar(20)"`
+	ClientAddress   string `json:"client_address" gorm:"type:text"`
 
 	// Даты договора
 	StartDate *time.Time `json:"start_date" gorm:"default:NULL"` // Опционально, будет установлено через подписку

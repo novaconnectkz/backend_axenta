@@ -488,12 +488,13 @@ type CreateContractRequestRaw struct {
 	ObjectIDs   []uint `json:"object_ids"`
 
 	// Клиент
-	ClientName    string `json:"client_name"`
-	ClientINN     string `json:"client_inn"`
-	ClientKPP     string `json:"client_kpp"`
-	ClientEmail   string `json:"client_email"`
-	ClientPhone   string `json:"client_phone"`
-	ClientAddress string `json:"client_address"`
+	ClientName      string `json:"client_name"`
+	ClientShortName string `json:"client_short_name"` // Сокращенное название с ОПФ (для организаций)
+	ClientINN       string `json:"client_inn"`
+	ClientKPP       string `json:"client_kpp"`
+	ClientEmail     string `json:"client_email"`
+	ClientPhone     string `json:"client_phone"`
+	ClientAddress   string `json:"client_address"`
 
 	// Даты как строки для парсинга
 	StartDateStr string `json:"start_date"`
@@ -594,20 +595,21 @@ func CreateContract(c *gin.Context) {
 	}
 	
 	contract := models.Contract{
-		Number:         rawRequest.Number,
-		Title:          rawRequest.Title,
-		Description:    rawRequest.Description,
-		CompanyID:      rawRequest.CompanyID,
-		ClientName:     rawRequest.ClientName,
-		ClientINN:      rawRequest.ClientINN,
-		ClientKPP:      rawRequest.ClientKPP,
-		ClientEmail:    rawRequest.ClientEmail,
-		ClientPhone:    rawRequest.ClientPhone,
-		ClientAddress:  rawRequest.ClientAddress,
-		StartDate:      startDate,
-		EndDate:        endDate,
-		TariffPlanID:   nil, // Тарифный план будет привязан через подписку
-		Status:         contractStatus,
+		Number:          rawRequest.Number,
+		Title:           rawRequest.Title,
+		Description:     rawRequest.Description,
+		CompanyID:       rawRequest.CompanyID,
+		ClientName:      rawRequest.ClientName,
+		ClientShortName: rawRequest.ClientShortName, // Сокращенное название с ОПФ
+		ClientINN:       rawRequest.ClientINN,
+		ClientKPP:       rawRequest.ClientKPP,
+		ClientEmail:     rawRequest.ClientEmail,
+		ClientPhone:     rawRequest.ClientPhone,
+		ClientAddress:   rawRequest.ClientAddress,
+		StartDate:       startDate,
+		EndDate:         endDate,
+		TariffPlanID:    nil, // Тарифный план будет привязан через подписку
+		Status:          contractStatus,
 		IsAutoRenew:         true, // По умолчанию включена
 		ContractPeriodMonths: nil, // По умолчанию используется период из тарифа
 		Notes:               rawRequest.Notes,
