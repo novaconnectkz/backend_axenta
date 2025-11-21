@@ -125,7 +125,7 @@ func (s *NotificationFallbackService) getFallbackChannels(user *models.User, pre
 		}
 
 	case "billing_alert", "invoice_created", "payment_overdue":
-		// Для биллинга приоритет: Email -> Telegram -> SMS
+		// Для биллинга приоритет: Email -> MAX -> Telegram -> SMS
 		if prefs.EmailEnabled && user.Email != "" && prefs.BillingAlerts {
 			channels = append(channels, FallbackChannel{
 				Channel:   "email",
@@ -134,10 +134,18 @@ func (s *NotificationFallbackService) getFallbackChannels(user *models.User, pre
 				Recipient: user.Email,
 			})
 		}
+		if prefs.MaxEnabled && user.MaxID != "" && prefs.BillingAlerts {
+			channels = append(channels, FallbackChannel{
+				Channel:   "max",
+				Priority:  2,
+				Enabled:   true,
+				Recipient: user.MaxID,
+			})
+		}
 		if prefs.TelegramEnabled && user.TelegramID != "" && prefs.BillingAlerts {
 			channels = append(channels, FallbackChannel{
 				Channel:   "telegram",
-				Priority:  2,
+				Priority:  3,
 				Enabled:   true,
 				Recipient: user.TelegramID,
 			})
@@ -145,7 +153,7 @@ func (s *NotificationFallbackService) getFallbackChannels(user *models.User, pre
 		if prefs.SMSEnabled && user.Phone != "" && prefs.BillingAlerts {
 			channels = append(channels, FallbackChannel{
 				Channel:   "sms",
-				Priority:  3,
+				Priority:  4,
 				Enabled:   true,
 				Recipient: user.Phone,
 			})

@@ -25,6 +25,7 @@ type User struct {
 	Name       string `json:"name" gorm:"type:varchar(200)"` // Полное имя для контрагентов
 	Phone      string `json:"phone" gorm:"type:varchar(50)"`
 	TelegramID string `json:"telegram_id" gorm:"type:varchar(50)"`
+	MaxID      string `json:"max_id" gorm:"type:varchar(50)"` // ID пользователя в MAX мессенджере
 	IsActive   bool   `json:"is_active" gorm:"default:true"`
 
 	// Поля для интеграций
