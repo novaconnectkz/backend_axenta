@@ -857,6 +857,7 @@ func main() {
 	apiGroup.POST("/billing/contracts/:contract_id/invoice", api.GenerateInvoice)
 	apiGroup.GET("/billing/invoices", api.GetInvoices)
 	apiGroup.GET("/billing/invoices/:id", api.GetInvoice)
+	apiGroup.POST("/billing/invoices/:id/send", api.SendInvoice)      // Отправка счета клиенту
 	apiGroup.POST("/billing/invoices/:id/payment", api.ProcessPayment)
 	apiGroup.POST("/billing/invoices/:id/cancel", api.CancelInvoice)
 	apiGroup.DELETE("/billing/invoices/:id", api.DeleteInvoice)

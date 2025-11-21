@@ -1712,9 +1712,35 @@ func SendInvoice(c *gin.Context) {
 		return
 	}
 
+	// Получаем параметры отправки из тела запроса
+	var requestData struct {
+		Channels    []string          `json:"channels"`     // Список каналов: email, telegram, max
+		ContactInfo map[string]string `json:"contact_info"` // Контактная информация для каждого канала
+	}
+
+	if err := c.ShouldBindJSON(&requestData); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Неверный формат данных",
+		})
+		return
+	}
+
+	// Проверяем, что указан хотя бы один канал
+	if len(requestData.Channels) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Не указан ни один канал отправки",
+		})
+		return
+	}
+
 	// Получаем счет
 	var invoice models.Invoice
-	if err := database.DB.Where("id = ? AND admin_account_id = ?", invoiceID, adminAccountID).First(&invoice).Error; err != nil {
+	if err := database.DB.Where("id = ? AND admin_account_id = ?", invoiceID, adminAccountID).
+		Preload("Contract").
+		Preload("TariffPlan").
+		First(&invoice).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"status": "error",
 			"error":  "Счет не найден",
@@ -1739,22 +1765,64 @@ func SendInvoice(c *gin.Context) {
 		return
 	}
 
-	// Обновляем статус на "sent"
-	invoice.Status = "sent"
-	if err := database.DB.Save(&invoice).Error; err != nil {
+	// Получаем контактную информацию из договора, если она не указана в запросе
+	if requestData.ContactInfo == nil {
+		requestData.ContactInfo = make(map[string]string)
+	}
+
+	// Дополняем контактную информацию из договора
+	if invoice.Contract != nil {
+		if _, ok := requestData.ContactInfo["email"]; !ok && invoice.Contract.ClientEmail != "" {
+			requestData.ContactInfo["email"] = invoice.Contract.ClientEmail
+		}
+		// Telegram и MAX ID можно получить из связанного пользователя, если есть
+	}
+
+	// Создаем сервис отправки счетов
+	senderService := services.NewInvoiceSenderService(database.DB)
+
+	// Отправляем счет через выбранные каналы
+	err = senderService.SendInvoiceToClient(&invoice, requestData.Channels, requestData.ContactInfo)
+
+	if err != nil {
+		// Даже если есть ошибка, проверяем, были ли успешные отправки
+		if invoice.LastSentAt != nil {
+			// Частичная отправка - возвращаем предупреждение
+			c.JSON(http.StatusOK, gin.H{
+				"status":        "partial_success",
+				"message":       fmt.Sprintf("Счет отправлен частично: %v", err),
+				"data":          invoice,
+				"sent_channels": invoice.LastSentChannels,
+			})
+			return
+		}
+
+		// Проверяем, является ли это ошибкой конфигурации
+		errorMsg := err.Error()
+		if strings.Contains(errorMsg, "не настроена") || strings.Contains(errorMsg, "не настроен") || 
+		   strings.Contains(errorMsg, "отключены") || strings.Contains(errorMsg, "отключен") {
+			// Ошибка конфигурации - возвращаем 400 Bad Request
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error",
+				"error":  errorMsg,
+			})
+			return
+		}
+
+		// Другая ошибка отправки - возвращаем 500
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Ошибка обновления статуса счета",
+			"error":  fmt.Sprintf("Ошибка отправки счета: %v", err),
 		})
 		return
 	}
 
-	// TODO: Здесь можно добавить отправку email/уведомления клиенту
-
+	// Успешная отправка
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
 		"message": "Счет успешно отправлен",
 		"data":    invoice,
+		"sent_channels": invoice.LastSentChannels,
 	})
 }
 

@@ -50,6 +50,14 @@ type Invoice struct {
 	Notes      string `json:"notes" gorm:"type:text"`
 	ExternalID string `json:"external_id" gorm:"type:varchar(100)"` // ID во внешних системах
 
+	// Настройки отправки счета клиенту
+	SendChannels      string     `json:"send_channels" gorm:"type:varchar(100)"` // Каналы отправки (email,telegram,max) через запятую
+	SendToEmail       string     `json:"send_to_email" gorm:"type:varchar(100)"` // Email для отправки
+	SendToTelegram    string     `json:"send_to_telegram" gorm:"type:varchar(50)"` // Telegram ID для отправки
+	SendToMax         string     `json:"send_to_max" gorm:"type:varchar(50)"`    // MAX ID для отправки
+	LastSentAt        *time.Time `json:"last_sent_at"`                           // Дата последней отправки
+	LastSentChannels  string     `json:"last_sent_channels" gorm:"type:varchar(100)"` // Каналы последней отправки
+
 	// Связанные позиции счета
 	Items []InvoiceItem `json:"items,omitempty" gorm:"foreignKey:InvoiceID"`
 }

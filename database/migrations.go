@@ -98,6 +98,12 @@ func GetAllMigrations() []MigrationInfo {
 			Description: "Refresh токены для локальной авторизации",
 			IsGlobal:    true,
 		},
+		{
+			TableName:   "notification_settings",
+			Model:       &models.NotificationSettings{},
+			Description: "Настройки уведомлений компаний (Email, Telegram, SMS, MAX)",
+			IsGlobal:    true,
+		},
 		// Новые таблицы для продвинутого биллинга (roadmap)
 		{
 			TableName:   "countries",
