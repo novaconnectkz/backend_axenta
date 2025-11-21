@@ -211,6 +211,8 @@ func main() {
 	// Документация по интеграциям (публичный доступ)
 	r.GET("/docs/TELEGRAM_INTEGRATION.md", api.GetTelegramIntegrationDocs)
 	r.GET("/api/docs/telegram", api.GetTelegramIntegrationDocs) // Альтернативный маршрут
+	r.GET("/docs/EMAIL_INTEGRATION.md", api.GetEmailIntegrationDocs)
+	r.GET("/api/docs/email", api.GetEmailIntegrationDocs) // Альтернативный маршрут
 
 	// Публичные тестовые endpoints для отладки ролей
 	r.GET("/api/debug/roles", api.TestRolesCreation)
@@ -1072,6 +1074,15 @@ func main() {
 	// Интеграция с Telegram
 	telegramAPI := api.NewTelegramIntegrationAPI()
 	telegramAPI.RegisterRoutes(integrationsGroup)
+
+	// Email SMTP интеграция (без tenant middleware, так как NotificationSettings в public схеме)
+	// Создаем отдельную группу без tenant middleware
+	emailAuthGroup := r.Group("/api/auth/email")
+	emailAuthGroup.Use(authMiddleware.RequireAuth()) // Только auth middleware, без tenant
+	emailAuthGroup.POST("/setup", api.SetupEmailIntegration)
+	emailAuthGroup.PUT("/setup", api.UpdateEmailIntegration)
+	emailAuthGroup.GET("/config", api.GetEmailConfig)
+	emailAuthGroup.POST("/test-connection", api.TestEmailConnection)
 
 	// Система отчетности
 	reportService := services.NewReportService(database.DB)
