@@ -1631,7 +1631,7 @@ func GetInvoices(c *gin.Context) {
 
 	fmt.Printf("GetInvoices: найдено счетов: %d\n", total)
 
-	// Добавляем Preload только для Items (Contract и TariffPlan загружаем отдельно)
+	// Добавляем Preload для Items
 	queryWithPreload := query.
 		Preload("Items")
 
@@ -1647,6 +1647,26 @@ func GetInvoices(c *gin.Context) {
 	}
 
 	fmt.Printf("GetInvoices: успешно получено %d счетов\n", len(invoices))
+
+	// Загружаем Contract для каждого счета отдельно из тенантной схемы
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB != nil {
+		for i := range invoices {
+			if invoices[i].ContractID != nil && *invoices[i].ContractID > 0 {
+				var contract models.Contract
+				err := tenantDB.Where("id = ?", *invoices[i].ContractID).
+					Select("id, number, client_name, client_short_name, client_email").
+					First(&contract).Error
+				if err == nil {
+					invoices[i].Contract = &contract
+				} else {
+					fmt.Printf("GetInvoices: ошибка загрузки договора для счета %d: %v\n", invoices[i].ID, err)
+				}
+			}
+		}
+	} else {
+		fmt.Printf("GetInvoices: не удалось получить тенантную БД\n")
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
