@@ -1076,10 +1076,11 @@ func main() {
 	telegramAPI := api.NewTelegramIntegrationAPI()
 	telegramAPI.RegisterRoutes(integrationsGroup)
 
-	// Email SMTP интеграция (без tenant middleware, так как NotificationSettings в public схеме)
-	// Создаем отдельную группу без tenant middleware
+	// Email SMTP интеграция (требует tenant middleware для company_id)
+	// КРИТИЧНО: Хотя NotificationSettings в public схеме, данные фильтруются по company_id
 	emailAuthGroup := r.Group("/api/auth/email")
-	emailAuthGroup.Use(authMiddleware.RequireAuth()) // Только auth middleware, без tenant
+	emailAuthGroup.Use(authMiddleware.RequireAuth())      // Auth middleware для проверки токена
+	emailAuthGroup.Use(tenantMiddleware.SetTenant())      // Tenant middleware для установки company_id
 	emailAuthGroup.POST("/setup", api.SetupEmailIntegration)
 	emailAuthGroup.PUT("/setup", api.UpdateEmailIntegration)
 	emailAuthGroup.GET("/config", api.GetEmailConfig)

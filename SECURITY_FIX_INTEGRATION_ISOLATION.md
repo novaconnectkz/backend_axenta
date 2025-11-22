@@ -36,7 +36,7 @@
 
 ## Решение
 
-### Внесенные изменения
+### Внесенные изменения в api/email.go
 
 1. **Добавлен импорт middleware**:
    ```go
@@ -65,9 +65,26 @@
    // КРИТИЧНО: Используем прямой SQL запрос с явным указанием схемы public и фильтрацией по company_id
    ```
 
+### Внесенные изменения в main.go
+
+4. **Добавлен tenant middleware для маршрутов Email**:
+   ```go
+   // БЫЛО (НЕПРАВИЛЬНО):
+   emailAuthGroup := r.Group("/api/auth/email")
+   emailAuthGroup.Use(authMiddleware.RequireAuth()) // Только auth middleware, без tenant
+   
+   // СТАЛО (ПРАВИЛЬНО):
+   emailAuthGroup := r.Group("/api/auth/email")
+   emailAuthGroup.Use(authMiddleware.RequireAuth())      // Auth middleware для проверки токена
+   emailAuthGroup.Use(tenantMiddleware.SetTenant())      // Tenant middleware для установки company_id
+   ```
+
+   **Почему это важно**: Хотя `NotificationSettings` хранятся в public схеме, они ДОЛЖНЫ фильтроваться по `company_id`. Middleware `tenantMiddleware.SetTenant()` извлекает информацию о компании из JWT токена и устанавливает её в контекст, что позволяет `middleware.GetCompanyID(c)` вернуть правильное значение.
+
 ### Затронутые файлы
 
 - `api/email.go` - исправлено ✅
+- `main.go` - добавлен `tenantMiddleware.SetTenant()` для маршрутов Email ✅
 
 ### Проверка других интеграций
 
