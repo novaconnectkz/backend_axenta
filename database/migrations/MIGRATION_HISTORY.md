@@ -138,3 +138,48 @@ WHERE table_schema = 'public' AND table_name = 'system_settings';
 5. Файлы миграций сохранены в `/Users/com/backend_axenta/database/migrations/`
 6. Все структурные различия между локальной и продакшен базами устранены
 
+
+## Migration 012: Add missing contract fields (2025-11-22)
+
+### Цель
+Добавление недостающих полей `client_type` и `client_website` в таблицу `contracts`.
+
+### Изменения
+- Добавлена колонка `client_type` VARCHAR(20) в `public.contracts`
+- Добавлена колонка `client_website` VARCHAR(200) в `public.contracts`
+- Добавлены те же колонки в tenant схемы с таблицей `contracts`
+- Установлены значения по умолчанию для существующих записей
+
+### Применено
+- ✅ Локально: 2025-11-22
+- ✅ Продакшен: 2025-11-22
+
+### Статус
+Успешно применена на всех окружениях.
+
+## Migration 013: Add all missing contract fields (2025-11-22)
+
+### Цель
+Добавление всех недостающих полей в таблицу `contracts` для полного соответствия модели Contract.
+
+### Проблема
+На продакшене отсутствовало 20 колонок из модели Contract:
+- Поля организаций (legal_address, postal_address, ogrn, okpo, director, based_on)
+- Банковские реквизиты (bank_name, bank_bik, bank_account, correspondent_account, recipient)
+- Поля физических лиц (passport_*, registration_address, actual_address, snils, ogrn_ip)
+
+### Изменения
+Добавлены все 20 недостающих колонок в:
+- `public.contracts`
+- `tenant_default.contracts`
+- `tenant_186.contracts`
+
+### Применено
+- ✅ Локально: 2025-11-22
+- ✅ Продакшен: 2025-11-22
+
+### Результат
+Теперь таблица contracts содержит все 58 колонок, полностью соответствует модели Go.
+
+### Статус
+Успешно применена. Создание договоров работает корректно.
