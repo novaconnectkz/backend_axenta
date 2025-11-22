@@ -2,6 +2,7 @@ package api
 
 import (
 	"backend_axenta/database"
+	"backend_axenta/middleware"
 	"backend_axenta/models"
 	"fmt"
 	"io"
@@ -24,10 +25,14 @@ func SetupEmailIntegration(c *gin.Context) {
 		return
 	}
 	
-	// Получаем company_id из контекста
-	companyID, exists := c.Get("company_id")
-	if !exists {
-		companyID = uint(186) // fallback для совместимости
+	// КРИТИЧНО: Получаем company_id из контекста через middleware
+	companyID := middleware.GetCompanyID(c)
+	if companyID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Не удалось определить компанию. Обратитесь к администратору.",
+		})
+		return
 	}
 
 	var req struct {
@@ -50,11 +55,11 @@ func SetupEmailIntegration(c *gin.Context) {
 
 	// Получаем или создаем настройки уведомлений (из public схемы)
 	var settings models.NotificationSettings
-	// Используем прямой SQL запрос с явным указанием схемы public и company_id
+	// КРИТИЧНО: Используем прямой SQL запрос с явным указанием схемы public и фильтрацией по company_id
 	if err := database.DB.Table("public.notification_settings").Where("company_id = ?", companyID).First(&settings).Error; err != nil {
 		// Если настроек нет, создаем новые
 		settings = models.NotificationSettings{
-			CompanyID: companyID.(uint),
+			CompanyID: companyID,
 		}
 	}
 
@@ -119,14 +124,18 @@ func GetEmailConfig(c *gin.Context) {
 		return
 	}
 	
-	// Получаем company_id из контекста
-	companyID, exists := c.Get("company_id")
-	if !exists {
-		companyID = uint(186) // fallback для совместимости
+	// КРИТИЧНО: Получаем company_id из контекста через middleware
+	companyID := middleware.GetCompanyID(c)
+	if companyID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Не удалось определить компанию. Обратитесь к администратору.",
+		})
+		return
 	}
 
 	var settings models.NotificationSettings
-	// Используем прямой SQL запрос с явным указанием схемы public и company_id
+	// КРИТИЧНО: Используем прямой SQL запрос с явным указанием схемы public и фильтрацией по company_id
 	if err := database.DB.Table("public.notification_settings").Where("company_id = ?", companyID).First(&settings).Error; err != nil {
 		// Если настройки не найдены, возвращаем пустой объект вместо ошибки
 		c.JSON(http.StatusOK, gin.H{
@@ -182,16 +191,19 @@ func TestEmailConnection(c *gin.Context) {
 		return
 	}
 	
-	// Получаем настройки Email
-	var settings models.NotificationSettings
-	
-	// Получаем company_id из контекста
-	companyID, exists := c.Get("company_id")
-	if !exists {
-		companyID = uint(186) // fallback для совместимости
+	// КРИТИЧНО: Получаем company_id из контекста через middleware
+	companyID := middleware.GetCompanyID(c)
+	if companyID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Не удалось определить компанию. Обратитесь к администратору.",
+		})
+		return
 	}
 	
-	// Используем прямой SQL запрос с явным указанием схемы public и company_id
+	// Получаем настройки Email
+	var settings models.NotificationSettings
+	// КРИТИЧНО: Используем прямой SQL запрос с явным указанием схемы public и фильтрацией по company_id
 	if err := database.DB.Table("public.notification_settings").Where("company_id = ?", companyID).First(&settings).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"status": "error",
