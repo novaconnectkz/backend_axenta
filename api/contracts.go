@@ -488,6 +488,7 @@ type CreateContractRequestRaw struct {
 	ObjectIDs   []uint `json:"object_ids"`
 
 	// Клиент
+	ClientType      string `json:"client_type"` // individual или organization
 	ClientName      string `json:"client_name"`
 	ClientShortName string `json:"client_short_name"` // Сокращенное название с ОПФ (для организаций)
 	ClientINN       string `json:"client_inn"`
@@ -495,6 +496,33 @@ type CreateContractRequestRaw struct {
 	ClientEmail     string `json:"client_email"`
 	ClientPhone     string `json:"client_phone"`
 	ClientAddress   string `json:"client_address"`
+	
+	// Дополнительные поля для организаций
+	ClientLegalAddress          string `json:"client_legal_address"`
+	ClientPostalAddress         string `json:"client_postal_address"`
+	ClientOGRN                  string `json:"client_ogrn"`
+	ClientOKPO                  string `json:"client_okpo"`
+	ClientDirector              string `json:"client_director"`
+	ClientBasedOn               string `json:"client_based_on"` // Действует на основании
+	ClientWebsite               string `json:"client_website"`
+	
+	// Банковские реквизиты
+	ClientBankName                 string `json:"client_bank_name"`
+	ClientBankBIK                  string `json:"client_bank_bik"`
+	ClientBankCorrespondentAccount string `json:"client_bank_correspondent_account"`
+	ClientBankAccount              string `json:"client_bank_account"`
+	ClientBankRecipient            string `json:"client_bank_recipient"`
+	
+	// Поля для физических лиц
+	ClientPassportSeries        string `json:"client_passport_series"`
+	ClientPassportNumber        string `json:"client_passport_number"`
+	ClientPassportIssuedBy      string `json:"client_passport_issued_by"`
+	ClientPassportIssueDate     string `json:"client_passport_issue_date"`
+	ClientPassportDepartmentCode string `json:"client_passport_department_code"`
+	ClientRegistrationAddress   string `json:"client_registration_address"`
+	ClientActualAddress         string `json:"client_actual_address"`
+	ClientSNILS                 string `json:"client_snils"`
+	ClientOGRNIP                string `json:"client_ogrnip"`
 
 	// Даты как строки для парсинга
 	StartDateStr string `json:"start_date"`
@@ -599,6 +627,7 @@ func CreateContract(c *gin.Context) {
 		Title:           rawRequest.Title,
 		Description:     rawRequest.Description,
 		CompanyID:       rawRequest.CompanyID,
+		ClientType:      rawRequest.ClientType,
 		ClientName:      rawRequest.ClientName,
 		ClientShortName: rawRequest.ClientShortName, // Сокращенное название с ОПФ
 		ClientINN:       rawRequest.ClientINN,
@@ -606,6 +635,30 @@ func CreateContract(c *gin.Context) {
 		ClientEmail:     rawRequest.ClientEmail,
 		ClientPhone:     rawRequest.ClientPhone,
 		ClientAddress:   rawRequest.ClientAddress,
+		// Дополнительные поля для организаций
+		ClientLegalAddress:          rawRequest.ClientLegalAddress,
+		ClientPostalAddress:         rawRequest.ClientPostalAddress,
+		ClientOGRN:                  rawRequest.ClientOGRN,
+		ClientOKPO:                  rawRequest.ClientOKPO,
+		ClientDirector:              rawRequest.ClientDirector,
+		ClientBasedOn:               rawRequest.ClientBasedOn,
+		ClientWebsite:               rawRequest.ClientWebsite,
+		// Банковские реквизиты
+		ClientBankName:                 rawRequest.ClientBankName,
+		ClientBankBIK:                  rawRequest.ClientBankBIK,
+		ClientBankCorrespondentAccount: rawRequest.ClientBankCorrespondentAccount,
+		ClientBankAccount:              rawRequest.ClientBankAccount,
+		ClientBankRecipient:            rawRequest.ClientBankRecipient,
+		// Поля для физических лиц
+		ClientPassportSeries:        rawRequest.ClientPassportSeries,
+		ClientPassportNumber:        rawRequest.ClientPassportNumber,
+		ClientPassportIssuedBy:      rawRequest.ClientPassportIssuedBy,
+		ClientPassportIssueDate:     rawRequest.ClientPassportIssueDate,
+		ClientPassportDepartmentCode: rawRequest.ClientPassportDepartmentCode,
+		ClientRegistrationAddress:   rawRequest.ClientRegistrationAddress,
+		ClientActualAddress:         rawRequest.ClientActualAddress,
+		ClientSNILS:                 rawRequest.ClientSNILS,
+		ClientOGRNIP:                rawRequest.ClientOGRNIP,
 		StartDate:       startDate,
 		EndDate:         endDate,
 		TariffPlanID:    nil, // Тарифный план будет привязан через подписку

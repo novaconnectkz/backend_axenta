@@ -27,6 +27,7 @@ type Contract struct {
 	CompanyID      uint `json:"company_id" gorm:"not null;index"`
 
 	// Клиент
+	ClientType      string `json:"client_type" gorm:"type:varchar(20)"` // individual или organization
 	ClientName      string `json:"client_name" gorm:"not null;type:varchar(200)"`
 	ClientShortName string `json:"client_short_name" gorm:"type:varchar(200)"` // Сокращенное название с ОПФ (для организаций)
 	ClientINN       string `json:"client_inn" gorm:"type:varchar(20)"`
@@ -34,6 +35,33 @@ type Contract struct {
 	ClientEmail     string `json:"client_email" gorm:"type:varchar(100)"`
 	ClientPhone     string `json:"client_phone" gorm:"type:varchar(20)"`
 	ClientAddress   string `json:"client_address" gorm:"type:text"`
+
+	// Дополнительные поля для организаций
+	ClientLegalAddress  string `json:"client_legal_address" gorm:"type:text"`
+	ClientPostalAddress string `json:"client_postal_address" gorm:"type:text"`
+	ClientOGRN          string `json:"client_ogrn" gorm:"type:varchar(20)"`
+	ClientOKPO          string `json:"client_okpo" gorm:"type:varchar(20)"`
+	ClientDirector      string `json:"client_director" gorm:"type:varchar(200)"`
+	ClientBasedOn       string `json:"client_based_on" gorm:"type:varchar(200)"` // Действует на основании
+	ClientWebsite       string `json:"client_website" gorm:"type:varchar(200)"`
+
+	// Банковские реквизиты
+	ClientBankName                 string `json:"client_bank_name" gorm:"type:varchar(200)"`
+	ClientBankBIK                  string `json:"client_bank_bik" gorm:"type:varchar(20)"`
+	ClientBankCorrespondentAccount string `json:"client_bank_correspondent_account" gorm:"type:varchar(20)"`
+	ClientBankAccount              string `json:"client_bank_account" gorm:"type:varchar(20)"`
+	ClientBankRecipient            string `json:"client_bank_recipient" gorm:"type:varchar(200)"`
+
+	// Поля для физических лиц
+	ClientPassportSeries         string `json:"client_passport_series" gorm:"type:varchar(10)"`
+	ClientPassportNumber         string `json:"client_passport_number" gorm:"type:varchar(20)"`
+	ClientPassportIssuedBy       string `json:"client_passport_issued_by" gorm:"type:text"`
+	ClientPassportIssueDate      string `json:"client_passport_issue_date" gorm:"type:varchar(20)"`
+	ClientPassportDepartmentCode string `json:"client_passport_department_code" gorm:"type:varchar(10)"`
+	ClientRegistrationAddress    string `json:"client_registration_address" gorm:"type:text"`
+	ClientActualAddress          string `json:"client_actual_address" gorm:"type:text"`
+	ClientSNILS                  string `json:"client_snils" gorm:"type:varchar(20)"`
+	ClientOGRNIP                 string `json:"client_ogrnip" gorm:"column:client_ogrn_ip;type:varchar(20)"`
 
 	// Даты договора
 	StartDate *time.Time `json:"start_date" gorm:"default:NULL"` // Опционально, будет установлено через подписку
@@ -58,7 +86,7 @@ type Contract struct {
 	IsActive bool   `json:"is_active" gorm:"default:true"`
 
 	// Настройки автоматической пролонгации (настраиваются через подписку)
-	IsAutoRenew        bool `json:"is_auto_renew" gorm:"-"`         // Автоматическая пролонгация договора (настраивается через подписку)
+	IsAutoRenew          bool `json:"is_auto_renew" gorm:"-"`          // Автоматическая пролонгация договора (настраивается через подписку)
 	ContractPeriodMonths *int `json:"contract_period_months" gorm:"-"` // Период договора в месяцах (настраивается через подписку)
 
 	// Настройки уведомлений
@@ -69,9 +97,9 @@ type Contract struct {
 	ExternalID string `json:"external_id" gorm:"type:varchar(100)"` // ID во внешних системах (1С, Битрикс24)
 
 	// Связи
-	Appendices     []ContractAppendix `json:"appendices,omitempty" gorm:"foreignKey:ContractID"`
-	Objects        []Object           `json:"objects,omitempty" gorm:"foreignKey:ContractID"` // Прямая связь (для обратной совместимости)
-	ContractObjects []ContractObject  `json:"contract_objects,omitempty" gorm:"foreignKey:ContractID"` // Связи через junction table
+	Appendices      []ContractAppendix `json:"appendices,omitempty" gorm:"foreignKey:ContractID"`
+	Objects         []Object           `json:"objects,omitempty" gorm:"foreignKey:ContractID"`          // Прямая связь (для обратной совместимости)
+	ContractObjects []ContractObject   `json:"contract_objects,omitempty" gorm:"foreignKey:ContractID"` // Связи через junction table
 }
 
 // TableName задает имя таблицы для модели Contract
