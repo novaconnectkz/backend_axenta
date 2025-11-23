@@ -93,9 +93,12 @@ func GetDashboardStats(c *gin.Context) {
 func GetDashboardActivity(c *gin.Context) {
 	tenantDB := middleware.GetTenantDB(c)
 	if tenantDB == nil {
+		log.Printf("❌ GetDashboardActivity: tenantDB is nil для пользователя")
 		c.JSON(500, gin.H{"status": "error", "error": "Ошибка подключения к базе данных компании"})
 		return
 	}
+	
+	log.Printf("✅ GetDashboardActivity: tenantDB получен успешно")
 
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
 	if limit > 100 {
