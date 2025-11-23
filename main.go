@@ -485,14 +485,8 @@ func main() {
 	r.PUT("/api/objects/:id", updateObjectHandler)
 	r.PUT("/api/objects/:id/", updateObjectHandler)
 
-	// Dashboard endpoints без мультитенантности (пока)
-	r.GET("/api/dashboard/stats", api.GetDashboardStatsSimple)
-	r.GET("/api/dashboard/activity", api.GetDashboardActivitySimple)
-	r.GET("/api/dashboard/layouts", api.GetDashboardLayouts)
-	r.GET("/api/dashboard/layouts/default", api.GetDefaultDashboardLayout)
-	r.GET("/api/notifications", api.GetDashboardNotificationsSimple)
-
-	// Dashboard для биллинга согласно roadmap (Этап 4.2)
+	// Dashboard endpoints (перемещены в apiGroup для поддержки мультитенантности)
+	// Dashboard для биллинга согласно roadmap (Этап 4.2) - остается публичным
 	r.GET("/api/dashboard", api.GetBillingDashboard)
 
 	// OpenAPI документация (Этап 9)
@@ -878,6 +872,13 @@ func main() {
 	// Настройки биллинга
 	apiGroup.GET("/billing/settings", api.GetBillingSettings)
 	apiGroup.PUT("/billing/settings", api.UpdateBillingSettings)
+
+	// Dashboard endpoints (с мультитенантностью)
+	apiGroup.GET("/dashboard/stats", api.GetDashboardStatsSimple)
+	apiGroup.GET("/dashboard/activity", api.GetDashboardActivitySimple)
+	apiGroup.GET("/dashboard/layouts", api.GetDashboardLayouts)
+	apiGroup.GET("/dashboard/layouts/default", api.GetDefaultDashboardLayout)
+	apiGroup.GET("/notifications", api.GetDashboardNotificationsSimple)
 
 	// Системные настройки
 	apiGroup.GET("/system/settings", api.GetSystemSettings)
