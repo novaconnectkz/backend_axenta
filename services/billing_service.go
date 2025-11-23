@@ -572,9 +572,15 @@ func (bs *BillingService) GenerateInvoiceForContractWithTenantDB(contractID uint
 
 // ProcessPayment обрабатывает платеж по счету
 func (bs *BillingService) ProcessPayment(invoiceID uint, amount decimal.Decimal, paymentMethod string, notes string) error {
+	// Устанавливаем схему public для работы с таблицами Invoice и BillingHistory
+	publicDB := bs.db.Session(&gorm.Session{})
+	if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
+		return fmt.Errorf("ошибка установки схемы public: %w", err)
+	}
+
 	// Получаем счет
 	var invoice models.Invoice
-	if err := bs.db.
+	if err := publicDB.
 		Where("id = ? AND admin_account_id = ?", invoiceID, bs.adminAccountID).
 		First(&invoice).Error; err != nil {
 		return fmt.Errorf("счет не найден: %w", err)
@@ -610,7 +616,7 @@ func (bs *BillingService) ProcessPayment(invoiceID uint, amount decimal.Decimal,
 		updates["paid_at"] = paidAt
 	}
 
-	if err := bs.db.Model(&invoice).Updates(updates).Error; err != nil {
+	if err := publicDB.Model(&invoice).Updates(updates).Error; err != nil {
 		return fmt.Errorf("ошибка обновления счета: %w", err)
 	}
 
@@ -631,9 +637,9 @@ func (bs *BillingService) ProcessPayment(invoiceID uint, amount decimal.Decimal,
 		history.Description += fmt.Sprintf(". Примечания: %s", notes)
 	}
 
-	if err := bs.db.Create(history).Error; err != nil {
+	if err := publicDB.Create(history).Error; err != nil {
 		// Логируем ошибку, но не прерываем выполнение
-		fmt.Printf("Предупреждение: ошибка создания записи в истории биллинга: %v\n", err)
+		log.Printf("⚠️ Предупреждение: ошибка создания записи в истории биллинга: %v", err)
 	}
 
 	return nil
