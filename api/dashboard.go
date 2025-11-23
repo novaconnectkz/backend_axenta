@@ -4,11 +4,16 @@ import (
 	"backend_axenta/database"
 	"backend_axenta/middleware"
 	"backend_axenta/models"
+	"fmt"
+	"log"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
+	"gorm.io/gorm"
 )
 
 // DashboardStats структура для статистики dashboard
@@ -31,8 +36,10 @@ type ActivityItem struct {
 	Title       string    `json:"title"`
 	Description string    `json:"description"`
 	Timestamp   time.Time `json:"timestamp"`
-	UserName    string    `json:"user_name"`
+	UserID      string    `json:"userId,omitempty"` // Опциональное поле для совместимости с фронтендом
+	UserName    string    `json:"userName"`         // Изменено с user_name на userName для совместимости
 	ObjectName  string    `json:"object_name,omitempty"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"` // Для дополнительных данных
 }
 
 // NotificationItem структура для уведомления
@@ -79,7 +86,10 @@ func GetDashboardStats(c *gin.Context) {
 	})
 }
 
-// GetDashboardActivity получает последнюю активность
+// GetDashboardActivity получает последнюю активность из реальных данных
+// Поддерживает фильтрацию источников через query параметр sources (через запятую)
+// Доступные источники: objects, users, invoices, contracts, installations, subscriptions
+// Пример: /api/dashboard/activity?sources=objects,invoices&limit=20
 func GetDashboardActivity(c *gin.Context) {
 	tenantDB := middleware.GetTenantDB(c)
 	if tenantDB == nil {
@@ -88,26 +98,310 @@ func GetDashboardActivity(c *gin.Context) {
 	}
 
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+	if limit > 100 {
+		limit = 100 // Увеличиваем максимум для большего охвата
+	}
+
+	// Получаем список разрешенных источников из query параметра
+	sourcesParam := c.Query("sources")
+	enabledSources := make(map[string]bool)
+	if sourcesParam != "" {
+		sources := strings.Split(sourcesParam, ",")
+		for _, s := range sources {
+			enabledSources[strings.TrimSpace(s)] = true
+		}
+	} else {
+		// По умолчанию все источники включены
+		enabledSources["objects"] = true
+		enabledSources["users"] = true
+		enabledSources["invoices"] = true
+		enabledSources["contracts"] = true
+		enabledSources["installations"] = true
+		enabledSources["subscriptions"] = true
+	}
 
 	var activities []ActivityItem
 
-	// Получаем последние изменения объектов
-	var objects []models.Object
-	tenantDB.Model(&models.Object{}).
-		Preload("Contract").
-		Order("updated_at DESC").
-		Limit(limit).
-		Find(&objects)
+	// 1. Получаем последние изменения объектов (создание, обновление)
+	if enabledSources["objects"] {
+		var objects []models.Object
+		tenantDB.Model(&models.Object{}).
+			Order("updated_at DESC").
+			Limit(limit / 3). // Треть от лимита для объектов
+			Find(&objects)
 
-	for _, obj := range objects {
-		activities = append(activities, ActivityItem{
-			ID:          strconv.FormatUint(uint64(obj.ID), 10),
-			Type:        "object_update",
-			Title:       "Обновление объекта",
-			Description: "Объект " + obj.Name + " был обновлен",
-			Timestamp:   obj.UpdatedAt,
-			ObjectName:  obj.Name,
-		})
+		for _, obj := range objects {
+			activityType := "object_updated"
+			title := "Обновлен объект"
+			if obj.CreatedAt.Equal(obj.UpdatedAt) || obj.CreatedAt.After(obj.UpdatedAt.Add(-1*time.Second)) {
+				activityType = "object_created"
+				title = "Создан новый объект"
+			}
+			
+			activities = append(activities, ActivityItem{
+				ID:          fmt.Sprintf("obj_%d", obj.ID),
+				Type:        activityType,
+				Title:       title,
+				Description: fmt.Sprintf("Объект '%s' %s", obj.Name, map[string]string{
+					"object_created": "добавлен в систему",
+					"object_updated": "был обновлен",
+				}[activityType]),
+				Timestamp: obj.UpdatedAt,
+				UserID:    "system",
+				UserName:  "Система",
+				Metadata: map[string]interface{}{
+					"objectId":   obj.ID,
+					"objectName": obj.Name,
+				},
+			})
+		}
+	}
+
+	// 2. Получаем последние созданные пользователи
+	if enabledSources["users"] {
+		var users []models.User
+		tenantDB.Model(&models.User{}).
+			Order("created_at DESC").
+			Limit(limit / 3). // Треть от лимита для пользователей
+			Find(&users)
+
+		for _, user := range users {
+			activities = append(activities, ActivityItem{
+				ID:          fmt.Sprintf("user_%d", user.ID),
+				Type:        "user_created",
+				Title:       "Добавлен пользователь",
+				Description: fmt.Sprintf("Новый пользователь '%s' зарегистрирован", user.Name),
+				Timestamp:   user.CreatedAt,
+				UserID:      fmt.Sprintf("user_%d", user.ID),
+				UserName:    user.Name,
+				Metadata: map[string]interface{}{
+					"newUserId":   user.ID,
+					"newUserName": user.Name,
+				},
+			})
+		}
+	}
+
+	// 3. Получаем последние счета (из public схемы, так как invoices там)
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err == nil && enabledSources["invoices"] {
+		// Используем public схему для счетов
+		publicDB := database.DB.Session(&gorm.Session{})
+		if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
+			log.Printf("⚠️ Не удалось переключиться на public схему: %v", err)
+		}
+
+		var invoices []models.Invoice
+		// Получаем больше счетов, чтобы важные события не терялись
+		publicDB.Model(&models.Invoice{}).
+			Where("admin_account_id = ? AND deleted_at IS NULL", adminAccountID).
+			Order("created_at DESC"). // Сортируем по дате создания (новые первыми)
+			Limit(limit * 2). // Берем в 2 раза больше, чтобы точно не потерять важные события
+			Find(&invoices)
+
+		for _, invoice := range invoices {
+			activityType := "invoice_generated"
+			title := "Создан счет"
+			// Используем номер счета вместо ID
+			description := fmt.Sprintf("Выставлен счет %s на сумму %.2f руб.", invoice.Number, invoice.TotalAmount.InexactFloat64())
+			
+			// Для новых счетов всегда используем created_at
+			timestamp := invoice.CreatedAt
+			
+			// Если счет был оплачен, показываем как платеж с датой оплаты
+			if invoice.Status == "paid" {
+				activityType = "payment_received"
+				title = "Получен платеж"
+				description = fmt.Sprintf("Оплата по счету %s на сумму %.2f руб.", invoice.Number, invoice.TotalAmount.InexactFloat64())
+				if invoice.PaidAt != nil {
+					timestamp = *invoice.PaidAt
+				} else if !invoice.UpdatedAt.IsZero() && invoice.UpdatedAt.After(invoice.CreatedAt) {
+					// Если PaidAt не установлен, используем updated_at
+					timestamp = invoice.UpdatedAt
+				}
+			} else if invoice.Status == "sent" && !invoice.UpdatedAt.IsZero() && invoice.UpdatedAt.After(invoice.CreatedAt) {
+				// Если счет был отправлен, используем updated_at для отображения времени отправки
+				timestamp = invoice.UpdatedAt
+			}
+
+			activities = append(activities, ActivityItem{
+				ID:          fmt.Sprintf("inv_%d", invoice.ID),
+				Type:        activityType,
+				Title:       title,
+				Description: description,
+				Timestamp:   timestamp,
+				UserID:      "billing_system",
+				UserName:    "Биллинг система",
+				Metadata: map[string]interface{}{
+					"invoiceId":   invoice.ID,
+					"invoiceNumber": invoice.Number,
+					"amount":      invoice.TotalAmount.InexactFloat64(),
+				},
+			})
+		}
+	}
+
+	// 4. Получаем последние договоры
+	if enabledSources["contracts"] {
+		var contracts []models.Contract
+		tenantDB.Model(&models.Contract{}).
+			Where("admin_account_id = ?", adminAccountID).
+			Order("updated_at DESC, created_at DESC").
+			Limit(limit / 3). // Треть от лимита для договоров
+			Find(&contracts)
+
+		for _, contract := range contracts {
+			activityType := "contract_updated"
+			title := "Обновлен договор"
+			if contract.CreatedAt.Equal(contract.UpdatedAt) || contract.CreatedAt.After(contract.UpdatedAt.Add(-1*time.Second)) {
+				activityType = "contract_created"
+				title = "Создан договор"
+			}
+
+			activities = append(activities, ActivityItem{
+				ID:          fmt.Sprintf("contract_%d", contract.ID),
+				Type:        activityType,
+				Title:       title,
+				Description: fmt.Sprintf("Договор %s '%s' %s", contract.Number, contract.ClientName, map[string]string{
+					"contract_created": "создан",
+					"contract_updated": "обновлен",
+				}[activityType]),
+				Timestamp: contract.UpdatedAt,
+				UserID:    "system",
+				UserName:  "Система",
+				Metadata: map[string]interface{}{
+					"contractId":   contract.ID,
+					"contractNumber": contract.Number,
+					"clientName":   contract.ClientName,
+				},
+			})
+		}
+	}
+
+	// 5. Получаем последние монтажи
+	if enabledSources["installations"] {
+		var installations []models.Installation
+		tenantDB.Model(&models.Installation{}).
+			Preload("Object").
+			Preload("Installer").
+			Order("updated_at DESC, created_at DESC").
+			Limit(limit / 3). // Треть от лимита для монтажей
+			Find(&installations)
+
+		for _, inst := range installations {
+			activityType := "installation_scheduled"
+			title := "Запланирован монтаж"
+			description := fmt.Sprintf("Монтаж на объекте")
+
+			if inst.Object != nil {
+				description = fmt.Sprintf("Монтаж оборудования на объекте '%s'", inst.Object.Name)
+			}
+
+			// Определяем тип активности по статусу
+			switch inst.Status {
+			case "completed":
+				activityType = "installation_completed"
+				title = "Завершен монтаж"
+				if inst.CompletedAt != nil {
+					description = fmt.Sprintf("Монтаж на объекте '%s' завершен", inst.Object.Name)
+				}
+			case "in_progress":
+				activityType = "installation_started"
+				title = "Начат монтаж"
+				if inst.StartedAt != nil {
+					description = fmt.Sprintf("Монтаж на объекте '%s' начат", inst.Object.Name)
+				}
+			case "cancelled":
+				activityType = "installation_cancelled"
+				title = "Отменен монтаж"
+				description = fmt.Sprintf("Монтаж на объекте '%s' отменен", inst.Object.Name)
+			}
+
+			timestamp := inst.UpdatedAt
+			if inst.CompletedAt != nil && inst.Status == "completed" {
+				timestamp = *inst.CompletedAt
+			} else if inst.StartedAt != nil && inst.Status == "in_progress" {
+				timestamp = *inst.StartedAt
+			} else if inst.CreatedAt.Equal(inst.UpdatedAt) || inst.CreatedAt.After(inst.UpdatedAt.Add(-1*time.Second)) {
+				timestamp = inst.CreatedAt
+			}
+
+			activities = append(activities, ActivityItem{
+				ID:          fmt.Sprintf("inst_%d", inst.ID),
+				Type:        activityType,
+				Title:       title,
+				Description: description,
+				Timestamp:   timestamp,
+				UserID:      "system",
+				UserName:    "Система",
+				Metadata: map[string]interface{}{
+					"installationId": inst.ID,
+					"objectId":      inst.ObjectID,
+					"objectName":    inst.Object.Name,
+					"status":        inst.Status,
+				},
+			})
+		}
+	}
+
+	// 6. Получаем последние подписки (из public схемы)
+	if enabledSources["subscriptions"] && adminAccountID > 0 {
+		publicDB := database.DB.Session(&gorm.Session{})
+		if err := publicDB.Exec("SET search_path TO public").Error; err == nil {
+			var subscriptions []models.Subscription
+			publicDB.Model(&models.Subscription{}).
+				Where("admin_account_id = ? AND deleted_at IS NULL", adminAccountID).
+				Preload("BillingPlan").
+				Order("updated_at DESC, created_at DESC").
+				Limit(limit / 4). // Четверть от лимита для подписок
+				Find(&subscriptions)
+
+			for _, sub := range subscriptions {
+				activityType := "subscription_created"
+				title := "Создана подписка"
+				description := fmt.Sprintf("Подписка на тариф '%s'", sub.BillingPlan.Name)
+
+				if sub.Status == "cancelled" {
+					activityType = "subscription_cancelled"
+					title = "Отменена подписка"
+					description = fmt.Sprintf("Подписка на тариф '%s' отменена", sub.BillingPlan.Name)
+				} else if sub.Status == "active" && !sub.CreatedAt.Equal(sub.UpdatedAt) {
+					activityType = "subscription_updated"
+					title = "Обновлена подписка"
+					description = fmt.Sprintf("Подписка на тариф '%s' обновлена", sub.BillingPlan.Name)
+				}
+
+				timestamp := sub.CreatedAt
+				if !sub.UpdatedAt.IsZero() && sub.UpdatedAt.After(sub.CreatedAt) {
+					timestamp = sub.UpdatedAt
+				}
+
+				activities = append(activities, ActivityItem{
+					ID:          fmt.Sprintf("sub_%d", sub.ID),
+					Type:        activityType,
+					Title:       title,
+					Description: description,
+					Timestamp:   timestamp,
+					UserID:      "billing_system",
+					UserName:    "Биллинг система",
+					Metadata: map[string]interface{}{
+						"subscriptionId": sub.ID,
+						"planId":         sub.BillingPlanID,
+						"planName":       sub.BillingPlan.Name,
+						"status":         sub.Status,
+					},
+				})
+			}
+		}
+	}
+
+	// Сортируем по времени (новые первыми) и ограничиваем лимитом
+	sort.Slice(activities, func(i, j int) bool {
+		return activities[i].Timestamp.After(activities[j].Timestamp)
+	})
+
+	if len(activities) > limit {
+		activities = activities[:limit]
 	}
 
 	c.JSON(200, gin.H{
@@ -202,32 +496,10 @@ func GetDashboardStatsSimple(c *gin.Context) {
 	})
 }
 
-// GetDashboardActivitySimple получает упрощенную активность
+// GetDashboardActivitySimple получает упрощенную активность (использует реальные данные)
 func GetDashboardActivitySimple(c *gin.Context) {
-	activities := []ActivityItem{
-		{
-			ID:          "1",
-			Type:        "object_update",
-			Title:       "Обновление объекта",
-			Description: "Объект 'Офис центральный' был обновлен",
-			Timestamp:   time.Now().Add(-1 * time.Hour),
-			UserName:    "Drew",
-			ObjectName:  "Офис центральный",
-		},
-		{
-			ID:          "2",
-			Type:        "user_login",
-			Title:       "Вход в систему",
-			Description: "Пользователь Drew вошел в систему",
-			Timestamp:   time.Now().Add(-2 * time.Hour),
-			UserName:    "Drew",
-		},
-	}
-
-	c.JSON(200, gin.H{
-		"status": "success",
-		"data":   activities,
-	})
+	// Используем реальную функцию GetDashboardActivity
+	GetDashboardActivity(c)
 }
 
 // GetDashboardNotificationsSimple получает упрощенные уведомления
