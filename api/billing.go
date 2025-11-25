@@ -708,6 +708,105 @@ type CreateSubscriptionData struct {
 	ContractPeriodMonths       *int   `json:"contract_period_months"` // Период подписки в месяцах (опционально)
 }
 
+// recalculateContractTotalAmount пересчитывает total_amount договора на основе всех его активных подписок
+func recalculateContractTotalAmount(tenantDB, publicDB *gorm.DB, contractID uint, adminAccountID uint) error {
+	// Загружаем все активные подписки для договора
+	var subscriptions []models.Subscription
+	if err := publicDB.
+		Where("contract_id = ? AND admin_account_id = ? AND deleted_at IS NULL AND status NOT IN (?, ?)", 
+			contractID, adminAccountID, "cancelled", "expired").
+		Find(&subscriptions).Error; err != nil {
+		return fmt.Errorf("ошибка загрузки подписок: %w", err)
+	}
+
+	if len(subscriptions) == 0 {
+		log.Printf("ℹ️ Нет активных подписок для договора %d, сумма не пересчитывается", contractID)
+		return nil
+	}
+
+	// Загружаем договор для получения периода
+	var contract models.Contract
+	if err := tenantDB.First(&contract, contractID).Error; err != nil {
+		return fmt.Errorf("ошибка загрузки договора: %w", err)
+	}
+
+	// Рассчитываем количество месяцев в договоре
+	months := 1
+	if contract.StartDate != nil && contract.EndDate != nil {
+		duration := contract.EndDate.Sub(*contract.StartDate)
+		days := int(duration.Hours() / 24)
+		if days > 0 {
+			months = days / 30
+			if months == 0 {
+				months = 1
+			}
+		}
+	}
+
+	totalAmount := decimal.Zero
+	log.Printf("📊 Расчет суммы договора %d (подписок: %d, месяцев: %d):", contractID, len(subscriptions), months)
+
+	// Суммируем стоимость каждой подписки
+	for _, subscription := range subscriptions {
+		// Загружаем тарифный план подписки
+		var billingPlan models.BillingPlan
+		if err := publicDB.First(&billingPlan, subscription.BillingPlanID).Error; err != nil {
+			log.Printf("⚠️ Ошибка загрузки тарифного плана %d: %v", subscription.BillingPlanID, err)
+			continue
+		}
+
+		// Подсчитываем количество объектов в этой подписке
+		var objectsCount int64
+		if err := tenantDB.Model(&models.ContractObject{}).
+			Where("contract_id = ? AND subscription_id = ? AND status = ?", contractID, subscription.ID, "active").
+			Count(&objectsCount).Error; err != nil {
+			log.Printf("⚠️ Ошибка подсчета объектов для подписки %d: %v", subscription.ID, err)
+			continue
+		}
+
+		// Рассчитываем стоимость подписки
+		var subscriptionAmount decimal.Decimal
+		if billingPlan.BillingPeriod == "yearly" {
+			// Годовой тариф: (цена / 12) × количество месяцев договора × количество объектов
+			// Делим годовую стоимость на 12 и умножаем на фактический период договора
+			pricePerMonth := billingPlan.Price.Div(decimal.NewFromInt(12))
+			subscriptionAmount = pricePerMonth.
+				Mul(decimal.NewFromInt(int64(months))).
+				Mul(decimal.NewFromInt(int64(objectsCount)))
+			
+			log.Printf("  - Подписка #%d (%s, yearly): %d объектов × (%s / 12) × %d мес = %s",
+				subscription.ID,
+				billingPlan.Name,
+				objectsCount,
+				billingPlan.Price.String(),
+				months,
+				subscriptionAmount.String())
+		} else {
+			// Месячный тариф с пролонгацией: цена × количество объектов
+			// Каждый месяц будет выставляться новый счет
+			subscriptionAmount = billingPlan.Price.Mul(decimal.NewFromInt(int64(objectsCount)))
+			
+			log.Printf("  - Подписка #%d (%s, monthly): %d объектов × %s = %s (ежемесячно)",
+				subscription.ID,
+				billingPlan.Name,
+				objectsCount,
+				billingPlan.Price.String(),
+				subscriptionAmount.String())
+		}
+
+		totalAmount = totalAmount.Add(subscriptionAmount)
+	}
+
+	// Обновляем total_amount договора
+	contract.TotalAmount = totalAmount
+	if err := tenantDB.Save(&contract).Error; err != nil {
+		return fmt.Errorf("ошибка обновления total_amount: %w", err)
+	}
+
+	log.Printf("✅ Обновлена сумма договора %d: %s ₽", contractID, totalAmount.String())
+	return nil
+}
+
 // CreateSubscription создает новую подписку
 func CreateSubscription(c *gin.Context) {
 	adminAccountID, err := middleware.GetAdminAccountID(c)
@@ -1146,48 +1245,12 @@ func CreateSubscription(c *gin.Context) {
 							log.Printf("✅ Привязано %d объектов к договору %d через подписку", attachedCount, contract.ID)
 						}
 
-						// Пересчитываем сумму договора на основе количества объектов и тарифного плана
-						if attachedCount > 0 && contract.TariffPlanID != nil && *contract.TariffPlanID > 0 {
-							// Загружаем тарифный план
-							if err := publicDB.Exec("SET search_path TO public").Error; err == nil {
-								var billingPlan models.BillingPlan
-								if err := publicDB.
-									Where("id = ? AND admin_account_id = ?", *contract.TariffPlanID, adminAccountID).
-									First(&billingPlan).Error; err == nil {
-									// Подсчитываем количество активных объектов
-									var objectsCount int64
-									if err := tenantDB.Model(&models.ContractObject{}).
-										Where("contract_id = ? AND status = ?", contract.ID, "active").
-										Count(&objectsCount).Error; err == nil {
-										// Рассчитываем сумму: количество объектов × цена тарифа за месяц × количество месяцев
-										months := 1 // По умолчанию 1 месяц
-										if contract.StartDate != nil && contract.EndDate != nil {
-											duration := contract.EndDate.Sub(*contract.StartDate)
-											days := int(duration.Hours() / 24)
-											if days > 0 {
-												months = days / 30
-												if months == 0 {
-													months = 1
-												}
-											}
-										}
-
-										// Рассчитываем total_amount
-										pricePerMonth := billingPlan.Price
-										totalAmount := pricePerMonth.Mul(decimal.NewFromInt(int64(objectsCount))).Mul(decimal.NewFromInt(int64(months)))
-
-										// Обновляем total_amount договора
-										contract.TotalAmount = totalAmount
-										if err := tenantDB.Save(&contract).Error; err != nil {
-											log.Printf("⚠️ Ошибка обновления total_amount договора %d: %v", contract.ID, err)
-										} else {
-											log.Printf("✅ Обновлена сумма договора %d: %s (объектов: %d, месяцев: %d, цена/мес: %s)",
-												contract.ID, totalAmount.String(), objectsCount, months, pricePerMonth.String())
-										}
-									}
-								}
-							}
+					// Пересчитываем сумму договора на основе ВСЕХ подписок
+					if attachedCount > 0 {
+						if err := recalculateContractTotalAmount(tenantDB, publicDB, contract.ID, adminAccountID); err != nil {
+							log.Printf("⚠️ Ошибка пересчета total_amount договора %d: %v", contract.ID, err)
 						}
+					}
 					}
 				} else {
 					log.Printf("ℹ️ Объекты не указаны в подписке, пропускаем привязку")
@@ -1279,6 +1342,16 @@ func UpdateSubscription(c *gin.Context) {
 		}
 	}
 
+	// Пересчитываем сумму договора после обновления подписки
+	if subscription.ContractID != nil {
+		tenantDB := middleware.GetTenantDB(c)
+		if tenantDB != nil {
+			if err := recalculateContractTotalAmount(tenantDB, database.DB, *subscription.ContractID, adminAccountID); err != nil {
+				log.Printf("⚠️ Ошибка пересчета total_amount договора %d после обновления подписки: %v", *subscription.ContractID, err)
+			}
+		}
+	}
+
 	// Загружаем обновленные данные с связями
 	database.DB.Preload("BillingPlan", "admin_account_id = ?", adminAccountID).
 		Where("id = ? AND admin_account_id = ?", subscription.ID, adminAccountID).
@@ -1320,6 +1393,12 @@ func DeleteSubscription(c *gin.Context) {
 		return
 	}
 
+	// Сохраняем contractID для пересчета после удаления
+	var contractID *uint
+	if subscription.ContractID != nil {
+		contractID = subscription.ContractID
+	}
+
 	// Получаем tenant DB для работы с объектами договора
 	tenantDB := middleware.GetTenantDB(c)
 	if tenantDB != nil && subscription.ContractID != nil {
@@ -1344,6 +1423,13 @@ func DeleteSubscription(c *gin.Context) {
 	}
 
 	log.Printf("✅ Подписка %d успешно удалена", subscriptionID)
+
+	// Пересчитываем сумму договора после удаления подписки
+	if contractID != nil && tenantDB != nil {
+		if err := recalculateContractTotalAmount(tenantDB, database.DB, *contractID, adminAccountID); err != nil {
+			log.Printf("⚠️ Ошибка пересчета total_amount договора %d после удаления подписки: %v", *contractID, err)
+		}
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
