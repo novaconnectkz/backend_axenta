@@ -23,7 +23,7 @@ type BillingPlan struct {
 	Currency       string          `json:"currency" gorm:"default:RUB;type:varchar(3)"`
 
 	// Период тарификации
-	BillingPeriod string `json:"billing_period" gorm:"default:monthly;type:varchar(20)"` // monthly, yearly, one-time
+	BillingPeriod string `json:"billing_period" gorm:"default:monthly;type:varchar(20)"` // hourly, daily, weekly, monthly, yearly, one-time
 
 	// Лимиты и возможности
 	MaxDevices      int  `json:"max_devices" gorm:"default:0"` // 0 = безлимитно

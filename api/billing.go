@@ -766,32 +766,62 @@ func recalculateContractTotalAmount(tenantDB, publicDB *gorm.DB, contractID uint
 
 		// Рассчитываем стоимость подписки
 		var subscriptionAmount decimal.Decimal
-		if billingPlan.BillingPeriod == "yearly" {
+		switch billingPlan.BillingPeriod {
+		case "yearly":
 			// Годовой тариф: (цена / 12) × количество месяцев договора × количество объектов
-			// Делим годовую стоимость на 12 и умножаем на фактический период договора
 			pricePerMonth := billingPlan.Price.Div(decimal.NewFromInt(12))
 			subscriptionAmount = pricePerMonth.
 				Mul(decimal.NewFromInt(int64(months))).
 				Mul(decimal.NewFromInt(int64(objectsCount)))
 			
 			log.Printf("  - Подписка #%d (%s, yearly): %d объектов × (%s / 12) × %d мес = %s",
-				subscription.ID,
-				billingPlan.Name,
-				objectsCount,
-				billingPlan.Price.String(),
-				months,
-				subscriptionAmount.String())
-		} else {
+				subscription.ID, billingPlan.Name, objectsCount, billingPlan.Price.String(), months, subscriptionAmount.String())
+		
+		case "weekly":
+			// Недельный тариф: (цена × количество недель) × количество объектов
+			weeks := (months * 30) / 7
+			if weeks == 0 {
+				weeks = 1
+			}
+			subscriptionAmount = billingPlan.Price.
+				Mul(decimal.NewFromInt(int64(weeks))).
+				Mul(decimal.NewFromInt(int64(objectsCount)))
+			
+			log.Printf("  - Подписка #%d (%s, weekly): %d объектов × %s × %d недель = %s",
+				subscription.ID, billingPlan.Name, objectsCount, billingPlan.Price.String(), weeks, subscriptionAmount.String())
+		
+		case "daily":
+			// Дневной тариф: (цена × количество дней) × количество объектов
+			days := months * 30
+			if days == 0 {
+				days = 1
+			}
+			subscriptionAmount = billingPlan.Price.
+				Mul(decimal.NewFromInt(int64(days))).
+				Mul(decimal.NewFromInt(int64(objectsCount)))
+			
+			log.Printf("  - Подписка #%d (%s, daily): %d объектов × %s × %d дней = %s",
+				subscription.ID, billingPlan.Name, objectsCount, billingPlan.Price.String(), days, subscriptionAmount.String())
+		
+		case "hourly":
+			// Часовой тариф: (цена × количество часов) × количество объектов
+			hours := months * 30 * 24
+			if hours == 0 {
+				hours = 1
+			}
+			subscriptionAmount = billingPlan.Price.
+				Mul(decimal.NewFromInt(int64(hours))).
+				Mul(decimal.NewFromInt(int64(objectsCount)))
+			
+			log.Printf("  - Подписка #%d (%s, hourly): %d объектов × %s × %d часов = %s",
+				subscription.ID, billingPlan.Name, objectsCount, billingPlan.Price.String(), hours, subscriptionAmount.String())
+		
+		default: // monthly и другие
 			// Месячный тариф с пролонгацией: цена × количество объектов
-			// Каждый месяц будет выставляться новый счет
 			subscriptionAmount = billingPlan.Price.Mul(decimal.NewFromInt(int64(objectsCount)))
 			
 			log.Printf("  - Подписка #%d (%s, monthly): %d объектов × %s = %s (ежемесячно)",
-				subscription.ID,
-				billingPlan.Name,
-				objectsCount,
-				billingPlan.Price.String(),
-				subscriptionAmount.String())
+				subscription.ID, billingPlan.Name, objectsCount, billingPlan.Price.String(), subscriptionAmount.String())
 		}
 
 		totalAmount = totalAmount.Add(subscriptionAmount)
@@ -1606,13 +1636,36 @@ func GetContractBillingBreakdown(c *gin.Context) {
 			var description string
 			var pricePerObject decimal.Decimal
 
-			if subData.BillingPlan.BillingPeriod == "yearly" {
+			switch subData.BillingPlan.BillingPeriod {
+			case "yearly":
 				// Годовой тариф: делим на 12 месяцев
 				pricePerObject = subData.BillingPlan.Price.Div(decimal.NewFromInt(12))
 				amount = pricePerObject.Mul(decimal.NewFromInt(int64(objectsCount)))
 				description = fmt.Sprintf("%d объект(ов) × %s ₽/год ÷ 12 мес", 
 					objectsCount, subData.BillingPlan.Price.String())
-			} else {
+			
+			case "weekly":
+				// Недельный тариф: конвертируем в месячную стоимость
+				pricePerObject = subData.BillingPlan.Price.Mul(decimal.NewFromInt(4)) // ~4 недели в месяце
+				amount = pricePerObject.Mul(decimal.NewFromInt(int64(objectsCount)))
+				description = fmt.Sprintf("%d объект(ов) × %s ₽/нед × 4", 
+					objectsCount, subData.BillingPlan.Price.String())
+			
+			case "daily":
+				// Дневной тариф: конвертируем в месячную стоимость
+				pricePerObject = subData.BillingPlan.Price.Mul(decimal.NewFromInt(30)) // 30 дней в месяце
+				amount = pricePerObject.Mul(decimal.NewFromInt(int64(objectsCount)))
+				description = fmt.Sprintf("%d объект(ов) × %s ₽/день × 30", 
+					objectsCount, subData.BillingPlan.Price.String())
+			
+			case "hourly":
+				// Часовой тариф: конвертируем в месячную стоимость
+				pricePerObject = subData.BillingPlan.Price.Mul(decimal.NewFromInt(720)) // 30 дней × 24 часа
+				amount = pricePerObject.Mul(decimal.NewFromInt(int64(objectsCount)))
+				description = fmt.Sprintf("%d объект(ов) × %s ₽/час × 720", 
+					objectsCount, subData.BillingPlan.Price.String())
+			
+			default: // monthly
 				// Месячный тариф
 				pricePerObject = subData.BillingPlan.Price
 				amount = subData.BillingPlan.Price.Mul(decimal.NewFromInt(int64(objectsCount)))
