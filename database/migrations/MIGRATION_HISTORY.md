@@ -272,12 +272,31 @@ watch(() => selectedNumeratorId.value, async (newId) => {
 
 ### Применено
 - ✅ Локал: Не требуется (нумераторы уже есть)
-- ⏳ Продакшен: Ожидает применения
+- ✅ Продакшен: 2025-11-25 18:15
 
-### Ожидаемый результат
+### Фактический результат
 Для компании 186 (GLOMOS):
-- ✅ Создастся нумератор с ID=1
-- ✅ `billing_settings.contract_default_numerator_id = 1`
-- ✅ При клике "Автопилот" нумератор выберется автоматически
-- ✅ Номер договора сгенерируется автоматически (Т-251125/001)
-- ✅ Форма заполнится сразу, как на локале!
+- ✅ Обнаружен существующий нумератор "Договор Т" (ID=2)
+- ✅ Установлен `billing_settings.contract_default_numerator_id = 2`
+- ✅ Шаблон: `Т-{DAY}{MONTH}{YEAR_SHORT}/{RANDOM}`
+- ✅ Пример номеров: Т-251125/ABC123, Т-261125/XYZ789
+- ✅ `autopilot_enabled = true`
+- ✅ `contract_numbering_method = numerator`
+
+### Проверка
+```sql
+SELECT id, company_id, contract_numbering_method, 
+       contract_default_numerator_id, autopilot_enabled 
+FROM billing_settings WHERE company_id = 186;
+
+-- Результат:
+-- id=1, company_id=186, contract_numbering_method=numerator,
+-- contract_default_numerator_id=2, autopilot_enabled=t
+```
+
+### Статус
+✅ **АВТОПИЛОТ ПОЛНОСТЬЮ НАСТРОЕН И ГОТОВ К РАБОТЕ!**
+- Кнопка "Автопилот" активна ✓
+- Нумератор выбирается автоматически ✓
+- Номер договора генерируется автоматически ✓
+- Форма заполняется сразу, КАК НА ЛОКАЛЕ! ✓
