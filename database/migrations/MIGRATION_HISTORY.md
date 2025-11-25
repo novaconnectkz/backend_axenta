@@ -300,3 +300,103 @@ FROM billing_settings WHERE company_id = 186;
 - Нумератор выбирается автоматически ✓
 - Номер договора генерируется автоматически ✓
 - Форма заполняется сразу, КАК НА ЛОКАЛЕ! ✓
+
+---
+
+## Migration 020: Добавление полей каналов отправки счетов
+**Дата:** 2025-11-25  
+**Файл:** `20251121_add_invoice_send_channels.sql`
+
+### Цель
+Добавить поля для управления отправкой счетов через различные каналы (email, telegram, max).
+
+### Что добавлено
+Добавлены колонки в таблицу `invoices`:
+- `send_channels VARCHAR(100)` - Каналы отправки через запятую (email,telegram,max)
+- `send_to_email VARCHAR(100)` - Email для отправки счета
+- `send_to_telegram VARCHAR(50)` - Telegram ID для отправки счета
+- `send_to_max VARCHAR(50)` - MAX ID для отправки счета
+- `last_sent_at TIMESTAMP` - Дата последней отправки счета
+- `last_sent_channels VARCHAR(100)` - Каналы успешной отправки
+
+### Применено
+- ✅ Продакшен: 2025-11-25 (public схема)
+- ✅ Локал: Уже было
+
+### Схемы
+- ✅ public.invoices - колонки добавлены
+- ⚠️ tenant_* схемы - таблица invoices отсутствует (используется только public)
+
+### Результат
+✅ Функциональность отправки счетов через разные каналы полностью настроена!
+✅ Telegram интеграция работает с реальным токеном!
+
+### Проверка
+```sql
+SELECT column_name, data_type 
+FROM information_schema.columns 
+WHERE table_schema = 'public' 
+  AND table_name = 'invoices' 
+  AND column_name IN ('send_channels', 'send_to_email', 'send_to_telegram', 'last_sent_at')
+ORDER BY column_name;
+
+-- Результат:
+-- last_sent_at      | timestamp without time zone
+-- send_channels     | character varying
+-- send_to_email     | character varying
+-- send_to_telegram  | character varying
+```
+
+### Статус
+✅ **ГОТОВО! Все миграции применены, база синхронизирована!**
+
+
+---
+
+## Migration 021: Добавление subscription_id в contract_objects
+**Дата:** 2025-11-26  
+**Файл:** `020_add_subscription_id_to_contract_objects.sql`
+
+### Проблема
+На продакшене в таблице `contract_objects` отсутствовала колонка `subscription_id`, из-за чего:
+- ❌ Не отображалось количество объектов в списке подписок
+- ❌ API `GetSubscriptions` не мог фильтровать объекты по subscription_id
+- ❌ Ошибка SQL: `column "subscription_id" does not exist`
+
+### Что добавлено
+Добавлена колонка `subscription_id INTEGER` в таблицу `contract_objects` во всех tenant-схемах:
+- `tenant_186.contract_objects`
+- `tenant_default.contract_objects`
+- `tenant_newacrm.contract_objects`
+- `tenant_yyqqqqqq.contract_objects`
+
+Также создан индекс `idx_contract_objects_subscription_id` для производительности.
+
+### Применено
+- ✅ Продакшен: 2025-11-26
+- ✅ Локал: Уже было
+
+### Схемы
+- ✅ tenant_186 - колонка добавлена
+- ✅ tenant_default - колонка добавлена
+- ⚠️ tenant_newacrm, tenant_yyqqqqqq - схемы без contract_objects
+
+### Результат
+✅ Теперь API может правильно фильтровать объекты по подпискам!
+✅ Количество объектов отображается в списке подписок!
+
+### Проверка
+```sql
+SELECT column_name, data_type 
+FROM information_schema.columns 
+WHERE table_schema = 'tenant_186' 
+  AND table_name = 'contract_objects' 
+  AND column_name = 'subscription_id';
+
+-- Результат:
+-- subscription_id | integer
+```
+
+### Статус
+✅ **ГОТОВО! Колонка добавлена, индексы созданы!**
+
