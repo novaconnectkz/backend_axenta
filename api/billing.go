@@ -571,7 +571,8 @@ func GetSubscriptions(c *gin.Context) {
 	for _, sub := range subscriptions {
 		if sub.ContractID != nil && tenantDB != nil {
 			var contractObjects []models.ContractObject
-			if err := tenantDB.Where("contract_id = ? AND status = ?", *sub.ContractID, "active").
+			// Фильтруем объекты по subscription_id, чтобы получить только те, которые принадлежат этой подписке
+			if err := tenantDB.Where("contract_id = ? AND subscription_id = ? AND status = ?", *sub.ContractID, sub.ID, "active").
 				Find(&contractObjects).Error; err == nil {
 				for _, co := range contractObjects {
 					objectKeysSet[ObjectKey{ObjectID: co.ObjectID, CompanyID: co.ObjectCompanyID}] = true
@@ -641,7 +642,8 @@ func GetSubscriptions(c *gin.Context) {
 		// Добавляем объекты, если они есть
 		if sub.ContractID != nil && tenantDB != nil {
 			var contractObjects []models.ContractObject
-			if err := tenantDB.Where("contract_id = ? AND status = ?", *sub.ContractID, "active").
+			// Фильтруем объекты по subscription_id, чтобы получить только те, которые принадлежат этой подписке
+			if err := tenantDB.Where("contract_id = ? AND subscription_id = ? AND status = ?", *sub.ContractID, sub.ID, "active").
 				Find(&contractObjects).Error; err == nil && len(contractObjects) > 0 {
 				objectIDs := make([]uint, 0, len(contractObjects))
 				objects := make([]map[string]interface{}, 0, len(contractObjects))
@@ -1095,14 +1097,27 @@ func CreateSubscription(c *gin.Context) {
 							var existingSameContract models.ContractObject
 							if err := tenantDB.Where("contract_id = ? AND object_id = ? AND object_company_id = ?",
 								contract.ID, objectID, targetAccountID).First(&existingSameContract).Error; err == nil {
-								log.Printf("ℹ️ Связь между договором %d и объектом %d уже существует, пропускаем", contract.ID, objectID)
-								attachedCount++
+								// Объект уже привязан к договору - обновляем subscription_id
+								existingSameContract.SubscriptionID = &subscription.ID
+								existingSameContract.StartDate = objStartDate
+								existingSameContract.EndDate = objEndDate
+								existingSameContract.Status = "active"
+								
+								if err := tenantDB.Save(&existingSameContract).Error; err != nil {
+									log.Printf("⚠️ Ошибка обновления связи для объекта %d: %v", objectID, err)
+									objectErrors = append(objectErrors, fmt.Sprintf("Ошибка обновления объекта %d: %v", objectID, err))
+								} else {
+									attachedCount++
+									log.Printf("✅ Обновлена связь: договор %d <-> объект %d (subscription_id=%d, account_id %d)", 
+										contract.ID, objectID, subscription.ID, targetAccountID)
+								}
 								continue
 							}
 
 							// Создаем связь в junction table
 							contractObject := models.ContractObject{
 								ContractID:      contract.ID,
+								SubscriptionID:  &subscription.ID, // Привязываем объект к конкретной подписке
 								ObjectID:        objectID,
 								ObjectCompanyID: targetAccountID,
 								ObjectSchema:    company.DatabaseSchema,
@@ -1116,7 +1131,8 @@ func CreateSubscription(c *gin.Context) {
 								objectErrors = append(objectErrors, fmt.Sprintf("Ошибка привязки объекта %d: %v", objectID, err))
 							} else {
 								attachedCount++
-								log.Printf("✅ Создана связь: договор %d <-> объект %d (account_id %d, схема %s)", contract.ID, objectID, targetAccountID, company.DatabaseSchema)
+								log.Printf("✅ Создана связь: договор %d <-> объект %d (subscription_id=%d, account_id %d, схема %s)", 
+									contract.ID, objectID, subscription.ID, targetAccountID, company.DatabaseSchema)
 							}
 						}
 
@@ -1233,12 +1249,34 @@ func UpdateSubscription(c *gin.Context) {
 		return
 	}
 
+	// Сохраняем старый статус
+	oldStatus := subscription.Status
+
 	if err := database.DB.Model(&subscription).Updates(updateData).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  "Ошибка при обновлении подписки",
 		})
 		return
+	}
+
+	// Если статус изменился на cancelled или expired, обнуляем subscription_id у объектов
+	if updateData.Status != "" && updateData.Status != oldStatus && 
+		(updateData.Status == "cancelled" || updateData.Status == "expired") {
+		
+		tenantDB := middleware.GetTenantDB(c)
+		if tenantDB != nil && subscription.ContractID != nil {
+			result := tenantDB.Model(&models.ContractObject{}).
+				Where("contract_id = ? AND subscription_id = ?", *subscription.ContractID, subscription.ID).
+				Update("subscription_id", nil)
+			
+			if result.Error != nil {
+				log.Printf("⚠️ Ошибка обнуления subscription_id у объектов подписки %d: %v", subscription.ID, result.Error)
+			} else if result.RowsAffected > 0 {
+				log.Printf("✅ Обнулен subscription_id у %d объектов подписки %d (статус изменен на %s)", 
+					result.RowsAffected, subscription.ID, updateData.Status)
+			}
+		}
 	}
 
 	// Загружаем обновленные данные с связями
@@ -1264,6 +1302,14 @@ func DeleteSubscription(c *gin.Context) {
 	}
 
 	id := c.Param("id")
+	subscriptionID, err := strconv.ParseUint(id, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Неверный формат ID подписки",
+		})
+		return
+	}
 
 	var subscription models.Subscription
 	if err := database.DB.Where("id = ? AND admin_account_id = ?", id, adminAccountID).First(&subscription).Error; err != nil {
@@ -1274,6 +1320,21 @@ func DeleteSubscription(c *gin.Context) {
 		return
 	}
 
+	// Получаем tenant DB для работы с объектами договора
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB != nil && subscription.ContractID != nil {
+		// Обнуляем subscription_id у всех объектов этой подписки
+		result := tenantDB.Model(&models.ContractObject{}).
+			Where("contract_id = ? AND subscription_id = ?", *subscription.ContractID, uint(subscriptionID)).
+			Update("subscription_id", nil)
+		
+		if result.Error != nil {
+			log.Printf("⚠️ Ошибка обнуления subscription_id у объектов подписки %d: %v", subscriptionID, result.Error)
+		} else if result.RowsAffected > 0 {
+			log.Printf("✅ Обнулен subscription_id у %d объектов подписки %d", result.RowsAffected, subscriptionID)
+		}
+	}
+
 	if err := database.DB.Delete(&subscription).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
@@ -1281,6 +1342,8 @@ func DeleteSubscription(c *gin.Context) {
 		})
 		return
 	}
+
+	log.Printf("✅ Подписка %d успешно удалена", subscriptionID)
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",

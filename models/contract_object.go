@@ -18,6 +18,9 @@ type ContractObject struct {
 	ContractID uint     `json:"contract_id" gorm:"not null;index"`
 	Contract   Contract `json:"contract,omitempty" gorm:"foreignKey:ContractID;constraint:-"`
 
+	// Связь с подпиской (опционально, для отслеживания какой подпиской был добавлен объект)
+	SubscriptionID *uint `json:"subscription_id" gorm:"index"` // ID подписки, которая добавила этот объект
+
 	// Информация об объекте (может находиться в другой tenant схеме)
 	ObjectID       uint   `json:"object_id" gorm:"not null;index"`
 	ObjectCompanyID uint   `json:"object_company_id" gorm:"not null;index"` // ID компании, которой принадлежит объект
