@@ -129,18 +129,17 @@ func ConnectDatabase() error {
 	log.Printf("✅ Успешно подключено к PostgreSQL (пул: %d/%d соединений)",
 		cfg.Database.MaxIdleConns, cfg.Database.MaxOpenConns)
 
-	// Выполняем миграции с проверкой структуры
-	if err := RunAllMigrations(false); err != nil {
-		log.Printf("⚠️ Ошибка выполнения миграций: %v", err)
-		log.Println("Продолжаем работу - некоторые функции могут быть недоступны")
-	} else {
-		log.Println("✅ Миграции выполнены успешно")
+	// Создаем недостающие глобальные таблицы напрямую (более надежный способ)
+	if err := CreateMissingGlobalTables(); err != nil {
+		log.Printf("⚠️ Ошибка создания глобальных таблиц: %v", err)
 	}
 
-	// Создаем недостающие глобальные таблицы (обход ошибок миграций)
-	if err := CreateMissingGlobalTables(); err != nil {
-		log.Printf("⚠️ Ошибка создания недостающих глобальных таблиц: %v", err)
-		log.Println("Продолжаем работу - некоторые функции могут быть недоступны")
+	// Выполняем миграции с проверкой структуры (только если таблицы уже созданы)
+	if err := RunAllMigrations(false); err != nil {
+		log.Printf("⚠️ Ошибка выполнения миграций: %v", err)
+		log.Println("Продолжаем работу - основные таблицы уже созданы")
+	} else {
+		log.Println("✅ Миграции выполнены успешно")
 	}
 
 	// Создаем индексы производительности в фоновом режиме

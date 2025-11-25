@@ -635,6 +635,7 @@ func RunAllMigrations(globalOnly bool) error {
 		log.Printf("⚠️ Не удалось переключиться на схему public: %v", err)
 	}
 
+	var migrationErrors []string
 	for _, migration := range migrations {
 		if migration.IsGlobal {
 			result := RunMigration(DB, migration)
@@ -642,7 +643,8 @@ func RunAllMigrations(globalOnly bool) error {
 
 			if result.Error != nil {
 				log.Printf("❌ Ошибка миграции %s: %v", migration.TableName, result.Error)
-				return fmt.Errorf("ошибка миграции глобальной таблицы %s: %v", migration.TableName, result.Error)
+				migrationErrors = append(migrationErrors, fmt.Sprintf("%s: %v", migration.TableName, result.Error))
+				// Продолжаем выполнение остальных миграций вместо прерывания
 			}
 		}
 	}
@@ -665,7 +667,11 @@ func RunAllMigrations(globalOnly bool) error {
 
 	// Если нужны только глобальные миграции, завершаем
 	if globalOnly {
-		log.Println("✅ Глобальные миграции завершены")
+		if len(migrationErrors) > 0 {
+			log.Printf("⚠️ Глобальные миграции завершены с ошибками (%d): %v", len(migrationErrors), migrationErrors)
+		} else {
+			log.Println("✅ Глобальные миграции завершены успешно")
+		}
 		printMigrationSummary(results)
 		return nil
 	}
@@ -711,7 +717,11 @@ func RunAllMigrations(globalOnly bool) error {
 		DB.Exec("SET search_path TO public")
 	}
 
-	log.Println("✅ Все миграции завершены")
+	if len(migrationErrors) > 0 {
+		log.Printf("⚠️ Все миграции завершены с ошибками (%d): %v", len(migrationErrors), migrationErrors)
+	} else {
+		log.Println("✅ Все миграции завершены успешно")
+	}
 	printMigrationSummary(results)
 
 	return nil
