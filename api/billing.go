@@ -1439,6 +1439,257 @@ func DeleteSubscription(c *gin.Context) {
 
 // ===== НОВЫЕ ENDPOINTS ДЛЯ СИСТЕМЫ БИЛЛИНГА =====
 
+// GetContractBillingBreakdown возвращает детализацию расчета стоимости договора с разбивкой по месяцам
+func GetContractBillingBreakdown(c *gin.Context) {
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	contractIDStr := c.Param("contract_id")
+	contractID, err := strconv.ParseUint(contractIDStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Неверный формат ID договора",
+		})
+		return
+	}
+
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка подключения к базе данных компании",
+		})
+		return
+	}
+
+	// Загружаем договор
+	var contract models.Contract
+	if err := tenantDB.First(&contract, uint(contractID)).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"status": "error",
+			"error":  "Договор не найден",
+		})
+		return
+	}
+
+	// Проверяем наличие дат
+	if contract.StartDate == nil || contract.EndDate == nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "У договора не указаны даты начала и окончания",
+		})
+		return
+	}
+
+	// Загружаем все активные подписки для договора
+	var subscriptions []models.Subscription
+	if err := database.DB.
+		Where("contract_id = ? AND admin_account_id = ? AND deleted_at IS NULL", 
+			uint(contractID), adminAccountID).
+		Find(&subscriptions).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка загрузки подписок",
+		})
+		return
+	}
+
+	// Загружаем тарифные планы для всех подписок
+	billingPlanIDs := make([]uint, 0)
+	for _, sub := range subscriptions {
+		billingPlanIDs = append(billingPlanIDs, sub.BillingPlanID)
+	}
+
+	billingPlans := make(map[uint]models.BillingPlan)
+	if len(billingPlanIDs) > 0 {
+		var plans []models.BillingPlan
+		if err := database.DB.Where("id IN ?", billingPlanIDs).Find(&plans).Error; err == nil {
+			for _, plan := range plans {
+				billingPlans[plan.ID] = plan
+			}
+		}
+	}
+
+	// Загружаем объекты для каждой подписки
+	type SubscriptionWithObjects struct {
+		Subscription models.Subscription
+		BillingPlan  models.BillingPlan
+		Objects      []models.ContractObject
+	}
+
+	subscriptionsData := make([]SubscriptionWithObjects, 0)
+	for _, sub := range subscriptions {
+		var objects []models.ContractObject
+		tenantDB.Where("contract_id = ? AND subscription_id = ? AND status = ?", 
+			uint(contractID), sub.ID, "active").Find(&objects)
+
+		plan, exists := billingPlans[sub.BillingPlanID]
+		if !exists {
+			continue
+		}
+
+		subscriptionsData = append(subscriptionsData, SubscriptionWithObjects{
+			Subscription: sub,
+			BillingPlan:  plan,
+			Objects:      objects,
+		})
+	}
+
+	// Генерируем разбивку по месяцам
+	type SubscriptionCharge struct {
+		SubscriptionID uint            `json:"subscription_id"`
+		PlanName       string          `json:"plan_name"`
+		BillingPeriod  string          `json:"billing_period"`
+		ObjectsCount   int             `json:"objects_count"`
+		PricePerObject decimal.Decimal `json:"price_per_object"`
+		Amount         decimal.Decimal `json:"amount"`
+		Description    string          `json:"description"`
+	}
+
+	type MonthlyCharge struct {
+		Month          string                 `json:"month"`           // YYYY-MM
+		MonthName      string                 `json:"month_name"`      // "Ноябрь 2025"
+		IsCompleted    bool                   `json:"is_completed"`    // Прошедший месяц
+		Subscriptions  []SubscriptionCharge   `json:"subscriptions"`
+		TotalAmount    decimal.Decimal        `json:"total_amount"`
+	}
+
+	monthlyCharges := make([]MonthlyCharge, 0)
+	currentDate := time.Now()
+
+	// Генерируем список месяцев от начала до конца договора
+	startMonth := time.Date(contract.StartDate.Year(), contract.StartDate.Month(), 1, 0, 0, 0, 0, contract.StartDate.Location())
+	endMonth := time.Date(contract.EndDate.Year(), contract.EndDate.Month(), 1, 0, 0, 0, 0, contract.EndDate.Location())
+
+	for month := startMonth; !month.After(endMonth); month = month.AddDate(0, 1, 0) {
+		isCompleted := month.Before(time.Date(currentDate.Year(), currentDate.Month(), 1, 0, 0, 0, 0, currentDate.Location()))
+		
+		monthlyCharge := MonthlyCharge{
+			Month:         month.Format("2006-01"),
+			MonthName:     getMonthName(month),
+			IsCompleted:   isCompleted,
+			Subscriptions: make([]SubscriptionCharge, 0),
+			TotalAmount:   decimal.Zero,
+		}
+
+		// Рассчитываем стоимость каждой подписки за этот месяц
+		for _, subData := range subscriptionsData {
+			// Проверяем, была ли подписка активна в этом месяце
+			subStartMonth := time.Date(subData.Subscription.CreatedAt.Year(), subData.Subscription.CreatedAt.Month(), 1, 0, 0, 0, 0, subData.Subscription.CreatedAt.Location())
+			
+			// Определяем конец действия подписки
+			var subEndMonth time.Time
+			if subData.Subscription.Status == "cancelled" || subData.Subscription.Status == "expired" {
+				subEndMonth = time.Date(subData.Subscription.UpdatedAt.Year(), subData.Subscription.UpdatedAt.Month(), 1, 0, 0, 0, 0, subData.Subscription.UpdatedAt.Location())
+			} else {
+				subEndMonth = endMonth
+			}
+
+			// Если подписка не активна в этом месяце, пропускаем
+			if month.Before(subStartMonth) || month.After(subEndMonth) {
+				continue
+			}
+
+			objectsCount := len(subData.Objects)
+			if objectsCount == 0 {
+				continue
+			}
+
+			var amount decimal.Decimal
+			var description string
+			var pricePerObject decimal.Decimal
+
+			if subData.BillingPlan.BillingPeriod == "yearly" {
+				// Годовой тариф: делим на 12 месяцев
+				pricePerObject = subData.BillingPlan.Price.Div(decimal.NewFromInt(12))
+				amount = pricePerObject.Mul(decimal.NewFromInt(int64(objectsCount)))
+				description = fmt.Sprintf("%d объект(ов) × %s ₽/год ÷ 12 мес", 
+					objectsCount, subData.BillingPlan.Price.String())
+			} else {
+				// Месячный тариф
+				pricePerObject = subData.BillingPlan.Price
+				amount = subData.BillingPlan.Price.Mul(decimal.NewFromInt(int64(objectsCount)))
+				description = fmt.Sprintf("%d объект(ов) × %s ₽/мес", 
+					objectsCount, subData.BillingPlan.Price.String())
+			}
+
+			monthlyCharge.Subscriptions = append(monthlyCharge.Subscriptions, SubscriptionCharge{
+				SubscriptionID: subData.Subscription.ID,
+				PlanName:       subData.BillingPlan.Name,
+				BillingPeriod:  subData.BillingPlan.BillingPeriod,
+				ObjectsCount:   objectsCount,
+				PricePerObject: pricePerObject,
+				Amount:         amount,
+				Description:    description,
+			})
+
+			monthlyCharge.TotalAmount = monthlyCharge.TotalAmount.Add(amount)
+		}
+
+		monthlyCharges = append(monthlyCharges, monthlyCharge)
+	}
+
+	// Рассчитываем итоговые суммы
+	totalPaid := decimal.Zero
+	totalFuture := decimal.Zero
+	totalAmount := decimal.Zero
+
+	for _, charge := range monthlyCharges {
+		totalAmount = totalAmount.Add(charge.TotalAmount)
+		if charge.IsCompleted {
+			totalPaid = totalPaid.Add(charge.TotalAmount)
+		} else {
+			totalFuture = totalFuture.Add(charge.TotalAmount)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data": gin.H{
+			"contract": gin.H{
+				"id":          contract.ID,
+				"number":      contract.Number,
+				"start_date":  contract.StartDate,
+				"end_date":    contract.EndDate,
+				"total_amount": contract.TotalAmount,
+			},
+			"monthly_charges": monthlyCharges,
+			"summary": gin.H{
+				"total_amount":  totalAmount,
+				"total_paid":    totalPaid,
+				"total_future":  totalFuture,
+				"months_count":  len(monthlyCharges),
+			},
+		},
+	})
+}
+
+// getMonthName возвращает название месяца на русском
+func getMonthName(date time.Time) string {
+	months := map[time.Month]string{
+		time.January:   "Январь",
+		time.February:  "Февраль",
+		time.March:     "Март",
+		time.April:     "Апрель",
+		time.May:       "Май",
+		time.June:      "Июнь",
+		time.July:      "Июль",
+		time.August:    "Август",
+		time.September: "Сентябрь",
+		time.October:   "Октябрь",
+		time.November:  "Ноябрь",
+		time.December:  "Декабрь",
+	}
+	return fmt.Sprintf("%s %d", months[date.Month()], date.Year())
+}
+
 // CalculateBilling рассчитывает стоимость биллинга для договора
 func CalculateBilling(c *gin.Context) {
 	adminAccountID, err := middleware.GetAdminAccountID(c)

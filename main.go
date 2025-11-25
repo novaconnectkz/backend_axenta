@@ -823,6 +823,7 @@ func main() {
 	// Новые эндпоинты системы биллинга
 	// Расчеты и счета
 	apiGroup.GET("/billing/contracts/:contract_id/calculate", api.CalculateBilling)
+	apiGroup.GET("/billing/contracts/:contract_id/breakdown", api.GetContractBillingBreakdown)
 	apiGroup.POST("/billing/contracts/:contract_id/invoice", api.GenerateInvoice)
 	
 	// Счета - ВАЖНО: специфичные роуты (/overdue) ПЕРЕД параметризованными (/:id)
