@@ -100,6 +100,10 @@ func main() {
 	// Инициализируем сервис интеграции с Telegram
 	api.InitTelegramService()
 	log.Println("✅ Telegram Integration Service initialized successfully")
+	
+	// Инициализируем сервис интеграции с MAX
+	api.InitMaxService()
+	log.Println("✅ MAX Integration Service initialized successfully")
 
 	// Инициализируем сервис синхронизации Axenta
 	axentaSyncService := services.NewAxentaSyncService(database.DB)
@@ -729,38 +733,9 @@ func main() {
 	apiGroup.PUT("/user-templates/:id", api.UpdateUserTemplate)
 	apiGroup.DELETE("/user-templates/:id", api.DeleteUserTemplate)
 
-	// === ЭНДПОИНТЫ С ПРЕФИКСОМ /auth/ ДЛЯ ФРОНТЕНДА ===
-	log.Println("🔧 Registering /auth/ prefixed endpoints for frontend compatibility...")
-
-	// Пользователи с префиксом /auth/
-	apiGroup.GET("/auth/users", api.GetUsersFromAxentaCloud)
-	apiGroup.GET("/auth/users/", api.GetUsersFromAxentaCloud)
-	apiGroup.GET("/auth/users/stats", api.GetUsersStatsFromAxentaCloud)
-	apiGroup.GET("/auth/users/stats/", api.GetUsersStatsFromAxentaCloud)
-	apiGroup.GET("/auth/users/:id", api.GetUser)
-	apiGroup.POST("/auth/users", api.CreateUser)
-	apiGroup.PUT("/auth/users/:id", api.UpdateUser)
-	apiGroup.DELETE("/auth/users/:id", api.DeleteUser)
-	apiGroup.POST("/auth/users/bulk-delete", api.BulkDeleteUsers)
-
-	// Роли с префиксом /auth/
-	apiGroup.GET("/auth/roles", api.GetRoles)
-	apiGroup.GET("/auth/roles/:id", api.GetRole)
-	apiGroup.POST("/auth/roles", api.CreateRole)
-	apiGroup.PUT("/auth/roles/:id", api.UpdateRole)
-	apiGroup.DELETE("/auth/roles/:id", api.DeleteRole)
-	apiGroup.PUT("/auth/roles/:id/permissions", api.UpdateRolePermissions)
-
-	// Разрешения с префиксом /auth/
-	apiGroup.GET("/auth/permissions", api.GetPermissions)
-	apiGroup.POST("/auth/permissions", api.CreatePermission)
-
-	// Шаблоны пользователей с префиксом /auth/
-	apiGroup.GET("/auth/user-templates", api.GetUserTemplates)
-	apiGroup.GET("/auth/user-templates/:id", api.GetUserTemplate)
-	apiGroup.POST("/auth/user-templates", api.CreateUserTemplate)
-	apiGroup.PUT("/auth/user-templates/:id", api.UpdateUserTemplate)
-	apiGroup.DELETE("/auth/user-templates/:id", api.DeleteUserTemplate)
+	// === Примечание: эндпоинты уже зарегистрированы выше ===
+	// Удалены дубликаты для /users, /roles, /permissions, /user-templates
+	// так как apiGroup уже имеет префикс /api/auth и роуты уже зарегистрированы
 
 	// Управление ролями Axenta пользователей
 	log.Println("🔧 Registering Axenta users management endpoints...")
@@ -849,7 +824,10 @@ func main() {
 	// Расчеты и счета
 	apiGroup.GET("/billing/contracts/:contract_id/calculate", api.CalculateBilling)
 	apiGroup.POST("/billing/contracts/:contract_id/invoice", api.GenerateInvoice)
+	
+	// Счета - ВАЖНО: специфичные роуты (/overdue) ПЕРЕД параметризованными (/:id)
 	apiGroup.GET("/billing/invoices", api.GetInvoices)
+	apiGroup.GET("/billing/invoices/overdue", api.GetOverdueInvoices) // Переместили сюда!
 	apiGroup.GET("/billing/invoices/:id", api.GetInvoice)
 	apiGroup.POST("/billing/invoices/:id/send", api.SendInvoice)      // Отправка счета клиенту
 	apiGroup.POST("/billing/invoices/:id/payment", api.ProcessPayment)
@@ -867,11 +845,14 @@ func main() {
 
 	// История и отчеты
 	apiGroup.GET("/billing/history", api.GetBillingHistory)
-	apiGroup.GET("/billing/invoices/overdue", api.GetOverdueInvoices)
+	// apiGroup.GET("/billing/invoices/overdue", api.GetOverdueInvoices) // Перемещено выше, к остальным invoice роутам
 
 	// Настройки биллинга
 	apiGroup.GET("/billing/settings", api.GetBillingSettings)
 	apiGroup.PUT("/billing/settings", api.UpdateBillingSettings)
+
+	// Примечание: все биллинг эндпоинты уже зарегистрированы выше
+	// Удалена дублирующая секция для /api/auth/billing/*
 
 	// Dashboard endpoints (с мультитенантностью)
 	apiGroup.GET("/dashboard/stats", api.GetDashboardStatsSimple)
@@ -889,13 +870,7 @@ func main() {
 	auditAPI.RegisterRoutes(apiGroup)
 	log.Println("✅ Audit API endpoints registered at /api/auth/audit/*")
 
-	// Автоматизация биллинга
-	apiGroup.POST("/billing/auto-generate", api.AutoGenerateInvoices)
-	apiGroup.POST("/billing/process-deletions", api.ProcessScheduledDeletions)
-	apiGroup.POST("/billing/activate-scheduled", api.ActivateScheduledSubscriptions)
-	apiGroup.POST("/billing/auto-renew-monthly", api.AutoRenewMonthlyContracts)
-	apiGroup.GET("/billing/statistics", api.GetBillingStatistics)
-	apiGroup.GET("/billing/invoices/period", api.GetInvoicesByPeriod)
+	// Примечание: автоматизация биллинга уже зарегистрирована выше
 
 	// Интеграции - временно отключено
 	// apiGroup.GET("/integration/health", api.GetIntegrationHealth)
@@ -1076,6 +1051,14 @@ func main() {
 	// Интеграция с Telegram
 	telegramAPI := api.NewTelegramIntegrationAPI()
 	telegramAPI.RegisterRoutes(integrationsGroup)
+
+	// Интеграция с MAX
+	maxAPI := api.NewMaxIntegrationAPI()
+	maxAPI.RegisterRoutes(integrationsGroup)
+
+	// Общий эндпоинт для списка интеграций
+	integrationsListAPI := api.NewIntegrationsAPI(database.DB)
+	integrationsListAPI.RegisterRoutes(integrationsGroup)
 
 	// Email SMTP интеграция (требует tenant middleware для company_id)
 	// КРИТИЧНО: Хотя NotificationSettings в public схеме, данные фильтруются по company_id

@@ -52,7 +52,6 @@ func GetBillingPlans(c *gin.Context) {
 		if companyIDUint, err := strconv.ParseUint(companyID, 10, 32); err == nil {
 			query = query.Where("company_id = ?", uint(companyIDUint))
 		} else {
-			fmt.Printf("GetBillingPlans: ошибка парсинга company_id: %v\n", err)
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "error",
 				"error":  fmt.Sprintf("Неверный формат company_id: %v", err),
@@ -140,20 +139,13 @@ func CreateBillingPlan(c *gin.Context) {
 
 	var plan models.BillingPlan
 
-	// Логируем входящие данные для отладки
-	fmt.Printf("CreateBillingPlan: получен запрос, query params: %v\n", c.Request.URL.Query())
-
 	if err := c.ShouldBindJSON(&plan); err != nil {
-		fmt.Printf("CreateBillingPlan: ошибка парсинга JSON: %v\n", err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
 			"error":  fmt.Sprintf("Неверный формат данных: %v", err),
 		})
 		return
 	}
-
-	fmt.Printf("CreateBillingPlan: распарсенные данные плана: Name=%s, Price=%s, CompanyID=%v\n",
-		plan.Name, plan.Price.String(), plan.CompanyID)
 
 	// Валидация обязательных полей
 	if plan.Name == "" {
@@ -192,14 +184,11 @@ func CreateBillingPlan(c *gin.Context) {
 	// Устанавливаем company_id из query параметра (если не указан в теле запроса)
 	if plan.CompanyID == nil {
 		companyIDStr := c.Query("company_id")
-		fmt.Printf("CreateBillingPlan: company_id из query: %s\n", companyIDStr)
 		if companyIDStr != "" {
 			if companyID, parseErr := strconv.ParseUint(companyIDStr, 10, 32); parseErr == nil {
 				companyIDUint := uint(companyID)
 				plan.CompanyID = &companyIDUint
-				fmt.Printf("CreateBillingPlan: установлен company_id: %d\n", companyIDUint)
 			} else {
-				fmt.Printf("CreateBillingPlan: ошибка парсинга company_id: %v\n", parseErr)
 				c.JSON(http.StatusBadRequest, gin.H{
 					"status": "error",
 					"error":  fmt.Sprintf("Неверный формат company_id: %v", parseErr),
@@ -213,16 +202,12 @@ func CreateBillingPlan(c *gin.Context) {
 
 	// Убеждаемся, что мы в схеме public для глобальных таблиц
 	if err := database.DB.Exec("SET search_path TO public").Error; err != nil {
-		fmt.Printf("CreateBillingPlan: ошибка установки search_path: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  fmt.Sprintf("Ошибка подключения к базе данных: %v", err),
 		})
 		return
 	}
-
-	fmt.Printf("CreateBillingPlan: создаем план с данными: Name=%s, Price=%s, CompanyID=%v\n",
-		plan.Name, plan.Price.String(), plan.CompanyID)
 
 	// Проверяем, нет ли уже плана с таким же именем
 	// ВАЖНО: Уникальный индекс idx_billing_plans_name в БД действует глобально по имени,
@@ -232,7 +217,6 @@ func CreateBillingPlan(c *gin.Context) {
 	if plan.CompanyID != nil {
 		// Проверяем активные планы для этой компании
 		if err := database.DB.Where("name = ? AND company_id = ? AND admin_account_id = ? AND is_active = ?", plan.Name, *plan.CompanyID, adminAccountID, true).First(&existingPlan).Error; err == nil {
-			fmt.Printf("CreateBillingPlan: активный план с именем '%s' уже существует для компании %d (ID: %d)\n", plan.Name, *plan.CompanyID, existingPlan.ID)
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "error",
 				"error":  fmt.Sprintf("Тарифный план с названием '%s' уже существует для вашей компании", plan.Name),
@@ -241,8 +225,6 @@ func CreateBillingPlan(c *gin.Context) {
 		}
 		// Проверяем неактивные планы для этой компании
 		if err := database.DB.Where("name = ? AND company_id = ? AND admin_account_id = ? AND is_active = ?", plan.Name, *plan.CompanyID, adminAccountID, false).First(&existingPlan).Error; err == nil {
-			fmt.Printf("CreateBillingPlan: найден неактивный план с именем '%s' для компании %d (ID: %d)\n",
-				plan.Name, *plan.CompanyID, existingPlan.ID)
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "error",
 				"error":  fmt.Sprintf("Тарифный план с названием '%s' уже существует (неактивен). Пожалуйста, активируйте существующий план или удалите его перед созданием нового.", plan.Name),
@@ -256,33 +238,16 @@ func CreateBillingPlan(c *gin.Context) {
 	// Используем Unscoped() чтобы найти даже удаленные планы
 	var deletedPlan models.BillingPlan
 	if err := database.DB.Unscoped().Where("name = ? AND admin_account_id = ?", plan.Name, adminAccountID).First(&deletedPlan).Error; err == nil {
-		// Найден план (активный или удаленный)
-		fmt.Printf("CreateBillingPlan: ⚠️ найден план с именем '%s' глобально (ID: %d, company_id: %v, is_active: %v, deleted_at: %v)\n",
-			plan.Name, deletedPlan.ID, deletedPlan.CompanyID, deletedPlan.IsActive, deletedPlan.DeletedAt)
-
 		// Если план удален (мягкое удаление)
 		if deletedPlan.DeletedAt.Valid {
 			// Если удаленный план принадлежит той же компании, физически удаляем его
 			if plan.CompanyID != nil && deletedPlan.CompanyID != nil && *deletedPlan.CompanyID == *plan.CompanyID {
-				fmt.Printf("CreateBillingPlan: найден удаленный план '%s' для той же компании %d, физически удаляем его\n",
-					plan.Name, *plan.CompanyID)
 				// Физически удаляем старый план, чтобы освободить имя
-				if err := database.DB.Unscoped().Delete(&deletedPlan).Error; err != nil {
-					fmt.Printf("CreateBillingPlan: ⚠️ ошибка физического удаления старого плана: %v\n", err)
-					// Продолжаем создание, возможно БД разрешит
-				} else {
-					fmt.Printf("CreateBillingPlan: ✅ старый удаленный план физически удален, можно создавать новый\n")
-				}
+				database.DB.Unscoped().Delete(&deletedPlan)
 			} else if deletedPlan.CompanyID == nil {
 				// Удаленный план с company_id=NULL (глобальный план) - можно физически удалить, если создаем для конкретной компании
 				if plan.CompanyID != nil {
-					fmt.Printf("CreateBillingPlan: найден удаленный глобальный план '%s', физически удаляем его для создания плана компании %d\n",
-						plan.Name, *plan.CompanyID)
-					if err := database.DB.Unscoped().Delete(&deletedPlan).Error; err != nil {
-						fmt.Printf("CreateBillingPlan: ⚠️ ошибка физического удаления старого глобального плана: %v\n", err)
-					} else {
-						fmt.Printf("CreateBillingPlan: ✅ старый удаленный глобальный план физически удален, можно создавать новый\n")
-					}
+					database.DB.Unscoped().Delete(&deletedPlan)
 				} else {
 					// Создаем глобальный план, а удаленный тоже глобальный - нельзя
 					c.JSON(http.StatusBadRequest, gin.H{
@@ -323,11 +288,6 @@ func CreateBillingPlan(c *gin.Context) {
 	}
 
 	if err := database.DB.Create(&plan).Error; err != nil {
-		// Логируем детальную информацию об ошибке
-		fmt.Printf("CreateBillingPlan: ОШИБКА при создании тарифного плана: %v\n", err)
-		fmt.Printf("CreateBillingPlan: Данные плана: Name=%s, Price=%s, CompanyID=%v, Currency=%s, BillingPeriod=%s\n",
-			plan.Name, plan.Price.String(), plan.CompanyID, plan.Currency, plan.BillingPeriod)
-
 		// Проверяем тип ошибки для более понятного сообщения
 		errorMsg := "Ошибка при создании тарифного плана"
 		errStr := err.Error()
@@ -583,44 +543,30 @@ func GetSubscriptions(c *gin.Context) {
 		return
 	}
 
-	log.Printf("📊 GetSubscriptions: Найдено подписок в БД: %d (admin_account_id=%d, company_id=%d)",
-		len(subscriptions), adminAccountID, companyID)
-	if len(subscriptions) > 0 {
-		log.Printf("📋 GetSubscriptions: Первая подписка: id=%d, billing_plan_id=%d, contract_id=%v, status=%s",
-			subscriptions[0].ID, subscriptions[0].BillingPlanID, subscriptions[0].ContractID, subscriptions[0].Status)
-	}
-
 	// Загружаем информацию о договорах для подписок (из tenant-схемы)
 	tenantDB := middleware.GetTenantDB(c)
 	if tenantDB != nil {
 		for i := range subscriptions {
 			if subscriptions[i].ContractID != nil {
 				var contract models.Contract
-				if err := tenantDB.Where("id = ? AND admin_account_id = ?", *subscriptions[i].ContractID, adminAccountID).
-					First(&contract).Error; err == nil {
-					subscriptions[i].Contract = &contract
-					log.Printf("✅ Загружен договор для подписки: subscription_id=%d, contract_id=%d, client_name=%s",
-						subscriptions[i].ID, contract.ID, contract.ClientName)
-				} else {
-					log.Printf("⚠️ Не удалось загрузить договор для подписки: subscription_id=%d, contract_id=%d, ошибка: %v",
-						subscriptions[i].ID, *subscriptions[i].ContractID, err)
-				}
+			if err := tenantDB.Where("id = ? AND admin_account_id = ?", *subscriptions[i].ContractID, adminAccountID).
+				First(&contract).Error; err == nil {
+				subscriptions[i].Contract = &contract
+			}
 			}
 		}
 	}
 
-	log.Printf("✅ GetSubscriptions: Возвращаем %d подписок клиенту", len(subscriptions))
-
 	// Создаем ответ с объектами для каждой подписки
 	subscriptionsResponse := make([]map[string]interface{}, 0, len(subscriptions))
-	
+
 	// Собираем все уникальные ObjectID и CompanyID для batch-загрузки названий
 	type ObjectKey struct {
 		ObjectID  uint
 		CompanyID uint
 	}
 	objectKeysSet := make(map[ObjectKey]bool)
-	
+
 	// Сначала собираем все объекты из подписок
 	for _, sub := range subscriptions {
 		if sub.ContractID != nil && tenantDB != nil {
@@ -633,7 +579,7 @@ func GetSubscriptions(c *gin.Context) {
 			}
 		}
 	}
-	
+
 	// Загружаем названия объектов из Axenta Cloud (batch)
 	objectNamesMap := make(map[ObjectKey]string)
 	if len(objectKeysSet) > 0 {
@@ -661,7 +607,7 @@ func GetSubscriptions(c *gin.Context) {
 					// Если объектов слишком много, берем только первые 50
 					objectIDs = objectIDs[:50]
 				}
-				
+
 				axentaObjects, err := fetchObjectsFromAxentaCloud(userToken, int(companyID), objectIDs)
 				if err != nil {
 					log.Printf("⚠️ Не удалось загрузить названия объектов для компании %d: %v", companyID, err)
@@ -684,14 +630,14 @@ func GetSubscriptions(c *gin.Context) {
 			}
 		}
 	}
-	
+
 	for _, sub := range subscriptions {
 		subMap := make(map[string]interface{})
-		
+
 		// Преобразуем подписку в map для добавления объектов
 		subJSON, _ := json.Marshal(sub)
 		json.Unmarshal(subJSON, &subMap)
-		
+
 		// Добавляем объекты, если они есть
 		if sub.ContractID != nil && tenantDB != nil {
 			var contractObjects []models.ContractObject
@@ -699,24 +645,24 @@ func GetSubscriptions(c *gin.Context) {
 				Find(&contractObjects).Error; err == nil && len(contractObjects) > 0 {
 				objectIDs := make([]uint, 0, len(contractObjects))
 				objects := make([]map[string]interface{}, 0, len(contractObjects))
-				
+
 				for _, co := range contractObjects {
 					objectIDs = append(objectIDs, co.ObjectID)
-					
+
 					// Получаем название объекта из карты
 					key := ObjectKey{ObjectID: co.ObjectID, CompanyID: co.ObjectCompanyID}
 					name := objectNamesMap[key]
 					if name == "" {
 						name = fmt.Sprintf("Объект #%d", co.ObjectID)
 					}
-					
+
 					objects = append(objects, map[string]interface{}{
 						"id":         co.ObjectID,
 						"name":       name,
 						"company_id": co.ObjectCompanyID,
 					})
 				}
-				
+
 				subMap["object_ids"] = objectIDs
 				subMap["objects_count"] = len(objectIDs)
 				subMap["objects"] = objects
@@ -731,7 +677,7 @@ func GetSubscriptions(c *gin.Context) {
 			subMap["objects_count"] = 0
 			subMap["objects"] = []map[string]interface{}{}
 		}
-		
+
 		subscriptionsResponse = append(subscriptionsResponse, subMap)
 	}
 
@@ -744,20 +690,20 @@ func GetSubscriptions(c *gin.Context) {
 
 // CreateSubscriptionData представляет данные для создания подписки
 type CreateSubscriptionData struct {
-	CompanyID                  uint    `json:"company_id" binding:"required"`
-	BillingPlanID              uint    `json:"billing_plan_id" binding:"required"`
-	StartDate                  string  `json:"start_date"`
-	StartTime                  string  `json:"start_time"` // Время начала (HH:MM)
-	EndDate                    string  `json:"end_date"`
-	Status                     string  `json:"status"`
-	IsAutoRenew                bool    `json:"is_auto_renew"`
-	PaymentMethod              string  `json:"payment_method"`
-	ContractID                 *uint   `json:"contract_id"`
-	SplitPeriod                bool    `json:"split_period"`
-	TransferFromSubscriptionID *uint   `json:"transfer_from_subscription_id"`
-	AccountID                  *uint   `json:"account_id"`                  // Учетная запись (опционально)
-	ObjectIDs                  []uint  `json:"object_ids"`                  // Список ID объектов (опционально)
-	ContractPeriodMonths       *int    `json:"contract_period_months"`       // Период подписки в месяцах (опционально)
+	CompanyID                  uint   `json:"company_id" binding:"required"`
+	BillingPlanID              uint   `json:"billing_plan_id" binding:"required"`
+	StartDate                  string `json:"start_date"`
+	StartTime                  string `json:"start_time"` // Время начала (HH:MM)
+	EndDate                    string `json:"end_date"`
+	Status                     string `json:"status"`
+	IsAutoRenew                bool   `json:"is_auto_renew"`
+	PaymentMethod              string `json:"payment_method"`
+	ContractID                 *uint  `json:"contract_id"`
+	SplitPeriod                bool   `json:"split_period"`
+	TransferFromSubscriptionID *uint  `json:"transfer_from_subscription_id"`
+	AccountID                  *uint  `json:"account_id"`             // Учетная запись (опционально)
+	ObjectIDs                  []uint `json:"object_ids"`             // Список ID объектов (опционально)
+	ContractPeriodMonths       *int   `json:"contract_period_months"` // Период подписки в месяцах (опционально)
 }
 
 // CreateSubscription создает новую подписку
@@ -810,7 +756,7 @@ func CreateSubscription(c *gin.Context) {
 	}
 	if err := planDB.Where("id = ? AND admin_account_id = ?", data.BillingPlanID, adminAccountID).
 		First(&plan).Error; err != nil {
-		log.Printf("❌ Тарифный план не найден: billing_plan_id=%d, admin_account_id=%d, ошибка: %v", 
+		log.Printf("❌ Тарифный план не найден: billing_plan_id=%d, admin_account_id=%d, ошибка: %v",
 			data.BillingPlanID, adminAccountID, err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
@@ -827,7 +773,7 @@ func CreateSubscription(c *gin.Context) {
 			log.Printf("⚠️ Не удалось получить tenant DB из контекста, используем основную БД")
 			tenantDB = database.DB
 		}
-		
+
 		var contract models.Contract
 		if err := tenantDB.Where("id = ? AND admin_account_id = ?", *data.ContractID, adminAccountID).
 			First(&contract).Error; err != nil {
@@ -838,7 +784,7 @@ func CreateSubscription(c *gin.Context) {
 			})
 			return
 		}
-		
+
 		log.Printf("✅ Договор найден: id=%d, number=%s, tariff_plan_id=%v", contract.ID, contract.Number, contract.TariffPlanID)
 
 		// Если у договора нет tariff_plan_id, устанавливаем его из billing_plan_id
@@ -880,7 +826,7 @@ func CreateSubscription(c *gin.Context) {
 			return
 		}
 		startDate = parsedDate
-		
+
 		// Если указано время начала, добавляем его
 		if data.StartTime != "" {
 			// Парсим время в формате HH:MM
@@ -902,7 +848,7 @@ func CreateSubscription(c *gin.Context) {
 	// НО если статус явно передан как 'active' (например, "Запустить немедленно"), не перезаписываем его
 	status := data.Status
 	now := time.Now()
-	
+
 	if startDate.After(now) && status != "active" {
 		// Если дата в будущем И статус НЕ установлен явно как 'active', делаем 'scheduled'
 		status = "scheduled"
@@ -1046,11 +992,11 @@ func CreateSubscription(c *gin.Context) {
 						log.Printf("⚠️ Не удалось обновить договор %d: %v", contract.ID, err)
 					} else {
 						if contract.Status == "active" {
-							log.Printf("✅ Договор %d (№%s) автоматически переведен в статус 'active' после создания подписки", 
+							log.Printf("✅ Договор %d (№%s) автоматически переведен в статус 'active' после создания подписки",
 								contract.ID, contract.Number)
 						}
 						if contract.StartDate != nil || contract.EndDate != nil {
-							log.Printf("✅ Период договора %d обновлен из подписки: start_date=%v, end_date=%v", 
+							log.Printf("✅ Период договора %d обновлен из подписки: start_date=%v, end_date=%v",
 								contract.ID, contract.StartDate, contract.EndDate)
 						}
 					}
@@ -1060,7 +1006,7 @@ func CreateSubscription(c *gin.Context) {
 				log.Printf("🔍 Проверка привязки объектов: len(data.ObjectIDs)=%d, data.ObjectIDs=%v", len(data.ObjectIDs), data.ObjectIDs)
 				if len(data.ObjectIDs) > 0 {
 					log.Printf("🔗 Привязываем объекты %v к договору %d через подписку", data.ObjectIDs, contract.ID)
-					
+
 					// Убеждаемся, что таблица contract_objects существует
 					if err := ensureContractObjectsTable(tenantDB); err != nil {
 						log.Printf("⚠️ Не удалось создать таблицу contract_objects: %v", err)
@@ -1082,7 +1028,7 @@ func CreateSubscription(c *gin.Context) {
 						if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
 							log.Printf("⚠️ Не удалось переключиться на схему public: %v", err)
 						}
-						
+
 						if err := publicDB.First(&company, targetAccountID).Error; err != nil {
 							log.Printf("⚠️ Компания с ID %d не найдена: %v", targetAccountID, err)
 						}
@@ -1147,7 +1093,7 @@ func CreateSubscription(c *gin.Context) {
 
 							// Проверяем, не существует ли уже такая связь с этим договором
 							var existingSameContract models.ContractObject
-							if err := tenantDB.Where("contract_id = ? AND object_id = ? AND object_company_id = ?", 
+							if err := tenantDB.Where("contract_id = ? AND object_id = ? AND object_company_id = ?",
 								contract.ID, objectID, targetAccountID).First(&existingSameContract).Error; err == nil {
 								log.Printf("ℹ️ Связь между договором %d и объектом %d уже существует, пропускаем", contract.ID, objectID)
 								attachedCount++
@@ -1183,7 +1129,7 @@ func CreateSubscription(c *gin.Context) {
 						} else {
 							log.Printf("✅ Привязано %d объектов к договору %d через подписку", attachedCount, contract.ID)
 						}
-						
+
 						// Пересчитываем сумму договора на основе количества объектов и тарифного плана
 						if attachedCount > 0 && contract.TariffPlanID != nil && *contract.TariffPlanID > 0 {
 							// Загружаем тарифный план
@@ -1209,11 +1155,11 @@ func CreateSubscription(c *gin.Context) {
 												}
 											}
 										}
-										
+
 										// Рассчитываем total_amount
 										pricePerMonth := billingPlan.Price
 										totalAmount := pricePerMonth.Mul(decimal.NewFromInt(int64(objectsCount))).Mul(decimal.NewFromInt(int64(months)))
-										
+
 										// Обновляем total_amount договора
 										contract.TotalAmount = totalAmount
 										if err := tenantDB.Save(&contract).Error; err != nil {
@@ -1713,16 +1659,22 @@ func GetInvoice(c *gin.Context) {
 
 // SendInvoice отправляет счет клиенту (POST /api/invoices/:id/send согласно roadmap)
 func SendInvoice(c *gin.Context) {
+	log.Printf("🔔 SendInvoice вызвана! Path: %s, Method: %s", c.Request.URL.Path, c.Request.Method)
+	
 	adminAccountID, err := middleware.GetAdminAccountID(c)
 	if err != nil {
+		log.Printf("❌ SendInvoice: ошибка получения adminAccountID: %v", err)
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"status": "error",
 			"error":  err.Error(),
 		})
 		return
 	}
+	
+	log.Printf("✅ SendInvoice: adminAccountID = %d", adminAccountID)
 
 	id := c.Param("id")
+	log.Printf("📋 SendInvoice: invoice ID from param = %s", id)
 	invoiceID, err := strconv.ParseUint(id, 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -1755,18 +1707,31 @@ func SendInvoice(c *gin.Context) {
 		return
 	}
 
-	// Получаем счет
+	// Получаем счет из схемы public
+	log.Printf("🔍 Ищем счет ID=%d для adminAccountID=%d", invoiceID, adminAccountID)
+	
 	var invoice models.Invoice
-	if err := database.DB.Where("id = ? AND admin_account_id = ?", invoiceID, adminAccountID).
-		Preload("Contract").
-		Preload("TariffPlan").
+	// Используем прямой запрос к таблице public.invoices
+	if err := database.DB.Table("public.invoices").
+		Where("id = ? AND admin_account_id = ?", invoiceID, adminAccountID).
 		First(&invoice).Error; err != nil {
+		log.Printf("❌ Счет не найден: %v", err)
 		c.JSON(http.StatusNotFound, gin.H{
 			"status": "error",
 			"error":  "Счет не найден",
 		})
 		return
 	}
+	
+	// Загружаем связанные данные отдельно из схемы public
+	if invoice.ContractID != nil && *invoice.ContractID > 0 {
+		database.DB.Table("public.contracts").Where("id = ?", *invoice.ContractID).First(&invoice.Contract)
+	}
+	if invoice.TariffPlanID > 0 {
+		database.DB.Table("public.billing_plans").Where("id = ?", invoice.TariffPlanID).First(&invoice.TariffPlan)
+	}
+	
+	log.Printf("✅ Счет найден: ID=%d, Сумма=%s, Статус=%s", invoice.ID, invoice.TotalAmount, invoice.Status)
 
 	// Проверяем, можно ли отправить счет
 	if invoice.Status == "paid" {
@@ -1819,8 +1784,8 @@ func SendInvoice(c *gin.Context) {
 
 		// Проверяем, является ли это ошибкой конфигурации
 		errorMsg := err.Error()
-		if strings.Contains(errorMsg, "не настроена") || strings.Contains(errorMsg, "не настроен") || 
-		   strings.Contains(errorMsg, "отключены") || strings.Contains(errorMsg, "отключен") {
+		if strings.Contains(errorMsg, "не настроена") || strings.Contains(errorMsg, "не настроен") ||
+			strings.Contains(errorMsg, "отключены") || strings.Contains(errorMsg, "отключен") {
 			// Ошибка конфигурации - возвращаем 400 Bad Request
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "error",
@@ -1839,9 +1804,9 @@ func SendInvoice(c *gin.Context) {
 
 	// Успешная отправка
 	c.JSON(http.StatusOK, gin.H{
-		"status":  "success",
-		"message": "Счет успешно отправлен",
-		"data":    invoice,
+		"status":        "success",
+		"message":       "Счет успешно отправлен",
+		"data":          invoice,
 		"sent_channels": invoice.LastSentChannels,
 	})
 }
@@ -2254,31 +2219,40 @@ func GetBillingSettings(c *gin.Context) {
 			}
 			settings = companySettings
 		} else if errors.Is(err, gorm.ErrRecordNotFound) {
-			// Нет настроек даже на уровне компании — создаем с дефолтными значениями
-			settings = models.BillingSettings{
-				AdminAccountID:             adminAccountID,
-				CompanyID:                  companyID,
-				AutoGenerateInvoices:       true,
-				InvoiceGenerationDay:       1,
-				InvoicePaymentTermDays:     14,
-				DefaultTaxRate:             decimal.NewFromFloat(20),
-				TaxIncluded:                false,
-				VATRatePreset:              "russia",
-				VATRateCustom:              decimal.NewFromFloat(20),
-				NotifyBeforeInvoice:        3,
-				NotifyBeforeDue:            3,
-				NotifyOverdue:              1,
-				InvoiceNumberPrefix:        "INV",
-				InvoiceNumberFormat:        "%s-%04d",
-				Currency:                   "RUB",
-				AllowPartialPayments:       true,
-				RequirePaymentConfirm:      false,
-				EnableInactiveDiscounts:    true,
-				InactiveDiscountRatio:      decimal.NewFromFloat(0.5),
-				ContractNumberingMethod:    "manual",
-				ContractDefaultNumeratorID: nil,
-				Bitrix24DealNumberField:    "",
-			}
+		// Нет настроек даже на уровне компании — создаем с дефолтными значениями
+		// Получаем валюту из настроек компании
+		var company models.Company
+		companyCurrency := "RUB" // По умолчанию
+		if err := db.Where("id = ?", companyID).First(&company).Error; err == nil {
+			companyCurrency = company.Currency
+			fmt.Printf("GetBillingSettings: используем валюту компании: %s\n", companyCurrency)
+		}
+
+		settings = models.BillingSettings{
+			AdminAccountID:             adminAccountID,
+			CompanyID:                  companyID,
+			AutoGenerateInvoices:       true,
+			InvoiceGenerationDay:       1,
+			InvoicePaymentTermDays:     14,
+			DefaultTaxRate:             decimal.NewFromFloat(20),
+			TaxIncluded:                false,
+			VATRatePreset:              "russia",
+			VATRateCustom:              decimal.NewFromFloat(20),
+			NotifyBeforeInvoice:        3,
+			NotifyBeforeDue:            3,
+			NotifyOverdue:              1,
+			InvoiceNumberPrefix:        "INV",
+			InvoiceNumberFormat:        "%s-%04d",
+			Currency:                   companyCurrency,
+			AllowPartialPayments:       true,
+			RequirePaymentConfirm:      false,
+			EnableInactiveDiscounts:    true,
+			InactiveDiscountRatio:      decimal.NewFromFloat(0.5),
+			ContractNumberingMethod:    "manual",
+			ContractDefaultNumeratorID: nil,
+			Bitrix24DealNumberField:    "",
+			AutopilotEnabled:           true, // Автопилот включен по умолчанию
+		}
 
 			fmt.Printf("GetBillingSettings: настройки не найдены, создаем по умолчанию для admin_account_id=%d, company_id=%d\n", adminAccountID, companyID)
 			if err := db.Create(&settings).Error; err != nil {
@@ -2394,13 +2368,92 @@ func UpdateBillingSettings(c *gin.Context) {
 		return
 	}
 
-	var settings models.BillingSettings
-	if err := database.DB.Where("company_id = ? AND admin_account_id = ?", uint(companyID), adminAccountID).First(&settings).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
+	// Устанавливаем search_path для работы с глобальными таблицами
+	db := database.DB.Session(&gorm.Session{})
+	if err := db.Exec("SET search_path TO public").Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Настройки биллинга не найдены",
+			"error":  "Ошибка подключения к базе данных",
 		})
 		return
+	}
+
+	var settings models.BillingSettings
+	// Пытаемся найти настройки для данной пары admin/company
+	err = db.Where("company_id = ? AND admin_account_id = ?", uint(companyID), adminAccountID).First(&settings).Error
+	
+	if err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error",
+				"error":  "Ошибка получения настроек биллинга",
+			})
+			return
+		}
+
+		// Настройки не найдены - пытаемся найти по company_id без учета admin_account_id
+		var companySettings models.BillingSettings
+		if err := db.Where("company_id = ?", uint(companyID)).First(&companySettings).Error; err == nil {
+			// Нашли настройки компании, обновляем admin_account_id
+			companySettings.AdminAccountID = adminAccountID
+			if saveErr := db.Save(&companySettings).Error; saveErr != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"status": "error",
+					"error":  "Ошибка обновления настроек биллинга",
+				})
+				return
+			}
+			settings = companySettings
+		} else if errors.Is(err, gorm.ErrRecordNotFound) {
+		// Нет настроек вообще - создаем дефолтные
+		// Получаем валюту из настроек компании
+		var company models.Company
+		companyCurrency := "RUB" // По умолчанию
+		if err := db.Where("id = ?", uint(companyID)).First(&company).Error; err == nil {
+			companyCurrency = company.Currency
+			fmt.Printf("UpdateBillingSettings: используем валюту компании: %s\n", companyCurrency)
+		}
+
+		settings = models.BillingSettings{
+			AdminAccountID:             adminAccountID,
+			CompanyID:                  uint(companyID),
+			AutoGenerateInvoices:       true,
+			InvoiceGenerationDay:       1,
+			InvoicePaymentTermDays:     14,
+			DefaultTaxRate:             decimal.NewFromFloat(20),
+			TaxIncluded:                false,
+			VATRatePreset:              "russia",
+			VATRateCustom:              decimal.NewFromFloat(20),
+			NotifyBeforeInvoice:        3,
+			NotifyBeforeDue:            3,
+			NotifyOverdue:              1,
+			InvoiceNumberPrefix:        "INV",
+			InvoiceNumberFormat:        "%s-%04d",
+			Currency:                   companyCurrency,
+			AllowPartialPayments:       true,
+			RequirePaymentConfirm:      false,
+			EnableInactiveDiscounts:    true,
+			InactiveDiscountRatio:      decimal.NewFromFloat(0.5),
+			ContractNumberingMethod:    "manual",
+			ContractDefaultNumeratorID: nil,
+			Bitrix24DealNumberField:    "",
+			AutopilotEnabled:           true, // Автопилот включен по умолчанию
+		}
+
+			if err := db.Create(&settings).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"status": "error",
+					"error":  "Ошибка создания настроек биллинга",
+				})
+				return
+			}
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error",
+				"error":  "Ошибка поиска настроек биллинга",
+			})
+			return
+		}
 	}
 
 	var updateData models.BillingSettings
@@ -2412,8 +2465,16 @@ func UpdateBillingSettings(c *gin.Context) {
 		return
 	}
 
-	// Валидация
-	if updateData.InvoiceGenerationDay < 1 || updateData.InvoiceGenerationDay > 28 {
+	// Логируем полученные данные для отладки
+	fmt.Printf("UpdateBillingSettings: получены данные обновления для company_id=%d:\n", uint(companyID))
+	fmt.Printf("  - contract_numbering_method: '%s'\n", updateData.ContractNumberingMethod)
+	fmt.Printf("  - autopilot_enabled: %v\n", updateData.AutopilotEnabled)
+	fmt.Printf("  - invoice_generation_day: %d\n", updateData.InvoiceGenerationDay)
+	fmt.Printf("  - invoice_payment_term_days: %d\n", updateData.InvoicePaymentTermDays)
+
+	// Валидация (пропускаем, если значения по умолчанию 0)
+	if updateData.InvoiceGenerationDay != 0 && (updateData.InvoiceGenerationDay < 1 || updateData.InvoiceGenerationDay > 28) {
+		fmt.Printf("❌ Ошибка валидации: InvoiceGenerationDay=%d должен быть от 1 до 28\n", updateData.InvoiceGenerationDay)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
 			"error":  "День генерации счета должен быть от 1 до 28",
@@ -2421,7 +2482,8 @@ func UpdateBillingSettings(c *gin.Context) {
 		return
 	}
 
-	if updateData.InvoicePaymentTermDays < 1 {
+	if updateData.InvoicePaymentTermDays != 0 && updateData.InvoicePaymentTermDays < 1 {
+		fmt.Printf("❌ Ошибка валидации: InvoicePaymentTermDays=%d должен быть больше 0\n", updateData.InvoicePaymentTermDays)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
 			"error":  "Срок оплаты должен быть больше 0 дней",
@@ -2445,13 +2507,30 @@ func UpdateBillingSettings(c *gin.Context) {
 
 	updateData.AdminAccountID = 0
 
-	if err := database.DB.Model(&settings).Updates(updateData).Error; err != nil {
+	// ВАЖНО: Updates() пропускает zero values (включая false для bool).
+	// Используем Select() для явного указания полей, которые нужно обновить
+	fmt.Printf("🔄 Обновляем настройки для settings.ID=%d\n", settings.ID)
+	if err := db.Model(&settings).Select("*").Updates(updateData).Error; err != nil {
+		fmt.Printf("❌ ОШИБКА при обновлении настроек: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Ошибка при обновлении настроек биллинга",
+			"error":  fmt.Sprintf("Ошибка при обновлении настроек биллинга: %v", err),
 		})
 		return
 	}
+	fmt.Printf("✅ Настройки успешно обновлены\n")
+
+	// Перезагружаем обновленные настройки из БД
+	fmt.Printf("🔄 Перезагружаем настройки из БД...\n")
+	if err := db.Where("id = ?", settings.ID).First(&settings).Error; err != nil {
+		fmt.Printf("❌ ОШИБКА при получении обновленных настроек: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("Ошибка получения обновленных настроек: %v", err),
+		})
+		return
+	}
+	fmt.Printf("✅ Настройки успешно перезагружены\n")
 
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
@@ -3048,7 +3127,7 @@ func UpdateInvoiceNumerator(c *gin.Context) {
 	// Если нумератор устанавливается как по умолчанию, снимаем флаг с других
 	if input.IsDefault != nil && *input.IsDefault {
 		database.DB.Model(&models.InvoiceNumerator{}).
-			Where("admin_account_id = ? AND company_id = ? AND id != ? AND is_default = ?", 
+			Where("admin_account_id = ? AND company_id = ? AND id != ? AND is_default = ?",
 				adminAccountID, numerator.CompanyID, uint(numeratorID), true).
 			Update("is_default", false)
 	}

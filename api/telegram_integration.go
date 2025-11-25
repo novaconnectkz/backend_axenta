@@ -38,7 +38,7 @@ func NewTelegramIntegrationAPI() *TelegramIntegrationAPI {
 
 // RegisterRoutes регистрирует маршруты для API интеграции с Telegram
 func (api *TelegramIntegrationAPI) RegisterRoutes(r *gin.RouterGroup) {
-	telegram := r.Group("/telegram")
+	telegram := r.Group("/integrations/telegram")
 	{
 		// Настройка интеграции
 		telegram.POST("/setup", api.SetupIntegration)
@@ -157,8 +157,12 @@ func (api *TelegramIntegrationAPI) GetIntegrationConfig(c *gin.Context) {
 		return
 	}
 
-	// Скрываем токен в ответе
-	config.BotToken = "***"
+	// Проверяем, нужно ли показать токен
+	showToken := c.Query("show_token")
+	if showToken != "true" {
+		// Скрываем токен в ответе
+		config.BotToken = "***"
+	}
 
 	// Получаем информацию об интеграции
 	var integration models.Integration

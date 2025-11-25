@@ -202,6 +202,9 @@ type BillingSettings struct {
 	// Настройки для льготных тарифов
 	EnableInactiveDiscounts bool            `json:"enable_inactive_discounts" gorm:"default:true"`
 	InactiveDiscountRatio   decimal.Decimal `json:"inactive_discount_ratio" gorm:"type:decimal(3,2);default:0.5"`
+
+	// Настройки автопилота
+	AutopilotEnabled bool `json:"autopilot_enabled" gorm:"default:false"` // Автоматизация создания договора -> подписки -> счета -> отправки
 }
 
 // TableName задает имя таблицы для модели BillingSettings

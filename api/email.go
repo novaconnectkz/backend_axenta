@@ -4,8 +4,11 @@ import (
 	"backend_axenta/database"
 	"backend_axenta/middleware"
 	"backend_axenta/models"
+	"crypto/tls"
 	"fmt"
 	"io"
+	"log"
+	"net"
 	"net/http"
 	"net/smtp"
 	"os"
@@ -172,28 +175,37 @@ func GetEmailConfig(c *gin.Context) {
 
 // TestEmailConnection тестирует подключение к SMTP серверу (POST /api/email/test-connection)
 func TestEmailConnection(c *gin.Context) {
+	log.Printf("🔔 TestEmailConnection вызвана! Path: %s, Method: %s", c.Request.URL.Path, c.Request.Method)
+	
 	// Получаем данные пользователя из контекста
+	log.Printf("📥 Получаем user из контекста...")
 	userInterface, exists := c.Get("user")
 	if !exists {
+		log.Printf("❌ TestEmailConnection: пользователь не найден в контексте")
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"status": "error",
 			"error":  "Требуется авторизация",
 		})
 		return
 	}
+	log.Printf("✅ User найден в контексте")
 	
 	userData, ok := userInterface.(map[string]interface{})
 	if !ok {
+		log.Printf("❌ Не удалось преобразовать user к map[string]interface{}")
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  "Ошибка получения данных пользователя",
 		})
 		return
 	}
+	log.Printf("✅ User data преобразован успешно")
 	
 	// КРИТИЧНО: Получаем company_id из контекста через middleware
 	companyID := middleware.GetCompanyID(c)
+	log.Printf("✅ Company ID получен: %d", companyID)
 	if companyID == 0 {
+		log.Printf("❌ Company ID = 0!")
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
 			"error":  "Не удалось определить компанию. Обратитесь к администратору.",
@@ -202,15 +214,18 @@ func TestEmailConnection(c *gin.Context) {
 	}
 	
 	// Получаем настройки Email
+	log.Printf("📥 Запрашиваем настройки Email для company_id=%d", companyID)
 	var settings models.NotificationSettings
 	// КРИТИЧНО: Используем прямой SQL запрос с явным указанием схемы public и фильтрацией по company_id
 	if err := database.DB.Table("public.notification_settings").Where("company_id = ?", companyID).First(&settings).Error; err != nil {
+		log.Printf("❌ Настройки не найдены: %v", err)
 		c.JSON(http.StatusNotFound, gin.H{
 			"status": "error",
 			"error":  "Настройки Email не найдены. Сначала настройте интеграцию.",
 		})
 		return
 	}
+	log.Printf("✅ Настройки Email найдены: host=%s, port=%d", settings.SMTPHost, settings.SMTPPort)
 
 	if settings.SMTPHost == "" || settings.SMTPUsername == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -234,6 +249,7 @@ func TestEmailConnection(c *gin.Context) {
 
 	// Тестируем подключение к SMTP
 	addr := fmt.Sprintf("%s:%d", settings.SMTPHost, settings.SMTPPort)
+	log.Printf("📧 Начинаем тест подключения к SMTP: %s", addr)
 	auth := smtp.PlainAuth("", settings.SMTPUsername, settings.SMTPPassword, settings.SMTPHost)
 
 	// Формируем тестовое письмо
@@ -292,8 +308,19 @@ func TestEmailConnection(c *gin.Context) {
 		"%s\r\n", settings.SMTPFromName, from, testEmail, subject, htmlBody))
 
 	// Отправляем тестовое письмо
-	err := smtp.SendMail(addr, auth, from, to, msg)
+	log.Printf("📤 Отправляем тестовое письмо на %s через %s (TLS: %t)", testEmail, addr, settings.SMTPUseTLS)
+	
+	var err error
+	if settings.SMTPPort == 465 && settings.SMTPUseTLS {
+		// Для порта 465 используем прямое SSL/TLS соединение
+		err = sendMailWithTLS(addr, auth, from, to, msg)
+	} else {
+		// Для других портов используем стандартный STARTTLS
+		err = smtp.SendMail(addr, auth, from, to, msg)
+	}
+	
 	if err != nil {
+		log.Printf("❌ Ошибка отправки: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
 			"error":   "Ошибка отправки тестового письма",
@@ -301,11 +328,86 @@ func TestEmailConnection(c *gin.Context) {
 		})
 		return
 	}
+	log.Printf("✅ Письмо успешно отправлено!")
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
 		"message": fmt.Sprintf("✅ Тестовое письмо успешно отправлено на %s", testEmail),
 	})
+}
+
+// sendMailWithTLS отправляет письмо через прямое SSL/TLS соединение (для порта 465)
+func sendMailWithTLS(addr string, auth smtp.Auth, from string, to []string, msg []byte) error {
+	// Извлекаем хост из адреса
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return err
+	}
+
+	// Создаем TLS конфигурацию
+	tlsConfig := &tls.Config{
+		ServerName: host,
+	}
+
+	// Устанавливаем TLS соединение
+	conn, err := tls.Dial("tcp", addr, tlsConfig)
+	if err != nil {
+		log.Printf("❌ Ошибка TLS Dial: %v", err)
+		return err
+	}
+	defer conn.Close()
+
+	// Создаем SMTP клиент поверх TLS соединения
+	client, err := smtp.NewClient(conn, host)
+	if err != nil {
+		log.Printf("❌ Ошибка создания SMTP клиента: %v", err)
+		return err
+	}
+	defer client.Close()
+
+	// Аутентификация
+	if auth != nil {
+		if err = client.Auth(auth); err != nil {
+			log.Printf("❌ Ошибка аутентификации: %v", err)
+			return err
+		}
+	}
+
+	// Устанавливаем отправителя
+	if err = client.Mail(from); err != nil {
+		log.Printf("❌ Ошибка установки отправителя: %v", err)
+		return err
+	}
+
+	// Устанавливаем получателей
+	for _, addr := range to {
+		if err = client.Rcpt(addr); err != nil {
+			log.Printf("❌ Ошибка установки получателя: %v", err)
+			return err
+		}
+	}
+
+	// Отправляем данные письма
+	w, err := client.Data()
+	if err != nil {
+		log.Printf("❌ Ошибка Data(): %v", err)
+		return err
+	}
+
+	_, err = w.Write(msg)
+	if err != nil {
+		log.Printf("❌ Ошибка записи сообщения: %v", err)
+		return err
+	}
+
+	err = w.Close()
+	if err != nil {
+		log.Printf("❌ Ошибка закрытия writer: %v", err)
+		return err
+	}
+
+	// Отправляем QUIT
+	return client.Quit()
 }
 
 // GetEmailIntegrationDocs возвращает документацию по Email интеграции (GET /docs/EMAIL_INTEGRATION.md)

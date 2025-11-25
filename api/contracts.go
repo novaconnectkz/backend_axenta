@@ -1857,6 +1857,22 @@ func CalculateContractCost(c *gin.Context) {
 
 // GetExpiringContracts получает список истекающих договоров
 func GetExpiringContracts(c *gin.Context) {
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	// Получаем tenant DB из контекста
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB == nil {
+		log.Printf("⚠️ GetExpiringContracts: Не удалось получить tenant DB из контекста, используем основную БД")
+		tenantDB = database.DB
+	}
+
 	// По умолчанию показываем договоры, истекающие в течение 30 дней
 	days := 30
 	if d := c.Query("days"); d != "" {
@@ -1868,9 +1884,11 @@ func GetExpiringContracts(c *gin.Context) {
 	var contracts []models.Contract
 	expiryDate := time.Now().AddDate(0, 0, days)
 
-	if err := database.DB.Preload("TariffPlan").
-		Where("end_date <= ? AND status = 'active'", expiryDate).
+	// Используем tenant DB и фильтруем по admin_account_id
+	if err := tenantDB.Preload("TariffPlan").
+		Where("end_date <= ? AND status = 'active' AND admin_account_id = ?", expiryDate, adminAccountID).
 		Find(&contracts).Error; err != nil {
+		log.Printf("❌ GetExpiringContracts: ошибка при получении истекающих договоров: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  "Ошибка при получении истекающих договоров",

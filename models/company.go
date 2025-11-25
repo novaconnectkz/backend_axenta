@@ -4,6 +4,7 @@ import (
 	"math/rand"
 	"time"
 
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
 
@@ -48,6 +49,10 @@ type Company struct {
 	Language string `json:"language" gorm:"default:'ru';type:varchar(5)"`
 	Timezone string `json:"timezone" gorm:"default:'Europe/Moscow';type:varchar(50)"`
 	Currency string `json:"currency" gorm:"default:'RUB';type:varchar(3)"`
+
+	// Настройки налогов
+	DefaultTaxRate decimal.Decimal `json:"default_tax_rate" gorm:"type:decimal(5,2);default:20"` // Ставка НДС по умолчанию
+	TaxIncluded    bool            `json:"tax_included" gorm:"default:false"`                    // НДС включен в цену
 
 	// Иерархия компании из Axenta Cloud
 	Hierarchy string `json:"hierarchy" gorm:"type:text"`

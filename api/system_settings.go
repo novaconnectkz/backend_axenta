@@ -179,33 +179,61 @@ func UpdateSystemSettings(c *gin.Context) {
 		return
 	}
 
-	// Синхронизируем настройки НДС с BillingSettings
-	if updateData.VATRatePreset != "" || updateData.VATRateCustom > 0 {
-		var billingSettings models.BillingSettings
-		if err := db.Where("company_id = ? AND admin_account_id = ?", uint(companyID), adminAccountID).First(&billingSettings).Error; err == nil {
-			// Вычисляем DefaultTaxRate на основе пресета
-			var taxRate float64
-			switch settings.VATRatePreset {
-			case "russia":
-				taxRate = 20
-			case "kazakhstan":
-				taxRate = 12
-			case "none":
-				taxRate = 0
-			case "custom":
-				taxRate = settings.VATRateCustom
-			default:
+	// Синхронизируем настройки НДС с BillingSettings и Company
+	if updateData.VATRatePreset != "" || updateData.VATRateCustom > 0 || updateData.DefaultTaxRate > 0 {
+		// Вычисляем DefaultTaxRate на основе пресета (приоритет над default_tax_rate)
+		var taxRate float64
+		switch settings.VATRatePreset {
+		case "russia":
+			taxRate = 20
+		case "kazakhstan":
+			taxRate = 12
+		case "none":
+			taxRate = 0
+		case "custom":
+			taxRate = settings.VATRateCustom
+		default:
+			// Если пресет не установлен, используем default_tax_rate или 20 по умолчанию
+			if settings.DefaultTaxRate > 0 {
+				taxRate = settings.DefaultTaxRate
+			} else {
 				taxRate = 20
 			}
+		}
 
+		// Обновляем default_tax_rate в самих настройках для консистентности
+		settings.DefaultTaxRate = taxRate
+		
+		// Сохраняем обновленный default_tax_rate обратно в system_settings
+		if err := db.Model(&settings).Update("default_tax_rate", taxRate).Error; err != nil {
+			fmt.Printf("⚠️ Ошибка обновления default_tax_rate в system_settings: %v\n", err)
+		}
+
+		// Синхронизируем с BillingSettings
+		var billingSettings models.BillingSettings
+		if err := db.Where("company_id = ? AND admin_account_id = ?", uint(companyID), adminAccountID).First(&billingSettings).Error; err == nil {
 			billingSettings.VATRatePreset = settings.VATRatePreset
 			billingSettings.VATRateCustom = decimal.NewFromFloat(settings.VATRateCustom)
 			billingSettings.DefaultTaxRate = decimal.NewFromFloat(taxRate)
+			billingSettings.TaxIncluded = settings.TaxIncluded
 
 			if err := db.Save(&billingSettings).Error; err != nil {
 				fmt.Printf("⚠️ Ошибка синхронизации настроек НДС с биллингом: %v\n", err)
 			} else {
-				fmt.Printf("✅ Настройки НДС синхронизированы с биллингом: preset=%s, rate=%.2f%%\n", settings.VATRatePreset, taxRate)
+				fmt.Printf("✅ Настройки НДС синхронизированы с биллингом: preset=%s, rate=%.2f%%, included=%v\n", settings.VATRatePreset, taxRate, settings.TaxIncluded)
+			}
+		}
+
+		// Синхронизируем с Company
+		var company models.Company
+		if err := db.Where("id = ?", uint(companyID)).First(&company).Error; err == nil {
+			company.DefaultTaxRate = decimal.NewFromFloat(taxRate)
+			company.TaxIncluded = settings.TaxIncluded
+
+			if err := db.Save(&company).Error; err != nil {
+				fmt.Printf("⚠️ Ошибка синхронизации настроек НДС с компанией: %v\n", err)
+			} else {
+				fmt.Printf("✅ Настройки НДС синхронизированы с компанией: rate=%.2f%%, included=%v\n", taxRate, settings.TaxIncluded)
 			}
 		}
 	}

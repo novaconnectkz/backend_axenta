@@ -174,10 +174,11 @@ func (s *TelegramIntegrationService) SendMessage(ctx context.Context, companyID 
 
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("ошибка отправки запроса к Telegram API: %w", err)
+		s.logger.Printf("Ошибка отправки сообщения в Telegram (компания: %d): %v", companyID, err)
+		return fmt.Errorf("ошибка отправки запроса к Telegram API: %w. Возможно, api.telegram.org заблокирован или требуется VPN/прокси", err)
 	}
 	defer resp.Body.Close()
 
@@ -214,18 +215,25 @@ func (s *TelegramIntegrationService) TestConnection(ctx context.Context, company
 
 	// Проверяем токен через метод getMe
 	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/getMe", config.BotToken)
+	s.logger.Printf("Проверка подключения к Telegram API для компании %d...", companyID)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
 	if err != nil {
 		return fmt.Errorf("ошибка создания запроса: %w", err)
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 30 * time.Second}
+	startTime := time.Now()
 	resp, err := client.Do(req)
+	duration := time.Since(startTime)
+	
 	if err != nil {
-		return fmt.Errorf("ошибка отправки запроса к Telegram API: %w", err)
+		s.logger.Printf("Ошибка подключения к Telegram API (компания: %d, время: %v): %v", companyID, duration, err)
+		return fmt.Errorf("ошибка отправки запроса к Telegram API: %w. Возможно, api.telegram.org заблокирован или требуется VPN/прокси", err)
 	}
 	defer resp.Body.Close()
+
+	s.logger.Printf("Получен ответ от Telegram API (компания: %d, код: %d, время: %v)", companyID, resp.StatusCode, duration)
 
 	var apiResp TelegramAPIResponse
 	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
@@ -233,10 +241,17 @@ func (s *TelegramIntegrationService) TestConnection(ctx context.Context, company
 	}
 
 	if !apiResp.OK {
-		return fmt.Errorf("неверный токен бота: %s (код: %d)", apiResp.Description, apiResp.ErrorCode)
+		s.logger.Printf("Telegram API вернул ошибку (компания: %d): %s (код: %d)", companyID, apiResp.Description, apiResp.ErrorCode)
+		
+		// Специальное сообщение для ошибки 404
+		if apiResp.ErrorCode == 404 {
+			return fmt.Errorf("неверный токен бота. Проверьте:\n1. Токен скопирован полностью из @BotFather\n2. Нет лишних пробелов в начале/конце\n3. Бот не был удален в Telegram")
+		}
+		
+		return fmt.Errorf("ошибка Telegram API: %s (код: %d)", apiResp.Description, apiResp.ErrorCode)
 	}
 
-	s.logger.Printf("Тест подключения к Telegram успешно пройден (компания: %d)", companyID)
+	s.logger.Printf("✅ Тест подключения к Telegram успешно пройден (компания: %d, время: %v)", companyID, duration)
 	return nil
 }
 

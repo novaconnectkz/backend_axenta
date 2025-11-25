@@ -149,6 +149,17 @@ func (bs *BillingService) CalculateBillingForContractWithTenantDB(contractID uin
 		}
 	}
 
+	// Получаем настройки НДС из таблицы companies
+	var company models.Company
+	if err := publicDB.Where("id = ?", contract.CompanyID).First(&company).Error; err == nil {
+		// Используем настройки НДС из компании, если они есть
+		if company.DefaultTaxRate.GreaterThan(decimal.Zero) {
+			settings.DefaultTaxRate = company.DefaultTaxRate
+			settings.TaxIncluded = company.TaxIncluded
+			log.Printf("✅ [CalculateBilling] Используем настройки НДС из компании: rate=%.2f%%, included=%v", company.DefaultTaxRate, company.TaxIncluded)
+		}
+	}
+
 	// Получаем объекты по договору из tenant DB
 	var objects []models.Object
 	if err := tenantDB.Where("contract_id = ?", contractID).Find(&objects).Error; err != nil {
@@ -403,6 +414,17 @@ func (bs *BillingService) GenerateInvoiceForContractWithTenantDB(contractID uint
 		return nil, fmt.Errorf("настройки биллинга не найдены: %w", err)
 	}
 
+	// Получаем настройки НДС из таблицы companies
+	var company models.Company
+	if err := publicDB.Where("id = ?", calculation.CompanyID).First(&company).Error; err == nil {
+		// Используем настройки НДС из компании, если они есть
+		if company.DefaultTaxRate.GreaterThan(decimal.Zero) {
+			settings.DefaultTaxRate = company.DefaultTaxRate
+			settings.TaxIncluded = company.TaxIncluded
+			log.Printf("✅ Используем настройки НДС из компании: rate=%.2f%%, included=%v", company.DefaultTaxRate, company.TaxIncluded)
+		}
+	}
+
 	// Генерируем номер счета через нумератор
 	var numerator models.InvoiceNumerator
 	// Ищем нумератор по умолчанию для этой компании
@@ -562,9 +584,21 @@ func (bs *BillingService) GenerateInvoiceForContractWithTenantDB(contractID uint
 		fmt.Printf("Предупреждение: ошибка создания записи в истории биллинга: %v\n", err)
 	}
 
-	// Загружаем созданный счет с позициями
-	if err := publicDB.Preload("Items").Preload("Contract").Preload("TariffPlan").First(invoice, invoice.ID).Error; err != nil {
+	// Загружаем созданный счет с позициями и тарифным планом (из public схемы)
+	// НЕ загружаем Contract через Preload, так как он в tenant-схеме
+	if err := publicDB.Preload("Items").Preload("TariffPlan").First(invoice, invoice.ID).Error; err != nil {
 		return nil, fmt.Errorf("ошибка загрузки созданного счета: %w", err)
+	}
+
+	// Загружаем договор отдельно из tenant-схемы, если contract_id задан
+	if invoice.ContractID != nil && *invoice.ContractID > 0 {
+		var contract models.Contract
+		if err := tenantDB.First(&contract, *invoice.ContractID).Error; err != nil {
+			log.Printf("⚠️ Не удалось загрузить договор ID=%d из tenant-схемы: %v", *invoice.ContractID, err)
+			// Не прерываем выполнение - счет уже создан
+		} else {
+			invoice.Contract = &contract
+		}
 	}
 
 	return invoice, nil

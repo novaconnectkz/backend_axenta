@@ -2,6 +2,7 @@ package services
 
 import (
 	"backend_axenta/models"
+	"context"
 	"crypto/tls"
 	"fmt"
 	"log"
@@ -14,13 +15,19 @@ import (
 
 // InvoiceSenderService предоставляет функциональность отправки счетов клиентам
 type InvoiceSenderService struct {
-	DB *gorm.DB
+	DB                        *gorm.DB
+	telegramIntegrationService *TelegramIntegrationService
+	maxIntegrationService      *MaxIntegrationService
 }
 
 // NewInvoiceSenderService создает новый экземпляр InvoiceSenderService
 func NewInvoiceSenderService(db *gorm.DB) *InvoiceSenderService {
+	logger := log.New(log.Writer(), "[InvoiceSender] ", log.LstdFlags|log.Lshortfile)
+	
 	return &InvoiceSenderService{
-		DB: db,
+		DB:                        db,
+		telegramIntegrationService: NewTelegramIntegrationService(db, logger),
+		maxIntegrationService:      NewMaxIntegrationService(db, logger),
 	}
 }
 
@@ -226,26 +233,25 @@ func (s *InvoiceSenderService) sendEmailViaTLS(addr string, auth smtp.Auth, from
 
 // sendInvoiceViaTelegram отправляет счет через Telegram
 func (s *InvoiceSenderService) sendInvoiceViaTelegram(invoice *models.Invoice, telegramID string) error {
-	// Получаем настройки Telegram для компании
-	var settings models.NotificationSettings
-	err := s.DB.Where("company_id = ?", invoice.CompanyID).First(&settings).Error
+	// Получаем конфигурацию Telegram интеграции
+	ctx := context.Background()
+	config, err := s.telegramIntegrationService.GetConfig(ctx, invoice.CompanyID)
 	if err != nil {
-		if err.Error() == "record not found" || strings.Contains(err.Error(), "record not found") {
-			return fmt.Errorf("Telegram интеграция не настроена. Перейдите в Настройки → Интеграции → Telegram для настройки")
-		}
-		return fmt.Errorf("ошибка получения настроек Telegram: %w", err)
+		return fmt.Errorf("Telegram не настроен. Перейдите в Настройки → Интеграции → Telegram")
 	}
 	
-	if !settings.TelegramEnabled || settings.TelegramBotToken == "" {
-		return fmt.Errorf("Telegram не настроен. Перейдите в Настройки → Интеграции → Telegram")
+	if config.BotToken == "" {
+		return fmt.Errorf("Telegram токен не настроен. Перейдите в Настройки → Интеграции → Telegram")
 	}
 	
 	// Формируем сообщение
 	message := s.generateInvoiceTelegramMessage(invoice)
 	
-	// Отправляем сообщение через простой сендер
-	sender := &SimpleTelegramSender{}
-	err = sender.SendMessage(settings.TelegramBotToken, telegramID, message)
+	// Отправляем сообщение через Telegram Integration Service
+	options := make(map[string]interface{})
+	options["parse_mode"] = config.ParseMode
+	
+	err = s.telegramIntegrationService.SendMessage(ctx, invoice.CompanyID, telegramID, message, options)
 	if err != nil {
 		return fmt.Errorf("ошибка отправки через Telegram: %w", err)
 	}
@@ -256,26 +262,25 @@ func (s *InvoiceSenderService) sendInvoiceViaTelegram(invoice *models.Invoice, t
 
 // sendInvoiceViaMax отправляет счет через MAX мессенджер
 func (s *InvoiceSenderService) sendInvoiceViaMax(invoice *models.Invoice, maxID string) error {
-	// Получаем настройки MAX для компании
-	var settings models.NotificationSettings
-	err := s.DB.Where("company_id = ?", invoice.CompanyID).First(&settings).Error
+	// Получаем конфигурацию MAX интеграции
+	ctx := context.Background()
+	config, err := s.maxIntegrationService.GetConfig(ctx, invoice.CompanyID)
 	if err != nil {
-		if err.Error() == "record not found" || strings.Contains(err.Error(), "record not found") {
-			return fmt.Errorf("MAX интеграция не настроена. Перейдите в Настройки → Интеграции → MAX для настройки")
-		}
-		return fmt.Errorf("ошибка получения настроек MAX: %w", err)
+		return fmt.Errorf("MAX не настроен. Перейдите в Настройки → Интеграции → MAX")
 	}
 	
-	if !settings.MaxEnabled || settings.MaxBotToken == "" {
-		return fmt.Errorf("MAX не настроен. Перейдите в Настройки → Интеграции → MAX")
+	if config.BotToken == "" {
+		return fmt.Errorf("MAX токен не настроен. Перейдите в Настройки → Интеграции → MAX")
 	}
 	
 	// Формируем сообщение
 	message := s.generateInvoiceMaxMessage(invoice)
 	
-	// Отправляем сообщение через простой сендер
-	sender := &SimpleMaxSender{}
-	err = sender.SendMessage(settings.MaxBotToken, maxID, message)
+	// Отправляем сообщение через MAX Integration Service
+	options := make(map[string]interface{})
+	options["parse_mode"] = config.ParseMode
+	
+	err = s.maxIntegrationService.SendMessage(ctx, invoice.CompanyID, maxID, message, options)
 	if err != nil {
 		return fmt.Errorf("ошибка отправки через MAX: %w", err)
 	}
