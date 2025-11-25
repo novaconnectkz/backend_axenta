@@ -56,7 +56,7 @@ type Role struct {
 
 	// Связи
 	Permissions []Permission `json:"permissions,omitempty" gorm:"many2many:role_permissions;"`
-	Users       []User       `json:"users,omitempty" gorm:"foreignKey:RoleID"`
+	Users       []User       `json:"users,omitempty" gorm:"foreignKey:RoleID;constraint:-"`
 }
 
 // TableName задает имя таблицы для модели Role
@@ -116,7 +116,7 @@ type UserTemplate struct {
 
 	// Роль по умолчанию
 	RoleID uint `json:"role_id" gorm:"not null"`
-	Role   Role `json:"role" gorm:"foreignKey:RoleID"`
+	Role   Role `json:"role" gorm:"foreignKey:RoleID;constraint:-"`
 
 	// Дополнительные настройки (JSON)
 	Settings string `json:"settings" gorm:"type:jsonb"` // Дополнительные настройки пользователя
@@ -125,7 +125,7 @@ type UserTemplate struct {
 	IsActive bool `json:"is_active" gorm:"default:true"`
 
 	// Связи
-	Users []User `json:"users,omitempty" gorm:"foreignKey:TemplateID"`
+	Users []User `json:"users,omitempty" gorm:"foreignKey:TemplateID;constraint:-"`
 }
 
 // TableName задает имя таблицы для модели UserTemplate

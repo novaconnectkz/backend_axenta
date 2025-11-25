@@ -37,7 +37,7 @@ type ObjectTemplate struct {
 	UsageCount int  `json:"usage_count" gorm:"default:0"`   // Количество использований
 
 	// Связи
-	Objects []Object `json:"objects,omitempty" gorm:"foreignKey:TemplateID"`
+	Objects []Object `json:"objects,omitempty" gorm:"foreignKey:TemplateID;constraint:-"`
 }
 
 // TableName задает имя таблицы для модели ObjectTemplate

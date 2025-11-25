@@ -41,8 +41,8 @@ type SystemSettings struct {
 
 	// Налоговые настройки
 	VATRatePreset  string  `json:"vat_rate_preset" gorm:"type:varchar(20);default:'russia'"` // russia, kazakhstan, none, custom
-	VATRateCustom  float64 `json:"vat_rate_custom" gorm:"type:decimal(5,2);default:20"`      // своя ставка НДС
-	DefaultTaxRate float64 `json:"default_tax_rate" gorm:"type:decimal(5,2);default:20"`     // ставка НДС по умолчанию
+	VATRateCustom  float64 `json:"vat_rate_custom" gorm:"type:decimal(5,2);default:20.00"`      // своя ставка НДС
+	DefaultTaxRate float64 `json:"default_tax_rate" gorm:"type:decimal(5,2);default:20.00"`     // ставка НДС по умолчанию
 	TaxIncluded    bool    `json:"tax_included" gorm:"default:false"`                        // НДС включен в цену
 
 	// Настройки резервного копирования

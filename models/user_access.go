@@ -15,7 +15,7 @@ type UserAccess struct {
 
 	// Основные поля
 	UserID uint   `json:"user_id" gorm:"not null;index"`
-	User   *User  `json:"user,omitempty" gorm:"foreignKey:UserID"`
+	User   *User  `json:"user,omitempty" gorm:"foreignKey:UserID;constraint:-"`
 	Scope  string `json:"scope" gorm:"not null;size:100"` // Область доступа
 	Perms  string `json:"perms" gorm:"type:text"`         // JSON строка с разрешениями
 }

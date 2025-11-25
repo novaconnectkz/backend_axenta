@@ -36,22 +36,22 @@ type Object struct {
 
 	// Связи с другими сущностями
 	CompanyID uint     `json:"company_id" gorm:"not null;index"`
-	Company   *Company `json:"company,omitempty" gorm:"foreignKey:CompanyID"`
+	Company   *Company `json:"company,omitempty" gorm:"foreignKey:CompanyID;constraint:-"`
 
 	ContractID *uint     `json:"contract_id" gorm:"index"` // Опциональное поле для обратной совместимости
-	Contract   *Contract `json:"contract,omitempty" gorm:"foreignKey:ContractID"`
+	Contract   *Contract `json:"contract,omitempty" gorm:"foreignKey:ContractID;constraint:-"`
 
 	TemplateID *uint           `json:"template_id"`
-	Template   *ObjectTemplate `json:"template,omitempty" gorm:"foreignKey:TemplateID"`
+	Template   *ObjectTemplate `json:"template,omitempty" gorm:"foreignKey:TemplateID;constraint:-"`
 
 	LocationID uint      `json:"location_id" gorm:"index"`
-	Location   *Location `json:"location,omitempty" gorm:"foreignKey:LocationID"`
+	Location   *Location `json:"location,omitempty" gorm:"foreignKey:LocationID;constraint:-"`
 
 	// Оборудование, установленное на объекте
-	Equipment []Equipment `json:"equipment,omitempty" gorm:"foreignKey:ObjectID"`
+	Equipment []Equipment `json:"equipment,omitempty" gorm:"foreignKey:ObjectID;constraint:-"`
 
 	// Монтажи и обслуживание
-	Installations []Installation `json:"installations,omitempty" gorm:"foreignKey:ObjectID"`
+	Installations []Installation `json:"installations,omitempty" gorm:"foreignKey:ObjectID;constraint:-"`
 
 	// Дополнительные настройки (JSON)
 	Settings string `json:"settings" gorm:"type:jsonb"` // Настройки мониторинга, уведомлений и т.д.

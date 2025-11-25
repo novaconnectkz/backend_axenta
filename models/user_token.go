@@ -14,7 +14,7 @@ type UserToken struct {
 	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
 
 	UserID    uint       `json:"user_id" gorm:"not null;index"`
-	User      *User      `json:"user,omitempty" gorm:"foreignKey:UserID"`
+	User      *User      `json:"user,omitempty" gorm:"foreignKey:UserID;constraint:-"`
 	Username  string     `json:"username" gorm:"not null;size:100;index"`
 	Token     string     `json:"token" gorm:"not null;type:text"`
 	ExpiresAt *time.Time `json:"expires_at" gorm:"index"`

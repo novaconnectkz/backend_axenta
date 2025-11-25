@@ -64,8 +64,8 @@ type NotificationLog struct {
 	CompanyID uint `json:"company_id" gorm:"index"`
 
 	// Связи
-	Template *NotificationTemplate `json:"template,omitempty" gorm:"foreignKey:TemplateID"`
-	User     *User                 `json:"user,omitempty" gorm:"foreignKey:UserID"`
+	Template *NotificationTemplate `json:"template,omitempty" gorm:"foreignKey:TemplateID;constraint:-"`
+	User     *User                 `json:"user,omitempty" gorm:"foreignKey:UserID;constraint:-"`
 }
 
 // NotificationSettings представляет настройки уведомлений для компании
@@ -113,7 +113,7 @@ type NotificationSettings struct {
 	CompanyID uint `json:"company_id" gorm:"uniqueIndex"`
 
 	// Связи
-	Company *Company `json:"company,omitempty" gorm:"foreignKey:CompanyID"`
+	Company *Company `json:"company,omitempty" gorm:"foreignKey:CompanyID;constraint:-"`
 }
 
 // UserNotificationPreferences представляет предпочтения пользователя по уведомлениям
@@ -125,7 +125,7 @@ type UserNotificationPreferences struct {
 
 	// Связи
 	UserID uint  `json:"user_id" gorm:"not null;index"`
-	User   *User `json:"user,omitempty" gorm:"foreignKey:UserID"`
+	User   *User `json:"user,omitempty" gorm:"foreignKey:UserID;constraint:-"`
 
 	// Настройки каналов
 	TelegramEnabled bool `json:"telegram_enabled" gorm:"default:true"`

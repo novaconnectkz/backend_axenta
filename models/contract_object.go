@@ -16,7 +16,7 @@ type ContractObject struct {
 
 	// Связь с договором (находится в схеме компании-создателя)
 	ContractID uint     `json:"contract_id" gorm:"not null;index"`
-	Contract   Contract `json:"contract,omitempty" gorm:"foreignKey:ContractID"`
+	Contract   Contract `json:"contract,omitempty" gorm:"foreignKey:ContractID;constraint:-"`
 
 	// Информация об объекте (может находиться в другой tenant схеме)
 	ObjectID       uint   `json:"object_id" gorm:"not null;index"`

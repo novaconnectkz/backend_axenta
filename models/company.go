@@ -51,7 +51,7 @@ type Company struct {
 	Currency string `json:"currency" gorm:"default:'RUB';type:varchar(3)"`
 
 	// Настройки налогов
-	DefaultTaxRate decimal.Decimal `json:"default_tax_rate" gorm:"type:decimal(5,2);default:20"` // Ставка НДС по умолчанию
+	DefaultTaxRate decimal.Decimal `json:"default_tax_rate" gorm:"type:decimal(5,2);default:20.00"` // Ставка НДС по умолчанию
 	TaxIncluded    bool            `json:"tax_included" gorm:"default:false"`                    // НДС включен в цену
 
 	// Иерархия компании из Axenta Cloud

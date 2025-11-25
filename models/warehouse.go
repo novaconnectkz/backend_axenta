@@ -33,11 +33,11 @@ type Equipment struct {
 
 	// Связь с объектом (если установлено)
 	ObjectID *uint   `json:"object_id"`
-	Object   *Object `json:"object,omitempty" gorm:"foreignKey:ObjectID"`
+	Object   *Object `json:"object,omitempty" gorm:"foreignKey:ObjectID;constraint:-"`
 
 	// Категория оборудования
 	CategoryID *uint              `json:"category_id"`
-	Category   *EquipmentCategory `json:"category,omitempty" gorm:"foreignKey:CategoryID"`
+	Category   *EquipmentCategory `json:"category,omitempty" gorm:"foreignKey:CategoryID;constraint:-"`
 
 	// Местоположение на складе
 	WarehouseLocation string `json:"warehouse_location" gorm:"type:varchar(100)"` // Полка, ячейка и т.д.
@@ -111,7 +111,7 @@ type Location struct {
 	Address string `json:"address" gorm:"-"`
 
 	// Связи
-	Objects []Object `json:"objects,omitempty" gorm:"foreignKey:LocationID"`
+	Objects []Object `json:"objects,omitempty" gorm:"foreignKey:LocationID;constraint:-"`
 }
 
 // TableName задает имя таблицы для модели Location
@@ -207,7 +207,7 @@ type Installer struct {
 	Notes string `json:"notes" gorm:"type:text"`
 
 	// Связи
-	Installations []Installation `json:"installations,omitempty" gorm:"foreignKey:InstallerID"`
+	Installations []Installation `json:"installations,omitempty" gorm:"foreignKey:InstallerID;constraint:-"`
 }
 
 // TableName задает имя таблицы для модели Installer
@@ -291,13 +291,13 @@ type Installation struct {
 
 	// Связи с другими сущностями
 	ObjectID uint    `json:"object_id" gorm:"not null;index"`
-	Object   *Object `json:"object,omitempty" gorm:"foreignKey:ObjectID"`
+	Object   *Object `json:"object,omitempty" gorm:"foreignKey:ObjectID;constraint:-"`
 
 	InstallerID uint       `json:"installer_id" gorm:"not null;index"`
-	Installer   *Installer `json:"installer,omitempty" gorm:"foreignKey:InstallerID"`
+	Installer   *Installer `json:"installer,omitempty" gorm:"foreignKey:InstallerID;constraint:-"`
 
 	LocationID *uint     `json:"location_id" gorm:"index"`
-	Location   *Location `json:"location,omitempty" gorm:"foreignKey:LocationID"`
+	Location   *Location `json:"location,omitempty" gorm:"foreignKey:LocationID;constraint:-"`
 
 	// Оборудование для монтажа
 	Equipment []Equipment `json:"equipment,omitempty" gorm:"many2many:installation_equipment;"`
@@ -310,7 +310,7 @@ type Installation struct {
 
 	// Метаданные
 	CreatedByUserID uint  `json:"created_by_user_id" gorm:"index"`
-	CreatedByUser   *User `json:"created_by_user,omitempty" gorm:"foreignKey:CreatedByUserID"`
+	CreatedByUser   *User `json:"created_by_user,omitempty" gorm:"foreignKey:CreatedByUserID;constraint:-"`
 
 	// Настройки напоминаний
 	ReminderSent     bool       `json:"reminder_sent" gorm:"default:false"`
@@ -425,7 +425,7 @@ type WarehouseOperation struct {
 
 	// Связанное оборудование
 	EquipmentID uint       `json:"equipment_id" gorm:"not null;index"`
-	Equipment   *Equipment `json:"equipment,omitempty" gorm:"foreignKey:EquipmentID"`
+	Equipment   *Equipment `json:"equipment,omitempty" gorm:"foreignKey:EquipmentID;constraint:-"`
 
 	// Количество (для групповых операций)
 	Quantity int `json:"quantity" gorm:"default:1"`
@@ -436,7 +436,7 @@ type WarehouseOperation struct {
 
 	// Ответственное лицо
 	UserID uint  `json:"user_id" gorm:"index"`
-	User   *User `json:"user,omitempty" gorm:"foreignKey:UserID"`
+	User   *User `json:"user,omitempty" gorm:"foreignKey:UserID;constraint:-"`
 
 	// Документы и заметки
 	DocumentNumber string `json:"document_number" gorm:"type:varchar(50)"` // Номер документа
@@ -444,7 +444,7 @@ type WarehouseOperation struct {
 
 	// Связанная установка (если операция связана с монтажом)
 	InstallationID *uint         `json:"installation_id"`
-	Installation   *Installation `json:"installation,omitempty" gorm:"foreignKey:InstallationID"`
+	Installation   *Installation `json:"installation,omitempty" gorm:"foreignKey:InstallationID;constraint:-"`
 
 	// Для мультитенантности
 	CompanyID uint `json:"company_id" gorm:"index"`
@@ -488,7 +488,7 @@ type EquipmentCategory struct {
 	IsActive      bool `json:"is_active" gorm:"default:true"`
 
 	// Связи
-	Equipment []Equipment `json:"equipment,omitempty" gorm:"foreignKey:CategoryID"`
+	Equipment []Equipment `json:"equipment,omitempty" gorm:"foreignKey:CategoryID;constraint:-"`
 }
 
 // TableName задает имя таблицы для модели EquipmentCategory
@@ -511,9 +511,9 @@ type StockAlert struct {
 
 	// Связанное оборудование или категория
 	EquipmentID         *uint              `json:"equipment_id"`
-	Equipment           *Equipment         `json:"equipment,omitempty" gorm:"foreignKey:EquipmentID"`
+	Equipment           *Equipment         `json:"equipment,omitempty" gorm:"foreignKey:EquipmentID;constraint:-"`
 	EquipmentCategoryID *uint              `json:"equipment_category_id"`
-	EquipmentCategory   *EquipmentCategory `json:"equipment_category,omitempty" gorm:"foreignKey:EquipmentCategoryID"`
+	EquipmentCategory   *EquipmentCategory `json:"equipment_category,omitempty" gorm:"foreignKey:EquipmentCategoryID;constraint:-"`
 
 	// Статус и обработка
 	Status     string     `json:"status" gorm:"default:'active';type:varchar(20)"` // active, acknowledged, resolved
@@ -522,7 +522,7 @@ type StockAlert struct {
 
 	// Ответственное лицо
 	AssignedUserID *uint `json:"assigned_user_id"`
-	AssignedUser   *User `json:"assigned_user,omitempty" gorm:"foreignKey:AssignedUserID"`
+	AssignedUser   *User `json:"assigned_user,omitempty" gorm:"foreignKey:AssignedUserID;constraint:-"`
 
 	// Дополнительные данные
 	Metadata string `json:"metadata" gorm:"type:jsonb"` // Дополнительные данные в JSON

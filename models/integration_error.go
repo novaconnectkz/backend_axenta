@@ -43,7 +43,7 @@ type IntegrationError struct {
 	UserAgent    string `json:"user_agent" gorm:"type:varchar(255)"`
 
 	// Связи
-	Company *Company `json:"company,omitempty" gorm:"foreignKey:TenantID"`
+	Company *Company `json:"company,omitempty" gorm:"foreignKey:TenantID;constraint:-"`
 }
 
 // TableName задает имя таблицы для модели IntegrationError

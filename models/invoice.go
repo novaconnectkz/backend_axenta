@@ -26,9 +26,9 @@ type Invoice struct {
 	AdminAccountID uint        `json:"admin_account_id" gorm:"not null;index"`
 	CompanyID      uint        `json:"company_id" gorm:"not null;index"`
 	ContractID     *uint       `json:"contract_id" gorm:"index"` // Может быть null для общих счетов
-	Contract       *Contract   `json:"contract,omitempty" gorm:"foreignKey:ContractID"`
+	Contract       *Contract   `json:"contract,omitempty" gorm:"foreignKey:ContractID;constraint:-"`
 	TariffPlanID   uint        `json:"tariff_plan_id" gorm:"not null"`
-	TariffPlan     *TariffPlan `json:"tariff_plan,omitempty" gorm:"foreignKey:TariffPlanID"`
+	TariffPlan     *TariffPlan `json:"tariff_plan,omitempty" gorm:"foreignKey:TariffPlanID;constraint:-"`
 
 	// Период биллинга
 	BillingPeriodStart time.Time `json:"billing_period_start" gorm:"not null"`
@@ -36,15 +36,15 @@ type Invoice struct {
 
 	// Финансовая информация
 	SubtotalAmount decimal.Decimal `json:"subtotal_amount" gorm:"type:decimal(15,2);not null"`
-	TaxRate        decimal.Decimal `json:"tax_rate" gorm:"type:decimal(5,2);default:0"`     // НДС в процентах
-	TaxAmount      decimal.Decimal `json:"tax_amount" gorm:"type:decimal(15,2);default:0"`  // Сумма НДС
+	TaxRate        decimal.Decimal `json:"tax_rate" gorm:"type:decimal(5,2);default:0.00"`     // НДС в процентах
+	TaxAmount      decimal.Decimal `json:"tax_amount" gorm:"type:decimal(15,2);default:0.00"`  // Сумма НДС
 	TotalAmount    decimal.Decimal `json:"total_amount" gorm:"type:decimal(15,2);not null"` // Итоговая сумма
 	Currency       string          `json:"currency" gorm:"default:'RUB';type:varchar(3)"`
 
 	// Статус счета
 	Status     string          `json:"status" gorm:"default:'draft';type:varchar(20)"`  // draft, sent, paid, overdue, cancelled
 	PaidAt     *time.Time      `json:"paid_at"`                                         // Дата оплаты
-	PaidAmount decimal.Decimal `json:"paid_amount" gorm:"type:decimal(15,2);default:0"` // Оплаченная сумма
+	PaidAmount decimal.Decimal `json:"paid_amount" gorm:"type:decimal(15,2);default:0.00"` // Оплаченная сумма
 
 	// Дополнительная информация
 	Notes      string `json:"notes" gorm:"type:text"`
@@ -59,7 +59,7 @@ type Invoice struct {
 	LastSentChannels  string     `json:"last_sent_channels" gorm:"type:varchar(100)"` // Каналы последней отправки
 
 	// Связанные позиции счета
-	Items []InvoiceItem `json:"items,omitempty" gorm:"foreignKey:InvoiceID"`
+	Items []InvoiceItem `json:"items,omitempty" gorm:"foreignKey:InvoiceID;constraint:-"`
 }
 
 // TableName задает имя таблицы для модели Invoice
@@ -91,7 +91,7 @@ type InvoiceItem struct {
 
 	// Связь с счетом
 	InvoiceID uint    `json:"invoice_id" gorm:"not null;index"`
-	Invoice   Invoice `json:"invoice,omitempty" gorm:"foreignKey:InvoiceID"`
+	Invoice   Invoice `json:"invoice,omitempty" gorm:"foreignKey:InvoiceID;constraint:-"`
 
 	// Основные поля позиции
 	Name        string `json:"name" gorm:"not null;type:varchar(200)"`
@@ -100,7 +100,7 @@ type InvoiceItem struct {
 
 	// Связи с объектами (для позиций по объектам)
 	ObjectID *uint   `json:"object_id" gorm:"index"`
-	Object   *Object `json:"object,omitempty" gorm:"foreignKey:ObjectID"`
+	Object   *Object `json:"object,omitempty" gorm:"foreignKey:ObjectID;constraint:-"`
 
 	// Количество и цены
 	Quantity  decimal.Decimal `json:"quantity" gorm:"type:decimal(10,3);not null"`
@@ -131,9 +131,9 @@ type BillingHistory struct {
 	AdminAccountID uint      `json:"admin_account_id" gorm:"not null;index"`
 	CompanyID      uint      `json:"company_id" gorm:"not null;index"`
 	InvoiceID      *uint     `json:"invoice_id" gorm:"index"`
-	Invoice        *Invoice  `json:"invoice,omitempty" gorm:"foreignKey:InvoiceID"`
+	Invoice        *Invoice  `json:"invoice,omitempty" gorm:"foreignKey:InvoiceID;constraint:-"`
 	ContractID     *uint     `json:"contract_id" gorm:"index"`
-	Contract       *Contract `json:"contract,omitempty" gorm:"foreignKey:ContractID"`
+	Contract       *Contract `json:"contract,omitempty" gorm:"foreignKey:ContractID;constraint:-"`
 
 	// Информация об операции
 	Operation   string          `json:"operation" gorm:"not null;type:varchar(50)"` // invoice_created, payment_received, invoice_cancelled
@@ -174,10 +174,10 @@ type BillingSettings struct {
 	InvoicePaymentTermDays int  `json:"invoice_payment_term_days" gorm:"default:14"` // Срок оплаты в днях
 
 	// Настройки налогов
-	DefaultTaxRate decimal.Decimal `json:"default_tax_rate" gorm:"type:decimal(5,2);default:20"` // НДС по умолчанию
+	DefaultTaxRate decimal.Decimal `json:"default_tax_rate" gorm:"type:decimal(5,2);default:20.00"` // НДС по умолчанию
 	TaxIncluded    bool            `json:"tax_included" gorm:"default:false"`                    // НДС включен в цену
 	VATRatePreset  string          `json:"vat_rate_preset" gorm:"type:varchar(20);default:'russia'"` // Пресет ставки НДС: russia, kazakhstan, none, custom
-	VATRateCustom  decimal.Decimal `json:"vat_rate_custom" gorm:"type:decimal(5,2);default:20"` // Своя ставка НДС (используется при VATRatePreset = custom)
+	VATRateCustom  decimal.Decimal `json:"vat_rate_custom" gorm:"type:decimal(5,2);default:20.00"` // Своя ставка НДС (используется при VATRatePreset = custom)
 
 	// Настройки уведомлений
 	NotifyBeforeInvoice int `json:"notify_before_invoice" gorm:"default:3"` // За сколько дней уведомлять о выставлении счета
@@ -201,7 +201,7 @@ type BillingSettings struct {
 
 	// Настройки для льготных тарифов
 	EnableInactiveDiscounts bool            `json:"enable_inactive_discounts" gorm:"default:true"`
-	InactiveDiscountRatio   decimal.Decimal `json:"inactive_discount_ratio" gorm:"type:decimal(3,2);default:0.5"`
+	InactiveDiscountRatio   decimal.Decimal `json:"inactive_discount_ratio" gorm:"type:decimal(3,2);default:0.50"`
 
 	// Настройки автопилота
 	AutopilotEnabled bool `json:"autopilot_enabled" gorm:"default:false"` // Автоматизация создания договора -> подписки -> счета -> отправки

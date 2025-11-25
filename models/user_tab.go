@@ -15,7 +15,7 @@ type UserTab struct {
 
 	// Основные поля
 	UserID uint   `json:"user_id" gorm:"not null;index"`
-	User   *User  `json:"user,omitempty" gorm:"foreignKey:UserID"`
+	User   *User  `json:"user,omitempty" gorm:"foreignKey:UserID;constraint:-"`
 	Name   string `json:"name" gorm:"not null;size:100"` // Название вкладки (monitoring, reports, objects, etc.)
 }
 

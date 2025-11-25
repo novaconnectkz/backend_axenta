@@ -43,11 +43,11 @@ type User struct {
 
 	// Роль и права доступа
 	RoleID *uint `json:"role_id" gorm:"index"`
-	Role   *Role `json:"role,omitempty" gorm:"foreignKey:RoleID"`
+	Role   *Role `json:"role,omitempty" gorm:"foreignKey:RoleID;constraint:-"`
 
 	// Шаблон пользователя
 	TemplateID *uint         `json:"template_id"`
-	Template   *UserTemplate `json:"template,omitempty" gorm:"foreignKey:TemplateID"`
+	Template   *UserTemplate `json:"template,omitempty" gorm:"foreignKey:TemplateID;constraint:-"`
 
 	// Дополнительные поля для CRM
 	LastLogin  *time.Time `json:"last_login"`

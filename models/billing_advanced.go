@@ -21,8 +21,8 @@ type Country struct {
 	IsActive    bool   `json:"is_active" gorm:"default:true"`                    // Активность
 
 	// Связи
-	TaxRates []TaxRate `json:"tax_rates,omitempty" gorm:"foreignKey:CountryCode;references:Code"`
-	TaxRules []TaxRule `json:"tax_rules,omitempty" gorm:"foreignKey:SellerCountryCode;references:Code"`
+	TaxRates []TaxRate `json:"tax_rates,omitempty" gorm:"foreignKey:CountryCode;constraint:-;references:Code"`
+	TaxRules []TaxRule `json:"tax_rules,omitempty" gorm:"foreignKey:SellerCountryCode;constraint:-;references:Code"`
 }
 
 // TableName задает имя таблицы для модели Country
@@ -39,7 +39,7 @@ type TaxRate struct {
 
 	// Основные поля
 	CountryCode string          `json:"country_code" gorm:"not null;type:varchar(2);index"`
-	Country     *Country        `json:"country,omitempty" gorm:"foreignKey:CountryCode;references:Code"`
+	Country     *Country        `json:"country,omitempty" gorm:"foreignKey:CountryCode;constraint:-;references:Code"`
 	Rate        decimal.Decimal `json:"rate" gorm:"not null;type:decimal(5,2)"` // НДС в процентах
 	Name        string          `json:"name" gorm:"type:varchar(100)"`          // Название ставки (например, "НДС 20%")
 
@@ -66,9 +66,9 @@ type TaxRule struct {
 
 	// Страны операции
 	SellerCountryCode string   `json:"seller_country_code" gorm:"not null;type:varchar(2);index"`
-	SellerCountry     *Country `json:"seller_country,omitempty" gorm:"foreignKey:SellerCountryCode;references:Code"`
+	SellerCountry     *Country `json:"seller_country,omitempty" gorm:"foreignKey:SellerCountryCode;constraint:-;references:Code"`
 	BuyerCountryCode  string   `json:"buyer_country_code" gorm:"not null;type:varchar(2);index"`
-	BuyerCountry      *Country `json:"buyer_country,omitempty" gorm:"foreignKey:BuyerCountryCode;references:Code"`
+	BuyerCountry      *Country `json:"buyer_country,omitempty" gorm:"foreignKey:BuyerCountryCode;constraint:-;references:Code"`
 
 	// Условия применения
 	ServiceType string     `json:"service_type" gorm:"type:varchar(50)"` // Тип услуги (например, "software", "monitoring")
@@ -100,7 +100,7 @@ type TariffComponent struct {
 	// Связь с тарифом
 	AdminAccountID uint        `json:"admin_account_id" gorm:"not null;index"`
 	TariffPlanID   uint        `json:"tariff_plan_id" gorm:"not null;index"`
-	TariffPlan     *TariffPlan `json:"tariff_plan,omitempty" gorm:"foreignKey:TariffPlanID"`
+	TariffPlan     *TariffPlan `json:"tariff_plan,omitempty" gorm:"foreignKey:TariffPlanID;constraint:-"`
 
 	// Тип компонента
 	Type string `json:"type" gorm:"not null;type:varchar(50)"` // recurring, per_usage, one_time
@@ -109,7 +109,7 @@ type TariffComponent struct {
 	Name      string          `json:"name" gorm:"not null;type:varchar(200)"`         // Название компонента
 	Unit      string          `json:"unit" gorm:"type:varchar(50)"`                   // Единица измерения
 	Price     decimal.Decimal `json:"price" gorm:"not null;type:decimal(15,2)"`       // Цена за единицу
-	MinCommit decimal.Decimal `json:"min_commit" gorm:"type:decimal(15,2);default:0"` // Минимальная оплата
+	MinCommit decimal.Decimal `json:"min_commit" gorm:"type:decimal(15,2);default:0.00"` // Минимальная оплата
 
 	// Для recurring
 	BillingPeriod string `json:"billing_period" gorm:"type:varchar(20)"` // monthly, yearly
@@ -132,11 +132,11 @@ type Assignment struct {
 
 	// Связи
 	SubscriptionID uint          `json:"subscription_id" gorm:"not null;index"`
-	Subscription   *Subscription `json:"subscription,omitempty" gorm:"foreignKey:SubscriptionID"`
+	Subscription   *Subscription `json:"subscription,omitempty" gorm:"foreignKey:SubscriptionID;constraint:-"`
 	ObjectID       uint          `json:"object_id" gorm:"not null;index"`
-	Object         *Object       `json:"object,omitempty" gorm:"foreignKey:ObjectID"`
+	Object         *Object       `json:"object,omitempty" gorm:"foreignKey:ObjectID;constraint:-"`
 	TariffPlanID   uint          `json:"tariff_plan_id" gorm:"not null;index"`
-	TariffPlan     *TariffPlan   `json:"tariff_plan,omitempty" gorm:"foreignKey:TariffPlanID"`
+	TariffPlan     *TariffPlan   `json:"tariff_plan,omitempty" gorm:"foreignKey:TariffPlanID;constraint:-"`
 
 	// Период действия привязки
 	StartDate time.Time  `json:"start_date" gorm:"not null"`
@@ -161,9 +161,9 @@ type Freeze struct {
 
 	// Связи
 	ObjectID     uint        `json:"object_id" gorm:"not null;index"`
-	Object       *Object     `json:"object,omitempty" gorm:"foreignKey:ObjectID"`
+	Object       *Object     `json:"object,omitempty" gorm:"foreignKey:ObjectID;constraint:-"`
 	AssignmentID *uint       `json:"assignment_id" gorm:"index"`
-	Assignment   *Assignment `json:"assignment,omitempty" gorm:"foreignKey:AssignmentID"`
+	Assignment   *Assignment `json:"assignment,omitempty" gorm:"foreignKey:AssignmentID;constraint:-"`
 
 	// Период заморозки
 	StartDate time.Time `json:"start_date" gorm:"not null"`
@@ -191,17 +191,17 @@ type Usage struct {
 
 	// Связи
 	ObjectID       uint          `json:"object_id" gorm:"not null;index"`
-	Object         *Object       `json:"object,omitempty" gorm:"foreignKey:ObjectID"`
+	Object         *Object       `json:"object,omitempty" gorm:"foreignKey:ObjectID;constraint:-"`
 	SubscriptionID *uint         `json:"subscription_id" gorm:"index"`
-	Subscription   *Subscription `json:"subscription,omitempty" gorm:"foreignKey:SubscriptionID"`
+	Subscription   *Subscription `json:"subscription,omitempty" gorm:"foreignKey:SubscriptionID;constraint:-"`
 	AssignmentID   *uint         `json:"assignment_id" gorm:"index"`
-	Assignment     *Assignment   `json:"assignment,omitempty" gorm:"foreignKey:AssignmentID"`
+	Assignment     *Assignment   `json:"assignment,omitempty" gorm:"foreignKey:AssignmentID;constraint:-"`
 
 	// День использования
 	UsageDate time.Time `json:"usage_date" gorm:"not null;index"` // Дата в формате YYYY-MM-DD
 
 	// Количество использования
-	Quantity decimal.Decimal `json:"quantity" gorm:"type:decimal(10,3);default:1"` // Количество единиц
+	Quantity decimal.Decimal `json:"quantity" gorm:"type:decimal(10,3);default:1.000"` // Количество единиц
 
 	// Дополнительная информация
 	Metadata string `json:"metadata" gorm:"type:jsonb"` // Дополнительные данные в JSON
@@ -256,11 +256,11 @@ type InvoiceHeader struct {
 
 	// Связи
 	CompanyID      uint          `json:"company_id" gorm:"not null;index"`
-	Company        *Company      `json:"company,omitempty" gorm:"foreignKey:CompanyID"`
+	Company        *Company      `json:"company,omitempty" gorm:"foreignKey:CompanyID;constraint:-"`
 	ContractID     *uint         `json:"contract_id" gorm:"index"`
-	Contract       *Contract     `json:"contract,omitempty" gorm:"foreignKey:ContractID"`
+	Contract       *Contract     `json:"contract,omitempty" gorm:"foreignKey:ContractID;constraint:-"`
 	SubscriptionID *uint         `json:"subscription_id" gorm:"index"`
-	Subscription   *Subscription `json:"subscription,omitempty" gorm:"foreignKey:SubscriptionID"`
+	Subscription   *Subscription `json:"subscription,omitempty" gorm:"foreignKey:SubscriptionID;constraint:-"`
 
 	// Период биллинга
 	PeriodStart time.Time `json:"period_start" gorm:"not null"`
@@ -268,19 +268,19 @@ type InvoiceHeader struct {
 
 	// Финансы
 	SubtotalAmount decimal.Decimal `json:"subtotal_amount" gorm:"type:decimal(15,2);not null"`
-	TaxAmount      decimal.Decimal `json:"tax_amount" gorm:"type:decimal(15,2);default:0"`
+	TaxAmount      decimal.Decimal `json:"tax_amount" gorm:"type:decimal(15,2);default:0.00"`
 	TotalAmount    decimal.Decimal `json:"total_amount" gorm:"type:decimal(15,2);not null"`
 	Currency       string          `json:"currency" gorm:"default:'RUB';type:varchar(3)"`
 
 	// Страны и налоги
 	SellerCountryCode string          `json:"seller_country_code" gorm:"type:varchar(2)"`
 	BuyerCountryCode  string          `json:"buyer_country_code" gorm:"type:varchar(2)"`
-	TaxRate           decimal.Decimal `json:"tax_rate" gorm:"type:decimal(5,2);default:0"`
+	TaxRate           decimal.Decimal `json:"tax_rate" gorm:"type:decimal(5,2);default:0.00"`
 
 	// Статус
 	Status     string          `json:"status" gorm:"default:'draft';type:varchar(20)"` // draft, sent, paid, overdue, cancelled
 	PaidAt     *time.Time      `json:"paid_at"`
-	PaidAmount decimal.Decimal `json:"paid_amount" gorm:"type:decimal(15,2);default:0"`
+	PaidAmount decimal.Decimal `json:"paid_amount" gorm:"type:decimal(15,2);default:0.00"`
 }
 
 // TableName задает имя таблицы для модели InvoiceHeader
@@ -297,7 +297,7 @@ type InvoiceLine struct {
 
 	// Связь со счетом
 	InvoiceHeaderID uint           `json:"invoice_header_id" gorm:"not null;index"`
-	InvoiceHeader   *InvoiceHeader `json:"invoice_header,omitempty" gorm:"foreignKey:InvoiceHeaderID"`
+	InvoiceHeader   *InvoiceHeader `json:"invoice_header,omitempty" gorm:"foreignKey:InvoiceHeaderID;constraint:-"`
 
 	// Позиция
 	LineNumber int             `json:"line_number" gorm:"not null"`
@@ -308,9 +308,9 @@ type InvoiceLine struct {
 
 	// Связи
 	TariffComponentID *uint            `json:"tariff_component_id" gorm:"index"`
-	TariffComponent   *TariffComponent `json:"tariff_component,omitempty" gorm:"foreignKey:TariffComponentID"`
+	TariffComponent   *TariffComponent `json:"tariff_component,omitempty" gorm:"foreignKey:TariffComponentID;constraint:-"`
 	ObjectID          *uint            `json:"object_id" gorm:"index"`
-	Object            *Object          `json:"object,omitempty" gorm:"foreignKey:ObjectID"`
+	Object            *Object          `json:"object,omitempty" gorm:"foreignKey:ObjectID;constraint:-"`
 
 	// Период для позиции
 	PeriodStart *time.Time `json:"period_start"`

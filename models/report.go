@@ -80,7 +80,7 @@ type Report struct {
 
 	// Пользователь, создавший отчет
 	CreatedByID uint  `json:"created_by_id" gorm:"not null;index"`
-	CreatedBy   *User `json:"created_by,omitempty" gorm:"foreignKey:CreatedByID"`
+	CreatedBy   *User `json:"created_by,omitempty" gorm:"foreignKey:CreatedByID;constraint:-"`
 
 	// Для мультитенантности
 	CompanyID uint `json:"company_id" gorm:"index"`
@@ -123,7 +123,7 @@ type ReportTemplate struct {
 
 	// Автор шаблона
 	CreatedByID uint  `json:"created_by_id" gorm:"not null;index"`
-	CreatedBy   *User `json:"created_by,omitempty" gorm:"foreignKey:CreatedByID"`
+	CreatedBy   *User `json:"created_by,omitempty" gorm:"foreignKey:CreatedByID;constraint:-"`
 
 	// Для мультитенантности
 	CompanyID uint `json:"company_id" gorm:"index"`
@@ -148,7 +148,7 @@ type ReportSchedule struct {
 
 	// Связь с шаблоном отчета
 	TemplateID uint            `json:"template_id" gorm:"not null"`
-	Template   *ReportTemplate `json:"template,omitempty" gorm:"foreignKey:TemplateID"`
+	Template   *ReportTemplate `json:"template,omitempty" gorm:"foreignKey:TemplateID;constraint:-"`
 
 	// Параметры расписания
 	CronExpression string `json:"cron_expression" gorm:"type:varchar(100)"` // Cron выражение для сложных расписаний
@@ -168,7 +168,7 @@ type ReportSchedule struct {
 	LastRunAt    *time.Time `json:"last_run_at"`
 	NextRunAt    *time.Time `json:"next_run_at"`
 	LastReportID *uint      `json:"last_report_id"`
-	LastReport   *Report    `json:"last_report,omitempty" gorm:"foreignKey:LastReportID"`
+	LastReport   *Report    `json:"last_report,omitempty" gorm:"foreignKey:LastReportID;constraint:-"`
 
 	// Статистика
 	RunCount  int `json:"run_count" gorm:"default:0"`
@@ -176,7 +176,7 @@ type ReportSchedule struct {
 
 	// Создатель расписания
 	CreatedByID uint  `json:"created_by_id" gorm:"not null;index"`
-	CreatedBy   *User `json:"created_by,omitempty" gorm:"foreignKey:CreatedByID"`
+	CreatedBy   *User `json:"created_by,omitempty" gorm:"foreignKey:CreatedByID;constraint:-"`
 
 	// Для мультитенантности
 	CompanyID uint `json:"company_id" gorm:"index"`
@@ -196,9 +196,9 @@ type ReportExecution struct {
 
 	// Связь с расписанием и отчетом
 	ScheduleID uint            `json:"schedule_id" gorm:"not null;index"`
-	Schedule   *ReportSchedule `json:"schedule,omitempty" gorm:"foreignKey:ScheduleID"`
+	Schedule   *ReportSchedule `json:"schedule,omitempty" gorm:"foreignKey:ScheduleID;constraint:-"`
 	ReportID   *uint           `json:"report_id"`
-	Report     *Report         `json:"report,omitempty" gorm:"foreignKey:ReportID"`
+	Report     *Report         `json:"report,omitempty" gorm:"foreignKey:ReportID;constraint:-"`
 
 	// Статус выполнения
 	Status   ReportStatus `json:"status" gorm:"default:pending;type:varchar(20)"`

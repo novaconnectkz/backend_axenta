@@ -70,7 +70,7 @@ type Contract struct {
 
 	// Тарификация (опционально, будет привязан через подписку)
 	TariffPlanID *uint       `json:"tariff_plan_id" gorm:"default:NULL"`
-	TariffPlan   BillingPlan `json:"tariff_plan" gorm:"foreignKey:TariffPlanID"`
+	TariffPlan   BillingPlan `json:"tariff_plan" gorm:"foreignKey:TariffPlanID;constraint:-"`
 
 	// Стоимость
 	TotalAmount decimal.Decimal `json:"total_amount" gorm:"type:decimal(15,2)"`
@@ -97,9 +97,9 @@ type Contract struct {
 	ExternalID string `json:"external_id" gorm:"type:varchar(100)"` // ID во внешних системах (1С, Битрикс24)
 
 	// Связи
-	Appendices      []ContractAppendix `json:"appendices,omitempty" gorm:"foreignKey:ContractID"`
-	Objects         []Object           `json:"objects,omitempty" gorm:"foreignKey:ContractID"`          // Прямая связь (для обратной совместимости)
-	ContractObjects []ContractObject   `json:"contract_objects,omitempty" gorm:"foreignKey:ContractID"` // Связи через junction table
+	Appendices      []ContractAppendix `json:"appendices,omitempty" gorm:"foreignKey:ContractID;constraint:-"`
+	Objects         []Object           `json:"objects,omitempty" gorm:"foreignKey:ContractID;constraint:-"`          // Прямая связь (для обратной совместимости)
+	ContractObjects []ContractObject   `json:"contract_objects,omitempty" gorm:"foreignKey:ContractID;constraint:-"` // Связи через junction table
 }
 
 // TableName задает имя таблицы для модели Contract
@@ -145,7 +145,7 @@ type ContractAppendix struct {
 
 	// Связь с договором
 	ContractID uint     `json:"contract_id" gorm:"not null;index"`
-	Contract   Contract `json:"contract,omitempty" gorm:"foreignKey:ContractID"`
+	Contract   Contract `json:"contract,omitempty" gorm:"foreignKey:ContractID;constraint:-"`
 
 	// Основные поля приложения
 	Number      string `json:"number" gorm:"not null;type:varchar(50)"`
@@ -185,9 +185,9 @@ type TariffPlan struct {
 	BillingPlan
 
 	// Дополнительные поля для тарификации
-	SetupFee         decimal.Decimal `json:"setup_fee" gorm:"type:decimal(10,2);default:0"`       // Плата за подключение
+	SetupFee         decimal.Decimal `json:"setup_fee" gorm:"type:decimal(10,2);default:0.00"`       // Плата за подключение
 	MinimumPeriod    int             `json:"minimum_period" gorm:"default:1"`                     // Минимальный период в месяцах
-	DiscountPercent  decimal.Decimal `json:"discount_percent" gorm:"type:decimal(5,2);default:0"` // Скидка в процентах
+	DiscountPercent  decimal.Decimal `json:"discount_percent" gorm:"type:decimal(5,2);default:0.00"` // Скидка в процентах
 	IsPromotional    bool            `json:"is_promotional" gorm:"default:false"`                 // Акционный тариф
 	PromotionalUntil *time.Time      `json:"promotional_until"`                                   // До какой даты действует акция
 
@@ -196,7 +196,7 @@ type TariffPlan struct {
 	FreeObjectsCount int             `json:"free_objects_count" gorm:"default:0"`        // Количество бесплатных объектов
 
 	// Специальные тарифы
-	InactivePriceRatio decimal.Decimal `json:"inactive_price_ratio" gorm:"type:decimal(3,2);default:0.5"` // Коэффициент для неактивных объектов
+	InactivePriceRatio decimal.Decimal `json:"inactive_price_ratio" gorm:"type:decimal(3,2);default:0.50"` // Коэффициент для неактивных объектов
 }
 
 // TableName задает имя таблицы для модели TariffPlan

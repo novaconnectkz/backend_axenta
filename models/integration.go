@@ -34,7 +34,7 @@ type Integration struct {
 	SuccessCount int `json:"success_count" gorm:"default:0"`
 
 	// Связи
-	Company *Company `json:"company,omitempty" gorm:"foreignKey:CompanyID"`
+	Company *Company `json:"company,omitempty" gorm:"foreignKey:CompanyID;constraint:-"`
 }
 
 // TableName задает имя таблицы для модели Integration

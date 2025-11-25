@@ -24,7 +24,7 @@ type LocalUser struct {
 	DeletedAt    gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// Связи
-	Company *Company `json:"company,omitempty" gorm:"foreignKey:CompanyID;references:ID"`
+	Company *Company `json:"company,omitempty" gorm:"foreignKey:CompanyID;constraint:-;references:ID"`
 }
 
 // TableName возвращает имя таблицы
@@ -92,7 +92,7 @@ type RefreshToken struct {
 	IsRevoked bool      `json:"is_revoked" gorm:"default:false"`
 
 	// Связи
-	User *LocalUser `json:"user,omitempty" gorm:"foreignKey:UserID"`
+	User *LocalUser `json:"user,omitempty" gorm:"foreignKey:UserID;constraint:-"`
 }
 
 // TableName возвращает имя таблицы
