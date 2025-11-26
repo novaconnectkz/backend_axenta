@@ -1531,19 +1531,6 @@ func GetContractBillingBreakdown(c *gin.Context) {
 		return
 	}
 
-	// Загружаем настройки биллинга для компании
-	var billingSettings models.BillingSettings
-	if err := database.DB.Where("company_id = ? AND admin_account_id = ?", contract.CompanyID, adminAccountID).
-		First(&billingSettings).Error; err != nil {
-		// Если настройки не найдены, используем дефолтные значения
-		billingSettings = models.BillingSettings{
-			MinDaysForFullMonth: 5, // Значение по умолчанию
-		}
-		log.Printf("⚠️ Настройки биллинга не найдены для компании %d, используем дефолтные значения", contract.CompanyID)
-	} else {
-		log.Printf("✅ Загружены настройки биллинга: MinDaysForFullMonth = %d", billingSettings.MinDaysForFullMonth)
-	}
-
 	// Загружаем тарифные планы для всех подписок
 	billingPlanIDs := make([]uint, 0)
 	for _, sub := range subscriptions {
@@ -1651,60 +1638,11 @@ func GetContractBillingBreakdown(c *gin.Context) {
 
 			switch subData.BillingPlan.BillingPeriod {
 			case "yearly":
-				// Годовой тариф: делим на 12 месяцев и применяем MinDaysForFullMonth
+				// Годовой тариф: делим на 12 месяцев
 				pricePerObject = subData.BillingPlan.Price.Div(decimal.NewFromInt(12))
-				
-				// Определяем начало и конец текущего месяца
-				monthStart := month
-				monthEnd := month.AddDate(0, 1, 0).Add(-time.Second)
-				
-				// Определяем период присутствия объекта в этом месяце
-				var periodStart, periodEnd time.Time
-				
-				periodStart = monthStart
-				if contract.StartDate.After(periodStart) {
-					periodStart = *contract.StartDate
-				}
-				if subData.Subscription.CreatedAt.After(periodStart) {
-					periodStart = subData.Subscription.CreatedAt
-				}
-				
-				periodEnd = monthEnd
-				if contract.EndDate.Before(periodEnd) {
-					periodEnd = *contract.EndDate
-				}
-				
-				if subData.Subscription.Status == "cancelled" || subData.Subscription.Status == "expired" {
-					if subData.Subscription.UpdatedAt.Before(periodEnd) {
-						periodEnd = subData.Subscription.UpdatedAt
-					}
-				}
-				
-				// Рассчитываем дни
-				daysInMonth := int(monthEnd.Sub(monthStart).Hours()/24) + 1
-				billableDays := int(periodEnd.Sub(periodStart).Hours()/24) + 1
-				if billableDays < 0 {
-					billableDays = 0
-				}
-				
-				// Применяем логику MinDaysForFullMonth
-				minDays := billingSettings.MinDaysForFullMonth
-				if minDays == 0 {
-					minDays = 5
-				}
-				
-				if billableDays >= minDays {
-					// Полная месячная доля годового тарифа
-					amount = pricePerObject.Mul(decimal.NewFromInt(int64(objectsCount)))
-					description = fmt.Sprintf("%d объект(ов) × %s ₽/год ÷ 12 мес (присутствие: %d дн. ≥ %d дн.)",
-						objectsCount, subData.BillingPlan.Price.String(), billableDays, minDays)
-				} else {
-					// Пропорционально дням от месячной доли
-					dailyPrice := pricePerObject.Div(decimal.NewFromInt(int64(daysInMonth)))
-					amount = dailyPrice.Mul(decimal.NewFromInt(int64(billableDays))).Mul(decimal.NewFromInt(int64(objectsCount)))
-					description = fmt.Sprintf("%d объект(ов) × %s ₽/год ÷ 12 мес × %d/%d дн.",
-						objectsCount, subData.BillingPlan.Price.String(), billableDays, daysInMonth)
-				}
+				amount = pricePerObject.Mul(decimal.NewFromInt(int64(objectsCount)))
+				description = fmt.Sprintf("%d объект(ов) × %s ₽/год ÷ 12 мес", 
+					objectsCount, subData.BillingPlan.Price.String())
 			
 			case "weekly":
 				// Недельный тариф: конвертируем в месячную стоимость
@@ -1728,65 +1666,11 @@ func GetContractBillingBreakdown(c *gin.Context) {
 					objectsCount, subData.BillingPlan.Price.String())
 			
 			default: // monthly
-				// Месячный тариф с учётом MinDaysForFullMonth
+				// Месячный тариф
 				pricePerObject = subData.BillingPlan.Price
-				
-				// Определяем начало и конец текущего месяца
-				monthStart := month
-				monthEnd := month.AddDate(0, 1, 0).Add(-time.Second) // Последняя секунда месяца
-				
-				// Определяем период, в течение которого объект был в подписке в этом месяце
-				var periodStart, periodEnd time.Time
-				
-				// Начало периода: максимум из (начало месяца, начало договора, создание подписки)
-				periodStart = monthStart
-				if contract.StartDate.After(periodStart) {
-					periodStart = *contract.StartDate
-				}
-				if subData.Subscription.CreatedAt.After(periodStart) {
-					periodStart = subData.Subscription.CreatedAt
-				}
-				
-				// Конец периода: минимум из (конец месяца, конец договора)
-				periodEnd = monthEnd
-				if contract.EndDate.Before(periodEnd) {
-					periodEnd = *contract.EndDate
-				}
-				
-				// Если подписка была отменена или истекла в этом месяце
-				if subData.Subscription.Status == "cancelled" || subData.Subscription.Status == "expired" {
-					if subData.Subscription.UpdatedAt.Before(periodEnd) {
-						periodEnd = subData.Subscription.UpdatedAt
-					}
-				}
-				
-				// Рассчитываем количество дней в месяце
-				daysInMonth := int(monthEnd.Sub(monthStart).Hours()/24) + 1
-				
-				// Рассчитываем количество дней присутствия объекта
-				billableDays := int(periodEnd.Sub(periodStart).Hours()/24) + 1
-				if billableDays < 0 {
-					billableDays = 0
-				}
-				
-				// Применяем логику MinDaysForFullMonth
-				minDays := billingSettings.MinDaysForFullMonth
-				if minDays == 0 {
-					minDays = 5 // Дефолтное значение
-				}
-				
-				if billableDays >= minDays {
-					// Списываем полный месяц
-					amount = pricePerObject.Mul(decimal.NewFromInt(int64(objectsCount)))
-					description = fmt.Sprintf("%d объект(ов) × %s ₽/мес (присутствие: %d дн. ≥ %d дн.)",
-						objectsCount, subData.BillingPlan.Price.String(), billableDays, minDays)
-				} else {
-					// Списываем пропорционально дням
-					dailyPrice := pricePerObject.Div(decimal.NewFromInt(int64(daysInMonth)))
-					amount = dailyPrice.Mul(decimal.NewFromInt(int64(billableDays))).Mul(decimal.NewFromInt(int64(objectsCount)))
-					description = fmt.Sprintf("%d объект(ов) × %s ₽/мес × %d/%d дн.",
-						objectsCount, subData.BillingPlan.Price.String(), billableDays, daysInMonth)
-				}
+				amount = subData.BillingPlan.Price.Mul(decimal.NewFromInt(int64(objectsCount)))
+				description = fmt.Sprintf("%d объект(ов) × %s ₽/мес", 
+					objectsCount, subData.BillingPlan.Price.String())
 			}
 
 			monthlyCharge.Subscriptions = append(monthlyCharge.Subscriptions, SubscriptionCharge{

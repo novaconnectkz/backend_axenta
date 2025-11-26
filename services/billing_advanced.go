@@ -301,29 +301,8 @@ func (bc *BillingCalculatorAdvanced) calculateObjectBilling(ctx context.Context,
 				chargedAsFullMonth = false
 			}
 		} else if component.BillingPeriod == "yearly" {
-			// Годовой тариф: применяем MinDaysForFullMonth к месячной доле
-			// Месячная доля = годовая цена / 12
-			monthlyPrice := component.Price.Div(decimal.NewFromInt(12))
-			daysInMonth := int(endDate.Sub(startDate).Hours()/24) + 1
-			if daysInMonth > 0 {
-				dailyPrice = monthlyPrice.Div(decimal.NewFromInt(int64(daysInMonth)))
-			}
-			
-			// Применяем логику минимального количества дней для полного месяца
-			minDays := settings.MinDaysForFullMonth
-			if minDays == 0 {
-				minDays = 5
-			}
-			
-			if billableDays >= minDays {
-				// Списываем полную месячную долю
-				amount = monthlyPrice
-				chargedAsFullMonth = true
-			} else {
-				// Списываем пропорционально дням от месячной доли
-				amount = dailyPrice.Mul(decimal.NewFromInt(int64(billableDays)))
-				chargedAsFullMonth = false
-			}
+			dailyPrice = component.Price.Div(decimal.NewFromInt(365))
+			amount = dailyPrice.Mul(decimal.NewFromInt(int64(billableDays)))
 		} else {
 			dailyPrice = component.Price
 			amount = dailyPrice.Mul(decimal.NewFromInt(int64(billableDays)))
