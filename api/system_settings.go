@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -171,13 +172,16 @@ func UpdateSystemSettings(c *gin.Context) {
 	}
 
 	// Обновляем настройки
+	log.Printf("UpdateSystemSettings: обновление настроек для company_id=%d, admin_account_id=%d", companyID, adminAccountID)
 	if err := db.Model(&settings).Updates(updateData).Error; err != nil {
+		log.Printf("❌ UpdateSystemSettings: ошибка обновления: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Ошибка при обновлении настроек системы",
+			"error":  "Ошибка при обновлении настроек системы: " + err.Error(),
 		})
 		return
 	}
+	log.Printf("✅ UpdateSystemSettings: настройки успешно обновлены")
 
 	// Синхронизируем настройки НДС с BillingSettings и Company
 	if updateData.VATRatePreset != "" || updateData.VATRateCustom > 0 || updateData.DefaultTaxRate > 0 {
