@@ -1839,8 +1839,9 @@ func GenerateInvoice(c *gin.Context) {
 
 	// Получаем параметры из тела запроса
 	var requestData struct {
-		PeriodStart string `json:"period_start"`
-		PeriodEnd   string `json:"period_end"`
+		PeriodStart  string   `json:"period_start"`
+		PeriodEnd    string   `json:"period_end"`
+		CustomAmount *float64 `json:"custom_amount"` // Ручная сумма для hourly/daily/weekly тарифов
 	}
 
 	if err := c.ShouldBindJSON(&requestData); err != nil {
@@ -1852,7 +1853,13 @@ func GenerateInvoice(c *gin.Context) {
 		return
 	}
 
-	log.Printf("📅 Получены даты: period_start=%s, period_end=%s", requestData.PeriodStart, requestData.PeriodEnd)
+	log.Printf("📅 Получены даты: period_start=%s, period_end=%s", 
+		requestData.PeriodStart, requestData.PeriodEnd)
+	if requestData.CustomAmount != nil {
+		log.Printf("💰 Ручная сумма получена: %.2f", *requestData.CustomAmount)
+	} else {
+		log.Printf("⚠️ Ручная сумма НЕ указана (custom_amount = nil)")
+	}
 
 	var periodStart, periodEnd time.Time
 
@@ -1898,7 +1905,7 @@ func GenerateInvoice(c *gin.Context) {
 
 	// Генерируем счет
 	log.Printf("🔄 Генерация счета для договора %d...", contractID)
-	invoice, err := billingService.GenerateInvoiceForContractWithTenantDB(uint(contractID), periodStart, periodEnd, tenantDB)
+	invoice, err := billingService.GenerateInvoiceForContractWithTenantDB(uint(contractID), periodStart, periodEnd, tenantDB, requestData.CustomAmount)
 	if err != nil {
 		log.Printf("❌ Ошибка генерации счета: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{

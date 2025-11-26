@@ -400,3 +400,45 @@ WHERE table_schema = 'tenant_186'
 ### Статус
 ✅ **ГОТОВО! Колонка добавлена, индексы созданы!**
 
+---
+
+## Migration 022: Добавление полей налогообложения в system_settings
+**Дата:** 2025-11-26  
+**Файл:** `021_add_tax_fields_to_system_settings.sql`
+
+### Проблема
+При сохранении настроек компании на продакшене возникала ошибка 500:
+- ❌ `ERROR: column "default_tax_rate" of relation "system_settings" does not exist`
+- ❌ `ERROR: column "tax_included" of relation "system_settings" does not exist`
+- ❌ Невозможно сохранить системные настройки
+
+### Что добавлено
+Добавлены колонки в таблицу `public.system_settings`:
+- `default_tax_rate NUMERIC(5,2) DEFAULT 20.00` - ставка налога по умолчанию
+- `tax_included BOOLEAN DEFAULT false` - налог включен в цену
+
+### Применено
+- ✅ Продакшен: 2025-11-26
+- ⚠️ Локал: Нужно применить
+
+### Результат
+✅ UpdateSystemSettings теперь работает без ошибок!
+✅ Настройки НДС синхронизируются с billing_settings и companies!
+✅ Можно сохранять настройки компании!
+
+### Проверка
+```sql
+SELECT column_name, data_type, column_default
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND table_name = 'system_settings'
+  AND column_name IN ('default_tax_rate', 'tax_included');
+
+-- Результат:
+-- default_tax_rate | numeric | 20.00
+-- tax_included     | boolean | false
+```
+
+### Статус
+✅ **ГОТОВО! Колонки добавлены, настройки сохраняются!**
+

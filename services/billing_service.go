@@ -391,15 +391,69 @@ func (bs *BillingService) calculateObjectsAmount(tariff *models.TariffPlan, acti
 
 // GenerateInvoiceForContract создает счет для договора
 func (bs *BillingService) GenerateInvoiceForContract(contractID uint, periodStart, periodEnd time.Time) (*models.Invoice, error) {
-	return bs.GenerateInvoiceForContractWithTenantDB(contractID, periodStart, periodEnd, bs.db)
+	return bs.GenerateInvoiceForContractWithTenantDB(contractID, periodStart, periodEnd, bs.db, nil)
 }
 
 // GenerateInvoiceForContractWithTenantDB создает счет для договора с использованием tenant DB
-func (bs *BillingService) GenerateInvoiceForContractWithTenantDB(contractID uint, periodStart, periodEnd time.Time, tenantDB *gorm.DB) (*models.Invoice, error) {
+func (bs *BillingService) GenerateInvoiceForContractWithTenantDB(contractID uint, periodStart, periodEnd time.Time, tenantDB *gorm.DB, customAmount *float64) (*models.Invoice, error) {
 	// Рассчитываем биллинг с tenant DB
 	calculation, err := bs.CalculateBillingForContractWithTenantDB(contractID, periodStart, periodEnd, tenantDB)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка расчета биллинга: %w", err)
+	}
+	
+	// Если задана ручная сумма для hourly/daily/weekly тарифов, переопределяем расчетную сумму
+	if customAmount != nil && *customAmount > 0 {
+		customAmountDecimal := decimal.NewFromFloat(*customAmount)
+		log.Printf("💰 Используется ручная сумма: %.2f (вместо расчетной %.2f)", 
+			*customAmount, calculation.TotalAmount)
+		
+		// Сохраняем оригинальную структуру расчета, но меняем суммы
+		calculation.BaseAmount = customAmountDecimal
+		calculation.ObjectsAmount = decimal.Zero
+		calculation.DiscountAmount = decimal.Zero
+		calculation.SubtotalAmount = customAmountDecimal
+		
+		// Пересчитываем налоги, если нужно
+		var settings models.BillingSettings
+		publicDB := bs.db.Session(&gorm.Session{})
+		if err := publicDB.Exec("SET search_path TO public").Error; err == nil {
+			if err := publicDB.Where("company_id = ? AND admin_account_id = ?", calculation.CompanyID, bs.adminAccountID).
+				First(&settings).Error; err == nil {
+				
+				if settings.TaxIncluded && settings.DefaultTaxRate.GreaterThan(decimal.Zero) {
+					// НДС включен в цену
+					taxRateDivisor := decimal.NewFromInt(100).Add(settings.DefaultTaxRate)
+					calculation.TaxAmount = customAmountDecimal.Mul(settings.DefaultTaxRate).Div(taxRateDivisor)
+					calculation.TotalAmount = customAmountDecimal
+					calculation.SubtotalAmount = customAmountDecimal.Sub(calculation.TaxAmount)
+				} else if !settings.TaxIncluded && settings.DefaultTaxRate.GreaterThan(decimal.Zero) {
+					// НДС сверху
+					calculation.TaxAmount = customAmountDecimal.Mul(settings.DefaultTaxRate).Div(decimal.NewFromInt(100))
+					calculation.TotalAmount = customAmountDecimal.Add(calculation.TaxAmount)
+				} else {
+					calculation.TaxAmount = decimal.Zero
+					calculation.TotalAmount = customAmountDecimal
+				}
+			}
+		}
+		
+		// Заменяем позиции счета на одну позицию с ручной суммой
+		calculation.Items = []InvoiceItemData{
+			{
+				Name:        "Услуги мониторинга (ручная сумма)",
+				Description: fmt.Sprintf("Оплата услуг за период с %s по %s", 
+					calculation.BillingPeriodStart.Format("02.01.2006"), 
+					calculation.BillingPeriodEnd.Format("02.01.2006")),
+				ItemType:    "subscription",
+				Quantity:    decimal.NewFromInt(1),
+				UnitPrice:   calculation.SubtotalAmount,
+				Amount:      calculation.SubtotalAmount,
+				PeriodStart: &calculation.BillingPeriodStart,
+				PeriodEnd:   &calculation.BillingPeriodEnd,
+			},
+		}
+		log.Printf("✅ Создана позиция счета с ручной суммой: %.2f", calculation.SubtotalAmount)
 	}
 
 	// Получаем настройки биллинга из public схемы
