@@ -1316,6 +1316,11 @@ components:
         invoice_prefix:
           type: string
           example: "INV"
+        min_days_for_full_month:
+          type: integer
+          description: "Минимальное количество дней присутствия объекта в месяце для начисления полного месяца"
+          example: 5
+          default: 5
         created_at:
           type: string
           format: date-time
@@ -1339,6 +1344,12 @@ components:
           format: decimal
         invoice_prefix:
           type: string
+        min_days_for_full_month:
+          type: integer
+          description: "Минимальное количество дней присутствия объекта в месяце для начисления полного месяца"
+          minimum: 1
+          maximum: 31
+          default: 5
 
     BillingSettingsResponse:
       type: object

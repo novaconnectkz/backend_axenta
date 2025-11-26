@@ -93,13 +93,24 @@ func (vr *VATResolver) GetActiveTaxRate(ctx context.Context, countryCode string)
 
 // BillingCalculatorAdvanced предоставляет расширенный калькулятор биллинга
 type BillingCalculatorAdvanced struct {
-	db *gorm.DB
+	db             *gorm.DB
+	companyID      uint
+	adminAccountID uint
 }
 
 // NewBillingCalculatorAdvanced создает новый экземпляр BillingCalculatorAdvanced
 func NewBillingCalculatorAdvanced() *BillingCalculatorAdvanced {
 	return &BillingCalculatorAdvanced{
 		db: database.DB,
+	}
+}
+
+// NewBillingCalculatorAdvancedWithContext создает новый экземпляр BillingCalculatorAdvanced с контекстом компании
+func NewBillingCalculatorAdvancedWithContext(companyID, adminAccountID uint) *BillingCalculatorAdvanced {
+	return &BillingCalculatorAdvanced{
+		db:             database.DB,
+		companyID:      companyID,
+		adminAccountID: adminAccountID,
 	}
 }
 
@@ -195,6 +206,16 @@ func (bc *BillingCalculatorAdvanced) calculateSubscriptionBilling(ctx context.Co
 
 // calculateObjectBilling рассчитывает стоимость объекта с учетом заморозок и использования
 func (bc *BillingCalculatorAdvanced) calculateObjectBilling(ctx context.Context, assignment models.Assignment, startDate, endDate time.Time) (decimal.Decimal, map[string]interface{}, error) {
+	// Получаем настройки биллинга для компании
+	var settings models.BillingSettings
+	if err := bc.db.Where("company_id = ? AND admin_account_id = ?", bc.companyID, bc.adminAccountID).
+		First(&settings).Error; err != nil {
+		// Если настройки не найдены, используем дефолтные значения
+		settings = models.BillingSettings{
+			MinDaysForFullMonth: 5, // Значение по умолчанию
+		}
+	}
+	
 	// Получаем заморозки объекта за период
 	var freezes []models.Freeze
 	if err := bc.db.Where("object_id = ? AND (start_date <= ? AND end_date >= ?)", assignment.ObjectID, endDate, startDate).
@@ -254,6 +275,8 @@ func (bc *BillingCalculatorAdvanced) calculateObjectBilling(ctx context.Context,
 		// Используем первый recurring компонент
 		component := tariffComponents[0]
 		var dailyPrice decimal.Decimal
+		var amount decimal.Decimal
+		var chargedAsFullMonth bool
 		
 		if component.BillingPeriod == "monthly" {
 			// Цена за месяц / количество дней в месяце
@@ -261,20 +284,59 @@ func (bc *BillingCalculatorAdvanced) calculateObjectBilling(ctx context.Context,
 			if daysInMonth > 0 {
 				dailyPrice = component.Price.Div(decimal.NewFromInt(int64(daysInMonth)))
 			}
+			
+			// Применяем логику минимального количества дней для полного месяца
+			minDays := settings.MinDaysForFullMonth
+			if minDays == 0 {
+				minDays = 5 // Дефолтное значение, если не задано
+			}
+			
+			if billableDays >= minDays {
+				// Если объект присутствует >= минимального количества дней, списываем полный месяц
+				amount = component.Price
+				chargedAsFullMonth = true
+			} else {
+				// Иначе списываем пропорционально дням
+				amount = dailyPrice.Mul(decimal.NewFromInt(int64(billableDays)))
+				chargedAsFullMonth = false
+			}
 		} else if component.BillingPeriod == "yearly" {
-			dailyPrice = component.Price.Div(decimal.NewFromInt(365))
+			// Годовой тариф: применяем MinDaysForFullMonth к месячной доле
+			// Месячная доля = годовая цена / 12
+			monthlyPrice := component.Price.Div(decimal.NewFromInt(12))
+			daysInMonth := int(endDate.Sub(startDate).Hours()/24) + 1
+			if daysInMonth > 0 {
+				dailyPrice = monthlyPrice.Div(decimal.NewFromInt(int64(daysInMonth)))
+			}
+			
+			// Применяем логику минимального количества дней для полного месяца
+			minDays := settings.MinDaysForFullMonth
+			if minDays == 0 {
+				minDays = 5
+			}
+			
+			if billableDays >= minDays {
+				// Списываем полную месячную долю
+				amount = monthlyPrice
+				chargedAsFullMonth = true
+			} else {
+				// Списываем пропорционально дням от месячной доли
+				amount = dailyPrice.Mul(decimal.NewFromInt(int64(billableDays)))
+				chargedAsFullMonth = false
+			}
 		} else {
 			dailyPrice = component.Price
+			amount = dailyPrice.Mul(decimal.NewFromInt(int64(billableDays)))
 		}
 		
-		amount := dailyPrice.Mul(decimal.NewFromInt(int64(billableDays)))
-		
 		return amount, map[string]interface{}{
-			"total_days":    totalDays,
-			"freeze_days":   freezeDays,
-			"billable_days": billableDays,
-			"price_per_day": dailyPrice,
-			"component_id":  component.ID,
+			"total_days":           totalDays,
+			"freeze_days":          freezeDays,
+			"billable_days":        billableDays,
+			"price_per_day":        dailyPrice,
+			"component_id":         component.ID,
+			"charged_as_full_month": chargedAsFullMonth,
+			"min_days_for_full_month": settings.MinDaysForFullMonth,
 		}, nil
 	}
 	

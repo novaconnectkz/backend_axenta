@@ -205,6 +205,9 @@ type BillingSettings struct {
 
 	// Настройки автопилота
 	AutopilotEnabled bool `json:"autopilot_enabled" gorm:"default:false"` // Автоматизация создания договора -> подписки -> счета -> отправки
+
+	// Настройки тарификации объектов
+	MinDaysForFullMonth int `json:"min_days_for_full_month" gorm:"default:5"` // Минимальное количество дней присутствия объекта в месяце для начисления полного месяца
 }
 
 // TableName задает имя таблицы для модели BillingSettings

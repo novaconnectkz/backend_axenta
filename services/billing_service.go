@@ -126,6 +126,7 @@ func (bs *BillingService) CalculateBillingForContractWithTenantDB(contractID uin
 				TaxIncluded:             false,
 				EnableInactiveDiscounts: true,
 				InactiveDiscountRatio:   decimal.NewFromFloat(0.5),
+				MinDaysForFullMonth:     5,
 			}
 			if createErr := publicDB.Create(&settings).Error; createErr != nil {
 				if isUniqueConstraintError(createErr) {

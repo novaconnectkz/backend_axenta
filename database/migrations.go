@@ -994,6 +994,7 @@ func ensureBillingSchemaIntegrity() error {
 		{"billing_history", "admin_account_id", "BIGINT", true},
 		{"billing_settings", "admin_account_id", "BIGINT", true},
 		{"billing_settings", "company_id", "BIGINT", true},
+		{"billing_settings", "min_days_for_full_month", "INTEGER DEFAULT 5", false},
 	}
 
 	for _, check := range columnChecks {

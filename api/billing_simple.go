@@ -47,6 +47,7 @@ func GetBillingSettingsSimple(c *gin.Context) {
 		"require_payment_confirm":    false,
 		"enable_inactive_discounts":  true,
 		"inactive_discount_ratio":    "0.50",
+		"min_days_for_full_month":    5,
 		"created_at":                 "2024-01-01T00:00:00Z",
 		"updated_at":                 "2024-01-01T00:00:00Z",
 	}
