@@ -719,8 +719,18 @@ func recalculateContractTotalAmount(tenantDB, publicDB *gorm.DB, contractID uint
 		return fmt.Errorf("ошибка загрузки подписок: %w", err)
 	}
 
+	// Если подписок нет, обнуляем сумму договора
 	if len(subscriptions) == 0 {
-		log.Printf("ℹ️ Нет активных подписок для договора %d, сумма не пересчитывается", contractID)
+		log.Printf("ℹ️ Нет активных подписок для договора %d, обнуляем total_amount", contractID)
+		var contract models.Contract
+		if err := tenantDB.First(&contract, contractID).Error; err != nil {
+			return fmt.Errorf("ошибка загрузки договора: %w", err)
+		}
+		contract.TotalAmount = decimal.Zero
+		if err := tenantDB.Save(&contract).Error; err != nil {
+			return fmt.Errorf("ошибка обнуления total_amount: %w", err)
+		}
+		log.Printf("✅ Обнулена сумма договора %d (нет активных подписок)", contractID)
 		return nil
 	}
 
@@ -834,6 +844,89 @@ func recalculateContractTotalAmount(tenantDB, publicDB *gorm.DB, contractID uint
 	}
 
 	log.Printf("✅ Обновлена сумма договора %d: %s ₽", contractID, totalAmount.String())
+	return nil
+}
+
+// recalculateDraftInvoicesForContract пересчитывает суммы черновиков счетов для договора
+// Обновляются только счета со статусом 'draft', так как отправленные/оплаченные счета изменять нельзя
+func recalculateDraftInvoicesForContract(publicDB, tenantDB *gorm.DB, contractID uint, adminAccountID uint) error {
+	// Загружаем договор для получения его актуальной суммы
+	var contract models.Contract
+	if err := tenantDB.Where("id = ? AND admin_account_id = ?", contractID, adminAccountID).
+		First(&contract).Error; err != nil {
+		return fmt.Errorf("ошибка загрузки договора: %w", err)
+	}
+
+	// Загружаем все черновики счетов для этого договора
+	var draftInvoices []models.Invoice
+	if err := publicDB.
+		Where("contract_id = ? AND admin_account_id = ? AND status = ?", contractID, adminAccountID, "draft").
+		Find(&draftInvoices).Error; err != nil {
+		return fmt.Errorf("ошибка загрузки черновиков счетов: %w", err)
+	}
+
+	if len(draftInvoices) == 0 {
+		log.Printf("ℹ️ Нет черновиков счетов для договора %d", contractID)
+		return nil
+	}
+
+	log.Printf("📊 Пересчет %d черновиков счетов для договора %d (новая сумма: %s)",
+		len(draftInvoices), contractID, contract.TotalAmount.String())
+
+	// Пересчитываем каждый черновик счета
+	for i := range draftInvoices {
+		invoice := &draftInvoices[i]
+		
+		// Вычисляем период в месяцах между датами счета
+		periodStart := invoice.BillingPeriodStart
+		periodEnd := invoice.BillingPeriodEnd
+		duration := periodEnd.Sub(periodStart)
+		days := int(duration.Hours() / 24)
+		months := days / 30
+		if months == 0 {
+			months = 1
+		}
+
+		// Рассчитываем новую сумму на основе total_amount договора
+		// Если договор рассчитан на несколько месяцев, пропорционально распределяем сумму
+		newSubtotal := contract.TotalAmount
+		if contract.StartDate != nil && contract.EndDate != nil {
+			contractDuration := contract.EndDate.Sub(*contract.StartDate)
+			contractMonths := int(contractDuration.Hours() / 24 / 30)
+			if contractMonths > 0 && months > 0 {
+				// Пропорциональный расчет для периода счета
+				newSubtotal = contract.TotalAmount.
+					Mul(decimal.NewFromInt(int64(months))).
+					Div(decimal.NewFromInt(int64(contractMonths)))
+			}
+		}
+
+		// Рассчитываем НДС, если применим
+		taxAmount := decimal.Zero
+		if invoice.TaxRate.GreaterThan(decimal.Zero) {
+			taxAmount = newSubtotal.Mul(invoice.TaxRate).Div(decimal.NewFromInt(100))
+		}
+
+		newTotal := newSubtotal.Add(taxAmount)
+
+		log.Printf("  - Счет #%d (%s): %s → %s (период: %d мес)",
+			invoice.ID, invoice.Number,
+			invoice.TotalAmount.String(),
+			newTotal.String(),
+			months)
+
+		// Обновляем суммы счета
+		invoice.SubtotalAmount = newSubtotal
+		invoice.TaxAmount = taxAmount
+		invoice.TotalAmount = newTotal
+
+		if err := publicDB.Save(invoice).Error; err != nil {
+			log.Printf("⚠️ Ошибка обновления счета #%d: %v", invoice.ID, err)
+			continue
+		}
+	}
+
+	log.Printf("✅ Пересчитано %d черновиков счетов для договора %d", len(draftInvoices), contractID)
 	return nil
 }
 
@@ -1280,6 +1373,11 @@ func CreateSubscription(c *gin.Context) {
 						if err := recalculateContractTotalAmount(tenantDB, publicDB, contract.ID, adminAccountID); err != nil {
 							log.Printf("⚠️ Ошибка пересчета total_amount договора %d: %v", contract.ID, err)
 						}
+						
+						// Пересчитываем черновики счетов по этому договору
+						if err := recalculateDraftInvoicesForContract(publicDB, tenantDB, contract.ID, adminAccountID); err != nil {
+							log.Printf("⚠️ Ошибка пересчета черновиков счетов для договора %d: %v", contract.ID, err)
+						}
 					}
 					}
 				} else {
@@ -1353,7 +1451,7 @@ func UpdateSubscription(c *gin.Context) {
 		return
 	}
 
-	// Если статус изменился на cancelled или expired, обнуляем subscription_id у объектов
+	// Если статус изменился на cancelled или expired, деактивируем объекты
 	if updateData.Status != "" && updateData.Status != oldStatus && 
 		(updateData.Status == "cancelled" || updateData.Status == "expired") {
 		
@@ -1361,12 +1459,15 @@ func UpdateSubscription(c *gin.Context) {
 		if tenantDB != nil && subscription.ContractID != nil {
 			result := tenantDB.Model(&models.ContractObject{}).
 				Where("contract_id = ? AND subscription_id = ?", *subscription.ContractID, subscription.ID).
-				Update("subscription_id", nil)
+				Updates(map[string]interface{}{
+					"subscription_id": nil,
+					"status":          "inactive",
+				})
 			
 			if result.Error != nil {
-				log.Printf("⚠️ Ошибка обнуления subscription_id у объектов подписки %d: %v", subscription.ID, result.Error)
+				log.Printf("⚠️ Ошибка деактивации объектов подписки %d: %v", subscription.ID, result.Error)
 			} else if result.RowsAffected > 0 {
-				log.Printf("✅ Обнулен subscription_id у %d объектов подписки %d (статус изменен на %s)", 
+				log.Printf("✅ Деактивировано %d объектов подписки %d (статус изменен на %s, status=inactive)", 
 					result.RowsAffected, subscription.ID, updateData.Status)
 			}
 		}
@@ -1378,6 +1479,11 @@ func UpdateSubscription(c *gin.Context) {
 		if tenantDB != nil {
 			if err := recalculateContractTotalAmount(tenantDB, database.DB, *subscription.ContractID, adminAccountID); err != nil {
 				log.Printf("⚠️ Ошибка пересчета total_amount договора %d после обновления подписки: %v", *subscription.ContractID, err)
+			}
+			
+			// Пересчитываем черновики счетов по этому договору
+			if err := recalculateDraftInvoicesForContract(database.DB, tenantDB, *subscription.ContractID, adminAccountID); err != nil {
+				log.Printf("⚠️ Ошибка пересчета черновиков счетов для договора %d: %v", *subscription.ContractID, err)
 			}
 		}
 	}
@@ -1432,15 +1538,18 @@ func DeleteSubscription(c *gin.Context) {
 	// Получаем tenant DB для работы с объектами договора
 	tenantDB := middleware.GetTenantDB(c)
 	if tenantDB != nil && subscription.ContractID != nil {
-		// Обнуляем subscription_id у всех объектов этой подписки
+		// Деактивируем объекты этой подписки (меняем статус на inactive и обнуляем subscription_id)
 		result := tenantDB.Model(&models.ContractObject{}).
 			Where("contract_id = ? AND subscription_id = ?", *subscription.ContractID, uint(subscriptionID)).
-			Update("subscription_id", nil)
+			Updates(map[string]interface{}{
+				"subscription_id": nil,
+				"status":          "inactive",
+			})
 		
 		if result.Error != nil {
-			log.Printf("⚠️ Ошибка обнуления subscription_id у объектов подписки %d: %v", subscriptionID, result.Error)
+			log.Printf("⚠️ Ошибка деактивации объектов подписки %d: %v", subscriptionID, result.Error)
 		} else if result.RowsAffected > 0 {
-			log.Printf("✅ Обнулен subscription_id у %d объектов подписки %d", result.RowsAffected, subscriptionID)
+			log.Printf("✅ Деактивировано %d объектов подписки %d (status=inactive, subscription_id=null)", result.RowsAffected, subscriptionID)
 		}
 	}
 
@@ -1458,6 +1567,11 @@ func DeleteSubscription(c *gin.Context) {
 	if contractID != nil && tenantDB != nil {
 		if err := recalculateContractTotalAmount(tenantDB, database.DB, *contractID, adminAccountID); err != nil {
 			log.Printf("⚠️ Ошибка пересчета total_amount договора %d после удаления подписки: %v", *contractID, err)
+		}
+		
+		// Пересчитываем черновики счетов по этому договору
+		if err := recalculateDraftInvoicesForContract(database.DB, tenantDB, *contractID, adminAccountID); err != nil {
+			log.Printf("⚠️ Ошибка пересчета черновиков счетов для договора %d: %v", *contractID, err)
 		}
 	}
 
