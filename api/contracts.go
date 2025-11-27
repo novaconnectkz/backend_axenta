@@ -23,6 +23,76 @@ import (
 	"gorm.io/gorm"
 )
 
+// FixContractStatuses исправляет статусы договоров без активных подписок
+func FixContractStatuses(c *gin.Context) {
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Не удалось получить tenant DB",
+		})
+		return
+	}
+
+	publicDB := database.DB.Session(&gorm.Session{})
+	if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
+		log.Printf("Ошибка установки search_path: %v", err)
+	}
+
+	// Загружаем все договоры
+	var contracts []models.Contract
+	if err := tenantDB.Where("admin_account_id = ?", adminAccountID).Find(&contracts).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка загрузки договоров",
+		})
+		return
+	}
+
+	updatedCount := 0
+	for _, contract := range contracts {
+		// Проверяем, есть ли у договора активные подписки
+		var subscriptionCount int64
+		if err := publicDB.Model(&models.Subscription{}).
+			Where("contract_id = ? AND admin_account_id = ? AND deleted_at IS NULL AND status NOT IN (?, ?)",
+				contract.ID, adminAccountID, "cancelled", "expired").
+			Count(&subscriptionCount).Error; err != nil {
+			log.Printf("⚠️ Ошибка подсчета подписок для договора %d: %v", contract.ID, err)
+			continue
+		}
+
+		// Если подписок нет и статус не "suspended"
+		if subscriptionCount == 0 && contract.Status != "suspended" {
+			contract.Status = "suspended"
+			contract.TotalAmount = decimal.Zero
+			if err := tenantDB.Save(&contract).Error; err != nil {
+				log.Printf("⚠️ Ошибка обновления договора %d: %v", contract.ID, err)
+				continue
+			}
+			log.Printf("✅ Договор %d (%s) переведен в статус 'suspended'", contract.ID, contract.Number)
+			updatedCount++
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": fmt.Sprintf("Обновлено договоров: %d", updatedCount),
+		"data": gin.H{
+			"total_contracts":   len(contracts),
+			"updated_contracts": updatedCount,
+		},
+	})
+}
+
 // GetContracts получает список всех договоров
 func GetContracts(c *gin.Context) {
 	adminAccountID, err := middleware.GetAdminAccountID(c)

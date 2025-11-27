@@ -780,6 +780,10 @@ func main() {
 	apiGroup.POST("/contracts/:id/sync-from-subscription", api.SyncContractFromSubscription)
 	log.Printf("✅ Зарегистрирован POST /api/auth/contracts/:id/sync-from-subscription -> SyncContractFromSubscription")
 
+	// Утилита для исправления статусов договоров без подписок
+	apiGroup.POST("/contracts/fix-statuses", api.FixContractStatuses)
+	log.Printf("✅ Зарегистрирован POST /api/auth/contracts/fix-statuses -> FixContractStatuses")
+
 	// Общие роуты для договоров
 	apiGroup.GET("/contracts", api.GetContracts)
 	apiGroup.GET("/contracts/:id", api.GetContract)

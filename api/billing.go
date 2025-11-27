@@ -719,18 +719,19 @@ func recalculateContractTotalAmount(tenantDB, publicDB *gorm.DB, contractID uint
 		return fmt.Errorf("ошибка загрузки подписок: %w", err)
 	}
 
-	// Если подписок нет, обнуляем сумму договора
+	// Если подписок нет, обнуляем сумму договора и меняем статус на "suspended"
 	if len(subscriptions) == 0 {
-		log.Printf("ℹ️ Нет активных подписок для договора %d, обнуляем total_amount", contractID)
+		log.Printf("ℹ️ Нет активных подписок для договора %d, обнуляем total_amount и меняем статус на 'suspended'", contractID)
 		var contract models.Contract
 		if err := tenantDB.First(&contract, contractID).Error; err != nil {
 			return fmt.Errorf("ошибка загрузки договора: %w", err)
 		}
 		contract.TotalAmount = decimal.Zero
+		contract.Status = "suspended"
 		if err := tenantDB.Save(&contract).Error; err != nil {
-			return fmt.Errorf("ошибка обнуления total_amount: %w", err)
+			return fmt.Errorf("ошибка обнуления total_amount и изменения статуса: %w", err)
 		}
-		log.Printf("✅ Обнулена сумма договора %d (нет активных подписок)", contractID)
+		log.Printf("✅ Обнулена сумма договора %d и установлен статус 'suspended' (нет активных подписок)", contractID)
 		return nil
 	}
 
@@ -1204,10 +1205,12 @@ func CreateSubscription(c *gin.Context) {
 					}
 				}
 
-				// Если договор в статусе "draft" (черновик), переводим в "active" (активный)
-				if contract.Status == "draft" {
+				// Если договор в статусе "draft" (черновик) или "suspended" (приостановлен), переводим в "active" (активный)
+				if contract.Status == "draft" || contract.Status == "suspended" {
+					oldStatus := contract.Status
 					contract.Status = "active"
 					contractUpdated = true
+					log.Printf("📝 Статус договора %d изменен с '%s' на 'active' при создании подписки", contract.ID, oldStatus)
 				}
 
 				// Сохраняем изменения договора, если были обновления
