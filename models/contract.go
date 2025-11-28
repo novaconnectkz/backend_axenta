@@ -143,6 +143,9 @@ type ContractAppendix struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
 
+	// Идентификатор учетной записи администратора для изоляции данных
+	AdminAccountID uint `json:"admin_account_id" gorm:"not null;index"`
+
 	// Связь с договором
 	ContractID uint     `json:"contract_id" gorm:"not null;index"`
 	Contract   Contract `json:"contract,omitempty" gorm:"foreignKey:ContractID;constraint:-"`

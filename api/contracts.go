@@ -1791,10 +1791,43 @@ func DeleteContract(c *gin.Context) {
 
 // GetContractAppendices получает список приложений к договору
 func GetContractAppendices(c *gin.Context) {
-	contractID := c.Param("contract_id")
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	contractID := c.Param("id")
+
+	// Получаем tenant DB из контекста
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB == nil {
+		log.Printf("⚠️ Не удалось получить tenant DB из контекста, используем основную БД")
+		tenantDB = database.DB
+	}
+
+	// Проверяем, что договор принадлежит текущей компании
+	var contract models.Contract
+	if err := tenantDB.Where("id = ? AND admin_account_id = ?", contractID, adminAccountID).First(&contract).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{
+				"status": "error",
+				"error":  "Договор не найден",
+			})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error",
+				"error":  "Ошибка при проверке договора",
+			})
+		}
+		return
+	}
 
 	var appendices []models.ContractAppendix
-	if err := database.DB.Where("contract_id = ?", contractID).Find(&appendices).Error; err != nil {
+	if err := tenantDB.Where("contract_id = ? AND admin_account_id = ?", contractID, adminAccountID).Find(&appendices).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  "Ошибка при получении приложений",
@@ -1811,15 +1844,38 @@ func GetContractAppendices(c *gin.Context) {
 
 // CreateContractAppendix создает новое приложение к договору
 func CreateContractAppendix(c *gin.Context) {
-	contractID := c.Param("contract_id")
-
-	// Проверяем существование договора
-	var contract models.Contract
-	if err := database.DB.Where("id = ?", contractID).First(&contract).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
 			"status": "error",
-			"error":  "Договор не найден",
+			"error":  err.Error(),
 		})
+		return
+	}
+
+	contractID := c.Param("id")
+
+	// Получаем tenant DB из контекста
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB == nil {
+		log.Printf("⚠️ Не удалось получить tenant DB из контекста, используем основную БД")
+		tenantDB = database.DB
+	}
+
+	// Проверяем существование договора и его принадлежность текущей компании
+	var contract models.Contract
+	if err := tenantDB.Where("id = ? AND admin_account_id = ?", contractID, adminAccountID).First(&contract).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{
+				"status": "error",
+				"error":  "Договор не найден",
+			})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error",
+				"error":  "Ошибка при проверке договора",
+			})
+		}
 		return
 	}
 
@@ -1832,9 +1888,10 @@ func CreateContractAppendix(c *gin.Context) {
 		return
 	}
 
-	// Устанавливаем ID договора
+	// Устанавливаем ID договора и admin_account_id
 	contractIDUint, _ := strconv.ParseUint(contractID, 10, 32)
 	appendix.ContractID = uint(contractIDUint)
+	appendix.AdminAccountID = adminAccountID
 
 	// Валидация обязательных полей
 	if appendix.Number == "" {
@@ -1864,7 +1921,7 @@ func CreateContractAppendix(c *gin.Context) {
 	// Обнуляем связанный объект Contract, чтобы GORM не создавал новый
 	appendix.Contract = models.Contract{}
 
-	if err := database.DB.Create(&appendix).Error; err != nil {
+	if err := tenantDB.Create(&appendix).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  "Ошибка при создании приложения",
@@ -1874,7 +1931,7 @@ func CreateContractAppendix(c *gin.Context) {
 
 	// Загружаем созданное приложение без связей для ответа
 	var createdAppendix models.ContractAppendix
-	database.DB.First(&createdAppendix, appendix.ID)
+	tenantDB.First(&createdAppendix, appendix.ID)
 
 	c.JSON(http.StatusCreated, gin.H{
 		"status": "success",
@@ -1884,14 +1941,37 @@ func CreateContractAppendix(c *gin.Context) {
 
 // UpdateContractAppendix обновляет приложение к договору
 func UpdateContractAppendix(c *gin.Context) {
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
 	id := c.Param("id")
 
+	// Получаем tenant DB из контекста
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB == nil {
+		log.Printf("⚠️ Не удалось получить tenant DB из контекста, используем основную БД")
+		tenantDB = database.DB
+	}
+
 	var appendix models.ContractAppendix
-	if err := database.DB.First(&appendix, id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"status": "error",
-			"error":  "Приложение не найдено",
-		})
+	if err := tenantDB.Where("id = ? AND admin_account_id = ?", id, adminAccountID).First(&appendix).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{
+				"status": "error",
+				"error":  "Приложение не найдено",
+			})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error",
+				"error":  "Ошибка при получении приложения",
+			})
+		}
 		return
 	}
 
@@ -1904,7 +1984,7 @@ func UpdateContractAppendix(c *gin.Context) {
 		return
 	}
 
-	if err := database.DB.Model(&appendix).Updates(updateData).Error; err != nil {
+	if err := tenantDB.Model(&appendix).Updates(updateData).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  "Ошибка при обновлении приложения",
@@ -1920,18 +2000,41 @@ func UpdateContractAppendix(c *gin.Context) {
 
 // DeleteContractAppendix удаляет приложение к договору
 func DeleteContractAppendix(c *gin.Context) {
-	id := c.Param("id")
-
-	var appendix models.ContractAppendix
-	if err := database.DB.First(&appendix, id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
 			"status": "error",
-			"error":  "Приложение не найдено",
+			"error":  err.Error(),
 		})
 		return
 	}
 
-	if err := database.DB.Delete(&appendix).Error; err != nil {
+	id := c.Param("id")
+
+	// Получаем tenant DB из контекста
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB == nil {
+		log.Printf("⚠️ Не удалось получить tenant DB из контекста, используем основную БД")
+		tenantDB = database.DB
+	}
+
+	var appendix models.ContractAppendix
+	if err := tenantDB.Where("id = ? AND admin_account_id = ?", id, adminAccountID).First(&appendix).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{
+				"status": "error",
+				"error":  "Приложение не найдено",
+			})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error",
+				"error":  "Ошибка при получении приложения",
+			})
+		}
+		return
+	}
+
+	if err := tenantDB.Delete(&appendix).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  "Ошибка при удалении приложения",
@@ -1947,26 +2050,62 @@ func DeleteContractAppendix(c *gin.Context) {
 
 // CalculateContractCost рассчитывает стоимость договора на основе объектов
 func CalculateContractCost(c *gin.Context) {
-	contractID := c.Param("contract_id")
-
-	// Получаем договор с тарифным планом
-	var contract models.Contract
-	if err := database.DB.Preload("TariffPlan").First(&contract, contractID).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
 			"status": "error",
-			"error":  "Договор не найден",
+			"error":  err.Error(),
 		})
 		return
 	}
 
-	// Получаем количество объектов по договору
+	contractID := c.Param("id")
+
+	// Получаем tenant DB из контекста
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB == nil {
+		log.Printf("⚠️ Не удалось получить tenant DB из контекста, используем основную БД")
+		tenantDB = database.DB
+	}
+
+	// Получаем договор
+	var contract models.Contract
+	if err := tenantDB.Where("id = ? AND admin_account_id = ?", contractID, adminAccountID).First(&contract).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{
+				"status": "error",
+				"error":  "Договор не найден",
+			})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error",
+				"error":  "Ошибка при получении договора",
+			})
+		}
+		return
+	}
+
+	// Загружаем тарифный план из public схемы
+	if contract.TariffPlanID != nil && *contract.TariffPlanID > 0 {
+		publicDB := database.DB.Session(&gorm.Session{})
+		if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
+			log.Printf("⚠️ Не удалось переключиться на public: %v", err)
+		} else {
+			var billingPlan models.BillingPlan
+			if err := publicDB.Where("id = ? AND admin_account_id = ?", *contract.TariffPlanID, adminAccountID).First(&billingPlan).Error; err == nil {
+				contract.TariffPlan = billingPlan
+			}
+		}
+	}
+
+	// Получаем количество объектов по договору через contract_objects
 	var totalObjects int64
 	var activeObjects int64
 	var inactiveObjects int64
 
-	database.DB.Model(&models.Object{}).Where("contract_id = ?", contractID).Count(&totalObjects)
-	database.DB.Model(&models.Object{}).Where("contract_id = ? AND is_active = ?", contractID, true).Count(&activeObjects)
-	inactiveObjects = totalObjects - activeObjects
+	tenantDB.Model(&models.ContractObject{}).Where("contract_id = ? AND status = ?", contractID, "active").Count(&totalObjects)
+	activeObjects = totalObjects // Для contract_objects все записи со статусом active считаются активными
+	inactiveObjects = 0
 
 	// Рассчитываем стоимость если есть TariffPlan с детальной тарификацией
 	var calculatedCost decimal.Decimal
