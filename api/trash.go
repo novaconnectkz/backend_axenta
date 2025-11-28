@@ -1,11 +1,15 @@
 package api
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"backend_axenta/database"
 	"backend_axenta/models"
@@ -603,32 +607,73 @@ func permanentlyDeleteTemplate(db *gorm.DB, entityType string, entityID uint) er
 
 // RecordDeletion записывает информацию об удалении в таблицу deleted_items
 // Эта функция должна вызываться при каждом удалении
+// sanitizeString удаляет все невалидные UTF-8 последовательности и NULL байты
+func sanitizeString(s string) string {
+	// Удаляем NULL байты
+	s = strings.ReplaceAll(s, "\x00", "")
+	// Заменяем невалидные UTF-8 последовательности
+	if !utf8.ValidString(s) {
+		s = strings.ToValidUTF8(s, "")
+	}
+	return s
+}
+
 func RecordDeletion(db *gorm.DB, entityType string, entityID uint, entityData interface{}, deletedBy uint, deletedByName string, companyID uint, entityName, entityDescription string) error {
+	log.Printf("🗑️ RecordDeletion вызвана: type=%s, entityID=%d, companyID=%d, deletedBy=%d", 
+		entityType, entityID, companyID, deletedBy)
+	
 	// Сериализуем данные в JSON
 	jsonData, err := json.Marshal(entityData)
 	if err != nil {
+		log.Printf("❌ Ошибка сериализации данных: %v", err)
 		return fmt.Errorf("failed to serialize entity data: %w", err)
 	}
 
+	// Очищаем JSON от невалидных символов
+	jsonString := sanitizeString(string(jsonData))
+	
+	// Если очистка не помогла, сохраняем в base64
+	if !utf8.ValidString(jsonString) || strings.Contains(jsonString, "\x00") {
+		log.Printf("⚠️ Использую base64 для данных с невалидными символами")
+		jsonString = "base64:" + base64.StdEncoding.EncodeToString(jsonData)
+	}
+
 	// Создаем превью данных (первые 200 символов)
-	preview := string(jsonData)
+	preview := jsonString
 	if len(preview) > 200 {
 		preview = preview[:200] + "..."
 	}
 
+	// Очищаем название и описание
+	entityName = sanitizeString(entityName)
+	entityDescription = sanitizeString(entityDescription)
+
 	deletedItem := models.DeletedItem{
 		EntityType:        entityType,
 		EntityID:          entityID,
-		EntityData:        string(jsonData),
+		EntityData:        jsonString,
 		DeletedBy:         deletedBy,
 		DeletedByName:     deletedByName,
 		DeletedAtCustom:   time.Now(),
 		CompanyID:         companyID,
 		EntityName:        entityName,
 		EntityDescription: entityDescription,
-		EntityPreview:     preview,
+		EntityPreview:     sanitizeString(preview),
 	}
 
-	return db.Create(&deletedItem).Error
+	log.Printf("🗑️ Создание записи в deleted_items: Name=%s, Type=%s, DataLen=%d", entityName, entityType, len(jsonString))
+	
+	if err := db.Create(&deletedItem).Error; err != nil {
+		log.Printf("❌ Ошибка создания записи в deleted_items: %v", err)
+		previewLen := 100
+		if len(jsonString) < previewLen {
+			previewLen = len(jsonString)
+		}
+		log.Printf("❌ Проблемные данные (первые %d символов): %s", previewLen, jsonString[:previewLen])
+		return err
+	}
+	
+	log.Printf("✅ Запись в deleted_items создана успешно, ID=%d", deletedItem.ID)
+	return nil
 }
 
