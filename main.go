@@ -1019,6 +1019,13 @@ func main() {
 	apiGroup.GET("/warehouse/operations", warehouseAPI.GetWarehouseOperations)
 	apiGroup.POST("/warehouse/transfer", warehouseAPI.TransferEquipment)
 
+	// Корзина (удаленные элементы)
+	log.Println("🔧 Регистрация роутов для корзины...")
+	apiGroup.GET("/trash/items", api.GetTrashItems)                      // Список удаленных элементов
+	apiGroup.GET("/trash/stats", api.GetTrashStats)                      // Статистика корзины
+	apiGroup.POST("/trash/items/:id/restore", api.RestoreItem)           // Восстановить элемент
+	apiGroup.DELETE("/trash/items/:id/permanent", api.PermanentlyDeleteItem) // Окончательно удалить элемент
+
 	// Категории оборудования - временно отключено
 	/*
 		apiGroup.GET("/equipment/categories", warehouseAPI.GetEquipmentCategories)

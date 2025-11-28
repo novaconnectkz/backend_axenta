@@ -3,6 +3,8 @@ package api
 import (
 	"backend_axenta/database"
 	"backend_axenta/models"
+	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -387,6 +389,48 @@ func DeleteUserTemplate(c *gin.Context) {
 			"error":  "Cannot delete template: it is assigned to users",
 		})
 		return
+	}
+
+	// Записываем информацию об удалении в корзину
+	userID, userIDExists := c.Get("user_id")
+	companyID, companyIDExists := c.Get("company_id")
+	var deletedBy uint
+	var deletedByName string
+	var companyIDUint uint
+	
+	if userIDExists {
+		deletedBy = userID.(uint)
+		var user models.User
+		if err := db.First(&user, deletedBy).Error; err == nil {
+			if user.FirstName != "" || user.LastName != "" {
+				deletedByName = fmt.Sprintf("%s %s", user.FirstName, user.LastName)
+			} else {
+				deletedByName = user.Username
+			}
+		}
+	}
+	
+	if companyIDExists {
+		companyIDUint = companyID.(uint)
+	}
+	
+	// Формируем название и описание для корзины
+	entityName := template.Name
+	entityDescription := fmt.Sprintf("Описание: %s", template.Description)
+	
+	// Записываем в корзину
+	if err := RecordDeletion(
+		db,
+		"user_template",
+		template.ID,
+		template,
+		deletedBy,
+		deletedByName,
+		companyIDUint,
+		entityName,
+		entityDescription,
+	); err != nil {
+		log.Printf("⚠️ Ошибка записи удаления шаблона пользователя в корзину: %v", err)
 	}
 
 	// Soft delete

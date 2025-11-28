@@ -476,6 +476,45 @@ func DeleteBillingPlan(c *gin.Context) {
 		return
 	}
 
+	// Записываем информацию об удалении в корзину
+	userID, userIDExists := c.Get("user_id")
+	var deletedBy uint
+	var deletedByName string
+	
+	if userIDExists {
+		deletedBy = userID.(uint)
+		var user models.User
+		if err := database.DB.First(&user, deletedBy).Error; err == nil {
+			if user.FirstName != "" || user.LastName != "" {
+				deletedByName = fmt.Sprintf("%s %s", user.FirstName, user.LastName)
+			} else {
+				deletedByName = user.Username
+			}
+		}
+	}
+	
+	// Формируем название и описание для корзины
+	entityName := plan.Name
+	entityDescription := fmt.Sprintf("Цена: %.2f %s за %s", plan.Price, plan.Currency, plan.BillingPeriod)
+	if plan.Description != "" {
+		entityDescription += fmt.Sprintf(", %s", plan.Description)
+	}
+	
+	// Записываем в корзину
+	if err := RecordDeletion(
+		database.DB,
+		"billing_plan",
+		plan.ID,
+		plan,
+		deletedBy,
+		deletedByName,
+		companyID,
+		entityName,
+		entityDescription,
+	); err != nil {
+		log.Printf("⚠️ Ошибка записи удаления тарифного плана в корзину: %v", err)
+	}
+
 	if err := database.DB.Delete(&plan).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
@@ -1556,6 +1595,48 @@ func DeleteSubscription(c *gin.Context) {
 		}
 	}
 
+	// Записываем информацию об удалении в корзину
+	if tenantDB != nil {
+		// Получаем информацию о пользователе
+		userID, userIDExists := c.Get("user_id")
+		var deletedBy uint
+		var deletedByName string
+		
+		if userIDExists {
+			deletedBy = userID.(uint)
+			var user models.User
+			if err := tenantDB.First(&user, deletedBy).Error; err == nil {
+				if user.FirstName != "" || user.LastName != "" {
+					deletedByName = fmt.Sprintf("%s %s", user.FirstName, user.LastName)
+				} else {
+					deletedByName = user.Username
+				}
+			}
+		}
+		
+		// Формируем название и описание для корзины
+		entityName := fmt.Sprintf("Подписка #%d", subscriptionID)
+		entityDescription := fmt.Sprintf("Подписка на тарифный план (ID: %d)", subscription.BillingPlanID)
+		if subscription.ContractID != nil {
+			entityDescription += fmt.Sprintf(", договор ID: %d", *subscription.ContractID)
+		}
+		
+		// Записываем в корзину
+		if err := RecordDeletion(
+			tenantDB,
+			"subscription",
+			uint(subscriptionID),
+			subscription,
+			deletedBy,
+			deletedByName,
+			subscription.CompanyID,
+			entityName,
+			entityDescription,
+		); err != nil {
+			log.Printf("⚠️ Ошибка записи удаления подписки в корзину: %v", err)
+		}
+	}
+
 	if err := database.DB.Delete(&subscription).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
@@ -2580,6 +2661,51 @@ func DeleteInvoice(c *gin.Context) {
 			"error":  "Нельзя удалить оплаченный счет",
 		})
 		return
+	}
+
+	// Записываем информацию об удалении в корзину
+	userID, userIDExists := c.Get("user_id")
+	companyID, companyIDExists := c.Get("company_id")
+	var deletedBy uint
+	var deletedByName string
+	var companyIDUint uint
+	
+	if userIDExists {
+		deletedBy = userID.(uint)
+		var user models.User
+		if err := database.DB.First(&user, deletedBy).Error; err == nil {
+			if user.FirstName != "" || user.LastName != "" {
+				deletedByName = fmt.Sprintf("%s %s", user.FirstName, user.LastName)
+			} else {
+				deletedByName = user.Username
+			}
+		}
+	}
+	
+	if companyIDExists {
+		companyIDUint = companyID.(uint)
+	}
+	
+	// Формируем название и описание для корзины
+	entityName := fmt.Sprintf("Счет #%s", invoice.Number)
+	entityDescription := fmt.Sprintf("Сумма: %.2f %s, Статус: %s", invoice.TotalAmount, invoice.Currency, invoice.Status)
+	if invoice.Description != "" {
+		entityDescription += fmt.Sprintf(", %s", invoice.Description)
+	}
+	
+	// Записываем в корзину
+	if err := RecordDeletion(
+		database.DB,
+		"invoice",
+		invoice.ID,
+		invoice,
+		deletedBy,
+		deletedByName,
+		companyIDUint,
+		entityName,
+		entityDescription,
+	); err != nil {
+		log.Printf("⚠️ Ошибка записи удаления счета в корзину: %v", err)
 	}
 
 	// Удаляем сначала все позиции счета

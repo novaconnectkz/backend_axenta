@@ -1702,8 +1702,54 @@ func DeleteContract(c *gin.Context) {
 		log.Printf("✅ Приложения к договору %d удалены из tenant схемы", contract.ID)
 	}
 
-	// 4. Удаляем договор из tenant схемы (жесткое удаление)
-	if err := tenantDB.Unscoped().Delete(&contract).Error; err != nil {
+	// 4. Записываем информацию об удалении в корзину перед удалением
+	// Получаем информацию о пользователе
+	userID, userIDExists := c.Get("user_id")
+	companyID, companyIDExists := c.Get("company_id")
+	var deletedBy uint
+	var deletedByName string
+	var companyIDUint uint
+	
+	if userIDExists {
+		deletedBy = userID.(uint)
+		var user models.User
+		if err := tenantDB.First(&user, deletedBy).Error; err == nil {
+			if user.FirstName != "" || user.LastName != "" {
+				deletedByName = fmt.Sprintf("%s %s", user.FirstName, user.LastName)
+			} else {
+				deletedByName = user.Username
+			}
+		}
+	}
+	
+	if companyIDExists {
+		companyIDUint = companyID.(uint)
+	}
+	
+	// Формируем название и описание для корзины
+	entityName := fmt.Sprintf("Договор %s", contract.Number)
+	entityDescription := fmt.Sprintf("Клиент: %s", contract.ClientName)
+	if contract.Title != "" {
+		entityDescription += fmt.Sprintf(", %s", contract.Title)
+	}
+	
+	// Записываем в корзину
+	if err := RecordDeletion(
+		tenantDB,
+		"contract",
+		contract.ID,
+		contract,
+		deletedBy,
+		deletedByName,
+		companyIDUint,
+		entityName,
+		entityDescription,
+	); err != nil {
+		log.Printf("⚠️ Ошибка записи удаления договора в корзину: %v", err)
+	}
+
+	// 5. Удаляем договор из tenant схемы (мягкое удаление)
+	if err := tenantDB.Delete(&contract).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  "Ошибка при удалении договора",

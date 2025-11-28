@@ -335,6 +335,12 @@ func GetAllMigrations() []MigrationInfo {
 			Description: "Шаблоны уведомлений мониторинга",
 			IsGlobal:    false,
 		},
+		{
+			TableName:   "deleted_items",
+			Model:       &models.DeletedItem{},
+			Description: "Корзина удаленных элементов (аудит удалений)",
+			IsGlobal:    false,
+		},
 	}
 }
 

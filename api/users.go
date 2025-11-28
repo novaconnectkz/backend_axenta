@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -838,6 +839,54 @@ func DeleteUser(c *gin.Context) {
 			"error":  "Ошибка получения пользователя: " + err.Error(),
 		})
 		return
+	}
+
+	// Записываем информацию об удалении в корзину
+	currentUserID, userIDExists := c.Get("user_id")
+	companyID, companyIDExists := c.Get("company_id")
+	var deletedBy uint
+	var deletedByName string
+	var companyIDUint uint
+	
+	if userIDExists {
+		deletedBy = currentUserID.(uint)
+		var currentUser models.User
+		if err := db.First(&currentUser, deletedBy).Error; err == nil {
+			if currentUser.FirstName != "" || currentUser.LastName != "" {
+				deletedByName = fmt.Sprintf("%s %s", currentUser.FirstName, currentUser.LastName)
+			} else {
+				deletedByName = currentUser.Username
+			}
+		}
+	}
+	
+	if companyIDExists {
+		companyIDUint = companyID.(uint)
+	}
+	
+	// Формируем название и описание для корзины
+	entityName := user.Username
+	if user.FirstName != "" || user.LastName != "" {
+		entityName = fmt.Sprintf("%s %s", user.FirstName, user.LastName)
+	}
+	entityDescription := fmt.Sprintf("Email: %s", user.Email)
+	if user.Phone != "" {
+		entityDescription += fmt.Sprintf(", Телефон: %s", user.Phone)
+	}
+	
+	// Записываем в корзину
+	if err := RecordDeletion(
+		db,
+		"user",
+		user.ID,
+		user,
+		deletedBy,
+		deletedByName,
+		companyIDUint,
+		entityName,
+		entityDescription,
+	); err != nil {
+		log.Printf("⚠️ Ошибка записи удаления пользователя в корзину: %v", err)
 	}
 
 	// Soft delete

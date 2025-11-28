@@ -395,6 +395,54 @@ func DeleteObject(c *gin.Context) {
 		return
 	}
 
+	// Записываем информацию об удалении в корзину
+	userID, userIDExists := c.Get("user_id")
+	companyID, companyIDExists := c.Get("company_id")
+	var deletedBy uint
+	var deletedByName string
+	var companyIDUint uint
+	
+	if userIDExists {
+		deletedBy = userID.(uint)
+		var user models.User
+		if err := tenantDB.First(&user, deletedBy).Error; err == nil {
+			if user.FirstName != "" || user.LastName != "" {
+				deletedByName = fmt.Sprintf("%s %s", user.FirstName, user.LastName)
+			} else {
+				deletedByName = user.Username
+			}
+		}
+	}
+	
+	if companyIDExists {
+		companyIDUint = companyID.(uint)
+	}
+	
+	// Формируем название и описание для корзины
+	entityName := object.Name
+	entityDescription := fmt.Sprintf("Тип: %s", object.Type)
+	if object.IMEI != "" {
+		entityDescription += fmt.Sprintf(", IMEI: %s", object.IMEI)
+	}
+	if object.Address != "" {
+		entityDescription += fmt.Sprintf(", Адрес: %s", object.Address)
+	}
+	
+	// Записываем в корзину
+	if err := RecordDeletion(
+		tenantDB,
+		"object",
+		object.ID,
+		object,
+		deletedBy,
+		deletedByName,
+		companyIDUint,
+		entityName,
+		entityDescription,
+	); err != nil {
+		log.Printf("⚠️ Ошибка записи удаления объекта в корзину: %v", err)
+	}
+
 	// Синхронизация временно отключена
 	// if integrationService := services.GetIntegrationService(); integrationService != nil {
 	// 	if tenantID, exists := c.Get("tenant_id"); exists {
@@ -1058,6 +1106,48 @@ func DeleteObjectTemplate(c *gin.Context) {
 	if objectCount > 0 {
 		c.JSON(400, gin.H{"status": "error", "error": "Шаблон используется объектами и не может быть удален"})
 		return
+	}
+
+	// Записываем информацию об удалении в корзину
+	userID, userIDExists := c.Get("user_id")
+	companyID, companyIDExists := c.Get("company_id")
+	var deletedBy uint
+	var deletedByName string
+	var companyIDUint uint
+	
+	if userIDExists {
+		deletedBy = userID.(uint)
+		var user models.User
+		if err := tenantDB.First(&user, deletedBy).Error; err == nil {
+			if user.FirstName != "" || user.LastName != "" {
+				deletedByName = fmt.Sprintf("%s %s", user.FirstName, user.LastName)
+			} else {
+				deletedByName = user.Username
+			}
+		}
+	}
+	
+	if companyIDExists {
+		companyIDUint = companyID.(uint)
+	}
+	
+	// Формируем название и описание для корзины
+	entityName := template.Name
+	entityDescription := fmt.Sprintf("Описание: %s, Категория: %s", template.Description, template.Category)
+	
+	// Записываем в корзину
+	if err := RecordDeletion(
+		tenantDB,
+		"object_template",
+		template.ID,
+		template,
+		deletedBy,
+		deletedByName,
+		companyIDUint,
+		entityName,
+		entityDescription,
+	); err != nil {
+		log.Printf("⚠️ Ошибка записи удаления шаблона объекта в корзину: %v", err)
 	}
 
 	// Мягкое удаление шаблона

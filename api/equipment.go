@@ -1,6 +1,8 @@
 package api
 
 import (
+	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -250,6 +252,54 @@ func (api *EquipmentAPI) DeleteEquipment(c *gin.Context) {
 	if equipment.ObjectID != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "Нельзя удалить оборудование, установленное на объект"})
 		return
+	}
+
+	// Записываем информацию об удалении в корзину
+	userID, userIDExists := c.Get("user_id")
+	companyID, companyIDExists := c.Get("company_id")
+	var deletedBy uint
+	var deletedByName string
+	var companyIDUint uint
+	
+	if userIDExists {
+		deletedBy = userID.(uint)
+		var user models.User
+		if err := api.DB.First(&user, deletedBy).Error; err == nil {
+			if user.FirstName != "" || user.LastName != "" {
+				deletedByName = fmt.Sprintf("%s %s", user.FirstName, user.LastName)
+			} else {
+				deletedByName = user.Username
+			}
+		}
+	}
+	
+	if companyIDExists {
+		companyIDUint = companyID.(uint)
+	}
+	
+	// Формируем название и описание для корзины
+	entityName := fmt.Sprintf("%s %s", equipment.Brand, equipment.Model)
+	if entityName == " " {
+		entityName = equipment.Type
+	}
+	entityDescription := fmt.Sprintf("Тип: %s, Серийный номер: %s", equipment.Type, equipment.SerialNumber)
+	if equipment.IMEI != "" {
+		entityDescription += fmt.Sprintf(", IMEI: %s", equipment.IMEI)
+	}
+	
+	// Записываем в корзину
+	if err := RecordDeletion(
+		api.DB,
+		"equipment",
+		equipment.ID,
+		equipment,
+		deletedBy,
+		deletedByName,
+		companyIDUint,
+		entityName,
+		entityDescription,
+	); err != nil {
+		log.Printf("⚠️ Ошибка записи удаления оборудования в корзину: %v", err)
 	}
 
 	if err := api.DB.Delete(&equipment).Error; err != nil {
