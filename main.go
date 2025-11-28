@@ -784,25 +784,20 @@ func main() {
 	apiGroup.POST("/contracts/fix-statuses", api.FixContractStatuses)
 	log.Printf("✅ Зарегистрирован POST /api/auth/contracts/fix-statuses -> FixContractStatuses")
 
-	// Расчет стоимости договора (ПЕРЕД общими роутами)
-	apiGroup.GET("/contracts/:id/calculate", api.CalculateContractCost)
-	log.Printf("✅ Зарегистрирован GET /api/auth/contracts/:id/calculate -> CalculateContractCost")
-	
-	// Приложения к договорам (ПЕРЕД общими роутами)
-	apiGroup.GET("/contracts/:id/appendices", api.GetContractAppendices)
-	apiGroup.POST("/contracts/:id/appendices", api.CreateContractAppendix)
-	apiGroup.PUT("/contract-appendices/:id", api.UpdateContractAppendix)
-	apiGroup.DELETE("/contract-appendices/:id", api.DeleteContractAppendix)
-	log.Printf("✅ Зарегистрированы роуты для приложений к договорам")
-
 	// Общие роуты для договоров
 	apiGroup.GET("/contracts", api.GetContracts)
 	apiGroup.GET("/contracts/:id", api.GetContract)
 	apiGroup.POST("/contracts", api.CreateContract)
 	apiGroup.PUT("/contracts/:id", api.UpdateContract)
 	apiGroup.DELETE("/contracts/:id", api.DeleteContract)
-	
 	log.Println("✅ Все роуты для договоров зарегистрированы")
+	// apiGroup.GET("/contracts/:contract_id/cost", api.CalculateContractCost) // Временно отключено
+
+	// Приложения к договорам - временно отключено
+	// apiGroup.GET("/contracts/:contract_id/appendices", api.GetContractAppendices)
+	// apiGroup.POST("/contracts/:contract_id/appendices", api.CreateContractAppendix)
+	// apiGroup.PUT("/contract-appendices/:id", api.UpdateContractAppendix)
+	// apiGroup.DELETE("/contract-appendices/:id", api.DeleteContractAppendix)
 
 	// Нумераторы договоров
 	apiGroup.POST("/contract-numerators/:numerator_id/generate", api.GenerateContractNumber)

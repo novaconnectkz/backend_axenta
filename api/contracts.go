@@ -1800,7 +1800,7 @@ func GetContractAppendices(c *gin.Context) {
 		return
 	}
 
-	contractID := c.Param("id")
+	contractID := c.Param("contract_id")
 
 	// Получаем tenant DB из контекста
 	tenantDB := middleware.GetTenantDB(c)
@@ -1853,7 +1853,7 @@ func CreateContractAppendix(c *gin.Context) {
 		return
 	}
 
-	contractID := c.Param("id")
+	contractID := c.Param("contract_id")
 
 	// Получаем tenant DB из контекста
 	tenantDB := middleware.GetTenantDB(c)
@@ -2059,7 +2059,7 @@ func CalculateContractCost(c *gin.Context) {
 		return
 	}
 
-	contractID := c.Param("id")
+	contractID := c.Param("contract_id")
 
 	// Получаем tenant DB из контекста
 	tenantDB := middleware.GetTenantDB(c)
