@@ -541,7 +541,7 @@ func (api *LocalAuthAPI) tryAxentaAuth(username, password string) (*AxentaUserDa
 
 	// Проверяем статус ответа
 	if resp.StatusCode != http.StatusOK {
-		return nil, "", fmt.Errorf("Axenta auth failed with status %d: %s", resp.StatusCode, string(body))
+		return nil, "", fmt.Errorf("axenta auth failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
 	// Парсим ответ

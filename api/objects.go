@@ -1222,7 +1222,7 @@ func CreateTemplateFromObject(c *gin.Context) {
 	}
 
 	// Определяем требуемое оборудование на основе типа объекта
-	requiredEquipment := []string{}
+	var requiredEquipment []string
 	switch object.Type {
 	case "vehicle":
 		requiredEquipment = []string{"GPS-трекер", "Датчик топлива"}

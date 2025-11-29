@@ -78,6 +78,12 @@ func (bs *BillingService) CalculateBillingForContractWithTenantDB(contractID uin
 		return nil, fmt.Errorf("договор не найден: %w", err)
 	}
 
+	// Проверяем тип договора
+	if contract.ContractType == "partner" {
+		// Для партнерских договоров используем специальную логику
+		return bs.CalculateBillingForPartnerContract(&contract, periodStart, periodEnd, tenantDB)
+	}
+
 	// Загружаем тарифный план из public схемы
 	if contract.TariffPlanID != nil && *contract.TariffPlanID > 0 {
 		publicDB := bs.db.Session(&gorm.Session{})
@@ -347,6 +353,182 @@ func (bs *BillingService) CalculateBillingForContractWithTenantDB(contractID uin
 		result.TaxAmount = decimal.Zero
 		result.TotalAmount = result.SubtotalAmount
 	}
+
+	return result, nil
+}
+
+// CalculateBillingForPartnerContract рассчитывает биллинг для партнерского договора
+// Для партнерских договоров:
+// - Используются ежедневные снимки объектов (partner_daily_snapshots)
+// - Стоимость = сумма daily_cost из всех снимков за период
+// - Формула для каждого дня: (тариф/30) * количество_активных_объектов
+// - Автопилот не применяется
+func (bs *BillingService) CalculateBillingForPartnerContract(contract *models.Contract, periodStart, periodEnd time.Time, tenantDB *gorm.DB) (*BillingCalculationResult, error) {
+	log.Printf("🔧 Расчет биллинга для партнерского договора %d за период %s - %s", 
+		contract.ID, periodStart.Format("2006-01-02"), periodEnd.Format("2006-01-02"))
+
+	// Проверяем, что указан partner_company_id
+	if contract.PartnerCompanyID == nil {
+		return nil, fmt.Errorf("для партнерского договора не указан partner_company_id")
+	}
+
+	// Проверяем, что у договора есть тарифный план
+	if contract.TariffPlanID == nil {
+		return nil, fmt.Errorf("у партнерского договора не указан тарифный план")
+	}
+
+	// Загружаем тарифный план из public схемы
+	publicDB := bs.db.Session(&gorm.Session{})
+	if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
+		log.Printf("⚠️ Не удалось переключиться на public: %v", err)
+	}
+
+	var tariffPlan models.BillingPlan
+	if err := publicDB.
+		Where("id = ? AND admin_account_id = ?", *contract.TariffPlanID, bs.adminAccountID).
+		First(&tariffPlan).Error; err != nil {
+		return nil, fmt.Errorf("тарифный план не найден: %w", err)
+	}
+
+	// Получаем настройки биллинга для компании
+	var settings models.BillingSettings
+	if err := publicDB.
+		Where("company_id = ? AND admin_account_id = ?", contract.CompanyID, bs.adminAccountID).
+		First(&settings).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// Создаем настройки по умолчанию
+			settings = models.BillingSettings{
+				AdminAccountID:          bs.adminAccountID,
+				CompanyID:               contract.CompanyID,
+				DefaultTaxRate:          decimal.NewFromFloat(20),
+				TaxIncluded:             false,
+				EnableInactiveDiscounts: false, // Для партнеров не применяем скидки на неактивные объекты
+				InactiveDiscountRatio:   decimal.Zero,
+				MinDaysForFullMonth:     5,
+			}
+			if createErr := publicDB.Create(&settings).Error; createErr != nil {
+				log.Printf("⚠️ Ошибка создания настроек биллинга: %v", createErr)
+			}
+		} else {
+			return nil, fmt.Errorf("ошибка получения настроек биллинга: %w", err)
+		}
+	}
+
+	// Получаем настройки НДС из таблицы companies
+	var company models.Company
+	if err := publicDB.Where("id = ?", contract.CompanyID).First(&company).Error; err == nil {
+		if company.DefaultTaxRate.GreaterThan(decimal.Zero) {
+			settings.DefaultTaxRate = company.DefaultTaxRate
+			settings.TaxIncluded = company.TaxIncluded
+			log.Printf("✅ Используем настройки НДС из компании: rate=%.2f%%, included=%v", company.DefaultTaxRate, company.TaxIncluded)
+		}
+	}
+
+	// Получаем ежедневные снимки для договора за период
+	var snapshots []models.PartnerDailySnapshot
+	if err := publicDB.
+		Where("contract_id = ? AND snapshot_date >= ? AND snapshot_date <= ?", contract.ID, periodStart, periodEnd).
+		Order("snapshot_date ASC").
+		Find(&snapshots).Error; err != nil {
+		return nil, fmt.Errorf("ошибка получения снимков: %w", err)
+	}
+
+	log.Printf("📊 Найдено снимков для договора за период: %d", len(snapshots))
+
+	if len(snapshots) == 0 {
+		log.Printf("⚠️ Нет снимков для партнерского договора %d за период %s - %s",
+			contract.ID, periodStart.Format("2006-01-02"), periodEnd.Format("2006-01-02"))
+		// Возвращаем нулевую стоимость, если нет снимков
+		return &BillingCalculationResult{
+			CompanyID:          contract.CompanyID,
+			ContractID:         contract.ID,
+			TariffPlanID:       *contract.TariffPlanID,
+			BillingPeriodStart: periodStart,
+			BillingPeriodEnd:   periodEnd,
+			ActiveObjects:      0,
+			InactiveObjects:    0,
+			ScheduledDeletes:   0,
+			Items:              make([]InvoiceItemData, 0),
+			ObjectsAmount:      decimal.Zero,
+			BaseAmount:         decimal.Zero,
+			SubtotalAmount:     decimal.Zero,
+			TaxAmount:          decimal.Zero,
+			TotalAmount:        decimal.Zero,
+		}, nil
+	}
+
+	// Рассчитываем общую стоимость из снимков
+	totalCost := decimal.Zero
+	totalObjectsDays := 0 // Сумма объектов за все дни
+	daysCount := len(snapshots)
+
+	for _, snapshot := range snapshots {
+		totalCost = totalCost.Add(snapshot.DailyCost)
+		totalObjectsDays += snapshot.ActiveObjectsCount
+	}
+
+	// Средне количество объектов за период
+	avgObjectsCount := 0
+	if daysCount > 0 {
+		avgObjectsCount = totalObjectsDays / daysCount
+	}
+
+	log.Printf("💰 Расчет для партнерского договора: снимков=%d, средне объектов=%d, общая стоимость=%.2f₽",
+		daysCount, avgObjectsCount, totalCost)
+	
+	// Создаем результат расчета на основе снимков
+	result := &BillingCalculationResult{
+		CompanyID:          contract.CompanyID,
+		ContractID:         contract.ID,
+		TariffPlanID:       *contract.TariffPlanID,
+		BillingPeriodStart: periodStart,
+		BillingPeriodEnd:   periodEnd,
+		ActiveObjects:      avgObjectsCount,
+		InactiveObjects:    0, // Для партнерских договоров не учитываем неактивные
+		ScheduledDeletes:   0,
+		Items:              make([]InvoiceItemData, 0),
+		ObjectsAmount:      totalCost,
+		BaseAmount:         decimal.Zero, // Нет базовой подписки для партнеров
+	}
+
+	// Добавляем позицию в счет
+	if totalCost.GreaterThan(decimal.Zero) {
+		result.Items = append(result.Items, InvoiceItemData{
+			Name:        fmt.Sprintf("Тарификация объектов партнера"),
+			Description: fmt.Sprintf("Среднее количество объектов: %d, период: %s - %s (%d дн.)", avgObjectsCount, periodStart.Format("02.01.2006"), periodEnd.Format("02.01.2006"), daysCount),
+			ItemType:    "partner_objects",
+			Quantity:    decimal.NewFromInt(int64(avgObjectsCount)),
+			UnitPrice:   tariffPlan.Price.Div(decimal.NewFromInt(30)), // Дневная цена
+			Amount:      totalCost,
+			PeriodStart: &periodStart,
+			PeriodEnd:   &periodEnd,
+		})
+	}
+
+	// Для партнерских договоров НЕ применяем скидки и автопилот
+	result.DiscountAmount = decimal.Zero
+
+	// Рассчитываем промежуточную сумму
+	result.SubtotalAmount = totalCost
+
+	// Рассчитываем налог
+	if settings.TaxIncluded && settings.DefaultTaxRate.GreaterThan(decimal.Zero) {
+		// НДС выделяется из суммы (включен в цену)
+		taxRateDivisor := decimal.NewFromInt(100).Add(settings.DefaultTaxRate)
+		result.TaxAmount = result.SubtotalAmount.Mul(settings.DefaultTaxRate).Div(taxRateDivisor)
+		result.TotalAmount = result.SubtotalAmount
+		result.SubtotalAmount = result.TotalAmount.Sub(result.TaxAmount)
+	} else if !settings.TaxIncluded && settings.DefaultTaxRate.GreaterThan(decimal.Zero) {
+		// НДС начисляется сверху
+		result.TaxAmount = result.SubtotalAmount.Mul(settings.DefaultTaxRate).Div(decimal.NewFromInt(100))
+		result.TotalAmount = result.SubtotalAmount.Add(result.TaxAmount)
+	} else {
+		// Налог не применяется
+		result.TaxAmount = decimal.Zero
+		result.TotalAmount = result.SubtotalAmount
+	}
+
+	log.Printf("💰 Партнерский договор: средне объектов=%d, снимков=%d, сумма=%s", avgObjectsCount, daysCount, result.TotalAmount.String())
 
 	return result, nil
 }

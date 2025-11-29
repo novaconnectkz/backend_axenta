@@ -26,6 +26,14 @@ type Contract struct {
 	AdminAccountID uint `json:"admin_account_id" gorm:"not null;index"`
 	CompanyID      uint `json:"company_id" gorm:"not null;index"`
 
+	// Тип договора
+	ContractType string `json:"contract_type" gorm:"type:varchar(20);default:'client'"` // client или partner
+	
+	// Для партнерских договоров - ID учетной записи партнера
+	// Все объекты из этой учетной записи будут тарифицироваться
+	PartnerCompanyID *uint    `json:"partner_company_id" gorm:"index"`
+	PartnerCompany   *Company `json:"partner_company,omitempty" gorm:"foreignKey:PartnerCompanyID;constraint:-"`
+
 	// Клиент
 	ClientType      string `json:"client_type" gorm:"type:varchar(20)"` // individual или organization
 	ClientName      string `json:"client_name" gorm:"not null;type:varchar(200)"`

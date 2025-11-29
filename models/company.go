@@ -40,10 +40,11 @@ type Company struct {
 	Country string `json:"country" gorm:"default:'Russia';type:varchar(100)"`
 
 	// Настройки и статус
-	IsActive     bool `json:"is_active" gorm:"default:true"`
-	MaxUsers     int  `json:"max_users" gorm:"default:10"`       // Лимит пользователей
-	MaxObjects   int  `json:"max_objects" gorm:"default:100"`    // Лимит объектов
-	StorageQuota int  `json:"storage_quota" gorm:"default:1024"` // Квота в МБ
+	IsActive     bool   `json:"is_active" gorm:"default:true"`
+	CompanyType  string `json:"company_type" gorm:"type:varchar(20);default:'client'"` // client или partner
+	MaxUsers     int    `json:"max_users" gorm:"default:10"`                            // Лимит пользователей
+	MaxObjects   int    `json:"max_objects" gorm:"default:100"`                         // Лимит объектов
+	StorageQuota int    `json:"storage_quota" gorm:"default:1024"`                      // Квота в МБ
 
 	// Настройки локализации
 	Language string `json:"language" gorm:"default:'ru';type:varchar(5)"`

@@ -115,6 +115,11 @@ func main() {
 		defer axentaSyncScheduler.Stop()
 	}
 
+	// Инициализируем сервис ежедневных снимков партнерских договоров
+	partnerSnapshotService := services.NewPartnerSnapshotService()
+	partnerSnapshotService.StartDailySnapshotScheduler()
+	log.Println("✅ Partner Daily Snapshots Scheduler started (00:00 UTC)")
+
 	// Инициализируем систему уведомлений - временно отключено
 	// cache := services.NewCacheService(database.RedisClient, log.New(log.Writer(), "CACHE: ", log.LstdFlags))
 	// notificationService := services.NewNotificationService(database.DB, cache)
@@ -790,6 +795,10 @@ func main() {
 	apiGroup.POST("/contracts", api.CreateContract)
 	apiGroup.PUT("/contracts/:id", api.UpdateContract)
 	apiGroup.DELETE("/contracts/:id", api.DeleteContract)
+	
+	// Снимки для партнерских договоров
+	apiGroup.GET("/contracts/:id/partner-snapshots", api.GetPartnerContractSnapshots)
+	apiGroup.POST("/contracts/partner-snapshots/create", api.CreatePartnerSnapshots)
 	log.Println("✅ Все роуты для договоров зарегистрированы")
 	// apiGroup.GET("/contracts/:contract_id/cost", api.CalculateContractCost) // Временно отключено
 

@@ -111,15 +111,15 @@ func GetContracts(c *gin.Context) {
 		createdAt := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 		demoContracts := []models.Contract{
 			{
-				ID:              24,
-				Number:          "DOG-2024-001",
-				Title:           "Договор с ООО Логистика Плюс",
-				ClientName:      "ООО Логистика Плюс",
-				StartDate:       &startDate,
-				EndDate:         &endDate,
-				Status:          "active",
-				Currency:        "RUB",
-				CreatedAt:       createdAt,
+				ID:         24,
+				Number:     "DOG-2024-001",
+				Title:      "Договор с ООО Логистика Плюс",
+				ClientName: "ООО Логистика Плюс",
+				StartDate:  &startDate,
+				EndDate:    &endDate,
+				Status:     "active",
+				Currency:   "RUB",
+				CreatedAt:  createdAt,
 			},
 		}
 
@@ -154,7 +154,7 @@ func GetContracts(c *gin.Context) {
 	// Используем tenant DB, так как договоры находятся в tenant схеме
 	// GORM автоматически исключает записи с deleted_at (soft delete)
 	baseQuery := tenantDB.Model(&models.Contract{}).Where("admin_account_id = ?", adminAccountID)
-	
+
 	// Логируем запрос для отладки
 	log.Printf("🔍 GetContracts: admin_account_id=%d, tenantDB=%v", adminAccountID, tenantDB != nil)
 
@@ -232,7 +232,8 @@ func GetContracts(c *gin.Context) {
 	}
 	log.Printf("📋 GetContracts: загружено договоров: %d (page=%d, limit=%d, offset=%d)", len(contracts), page, limit, offset)
 	if len(contracts) > 0 {
-		log.Printf("📋 GetContracts: первый договор: ID=%d, Number=%s, Status=%s", contracts[0].ID, contracts[0].Number, contracts[0].Status)
+		log.Printf("📋 GetContracts: первый договор: ID=%d, Number=%s, Status=%s, ContractType=%s, PartnerCompanyID=%v",
+			contracts[0].ID, contracts[0].Number, contracts[0].Status, contracts[0].ContractType, contracts[0].PartnerCompanyID)
 	}
 
 	// Загружаем TariffPlan (BillingPlan) для каждого договора отдельно (он в public схеме)
@@ -329,7 +330,7 @@ func GetContracts(c *gin.Context) {
 					// Если объектов слишком много, берем только первые 50
 					objectIDs = objectIDs[:50]
 				}
-				
+
 				axentaObjects, err := fetchObjectsFromAxentaCloud(userToken, int(companyID), objectIDs)
 				if err != nil {
 					log.Printf("⚠️ Не удалось загрузить названия объектов для компании %d: %v", companyID, err)
@@ -353,6 +354,111 @@ func GetContracts(c *gin.Context) {
 		}
 	}
 
+	// Загружаем объекты для партнерских договоров из Axenta Cloud
+	// Получаем токен пользователя для запроса к Axenta Cloud
+	authHeader := c.GetHeader("Authorization")
+	var userToken string
+	if strings.HasPrefix(authHeader, "Token ") {
+		userToken = strings.TrimPrefix(authHeader, "Token ")
+	} else if strings.HasPrefix(authHeader, "Bearer ") {
+		userToken = strings.TrimPrefix(authHeader, "Bearer ")
+	} else {
+		userToken = authHeader
+	}
+
+	// Карта объектов для партнерских договоров
+	partnerObjectsMap := make(map[uint][]models.Object) // contract_id -> objects
+
+	// Загружаем объекты для каждого партнерского договора
+	for i := range contracts {
+		if contracts[i].ContractType == "partner" && contracts[i].PartnerCompanyID != nil {
+			partnerCompanyID := *contracts[i].PartnerCompanyID
+			log.Printf("📦 Загрузка объектов для партнерского договора ID=%d, partner_company_id=%d", contracts[i].ID, partnerCompanyID)
+
+			// Загружаем ВСЕ объекты с пагинацией
+			var allObjects []struct {
+				ID       uint   `json:"id"`
+				Name     string `json:"name"`
+				IsActive bool   `json:"isActive"`
+			}
+
+			page := 1
+			perPage := 1000
+			client := &http.Client{Timeout: 30 * time.Second}
+
+			for {
+				// Запрос к Axenta Cloud API с пагинацией
+				axentaCloudURL := fmt.Sprintf("https://axenta.cloud/api/cms/objects/?accountId=%d&page=%d&per_page=%d", 
+					partnerCompanyID, page, perPage)
+				
+				req, err := http.NewRequest("GET", axentaCloudURL, nil)
+				if err != nil {
+					log.Printf("⚠️ Не удалось создать запрос для загрузки объектов партнера: %v", err)
+					break
+				}
+				req.Header.Set("Authorization", "Token "+userToken)
+
+				resp, err := client.Do(req)
+				if err != nil {
+					log.Printf("⚠️ Не удалось загрузить объекты партнера: %v", err)
+					break
+				}
+
+				if resp.StatusCode != http.StatusOK {
+					log.Printf("⚠️ Axenta Cloud вернул статус %d для партнера %d", resp.StatusCode, partnerCompanyID)
+					resp.Body.Close()
+					break
+				}
+
+				var axentaResponse struct {
+					Results []struct {
+						ID       uint   `json:"id"`
+						Name     string `json:"name"`
+						IsActive bool   `json:"isActive"`
+					} `json:"results"`
+					Count int     `json:"count"`
+					Next  *string `json:"next"`
+				}
+
+				if err := json.NewDecoder(resp.Body).Decode(&axentaResponse); err != nil {
+					log.Printf("⚠️ Не удалось распарсить ответ Axenta Cloud: %v", err)
+					resp.Body.Close()
+					break
+				}
+				resp.Body.Close()
+
+				// Добавляем объекты с текущей страницы
+				allObjects = append(allObjects, axentaResponse.Results...)
+
+				log.Printf("📄 Страница %d: получено %d объектов, всего загружено %d из %d",
+					page, len(axentaResponse.Results), len(allObjects), axentaResponse.Count)
+
+				// Если получили меньше объектов, чем per_page, или нет следующей страницы - это последняя страница
+				if len(axentaResponse.Results) < perPage || axentaResponse.Next == nil {
+					break
+				}
+
+				page++
+			}
+
+			// Фильтруем объекты - берем только активные (isActive=true)
+			var objects []models.Object
+			for _, obj := range allObjects {
+				if obj.IsActive {
+					objects = append(objects, models.Object{
+						ID:        obj.ID,
+						CompanyID: partnerCompanyID,
+						Name:      obj.Name,
+					})
+				}
+			}
+
+			partnerObjectsMap[contracts[i].ID] = objects
+			log.Printf("✅ Загружено %d активных объектов из %d всего для партнерского договора ID=%d", 
+				len(objects), len(allObjects), contracts[i].ID)
+		}
+	}
+
 	// Присваиваем тарифные планы и объекты договорам
 	for i := range contracts {
 		// Присваиваем тарифный план
@@ -362,26 +468,37 @@ func GetContracts(c *gin.Context) {
 			}
 		}
 
-		// Присваиваем объекты с названиями
-		if contractObjects, ok := objectsByContract[contracts[i].ID]; ok {
-			objects := make([]models.Object, len(contractObjects))
-			for j, co := range contractObjects {
-				key := ObjectKey{ObjectID: co.ObjectID, CompanyID: co.ObjectCompanyID}
-				name := objectNamesMap[key]
-				if name == "" {
-					name = fmt.Sprintf("Объект #%d", co.ObjectID)
-				}
-				objects[j] = models.Object{
-					ID:        co.ObjectID,
-					CompanyID: co.ObjectCompanyID,
-					Name:      name,
-				}
+		// Для партнерских договоров используем объекты из учетной записи партнера
+		if contracts[i].ContractType == "partner" {
+			if partnerObjects, ok := partnerObjectsMap[contracts[i].ID]; ok {
+				contracts[i].Objects = partnerObjects
+				log.Printf("📊 Партнерский договор ID=%d: %d объектов", contracts[i].ID, len(partnerObjects))
+			} else {
+				contracts[i].Objects = make([]models.Object, 0)
 			}
-			contracts[i].Objects = objects
-			contracts[i].ContractObjects = contractObjects
+			contracts[i].ContractObjects = make([]models.ContractObject, 0) // У партнерских договоров нет contract_objects
 		} else {
-			contracts[i].Objects = make([]models.Object, 0)
-			contracts[i].ContractObjects = make([]models.ContractObject, 0)
+			// Для клиентских договоров используем объекты из contract_objects
+			if contractObjects, ok := objectsByContract[contracts[i].ID]; ok {
+				objects := make([]models.Object, len(contractObjects))
+				for j, co := range contractObjects {
+					key := ObjectKey{ObjectID: co.ObjectID, CompanyID: co.ObjectCompanyID}
+					name := objectNamesMap[key]
+					if name == "" {
+						name = fmt.Sprintf("Объект #%d", co.ObjectID)
+					}
+					objects[j] = models.Object{
+						ID:        co.ObjectID,
+						CompanyID: co.ObjectCompanyID,
+						Name:      name,
+					}
+				}
+				contracts[i].Objects = objects
+				contracts[i].ContractObjects = contractObjects
+			} else {
+				contracts[i].Objects = make([]models.Object, 0)
+				contracts[i].ContractObjects = make([]models.ContractObject, 0)
+			}
 		}
 	}
 
@@ -497,7 +614,7 @@ func GetContract(c *gin.Context) {
 				if len(objectIDs) > 50 {
 					objectIDs = objectIDs[:50]
 				}
-				
+
 				axentaObjects, err := fetchObjectsFromAxentaCloud(userToken, int(companyID), objectIDs)
 				if err != nil {
 					log.Printf("⚠️ Не удалось загрузить названия объектов для компании %d: %v", companyID, err)
@@ -557,6 +674,10 @@ type CreateContractRequestRaw struct {
 	CompanyID   uint   `json:"company_id"`
 	ObjectIDs   []uint `json:"object_ids"`
 
+	// Тип договора
+	ContractType     string `json:"contract_type"`      // client или partner
+	PartnerCompanyID *uint  `json:"partner_company_id"` // Для партнерских договоров
+
 	// Клиент
 	ClientType      string `json:"client_type"` // individual или organization
 	ClientName      string `json:"client_name"`
@@ -566,33 +687,33 @@ type CreateContractRequestRaw struct {
 	ClientEmail     string `json:"client_email"`
 	ClientPhone     string `json:"client_phone"`
 	ClientAddress   string `json:"client_address"`
-	
+
 	// Дополнительные поля для организаций
-	ClientLegalAddress          string `json:"client_legal_address"`
-	ClientPostalAddress         string `json:"client_postal_address"`
-	ClientOGRN                  string `json:"client_ogrn"`
-	ClientOKPO                  string `json:"client_okpo"`
-	ClientDirector              string `json:"client_director"`
-	ClientBasedOn               string `json:"client_based_on"` // Действует на основании
-	ClientWebsite               string `json:"client_website"`
-	
+	ClientLegalAddress  string `json:"client_legal_address"`
+	ClientPostalAddress string `json:"client_postal_address"`
+	ClientOGRN          string `json:"client_ogrn"`
+	ClientOKPO          string `json:"client_okpo"`
+	ClientDirector      string `json:"client_director"`
+	ClientBasedOn       string `json:"client_based_on"` // Действует на основании
+	ClientWebsite       string `json:"client_website"`
+
 	// Банковские реквизиты
 	ClientBankName                 string `json:"client_bank_name"`
 	ClientBankBIK                  string `json:"client_bank_bik"`
 	ClientBankCorrespondentAccount string `json:"client_bank_correspondent_account"`
 	ClientBankAccount              string `json:"client_bank_account"`
 	ClientBankRecipient            string `json:"client_bank_recipient"`
-	
+
 	// Поля для физических лиц
-	ClientPassportSeries        string `json:"client_passport_series"`
-	ClientPassportNumber        string `json:"client_passport_number"`
-	ClientPassportIssuedBy      string `json:"client_passport_issued_by"`
-	ClientPassportIssueDate     string `json:"client_passport_issue_date"`
+	ClientPassportSeries         string `json:"client_passport_series"`
+	ClientPassportNumber         string `json:"client_passport_number"`
+	ClientPassportIssuedBy       string `json:"client_passport_issued_by"`
+	ClientPassportIssueDate      string `json:"client_passport_issue_date"`
 	ClientPassportDepartmentCode string `json:"client_passport_department_code"`
-	ClientRegistrationAddress   string `json:"client_registration_address"`
-	ClientActualAddress         string `json:"client_actual_address"`
-	ClientSNILS                 string `json:"client_snils"`
-	ClientOGRNIP                string `json:"client_ogrnip"`
+	ClientRegistrationAddress    string `json:"client_registration_address"`
+	ClientActualAddress          string `json:"client_actual_address"`
+	ClientSNILS                  string `json:"client_snils"`
+	ClientOGRNIP                 string `json:"client_ogrnip"`
 
 	// Даты как строки для парсинга
 	StartDateStr string `json:"start_date"`
@@ -602,10 +723,10 @@ type CreateContractRequestRaw struct {
 	TariffPlanID *uint `json:"tariff_plan_id"`
 
 	// Статус и прочее
-	Status              string `json:"status"`
-	IsAutoRenew         *bool  `json:"is_auto_renew"`
+	Status               string `json:"status"`
+	IsAutoRenew          *bool  `json:"is_auto_renew"`
 	ContractPeriodMonths *int   `json:"contract_period_months"`
-	Notes               string `json:"notes"`
+	Notes                string `json:"notes"`
 
 	AccountID *uint `json:"account_id"` // ID учетной записи Axenta для автоматической привязки объектов
 }
@@ -691,28 +812,67 @@ func CreateContract(c *gin.Context) {
 	if contractStatus == "" {
 		contractStatus = "draft" // По умолчанию черновик, после привязки подписки станет "active"
 	}
-	
+
+	// Устанавливаем тип договора (по умолчанию "client")
+	contractType := rawRequest.ContractType
+	if contractType == "" {
+		contractType = "client"
+	}
+
+	// Валидация для партнерских договоров
+	if contractType == "partner" {
+		if rawRequest.PartnerCompanyID == nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error",
+				"error":  "Для партнерского договора необходимо указать partner_company_id",
+			})
+			return
+		}
+		if rawRequest.TariffPlanID == nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error",
+				"error":  "Для партнерского договора необходимо указать тарифный план",
+			})
+			return
+		}
+		log.Printf("📋 Создание партнерского договора для компании %d", *rawRequest.PartnerCompanyID)
+
+		// Для партнерских договоров автоматически устанавливаем период
+		// Начало: текущая дата
+		// Конец: конец текущего календарного года
+		now := time.Now()
+		startDate = &now
+
+		// Конец текущего года (31 декабря 23:59:59)
+		endOfYear := time.Date(now.Year(), 12, 31, 23, 59, 59, 0, now.Location())
+		endDate = &endOfYear
+
+		log.Printf("📅 Партнерский договор: период установлен автоматически с %v по %v", *startDate, *endDate)
+	}
+
 	contract := models.Contract{
-		Number:          rawRequest.Number,
-		Title:           rawRequest.Title,
-		Description:     rawRequest.Description,
-		CompanyID:       rawRequest.CompanyID,
-		ClientType:      rawRequest.ClientType,
-		ClientName:      rawRequest.ClientName,
-		ClientShortName: rawRequest.ClientShortName, // Сокращенное название с ОПФ
-		ClientINN:       rawRequest.ClientINN,
-		ClientKPP:       rawRequest.ClientKPP,
-		ClientEmail:     rawRequest.ClientEmail,
-		ClientPhone:     rawRequest.ClientPhone,
-		ClientAddress:   rawRequest.ClientAddress,
+		Number:           rawRequest.Number,
+		Title:            rawRequest.Title,
+		Description:      rawRequest.Description,
+		CompanyID:        rawRequest.CompanyID,
+		ContractType:     contractType,
+		PartnerCompanyID: rawRequest.PartnerCompanyID,
+		ClientType:       rawRequest.ClientType,
+		ClientName:       rawRequest.ClientName,
+		ClientShortName:  rawRequest.ClientShortName, // Сокращенное название с ОПФ
+		ClientINN:        rawRequest.ClientINN,
+		ClientKPP:        rawRequest.ClientKPP,
+		ClientEmail:      rawRequest.ClientEmail,
+		ClientPhone:      rawRequest.ClientPhone,
+		ClientAddress:    rawRequest.ClientAddress,
 		// Дополнительные поля для организаций
-		ClientLegalAddress:          rawRequest.ClientLegalAddress,
-		ClientPostalAddress:         rawRequest.ClientPostalAddress,
-		ClientOGRN:                  rawRequest.ClientOGRN,
-		ClientOKPO:                  rawRequest.ClientOKPO,
-		ClientDirector:              rawRequest.ClientDirector,
-		ClientBasedOn:               rawRequest.ClientBasedOn,
-		ClientWebsite:               rawRequest.ClientWebsite,
+		ClientLegalAddress:  rawRequest.ClientLegalAddress,
+		ClientPostalAddress: rawRequest.ClientPostalAddress,
+		ClientOGRN:          rawRequest.ClientOGRN,
+		ClientOKPO:          rawRequest.ClientOKPO,
+		ClientDirector:      rawRequest.ClientDirector,
+		ClientBasedOn:       rawRequest.ClientBasedOn,
+		ClientWebsite:       rawRequest.ClientWebsite,
 		// Банковские реквизиты
 		ClientBankName:                 rawRequest.ClientBankName,
 		ClientBankBIK:                  rawRequest.ClientBankBIK,
@@ -720,23 +880,23 @@ func CreateContract(c *gin.Context) {
 		ClientBankAccount:              rawRequest.ClientBankAccount,
 		ClientBankRecipient:            rawRequest.ClientBankRecipient,
 		// Поля для физических лиц
-		ClientPassportSeries:        rawRequest.ClientPassportSeries,
-		ClientPassportNumber:        rawRequest.ClientPassportNumber,
-		ClientPassportIssuedBy:      rawRequest.ClientPassportIssuedBy,
-		ClientPassportIssueDate:     rawRequest.ClientPassportIssueDate,
+		ClientPassportSeries:         rawRequest.ClientPassportSeries,
+		ClientPassportNumber:         rawRequest.ClientPassportNumber,
+		ClientPassportIssuedBy:       rawRequest.ClientPassportIssuedBy,
+		ClientPassportIssueDate:      rawRequest.ClientPassportIssueDate,
 		ClientPassportDepartmentCode: rawRequest.ClientPassportDepartmentCode,
-		ClientRegistrationAddress:   rawRequest.ClientRegistrationAddress,
-		ClientActualAddress:         rawRequest.ClientActualAddress,
-		ClientSNILS:                 rawRequest.ClientSNILS,
-		ClientOGRNIP:                rawRequest.ClientOGRNIP,
-		StartDate:       startDate,
-		EndDate:         endDate,
-		TariffPlanID:    nil, // Тарифный план будет привязан через подписку
-		Status:          contractStatus,
-		IsAutoRenew:         true, // По умолчанию включена
-		ContractPeriodMonths: nil, // По умолчанию используется период из тарифа
-		Notes:               rawRequest.Notes,
-		AdminAccountID:      adminAccountID,
+		ClientRegistrationAddress:    rawRequest.ClientRegistrationAddress,
+		ClientActualAddress:          rawRequest.ClientActualAddress,
+		ClientSNILS:                  rawRequest.ClientSNILS,
+		ClientOGRNIP:                 rawRequest.ClientOGRNIP,
+		StartDate:                    startDate,
+		EndDate:                      endDate,
+		TariffPlanID:                 rawRequest.TariffPlanID, // Для партнерских договоров устанавливается сразу
+		Status:                       contractStatus,
+		IsAutoRenew:                  true, // По умолчанию включена
+		ContractPeriodMonths:         nil,  // По умолчанию используется период из тарифа
+		Notes:                        rawRequest.Notes,
+		AdminAccountID:               adminAccountID,
 	}
 
 	// Устанавливаем IsAutoRenew, если передан
@@ -895,7 +1055,7 @@ func CreateContract(c *gin.Context) {
 	selectedObjectIDs := request.ObjectIDs
 	if len(selectedObjectIDs) > 0 {
 		log.Printf("🔍 Проверяем объекты перед созданием договора: %v", selectedObjectIDs)
-		
+
 		// Убеждаемся, что таблица contract_objects существует для проверки
 		if err := ensureContractObjectsTable(tenantDB); err != nil {
 			log.Printf("⚠️ Не удалось создать таблицу contract_objects для проверки: %v", err)
@@ -915,7 +1075,7 @@ func CreateContract(c *gin.Context) {
 		if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
 			log.Printf("⚠️ Не удалось переключиться на схему public: %v", err)
 		}
-		
+
 		if err := publicDB.First(&company, targetAccountID).Error; err != nil {
 			log.Printf("⚠️ Компания с ID %d не найдена: %v", targetAccountID, err)
 		}
@@ -932,9 +1092,9 @@ func CreateContract(c *gin.Context) {
 		for _, objectID := range selectedObjectIDs {
 			// Проверяем, не привязан ли объект к другому активному договору с пересекающимися сроками
 			var existingAttachments []models.ContractObject
-			if err := tenantDB.Where("object_id = ? AND object_company_id = ? AND status = ?", 
+			if err := tenantDB.Where("object_id = ? AND object_company_id = ? AND status = ?",
 				objectID, targetAccountID, "active").Find(&existingAttachments).Error; err == nil {
-				
+
 				for _, existing := range existingAttachments {
 					// Проверяем пересечение сроков
 					// Если у нового договора нет start_date или end_date, пропускаем проверку пересечений (период будет установлен через подписку)
@@ -956,7 +1116,7 @@ func CreateContract(c *gin.Context) {
 							hasOverlap = false
 						}
 					}
-					
+
 					if hasOverlap {
 						// Получаем информацию о конфликтующем договоре для проверки тарифных планов
 						var conflictingContract models.Contract
@@ -977,7 +1137,7 @@ func CreateContract(c *gin.Context) {
 						if conflictingContract.TariffPlanID != nil {
 							conflictingTariffPlanID = *conflictingContract.TariffPlanID
 						}
-						
+
 						log.Printf("🔍 Проверка тарифных планов перед созданием договора: новый договор (TariffPlanID=%d), конфликтующий договор %d (TariffPlanID=%d)",
 							currentTariffPlanID, conflictingContract.ID, conflictingTariffPlanID)
 
@@ -1018,7 +1178,7 @@ func CreateContract(c *gin.Context) {
 							log.Printf("❌ Объект %d уже привязан к договору %s (ID: %d) с тем же тарифным планом '%s' (ID: %d) на период %s - %s. Договор не будет создан.",
 								objectID, conflictingContract.Number, conflictingContract.ID, tariffPlanName, currentTariffPlanID,
 								existing.StartDate.Format("2006-01-02"), endDateStr)
-							
+
 							validationErrors = append(validationErrors, fmt.Sprintf(
 								"Объект %d уже привязан к договору %s (ID: %d) с тарифным планом '%s' на период %s - %s. Объект не может быть привязан к другому договору с тем же тарифным планом.",
 								objectID, conflictingContract.Number, conflictingContract.ID, tariffPlanName,
@@ -1034,8 +1194,8 @@ func CreateContract(c *gin.Context) {
 		if len(validationErrors) > 0 {
 			log.Printf("❌ Обнаружены конфликты при проверке объектов. Договор не будет создан. Ошибок: %d", len(validationErrors))
 			c.JSON(http.StatusBadRequest, gin.H{
-				"status": "error",
-				"error":  "Не удалось создать договор: объекты уже привязаны к другим договорам с тем же тарифным планом",
+				"status":  "error",
+				"error":   "Не удалось создать договор: объекты уже привязаны к другим договорам с тем же тарифным планом",
 				"details": validationErrors,
 			})
 			return
@@ -1106,13 +1266,13 @@ func CreateContract(c *gin.Context) {
 		// Проверяем, не связана ли ошибка с NOT NULL ограничением на tariff_plan_id
 		errorStr := err.Error()
 		log.Printf("🔍 Анализ ошибки БД: %s", errorStr)
-		
+
 		// Проверяем различные варианты ошибок, связанных с tariff_plan_id
-		if strings.Contains(errorStr, "tariff_plan_id") && 
-		   (strings.Contains(errorStr, "null") || 
-		    strings.Contains(errorStr, "NOT NULL") ||
-		    strings.Contains(errorStr, "violates not-null constraint") ||
-		    strings.Contains(errorStr, "null value in column")) {
+		if strings.Contains(errorStr, "tariff_plan_id") &&
+			(strings.Contains(errorStr, "null") ||
+				strings.Contains(errorStr, "NOT NULL") ||
+				strings.Contains(errorStr, "violates not-null constraint") ||
+				strings.Contains(errorStr, "null value in column")) {
 			log.Printf("⚠️ Обнаружена ошибка NOT NULL для tariff_plan_id, пытаемся исправить...")
 			// Пытаемся еще раз удалить NOT NULL ограничение
 			if fixErr := tenantDB.Exec("ALTER TABLE contracts ALTER COLUMN tariff_plan_id DROP NOT NULL").Error; fixErr != nil {
@@ -1133,7 +1293,7 @@ func CreateContract(c *gin.Context) {
 				goto contractCreated
 			}
 		}
-		
+
 		// Если ошибка не связана с NOT NULL, но содержит упоминание о тарифном плане,
 		// возможно это ошибка валидации или constraint - логируем для отладки
 		if strings.Contains(errorStr, "tariff") || strings.Contains(errorStr, "plan") {
@@ -1150,7 +1310,7 @@ func CreateContract(c *gin.Context) {
 		// возвращаем понятное сообщение
 		errorMsg := fmt.Sprintf("Ошибка при создании договора: %v", err)
 		details := err.Error()
-		
+
 		// Проверяем, не связана ли ошибка с тарифным планом
 		if strings.Contains(details, "tariff_plan_id") || strings.Contains(details, "tariff") {
 			// Если это ошибка NOT NULL, но мы не смогли её исправить, возвращаем понятное сообщение
@@ -1205,14 +1365,14 @@ contractCreated:
 	if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
 		log.Printf("⚠️ Не удалось переключиться на схему public: %v", err)
 	}
-	
+
 	if err := publicDB.First(&company, targetAccountID).Error; err != nil {
 		log.Printf("⚠️ Компания с ID %d не найдена: %v", targetAccountID, err)
 	}
 
 	if len(selectedObjectIDs) > 0 {
 		log.Printf("🔗 Привязываем выбранные объекты %v к договору %d из account_id %d через Axenta Cloud API", selectedObjectIDs, contract.ID, targetAccountID)
-		
+
 		// Получаем токен из заголовка Authorization для запроса к Axenta Cloud API
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
@@ -1257,7 +1417,7 @@ contractCreated:
 
 				// Проверяем, не существует ли уже такая связь с этим договором
 				var existingSameContract models.ContractObject
-				if err := tenantDB.Where("contract_id = ? AND object_id = ? AND object_company_id = ?", 
+				if err := tenantDB.Where("contract_id = ? AND object_id = ? AND object_company_id = ?",
 					contract.ID, objectID, targetAccountID).First(&existingSameContract).Error; err == nil {
 					log.Printf("ℹ️ Связь между договором %d и объектом %d уже существует, пропускаем", contract.ID, objectID)
 					attachedCount++
@@ -1271,15 +1431,15 @@ contractCreated:
 				contractStartDate := contract.StartDate
 				var contractEndDate *time.Time = contract.EndDate
 
-				if err := tenantDB.Where("object_id = ? AND object_company_id = ? AND status = ?", 
+				if err := tenantDB.Where("object_id = ? AND object_company_id = ? AND status = ?",
 					objectID, targetAccountID, "active").Find(&existingAttachments).Error; err == nil {
-					
+
 					for _, existing := range existingAttachments {
 						// Если это тот же договор, пропускаем проверку
 						if existing.ContractID == contract.ID {
 							continue
 						}
-						
+
 						// Проверяем пересечение сроков
 						// Периоды пересекаются, если start1 <= end2 && start2 <= end1
 						// Если у нового договора нет start_date или end_date, пропускаем проверку пересечений (период будет установлен через подписку)
@@ -1301,7 +1461,7 @@ contractCreated:
 								hasOverlap = false
 							}
 						}
-						
+
 						if hasOverlap {
 							// Получаем информацию о конфликтующем договоре для проверки тарифных планов
 							var conflictingContract models.Contract
@@ -1328,7 +1488,7 @@ contractCreated:
 							if conflictingContract.TariffPlanID != nil {
 								conflictingTariffPlanID = *conflictingContract.TariffPlanID
 							}
-							
+
 							log.Printf("🔍 Проверка тарифных планов при создании договора: новый договор %d (TariffPlanID=%d), конфликтующий договор %d (TariffPlanID=%d)",
 								contract.ID, currentTariffPlanID, conflictingContract.ID, conflictingTariffPlanID)
 
@@ -1370,7 +1530,7 @@ contractCreated:
 								log.Printf("❌ Объект %d уже привязан к договору %s (ID: %d) с тем же тарифным планом '%s' (ID: %d) на период %s - %s",
 									objectID, conflictingContract.Number, conflictingContract.ID, tariffPlanName, currentTariffPlanID,
 									existing.StartDate.Format("2006-01-02"), endDateStr)
-								
+
 								objectErrors = append(objectErrors, fmt.Sprintf(
 									"Объект %d уже привязан к договору %s (ID: %d) с тарифным планом '%s' на период %s - %s. Объект не может быть привязан к другому договору с тем же тарифным планом.",
 									objectID, conflictingContract.Number, conflictingContract.ID, tariffPlanName,
@@ -1405,8 +1565,8 @@ contractCreated:
 					ObjectCompanyID: targetAccountID,
 					ObjectSchema:    company.DatabaseSchema,
 					Status:          "active",
-					StartDate:       objStartDate, // Используем сроки договора или текущую дату
-					EndDate:         contract.EndDate,   // Используем сроки договора
+					StartDate:       objStartDate,     // Используем сроки договора или текущую дату
+					EndDate:         contract.EndDate, // Используем сроки договора
 				}
 
 				if err := tenantDB.Create(&contractObject).Error; err != nil {
@@ -1423,7 +1583,7 @@ contractCreated:
 				log.Printf("⚠️ При привязке объектов к договору %d возникло %d ошибок", contract.ID, len(objectErrors))
 			}
 		}
-		
+
 		if attachedCount != int64(len(selectedObjectIDs)) {
 			log.Printf("⚠️ Не все объекты привязаны: ожидалось %d, создано %d", len(selectedObjectIDs), attachedCount)
 		} else {
@@ -1463,11 +1623,11 @@ contractCreated:
 							}
 						}
 					}
-					
+
 					// Рассчитываем total_amount
 					pricePerMonth := billingPlan.Price
 					totalAmount := pricePerMonth.Mul(decimal.NewFromInt(int64(objectsCount))).Mul(decimal.NewFromInt(int64(months)))
-					
+
 					// Обновляем total_amount договора
 					contract.TotalAmount = totalAmount
 					if err := tenantDB.Save(&contract).Error; err != nil {
@@ -1709,7 +1869,7 @@ func DeleteContract(c *gin.Context) {
 	var deletedBy uint
 	var deletedByName string
 	var companyIDUint uint
-	
+
 	if userIDExists {
 		deletedBy = userID.(uint)
 		var user models.User
@@ -1721,21 +1881,21 @@ func DeleteContract(c *gin.Context) {
 			}
 		}
 	}
-	
+
 	if companyIDExists {
 		companyIDUint = companyID.(uint)
 	}
-	
+
 	// Формируем название и описание для корзины
 	entityName := fmt.Sprintf("Договор %s", contract.Number)
 	entityDescription := fmt.Sprintf("Клиент: %s", contract.ClientName)
 	if contract.Title != "" {
 		entityDescription += fmt.Sprintf(", %s", contract.Title)
 	}
-	
-	log.Printf("🗑️ Запись удаления договора в корзину: ID=%d, Name=%s, CompanyID=%d, DeletedBy=%d (%s)", 
+
+	log.Printf("🗑️ Запись удаления договора в корзину: ID=%d, Name=%s, CompanyID=%d, DeletedBy=%d (%s)",
 		contract.ID, entityName, companyIDUint, deletedBy, deletedByName)
-	
+
 	// Создаем упрощенную копию договора для сохранения в корзину (только основные поля)
 	contractSimplified := map[string]interface{}{
 		"id":                contract.ID,
@@ -1756,7 +1916,7 @@ func DeleteContract(c *gin.Context) {
 		"created_at":        contract.CreatedAt,
 		"updated_at":        contract.UpdatedAt,
 	}
-	
+
 	// Записываем в корзину
 	if err := RecordDeletion(
 		tenantDB,
@@ -2194,7 +2354,7 @@ func ensureContractNumeratorTable(db *gorm.DB) error {
 
 	migrator := db.Migrator()
 	tableExists := migrator.HasTable(&models.ContractNumerator{})
-	
+
 	if !tableExists {
 		log.Printf("ensureContractNumeratorTable: таблица contract_numerators отсутствует, пытаемся создать через AutoMigrate")
 		if err := db.AutoMigrate(&models.ContractNumerator{}); err != nil {
@@ -2222,7 +2382,7 @@ func ensureContractNumeratorTable(db *gorm.DB) error {
 	} else {
 		log.Printf("ensureContractNumeratorTable: текущая схема: %s", currentSchema)
 	}
-	
+
 	checkQuery := `
 		SELECT EXISTS (
 			SELECT 1 
@@ -2309,7 +2469,7 @@ func ensureContractNumeratorTable(db *gorm.DB) error {
 	} else {
 		log.Printf("ensureContractNumeratorTable: колонка admin_account_id уже существует")
 	}
-	
+
 	// Финальная проверка перед возвратом
 	var finalCheck bool
 	if err := db.Raw(checkQuery).Scan(&finalCheck).Error; err == nil {
@@ -2341,7 +2501,7 @@ func ensureContractObjectsTable(db *gorm.DB) error {
 	migrator := db.Migrator()
 	if !migrator.HasTable(&models.ContractObject{}) {
 		log.Printf("ensureContractObjectsTable: таблица contract_objects отсутствует, пытаемся создать через SQL")
-		
+
 		// Создаем таблицу вручную через SQL, чтобы избежать проблем с foreign keys
 		createTableSQL := `
 			CREATE TABLE IF NOT EXISTS contract_objects (
@@ -2365,7 +2525,7 @@ func ensureContractObjectsTable(db *gorm.DB) error {
 			CREATE INDEX IF NOT EXISTS idx_contract_objects_object_company_id ON contract_objects(object_company_id);
 			CREATE INDEX IF NOT EXISTS idx_contract_objects_deleted_at ON contract_objects(deleted_at);
 		`
-		
+
 		if err := db.Exec(createTableSQL).Error; err != nil {
 			log.Printf("⚠️ Ошибка создания таблицы contract_objects через SQL: %v", err)
 			// Пробуем через AutoMigrate как fallback
@@ -2382,7 +2542,7 @@ func ensureContractObjectsTable(db *gorm.DB) error {
 		migrator := db.Migrator()
 		hasStartDate := migrator.HasColumn(&models.ContractObject{}, "start_date")
 		hasEndDate := migrator.HasColumn(&models.ContractObject{}, "end_date")
-		
+
 		if !hasStartDate || !hasEndDate {
 			log.Printf("ensureContractObjectsTable: добавляем недостающие колонки start_date и end_date")
 			if !hasStartDate {
@@ -2484,9 +2644,9 @@ func fetchObjectsFromAxentaCloud(token string, accountID int, objectIDs []uint) 
 
 	// Парсим ответ
 	var axentaResponse struct {
-		Count    int                          `json:"count"`
-		Next     *string                      `json:"next"`
-		Previous *string                      `json:"previous"`
+		Count    int                            `json:"count"`
+		Next     *string                        `json:"next"`
+		Previous *string                        `json:"previous"`
 		Results  []axentaCloudObjectForContract `json:"results"`
 	}
 
@@ -2528,9 +2688,9 @@ func fetchObjectsFromAxentaCloud(token string, accountID int, objectIDs []uint) 
 		}
 
 		var nextResponse struct {
-			Count    int                          `json:"count"`
-			Next     *string                      `json:"next"`
-			Previous *string                      `json:"previous"`
+			Count    int                            `json:"count"`
+			Next     *string                        `json:"next"`
+			Previous *string                        `json:"previous"`
 			Results  []axentaCloudObjectForContract `json:"results"`
 		}
 
@@ -2602,7 +2762,7 @@ func loadContractObjectsWithNames(tenantDB *gorm.DB, contract *models.Contract, 
 			if len(objectIDs) > 50 {
 				objectIDs = objectIDs[:50]
 			}
-			
+
 			axentaObjects, err := fetchObjectsFromAxentaCloud(userToken, int(companyID), objectIDs)
 			if err != nil {
 				log.Printf("⚠️ Не удалось загрузить названия объектов для компании %d: %v", companyID, err)
@@ -4357,7 +4517,7 @@ func AttachObjectsToContract(c *gin.Context) {
 											Status:      "active",
 											IsActive:    foundAxentaObj.IsActive,
 											CompanyID:   objectCompanyID,   // Используем целевую компанию (account_id)
-											ContractID:  &contract.ID,       // Устанавливаем ID договора сразу
+											ContractID:  &contract.ID,      // Устанавливаем ID договора сразу
 											LocationID:  defaultLocationID, // Используем найденную или созданную локацию
 											Settings:    "{}",              // Валидный JSON для jsonb поля
 											ExternalID:  externalIDStr,     // Сохраняем ID из Axenta Cloud как строку
@@ -4653,14 +4813,14 @@ func AttachObjectsToContract(c *gin.Context) {
 		// Повторная привязка возможна только на другой срок (без пересечений)
 		var existingAttachments []models.ContractObject
 		skipObject := false
-		
-		if err := tenantDBForContract.Where("object_id = ? AND object_company_id = ? AND status = ?", 
+
+		if err := tenantDBForContract.Where("object_id = ? AND object_company_id = ? AND status = ?",
 			objectID, object.CompanyID, "active").Find(&existingAttachments).Error; err == nil {
-			
+
 			// Проверяем пересечение сроков с существующими привязками
 			contractStartDate := contract.StartDate
 			var contractEndDate *time.Time = contract.EndDate
-			
+
 			for _, existing := range existingAttachments {
 				// Если это тот же договор, пропускаем проверку
 				if existing.ContractID == uint(contractIDUint) {
@@ -4669,7 +4829,7 @@ func AttachObjectsToContract(c *gin.Context) {
 					skipObject = true
 					break
 				}
-				
+
 				// Проверяем пересечение сроков
 				// Периоды пересекаются, если start1 <= end2 && start2 <= end1
 				// Если у договора нет start_date или end_date, пропускаем проверку пересечений (период будет установлен через подписку)
@@ -4691,7 +4851,7 @@ func AttachObjectsToContract(c *gin.Context) {
 						hasOverlap = false
 					}
 				}
-				
+
 				if hasOverlap {
 					// Получаем информацию о конфликтующем договоре для проверки тарифных планов
 					var conflictingContract models.Contract
@@ -4709,7 +4869,7 @@ func AttachObjectsToContract(c *gin.Context) {
 					// Проверяем тарифные планы обоих договоров
 					currentTariffPlanID := contract.TariffPlanID
 					conflictingTariffPlanID := conflictingContract.TariffPlanID
-					
+
 					var currentID, conflictingID uint
 					if currentTariffPlanID != nil {
 						currentID = *currentTariffPlanID
@@ -4717,7 +4877,7 @@ func AttachObjectsToContract(c *gin.Context) {
 					if conflictingTariffPlanID != nil {
 						conflictingID = *conflictingTariffPlanID
 					}
-					
+
 					log.Printf("🔍 Проверка тарифных планов: текущий договор %d (TariffPlanID=%d), конфликтующий договор %d (TariffPlanID=%d)",
 						contract.ID, currentID, conflictingContract.ID, conflictingID)
 
@@ -4750,7 +4910,7 @@ func AttachObjectsToContract(c *gin.Context) {
 						log.Printf("❌ Объект %d уже привязан к договору %s (ID: %d) с тем же тарифным планом '%s' (ID: %d) на период %s - %s",
 							objectID, conflictingContract.Number, conflictingContract.ID, tariffPlanName, currentTariffPlanID,
 							existing.StartDate.Format("2006-01-02"), existing.EndDate.Format("2006-01-02"))
-						
+
 						errorMessages = append(errorMessages, fmt.Sprintf(
 							"Объект %d уже привязан к договору %s (ID: %d) с тарифным планом '%s' на период %s - %s. Объект не может быть привязан к другому договору с тем же тарифным планом.",
 							objectID, conflictingContract.Number, conflictingContract.ID, tariffPlanName,
@@ -4767,7 +4927,7 @@ func AttachObjectsToContract(c *gin.Context) {
 				}
 			}
 		}
-		
+
 		// Если объект нужно пропустить (уже привязан к этому договору или есть конфликт сроков)
 		if skipObject {
 			continue // Пропускаем привязку этого объекта
@@ -4786,8 +4946,8 @@ func AttachObjectsToContract(c *gin.Context) {
 			ObjectCompanyID: object.CompanyID,
 			ObjectSchema:    objectSchema,
 			Status:          "active",
-			StartDate:       objStartDate, // Используем сроки договора или текущую дату
-			EndDate:         contract.EndDate,   // Используем сроки договора
+			StartDate:       objStartDate,     // Используем сроки договора или текущую дату
+			EndDate:         contract.EndDate, // Используем сроки договора
 		}
 
 		log.Printf("🔗 Привязываем объект %d к договору %d через junction table (схема объекта: %s)", objectID, contractIDUint, objectSchema)
@@ -4836,11 +4996,11 @@ func AttachObjectsToContract(c *gin.Context) {
 							}
 						}
 					}
-					
+
 					// Рассчитываем total_amount
 					pricePerMonth := billingPlan.Price
 					totalAmount := pricePerMonth.Mul(decimal.NewFromInt(int64(objectsCount))).Mul(decimal.NewFromInt(int64(months)))
-					
+
 					// Обновляем total_amount договора
 					contract.TotalAmount = totalAmount
 					if err := tenantDBForContract.Save(&contract).Error; err != nil {
@@ -5009,7 +5169,7 @@ func SyncContractFromSubscription(c *gin.Context) {
 	}
 
 	var subscription models.Subscription
-	if err := publicDB.Where("contract_id = ? AND admin_account_id = ? AND status IN (?, ?)", 
+	if err := publicDB.Where("contract_id = ? AND admin_account_id = ? AND status IN (?, ?)",
 		contract.ID, adminAccountID, "active", "scheduled").
 		Order("created_at DESC").
 		First(&subscription).Error; err != nil {
@@ -5031,7 +5191,7 @@ func SyncContractFromSubscription(c *gin.Context) {
 
 	// Обновляем период договора из подписки
 	contractUpdated := false
-	
+
 	// Обновляем start_date из подписки
 	if contract.StartDate == nil || !contract.StartDate.Equal(subscription.StartDate) {
 		contract.StartDate = &subscription.StartDate
@@ -5087,7 +5247,7 @@ func SyncContractFromSubscription(c *gin.Context) {
 	// Если объекты не указаны в запросе, пытаемся получить их из существующих связей договора или подписки
 	if len(requestData.ObjectIDs) == 0 {
 		log.Printf("ℹ️ Объекты не указаны в запросе, получаем их из договора %d или подписки %d", contract.ID, subscription.ID)
-		
+
 		// Сначала проверяем существующие связи договора (они должны были быть созданы при создании подписки)
 		var existingObjects []models.ContractObject
 		if err := tenantDB.Where("contract_id = ? AND status = ?", contract.ID, "active").
@@ -5101,7 +5261,7 @@ func SyncContractFromSubscription(c *gin.Context) {
 			log.Printf("✅ Найдено %d существующих объектов для договора %d", len(objectIDs), contract.ID)
 		} else {
 			log.Printf("ℹ️ Существующие объекты не найдены для договора %d, проверяем подписку через assignments", contract.ID)
-			
+
 			// Если объектов нет в договоре, пытаемся получить их из подписки через таблицу assignments
 			var assignments []models.Assignment
 			if err := publicDB.Where("subscription_id = ? AND status = ?", subscription.ID, "active").
@@ -5122,7 +5282,7 @@ func SyncContractFromSubscription(c *gin.Context) {
 	// Если объекты указаны (из запроса или из существующих связей), обновляем их привязку
 	if len(requestData.ObjectIDs) > 0 {
 		log.Printf("🔗 Привязываем объекты %v к договору %d через синхронизацию", requestData.ObjectIDs, contract.ID)
-		
+
 		// Убеждаемся, что таблица contract_objects существует
 		if err := ensureContractObjectsTable(tenantDB); err != nil {
 			log.Printf("⚠️ Не удалось создать таблицу contract_objects: %v", err)
@@ -5192,7 +5352,7 @@ func SyncContractFromSubscription(c *gin.Context) {
 
 				// Проверяем, не существует ли уже такая связь
 				var existingSameContract models.ContractObject
-				if err := tenantDB.Where("contract_id = ? AND object_id = ? AND object_company_id = ?", 
+				if err := tenantDB.Where("contract_id = ? AND object_id = ? AND object_company_id = ?",
 					contract.ID, objectID, targetAccountID).First(&existingSameContract).Error; err == nil {
 					// Обновляем даты существующей связи из подписки
 					needsUpdate := false
@@ -5245,7 +5405,7 @@ func SyncContractFromSubscription(c *gin.Context) {
 			} else {
 				log.Printf("✅ Привязано %d объектов к договору %d", attachedCount, contract.ID)
 			}
-			
+
 			// Пересчитываем сумму договора на основе количества объектов и тарифного плана
 			if attachedCount > 0 && contract.TariffPlanID != nil && *contract.TariffPlanID > 0 {
 				// Загружаем тарифный план
@@ -5271,11 +5431,11 @@ func SyncContractFromSubscription(c *gin.Context) {
 									}
 								}
 							}
-							
+
 							// Рассчитываем total_amount
 							pricePerMonth := billingPlan.Price
 							totalAmount := pricePerMonth.Mul(decimal.NewFromInt(int64(objectsCount))).Mul(decimal.NewFromInt(int64(months)))
-							
+
 							// Обновляем total_amount договора
 							contract.TotalAmount = totalAmount
 							if err := tenantDB.Save(&contract).Error; err != nil {
