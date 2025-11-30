@@ -84,6 +84,11 @@ type Contract struct {
 	TotalAmount decimal.Decimal `json:"total_amount" gorm:"type:decimal(15,2)"`
 	Currency    string          `json:"currency" gorm:"default:'RUB';type:varchar(3)"`
 
+	// Скидки (для партнерских договоров)
+	DiscountType          string          `json:"discount_type" gorm:"type:varchar(20);default:'none'"` // none, manual, auto
+	ManualDiscountPercent decimal.Decimal `json:"manual_discount_percent" gorm:"type:decimal(5,2);default:0"` // 0-100
+	UseAutoDiscount       bool            `json:"use_auto_discount" gorm:"default:false"` // Использовать автоматические скидки
+
 	// Страны и реквизиты (поля не используются в текущей версии БД)
 	SellerCountryCode string           `json:"seller_country_code" gorm:"-"` // Страна продавца (не используется)
 	BuyerCountryCode  string           `json:"buyer_country_code" gorm:"-"`  // Страна покупателя (не используется)
@@ -142,6 +147,29 @@ func (c *Contract) GetDaysUntilExpiry() int {
 	}
 	duration := c.EndDate.Sub(time.Now())
 	return int(duration.Hours() / 24)
+}
+
+// CalculateAutoDiscount рассчитывает автоматическую скидку на основе количества активных объектов
+// Правила: >1000 объектов = 10%, >2000 = 20%, >4000 = 30%
+func CalculateAutoDiscount(activeObjectsCount int) decimal.Decimal {
+	if activeObjectsCount >= 4000 {
+		return decimal.NewFromInt(30) // 30%
+	} else if activeObjectsCount >= 2000 {
+		return decimal.NewFromInt(20) // 20%
+	} else if activeObjectsCount >= 1000 {
+		return decimal.NewFromInt(10) // 10%
+	}
+	return decimal.Zero // Нет скидки
+}
+
+// GetDiscountPercent возвращает применяемый процент скидки
+func (c *Contract) GetDiscountPercent(activeObjectsCount int) decimal.Decimal {
+	if c.DiscountType == "manual" {
+		return c.ManualDiscountPercent
+	} else if c.DiscountType == "auto" || c.UseAutoDiscount {
+		return CalculateAutoDiscount(activeObjectsCount)
+	}
+	return decimal.Zero
 }
 
 // ContractAppendix представляет приложение к договору

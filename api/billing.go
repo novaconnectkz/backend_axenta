@@ -1562,6 +1562,27 @@ func DeleteSubscription(c *gin.Context) {
 		return
 	}
 
+	// Сначала проверяем, существует ли подписка вообще (включая удаленные)
+	var deletedSubscription models.Subscription
+	if err := database.DB.Unscoped().Where("id = ? AND admin_account_id = ?", id, adminAccountID).First(&deletedSubscription).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"status": "error",
+			"error":  "Подписка не найдена",
+		})
+		return
+	}
+	
+	// Проверяем, не удалена ли уже подписка
+	if deletedSubscription.DeletedAt.Valid {
+		log.Printf("⚠️ Попытка удалить уже удаленную подписку %d", subscriptionID)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Подписка уже удалена",
+			"code":   "ALREADY_DELETED",
+		})
+		return
+	}
+
 	var subscription models.Subscription
 	if err := database.DB.Where("id = ? AND admin_account_id = ?", id, adminAccountID).First(&subscription).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{

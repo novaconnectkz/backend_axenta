@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"time"
 
-	"backend_axenta/database"
 	"backend_axenta/middleware"
 	"backend_axenta/models"
 	"backend_axenta/services"
@@ -62,9 +61,22 @@ func GetPartnerContractSnapshots(c *gin.Context) {
 		endDate = time.Now()
 	}
 
-	// Получаем снимки из базы данных (public schema)
+	// Получаем tenant DB из контекста
+	tenantDB, exists := c.Get("tenant_db")
+	if !exists {
+		log.Printf("❌ Tenant DB не найдена в контексте")
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Tenant DB не найдена",
+		})
+		return
+	}
+
+	db := tenantDB.(*gorm.DB)
+
+	// Получаем снимки из базы данных (tenant schema)
 	var snapshots []models.PartnerDailySnapshot
-	if err := database.DB.
+	if err := db.
 		Where("contract_id = ? AND admin_account_id = ? AND snapshot_date >= ? AND snapshot_date <= ?",
 			contractID, adminAccountID, startDate, endDate).
 		Order("snapshot_date ASC").
@@ -201,7 +213,7 @@ func CreatePartnerSnapshots(c *gin.Context) {
 	errorCount := 0
 
 	for _, contract := range contracts {
-		if err := snapshotService.CreateSnapshotForContractWithToken(&contract, snapshotDate, userToken); err != nil {
+		if err := snapshotService.CreateSnapshotForContractWithTokenAndDB(&contract, snapshotDate, userToken, db); err != nil {
 			log.Printf("❌ Ошибка создания снимка для договора %d: %v", contract.ID, err)
 			errorCount++
 		} else {
@@ -340,7 +352,7 @@ func GeneratePartnerSnapshotsForPeriod(c *gin.Context) {
 		snapshotDate := time.Date(currentDate.Year(), currentDate.Month(), currentDate.Day(), 0, 0, 0, 0, time.UTC)
 		
 		// Создаем снимок для этой даты
-		if err := snapshotService.CreateSnapshotForContractWithToken(&contract, snapshotDate, userToken); err != nil {
+		if err := snapshotService.CreateSnapshotForContractWithTokenAndDB(&contract, snapshotDate, userToken, db); err != nil {
 			log.Printf("❌ Ошибка создания снимка для договора %d на дату %s: %v", 
 				contract.ID, snapshotDate.Format("2006-01-02"), err)
 			errorCount++

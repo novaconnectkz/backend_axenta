@@ -183,12 +183,12 @@ func GetAllMigrations() []MigrationInfo {
 			Description: "Последовательности нумерации счетов по странам",
 			IsGlobal:    true,
 		},
-		{
-			TableName:   "partner_daily_snapshots",
-			Model:       &models.PartnerDailySnapshot{},
-			Description: "Ежедневные снимки объектов партнеров для тарификации",
-			IsGlobal:    true,
-		},
+	{
+		TableName:   "partner_daily_snapshots",
+		Model:       &models.PartnerDailySnapshot{},
+		Description: "Ежедневные снимки объектов партнеров для тарификации",
+		IsGlobal:    false, // Тенантная таблица - каждая компания имеет свои снимки
+	},
 
 		// Тенантные таблицы (в схемах компаний)
 		{

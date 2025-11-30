@@ -40,7 +40,17 @@ type PartnerDailySnapshot struct {
 	TotalObjectsCount  int `json:"total_objects_count" gorm:"not null;default:0"`  // Всего объектов в учетной записи
 	ActiveObjectsCount int `json:"active_objects_count" gorm:"not null;default:0"` // Активных объектов (для тарификации)
 
-	// Стоимость за день = daily_price * active_objects_count (храним точно для прозрачности)
+	// Скидки
+	DiscountType    string          `json:"discount_type" gorm:"type:varchar(20);default:'none'"` // none, manual, auto
+	DiscountPercent decimal.Decimal `json:"discount_percent" gorm:"type:decimal(5,2);default:0"` // Процент скидки (0-100)
+	
+	// Стоимость до скидки = daily_price * active_objects_count
+	CostBeforeDiscount decimal.Decimal `json:"cost_before_discount" gorm:"type:decimal(12,4);not null;default:0"`
+	
+	// Сумма скидки
+	DiscountAmount decimal.Decimal `json:"discount_amount" gorm:"type:decimal(12,4);not null;default:0"`
+	
+	// Стоимость за день после применения скидки
 	DailyCost decimal.Decimal `json:"daily_cost" gorm:"type:decimal(12,4);not null"`
 
 	// Статус снимка
@@ -64,10 +74,21 @@ func (s *PartnerDailySnapshot) BeforeCreate(tx *gorm.DB) error {
 		s.DailyPrice = dailyPriceExact.Round(4)
 	}
 	
-	// Стоимость за день = (дневная цена с 4 знаками) * количество объектов
-	// Результат округляем до 2 знаков (копейки) для итоговой суммы
+	// Стоимость до скидки = (дневная цена) * количество объектов
 	costExact := s.DailyPrice.Mul(decimal.NewFromInt(int64(s.ActiveObjectsCount)))
-	s.DailyCost = costExact.Round(2)
+	s.CostBeforeDiscount = costExact.Round(2)
+	
+	// Рассчитываем скидку
+	if s.DiscountPercent.GreaterThan(decimal.Zero) {
+		// Сумма скидки = стоимость * (процент / 100)
+		discountMultiplier := s.DiscountPercent.Div(decimal.NewFromInt(100))
+		s.DiscountAmount = s.CostBeforeDiscount.Mul(discountMultiplier).Round(2)
+	} else {
+		s.DiscountAmount = decimal.Zero
+	}
+	
+	// Итоговая стоимость = стоимость до скидки - сумма скидки
+	s.DailyCost = s.CostBeforeDiscount.Sub(s.DiscountAmount).Round(2)
 	
 	return nil
 }
