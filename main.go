@@ -776,6 +776,15 @@ func main() {
 	// Важно: более специфичные роуты (с дополнительными параметрами) должны быть зарегистрированы ПЕРЕД общими
 	// Например: /contracts/:id/objects должен быть ПЕРЕД /contracts/:id
 	log.Println("🔧 Регистрация роутов для договоров...")
+	
+	// Временный эндпоинт для отладки данных из Axenta Cloud
+	apiGroup.GET("/contracts/debug-axenta-objects", api.DebugAxentaPartnerObjects)
+	log.Println("✅ Зарегистрирован GET /api/auth/contracts/debug-axenta-objects -> DebugAxentaPartnerObjects")
+	
+	// Эндпоинт для очистки кэша партнерских объектов
+	apiGroup.POST("/contracts/clear-partner-cache", api.ClearPartnerObjectsCache)
+	log.Println("✅ Зарегистрирован POST /api/auth/contracts/clear-partner-cache -> ClearPartnerObjectsCache")
+	
 	apiGroup.GET("/contracts/expiring", api.GetExpiringContracts)
 
 	// Роуты для работы с объектами договора (регистрируем ПЕРЕД общими роутами)

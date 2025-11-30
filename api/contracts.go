@@ -40,6 +40,99 @@ type partnerObjectsCacheEntry struct {
 	timestamp time.Time
 }
 
+// getPartnerObjectsCountFromAccount получает количество активных объектов партнера из /api/cms/accounts/
+func getPartnerObjectsCountFromAccount(partnerCompanyID uint, userToken string) (int, error) {
+	client := &http.Client{Timeout: 30 * time.Second}
+	
+	// Используем СПИСОК accounts БЕЗ фильтра и найдем нужную компанию
+	// (параметр ?id= фильтрует не по полю id, а по другому критерию)
+	accountURL := "https://axenta.cloud/api/cms/accounts/?page=1&per_page=10000"
+	
+	req, err := http.NewRequest("GET", accountURL, nil)
+	if err != nil {
+		return 0, fmt.Errorf("ошибка создания запроса: %w", err)
+	}
+	req.Header.Set("Authorization", "Token "+userToken)
+	
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("ошибка запроса к Axenta Cloud: %w", err)
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("Axenta Cloud вернул статус %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+	
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, fmt.Errorf("ошибка чтения тела ответа: %w", err)
+	}
+	
+	responsePreview := string(bodyBytes)
+	if len(responsePreview) > 500 {
+		responsePreview = responsePreview[:500] + "..."
+	}
+	log.Printf("🔍 Сырой ответ от /api/cms/accounts/?id=%d: %s", partnerCompanyID, responsePreview)
+	
+	// Пробуем сначала как объект с results
+	var listResponse struct {
+		Results []map[string]interface{} `json:"results"`
+		Count   int                      `json:"count"`
+	}
+	
+	var accounts []map[string]interface{}
+	
+	// Если это объект с results
+	if err := json.Unmarshal(bodyBytes, &listResponse); err == nil && len(listResponse.Results) > 0 {
+		accounts = listResponse.Results
+		log.Printf("✅ Парсим как объект с results, найдено аккаунтов: %d", len(accounts))
+	} else {
+		// Если это просто массив
+		if err := json.Unmarshal(bodyBytes, &accounts); err != nil {
+			return 0, fmt.Errorf("ошибка декодирования ответа: %w", err)
+		}
+		log.Printf("✅ Парсим как массив, найдено аккаунтов: %d", len(accounts))
+	}
+	
+	// Ищем компанию с нужным ID
+	var account map[string]interface{}
+	found := false
+	for _, acc := range accounts {
+		if accID, ok := acc["id"].(float64); ok && uint(accID) == partnerCompanyID {
+			account = acc
+			found = true
+			break
+		}
+	}
+	
+	if !found {
+		log.Printf("⚠️ Учетная запись ID=%d не найдена в /api/cms/accounts/", partnerCompanyID)
+		return 0, nil
+	}
+	
+	// Пробуем разные варианты названий полей
+	objectsActive := 0
+	if val, ok := account["objectsActive"].(float64); ok {
+		objectsActive = int(val)
+	} else if val, ok := account["objects_active"].(float64); ok {
+		objectsActive = int(val)
+	}
+	
+	objectsTotal := 0
+	if val, ok := account["objectsTotal"].(float64); ok {
+		objectsTotal = int(val)
+	} else if val, ok := account["objects_total"].(float64); ok {
+		objectsTotal = int(val)
+	}
+	
+	log.Printf("✅ Статистика из /api/cms/accounts/?id=%d: активных=%d, всего=%d (источник: список accounts)",
+		partnerCompanyID, objectsActive, objectsTotal)
+	
+	return objectsActive, nil
+}
+
 // getPartnerObjectsFromCache получает объекты из кэша или загружает их
 func getPartnerObjectsFromCache(partnerCompanyID uint, userToken string) ([]models.Object, error) {
 	// Проверяем кэш
@@ -155,6 +248,13 @@ func getPartnerObjectsFromCache(partnerCompanyID uint, userToken string) ([]mode
 	
 	// Фильтруем только активные объекты (дополнительная проверка на клиенте)
 	var objects []models.Object
+	var activeObjectIDs []uint
+	var inactiveObjects []struct {
+		ID       uint
+		Name     string
+		IsActive bool
+	}
+	
 	for _, obj := range allObjects {
 		if obj.IsActive {
 			objects = append(objects, models.Object{
@@ -162,12 +262,27 @@ func getPartnerObjectsFromCache(partnerCompanyID uint, userToken string) ([]mode
 				CompanyID: partnerCompanyID,
 				Name:      obj.Name,
 			})
+			if len(activeObjectIDs) < 10 {
+				activeObjectIDs = append(activeObjectIDs, obj.ID)
+			}
+		} else {
+			if len(inactiveObjects) < 10 {
+				inactiveObjects = append(inactiveObjects, struct {
+					ID       uint
+					Name     string
+					IsActive bool
+				}{ID: obj.ID, Name: obj.Name, IsActive: obj.IsActive})
+			}
 		}
 	}
 	
 	inactiveCount := len(allObjects) - len(objects)
 	log.Printf("✅ Загружено %d активных объектов из %d всего для партнерской компании ID=%d (неактивных: %d)", 
 		len(objects), len(allObjects), partnerCompanyID, inactiveCount)
+	log.Printf("📋 Первые 10 активных объектов (ID): %v", activeObjectIDs)
+	if len(inactiveObjects) > 0 {
+		log.Printf("⚠️ Первые неактивные объекты: %+v", inactiveObjects)
+	}
 	
 	// Сохраняем в кэш
 	partnerObjectsCacheMutex.Lock()
@@ -534,13 +649,23 @@ func GetContracts(c *gin.Context) {
 		}
 	}
 
-	// Загружаем объекты для каждой уникальной партнерской компании используя глобальный кэш с TTL
+	// Получаем КОЛИЧЕСТВО объектов из /api/cms/accounts/ (ПРАВИЛЬНЫЙ источник, совпадает с веб-интерфейсом)
 	if len(partnerCompanyIDs) > 0 && userToken != "" {
 		for partnerCompanyID := range partnerCompanyIDs {
-			objects, err := getPartnerObjectsFromCache(partnerCompanyID, userToken)
+			objectsCount, err := getPartnerObjectsCountFromAccount(partnerCompanyID, userToken)
 			if err != nil {
-				log.Printf("⚠️ Ошибка загрузки объектов для партнера ID=%d: %v", partnerCompanyID, err)
+				log.Printf("⚠️ Ошибка получения статистики для партнера ID=%d: %v", partnerCompanyID, err)
 				continue
+			}
+			
+			// Создаем массив объектов нужной длины (frontend использует len(Objects))
+			fakeObjects := make([]models.Object, objectsCount)
+			for j := 0; j < objectsCount; j++ {
+				fakeObjects[j] = models.Object{
+					ID:        uint(j + 1),
+					CompanyID: partnerCompanyID,
+					Name:      fmt.Sprintf("Object %d", j+1),
+				}
 			}
 			
 			// Заполняем partnerObjectsMap для всех договоров этого партнера
@@ -548,8 +673,8 @@ func GetContracts(c *gin.Context) {
 				if contracts[i].ContractType == "partner" && 
 				   contracts[i].PartnerCompanyID != nil && 
 				   *contracts[i].PartnerCompanyID == partnerCompanyID {
-					partnerObjectsMap[contracts[i].ID] = objects
-					log.Printf("📊 Партнерский договор ID=%d: %d объектов", contracts[i].ID, len(objects))
+					partnerObjectsMap[contracts[i].ID] = fakeObjects
+					log.Printf("📊 Партнерский договор ID=%d: %d объектов (из /api/cms/accounts/)", contracts[i].ID, len(fakeObjects))
 				}
 			}
 		}
@@ -5568,5 +5693,112 @@ func SyncContractFromSubscription(c *gin.Context) {
 		"status":  "success",
 		"message": "Договор успешно синхронизирован с подпиской",
 		"data":    contract,
+	})
+}
+
+// ClearPartnerObjectsCache очищает кэш партнерских объектов
+func ClearPartnerObjectsCache(c *gin.Context) {
+	partnerCompanyIDStr := c.Query("partner_company_id")
+	
+	partnerObjectsCacheMutex.Lock()
+	defer partnerObjectsCacheMutex.Unlock()
+	
+	if partnerCompanyIDStr != "" {
+		// Очищаем для конкретного партнера
+		partnerCompanyID, err := strconv.ParseUint(partnerCompanyIDStr, 10, 64)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Неверный partner_company_id"})
+			return
+		}
+		delete(globalPartnerObjectsCache, uint(partnerCompanyID))
+		c.JSON(http.StatusOK, gin.H{
+			"status": "success",
+			"message": fmt.Sprintf("Кэш для партнера ID=%d очищен", partnerCompanyID),
+		})
+	} else {
+		// Очищаем весь кэш
+		globalPartnerObjectsCache = make(map[uint]*partnerObjectsCacheEntry)
+		c.JSON(http.StatusOK, gin.H{
+			"status": "success",
+			"message": "Весь кэш партнерских объектов очищен",
+		})
+	}
+}
+
+// DebugAxentaPartnerObjects - временный эндпоинт для проверки данных из Axenta Cloud
+func DebugAxentaPartnerObjects(c *gin.Context) {
+	partnerCompanyIDStr := c.Query("partner_company_id")
+	if partnerCompanyIDStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "partner_company_id обязателен"})
+		return
+	}
+	
+	partnerCompanyID, err := strconv.ParseUint(partnerCompanyIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Неверный partner_company_id"})
+		return
+	}
+	
+	userToken := c.GetHeader("X-Axenta-Token")
+	if userToken == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Нет токена Axenta"})
+		return
+	}
+	
+	client := &http.Client{Timeout: 30 * time.Second}
+	
+	// Делаем прямой запрос к Axenta Cloud
+	axentaCloudURL := fmt.Sprintf("https://axenta.cloud/api/cms/objects/?accountId=%d&page=1&per_page=1000&is_active=true", 
+		partnerCompanyID)
+	
+	req, err := http.NewRequest("GET", axentaCloudURL, nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	req.Header.Set("Authorization", "Token "+userToken)
+	
+	resp, err := client.Do(req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+	
+	body, _ := io.ReadAll(resp.Body)
+	
+	var axentaResponse struct {
+		Results []struct {
+			ID       uint   `json:"id"`
+			Name     string `json:"name"`
+			IsActive bool   `json:"isActive"`
+		} `json:"results"`
+		Count int     `json:"count"`
+		Next  *string `json:"next"`
+	}
+	
+	json.Unmarshal(body, &axentaResponse)
+	
+	activeCount := 0
+	inactiveCount := 0
+	for _, obj := range axentaResponse.Results {
+		if obj.IsActive {
+			activeCount++
+		} else {
+			inactiveCount++
+		}
+	}
+	
+	c.JSON(http.StatusOK, gin.H{
+		"partner_company_id": partnerCompanyID,
+		"url": axentaCloudURL,
+		"axenta_response": gin.H{
+			"count": axentaResponse.Count,
+			"results_length": len(axentaResponse.Results),
+			"active_in_results": activeCount,
+			"inactive_in_results": inactiveCount,
+			"has_next": axentaResponse.Next != nil,
+		},
+		"raw_response": string(body),
 	})
 }
