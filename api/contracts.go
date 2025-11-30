@@ -369,11 +369,23 @@ func GetContracts(c *gin.Context) {
 	// Карта объектов для партнерских договоров
 	partnerObjectsMap := make(map[uint][]models.Object) // contract_id -> objects
 
-	// Загружаем объекты для каждого партнерского договора
+	// Сначала собираем все уникальные partner_company_id
+	partnerCompanyIDs := make(map[uint]bool)
 	for i := range contracts {
 		if contracts[i].ContractType == "partner" && contracts[i].PartnerCompanyID != nil {
-			partnerCompanyID := *contracts[i].PartnerCompanyID
-			log.Printf("📦 Загрузка объектов для партнерского договора ID=%d, partner_company_id=%d", contracts[i].ID, partnerCompanyID)
+			partnerCompanyIDs[*contracts[i].PartnerCompanyID] = true
+		}
+	}
+
+	// Создаем кэш для объектов партнерских компаний: company_id -> objects
+	partnerCompanyObjectsCache := make(map[uint][]models.Object)
+
+	// Загружаем объекты для каждой уникальной партнерской компании (batch loading)
+	if len(partnerCompanyIDs) > 0 && userToken != "" {
+		client := &http.Client{Timeout: 30 * time.Second}
+		
+		for partnerCompanyID := range partnerCompanyIDs {
+			log.Printf("📦 Загрузка объектов для партнерской компании partner_company_id=%d", partnerCompanyID)
 
 			// Загружаем ВСЕ объекты с пагинацией
 			var allObjects []struct {
@@ -384,11 +396,10 @@ func GetContracts(c *gin.Context) {
 
 			page := 1
 			perPage := 1000
-			client := &http.Client{Timeout: 30 * time.Second}
 
 			for {
-				// Запрос к Axenta Cloud API с пагинацией
-				axentaCloudURL := fmt.Sprintf("https://axenta.cloud/api/cms/objects/?accountId=%d&page=%d&per_page=%d", 
+				// Запрос к Axenta Cloud API с пагинацией и фильтром по активным объектам
+				axentaCloudURL := fmt.Sprintf("https://axenta.cloud/api/cms/objects/?accountId=%d&page=%d&per_page=%d&is_active=true", 
 					partnerCompanyID, page, perPage)
 				
 				req, err := http.NewRequest("GET", axentaCloudURL, nil)
@@ -430,8 +441,8 @@ func GetContracts(c *gin.Context) {
 				// Добавляем объекты с текущей страницы
 				allObjects = append(allObjects, axentaResponse.Results...)
 
-				log.Printf("📄 Страница %d: получено %d объектов, всего загружено %d из %d",
-					page, len(axentaResponse.Results), len(allObjects), axentaResponse.Count)
+				log.Printf("📄 Партнер ID=%d, Страница %d: получено %d объектов, всего загружено %d, Axenta Cloud Count=%d",
+					partnerCompanyID, page, len(axentaResponse.Results), len(allObjects), axentaResponse.Count)
 
 				// Если получили меньше объектов, чем per_page, или нет следующей страницы - это последняя страница
 				if len(axentaResponse.Results) < perPage || axentaResponse.Next == nil {
@@ -453,9 +464,33 @@ func GetContracts(c *gin.Context) {
 				}
 			}
 
+			// Сохраняем в кэш для этой партнерской компании
+			partnerCompanyObjectsCache[partnerCompanyID] = objects
+			
+			// Детальное логирование для диагностики
+			inactiveCount := len(allObjects) - len(objects)
+			log.Printf("✅ Загружено %d активных объектов из %d всего для партнерской компании ID=%d (неактивных: %d)", 
+				len(objects), len(allObjects), partnerCompanyID, inactiveCount)
+			
+			// Если есть расхождение, логируем первые неактивные объекты
+			if inactiveCount > 0 && inactiveCount <= 5 {
+				log.Printf("🔍 Неактивные объекты для компании ID=%d:", partnerCompanyID)
+				for _, obj := range allObjects {
+					if !obj.IsActive {
+						log.Printf("   - ID=%d Name=%s IsActive=%v", obj.ID, obj.Name, obj.IsActive)
+					}
+				}
+			}
+		}
+	}
+
+	// Теперь заполняем partnerObjectsMap используя кэш
+	for i := range contracts {
+		if contracts[i].ContractType == "partner" && contracts[i].PartnerCompanyID != nil {
+			partnerCompanyID := *contracts[i].PartnerCompanyID
+			if objects, found := partnerCompanyObjectsCache[partnerCompanyID]; found {
 			partnerObjectsMap[contracts[i].ID] = objects
-			log.Printf("✅ Загружено %d активных объектов из %d всего для партнерского договора ID=%d", 
-				len(objects), len(allObjects), contracts[i].ID)
+			}
 		}
 	}
 
