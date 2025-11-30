@@ -160,6 +160,10 @@ func main() {
 	r.RedirectTrailingSlash = false
 	r.RedirectFixedPath = false
 
+	// Добавляем gzip сжатие для оптимизации при плохом интернете
+	r.Use(middleware.GzipMiddleware())
+	log.Println("✅ Gzip compression middleware enabled")
+
 	// Добавляем audit middleware для логирования всех запросов
 	if cfg.Audit.Enabled {
 		r.Use(audit.Middleware())
