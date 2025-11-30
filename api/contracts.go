@@ -103,8 +103,8 @@ func getPartnerObjectsFromCache(partnerCompanyID uint, userToken string) ([]mode
 	perPage := 1000
 	
 	for {
-		// Запрос к Axenta Cloud API с пагинацией и фильтром по активным объектам
-		axentaCloudURL := fmt.Sprintf("https://axenta.cloud/api/cms/objects/?accountId=%d&page=%d&per_page=%d&is_active=true", 
+		// Запрос к Axenta Cloud API с пагинацией (получаем ВСЕ объекты, фильтруем на клиенте)
+		axentaCloudURL := fmt.Sprintf("https://axenta.cloud/api/cms/objects/?accountId=%d&page=%d&per_page=%d", 
 			partnerCompanyID, page, perPage)
 		
 		req, err := http.NewRequest("GET", axentaCloudURL, nil)
