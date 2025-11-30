@@ -812,6 +812,8 @@ func main() {
 	// Снимки для партнерских договоров
 	apiGroup.GET("/contracts/:id/partner-snapshots", api.GetPartnerContractSnapshots)
 	apiGroup.POST("/contracts/partner-snapshots/create", api.CreatePartnerSnapshots)
+	apiGroup.POST("/contracts/:id/partner-snapshots/generate", api.GeneratePartnerSnapshotsForPeriod)
+	log.Println("✅ Зарегистрирован POST /api/auth/contracts/:id/partner-snapshots/generate -> GeneratePartnerSnapshotsForPeriod")
 	log.Println("✅ Все роуты для договоров зарегистрированы")
 	// apiGroup.GET("/contracts/:contract_id/cost", api.CalculateContractCost) // Временно отключено
 

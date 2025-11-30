@@ -85,14 +85,52 @@ func (s *PartnerSnapshotService) CreateSnapshotForContract(contract *models.Cont
 
 // CreateSnapshotForContractWithToken создает снимок для конкретного договора с указанным токеном
 func (s *PartnerSnapshotService) CreateSnapshotForContractWithToken(contract *models.Contract, snapshotDate time.Time, token string) error {
-	log.Printf("📸 Создание снимка для договора ID=%d, number=%s", contract.ID, contract.Number)
+	log.Printf("📸 Создание снимка для договора ID=%d, number=%s на дату %s", 
+		contract.ID, contract.Number, snapshotDate.Format("2006-01-02"))
 
 	// Проверяем, не создан ли уже снимок на эту дату
 	var existingSnapshot models.PartnerDailySnapshot
 	if err := s.db.
 		Where("contract_id = ? AND snapshot_date = ?", contract.ID, snapshotDate).
 		First(&existingSnapshot).Error; err == nil {
-		log.Printf("ℹ️ Снимок для договора %d на дату %s уже существует", contract.ID, snapshotDate.Format("2006-01-02"))
+		log.Printf("ℹ️ Снимок для договора %d на дату %s уже существует, обновляем...", 
+			contract.ID, snapshotDate.Format("2006-01-02"))
+		
+		// Обновляем существующий снимок вместо создания нового
+		// Загружаем тарифный план
+		var tariffPlan models.BillingPlan
+		if err := s.db.
+			Where("id = ?", *contract.TariffPlanID).
+			First(&tariffPlan).Error; err != nil {
+			return fmt.Errorf("тарифный план не найден: %w", err)
+		}
+
+		// Получаем объекты партнера из Axenta Cloud API на дату снимка
+		objectsCount, activeObjectsCount, err := s.getPartnerObjectsCountForDate(*contract.PartnerCompanyID, token, snapshotDate)
+		if err != nil {
+			return fmt.Errorf("ошибка получения объектов партнера: %w", err)
+		}
+
+		// Расчет цен
+		monthlyPrice := tariffPlan.Price
+		dailyPrice := monthlyPrice.Div(decimal.NewFromInt(30)).Round(4)
+		dailyCost := dailyPrice.Mul(decimal.NewFromInt(int64(activeObjectsCount))).Round(2)
+
+		// Обновляем снимок
+		existingSnapshot.TotalObjectsCount = objectsCount
+		existingSnapshot.ActiveObjectsCount = activeObjectsCount
+		existingSnapshot.MonthlyPrice = monthlyPrice
+		existingSnapshot.DailyPrice = dailyPrice
+		existingSnapshot.DailyCost = dailyCost
+		existingSnapshot.Status = "completed"
+
+		if err := s.db.Save(&existingSnapshot).Error; err != nil {
+			return fmt.Errorf("ошибка обновления снимка: %w", err)
+		}
+
+		log.Printf("✅ Снимок обновлен: договор=%s, дата=%s, объектов=%d (активных=%d), цена/день=%.4f₽, стоимость=%.2f₽",
+			contract.Number, snapshotDate.Format("2006-01-02"), objectsCount, activeObjectsCount, dailyPrice, dailyCost)
+
 		return nil
 	}
 
@@ -104,8 +142,8 @@ func (s *PartnerSnapshotService) CreateSnapshotForContractWithToken(contract *mo
 		return fmt.Errorf("тарифный план не найден: %w", err)
 	}
 
-	// Получаем объекты партнера из Axenta Cloud API
-	objectsCount, activeObjectsCount, err := s.getPartnerObjectsCountWithToken(*contract.PartnerCompanyID, token)
+	// Получаем объекты партнера из Axenta Cloud API на дату снимка
+	objectsCount, activeObjectsCount, err := s.getPartnerObjectsCountForDate(*contract.PartnerCompanyID, token, snapshotDate)
 	if err != nil {
 		return fmt.Errorf("ошибка получения объектов партнера: %w", err)
 	}
@@ -135,20 +173,30 @@ func (s *PartnerSnapshotService) CreateSnapshotForContractWithToken(contract *mo
 		return fmt.Errorf("ошибка создания снимка: %w", err)
 	}
 
-	log.Printf("✅ Снимок создан: договор=%s, объектов=%d (активных=%d), цена/день=%.2f₽, стоимость=%.2f₽",
-		contract.Number, objectsCount, activeObjectsCount, dailyPrice, dailyCost)
+	log.Printf("✅ Снимок создан: договор=%s, дата=%s, объектов=%d (активных=%d), цена/день=%.4f₽, стоимость=%.2f₽",
+		contract.Number, snapshotDate.Format("2006-01-02"), objectsCount, activeObjectsCount, dailyPrice, dailyCost)
 
 	return nil
 }
 
 // getPartnerObjectsCountWithToken получает количество объектов партнера из Axenta Cloud с указанным токеном
+// Учитывает дату снимка для фильтрации объектов по дате создания
 func (s *PartnerSnapshotService) getPartnerObjectsCountWithToken(partnerCompanyID uint, token string) (total int, active int, err error) {
+	// Для обратной совместимости - используем текущую дату
+	return s.getPartnerObjectsCountForDate(partnerCompanyID, token, time.Now())
+}
+
+// getPartnerObjectsCountForDate получает количество объектов партнера на определенную дату
+// Фильтрует объекты: учитываются только те, что были созданы до или в день снимка
+func (s *PartnerSnapshotService) getPartnerObjectsCountForDate(partnerCompanyID uint, token string, snapshotDate time.Time) (total int, active int, err error) {
 	client := &http.Client{Timeout: 30 * time.Second}
 	
 	var allObjects []struct {
-		ID       uint   `json:"id"`
-		Name     string `json:"name"`
-		IsActive bool   `json:"isActive"`
+		ID        uint   `json:"id"`
+		Name      string `json:"name"`
+		IsActive  bool   `json:"isActive"`
+		CreatedAt string `json:"createdAt"`
+		DeletedAt string `json:"deletedAt"`
 	}
 
 	page := 1
@@ -179,11 +227,13 @@ func (s *PartnerSnapshotService) getPartnerObjectsCountWithToken(partnerCompanyI
 
 		var axentaResponse struct {
 			Results []struct {
-				ID       uint   `json:"id"`
-				Name     string `json:"name"`
-				IsActive bool   `json:"isActive"`
+				ID        uint   `json:"id"`
+				Name      string `json:"name"`
+				IsActive  bool   `json:"isActive"`
+				CreatedAt string `json:"createdAt"`
+				DeletedAt string `json:"deletedAt"`
 			} `json:"results"`
-			Count int `json:"count"`
+			Count int     `json:"count"`
 			Next  *string `json:"next"` // URL следующей страницы (если есть)
 		}
 
@@ -207,17 +257,78 @@ func (s *PartnerSnapshotService) getPartnerObjectsCountWithToken(partnerCompanyI
 		page++
 	}
 
-	// Подсчитываем объекты
-	total = len(allObjects)
+	// Подсчитываем объекты с учетом даты снимка
+	total = 0
 	active = 0
+	
+	// Устанавливаем конец дня для снимка (23:59:59)
+	snapshotEndOfDay := time.Date(snapshotDate.Year(), snapshotDate.Month(), snapshotDate.Day(), 23, 59, 59, 0, time.UTC)
+	
 	for _, obj := range allObjects {
-		if obj.IsActive {
-			active++
+		// Парсим дату создания объекта
+		var createdAt time.Time
+		if obj.CreatedAt != "" {
+			// Пробуем разные форматы даты
+			formats := []string{
+				time.RFC3339,
+				"2006-01-02T15:04:05.000Z",
+				"2006-01-02T15:04:05Z",
+				"2006-01-02 15:04:05",
+				"2006-01-02",
+			}
+			
+			parsed := false
+			for _, format := range formats {
+				if t, err := time.Parse(format, obj.CreatedAt); err == nil {
+					createdAt = t
+					parsed = true
+					break
+				}
+			}
+			
+			if !parsed {
+				log.Printf("⚠️ Не удалось распарсить дату создания объекта %d: %s, пропускаем", obj.ID, obj.CreatedAt)
+				continue
+			}
+		} else {
+			// Если нет даты создания, считаем что объект существовал всегда
+			createdAt = time.Time{}
+		}
+		
+		// Проверяем, был ли объект удален до даты снимка
+		var deletedAt time.Time
+		if obj.DeletedAt != "" {
+			// Пробуем разные форматы даты
+			formats := []string{
+				time.RFC3339,
+				"2006-01-02T15:04:05.000Z",
+				"2006-01-02T15:04:05Z",
+				"2006-01-02 15:04:05",
+				"2006-01-02",
+			}
+			
+			for _, format := range formats {
+				if t, err := time.Parse(format, obj.DeletedAt); err == nil {
+					deletedAt = t
+					break
+				}
+			}
+		}
+		
+		// Учитываем объект только если:
+		// 1. Он был создан до или в день снимка
+		// 2. Он не был удален до даты снимка (или не удален вообще)
+		if (createdAt.IsZero() || createdAt.Before(snapshotEndOfDay) || createdAt.Equal(snapshotEndOfDay)) &&
+		   (deletedAt.IsZero() || deletedAt.After(snapshotEndOfDay)) {
+			total++
+			if obj.IsActive {
+				active++
+			}
 		}
 	}
 
-	log.Printf("✅ Всего объектов партнера %d: %d (активных: %d, неактивных: %d)", 
-		partnerCompanyID, total, active, total-active)
+	log.Printf("✅ Объектов партнера %d на дату %s: %d (активных: %d, неактивных: %d)", 
+		partnerCompanyID, snapshotDate.Format("2006-01-02"), total, active, total-active)
 
 	return total, active, nil
 }
