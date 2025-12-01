@@ -40,9 +40,10 @@ type PartnerDailySnapshot struct {
 	TotalObjectsCount  int `json:"total_objects_count" gorm:"not null;default:0"`  // Всего объектов в учетной записи
 	ActiveObjectsCount int `json:"active_objects_count" gorm:"not null;default:0"` // Активных объектов (для тарификации)
 
-	// Скидки
+	// Скидки (используется только один тип: либо процент, либо фиксированная сумма)
 	DiscountType    string          `json:"discount_type" gorm:"type:varchar(20);default:'none'"` // none, manual, auto
 	DiscountPercent decimal.Decimal `json:"discount_percent" gorm:"type:decimal(5,2);default:0"` // Процент скидки (0-100)
+	DiscountFixed   decimal.Decimal `json:"discount_fixed" gorm:"type:decimal(12,2);default:0"`  // Фиксированная скидка в рублях
 	
 	// Стоимость до скидки = daily_price * active_objects_count
 	CostBeforeDiscount decimal.Decimal `json:"cost_before_discount" gorm:"type:decimal(12,4);not null;default:0"`
@@ -67,28 +68,45 @@ func (PartnerDailySnapshot) TableName() string {
 
 // BeforeCreate устанавливает дефолтные значения перед созданием
 func (s *PartnerDailySnapshot) BeforeCreate(tx *gorm.DB) error {
-	// Дневная цена = месячная цена / 30, округляем до 4 знаков
-	if s.MonthlyPrice.GreaterThan(decimal.Zero) {
-		dailyPriceExact := s.MonthlyPrice.Div(decimal.NewFromInt(30))
-		// Округляем до 4 знаков после запятой (как на калькуляторе)
-		s.DailyPrice = dailyPriceExact.Round(4)
-	}
+	// Для фиксированной скидки: применяем скидку к месячному тарифу, затем рассчитываем дневную цену
+	// Для процентной скидки: рассчитываем дневную цену из базового тарифа, затем применяем скидку к стоимости
 	
-	// Стоимость до скидки = (дневная цена) * количество объектов
-	costExact := s.DailyPrice.Mul(decimal.NewFromInt(int64(s.ActiveObjectsCount)))
-	s.CostBeforeDiscount = costExact.Round(2)
+	var effectiveDailyPrice decimal.Decimal
 	
-	// Рассчитываем скидку
-	if s.DiscountPercent.GreaterThan(decimal.Zero) {
-		// Сумма скидки = стоимость * (процент / 100)
-		discountMultiplier := s.DiscountPercent.Div(decimal.NewFromInt(100))
-		s.DiscountAmount = s.CostBeforeDiscount.Mul(discountMultiplier).Round(2)
+	if s.DiscountFixed.GreaterThan(decimal.Zero) {
+		// Фиксированная скидка применяется к МЕСЯЧНОМУ тарифу
+		effectiveMonthlyPrice := s.MonthlyPrice.Sub(s.DiscountFixed)
+		// Если скидка больше месячной цены, устанавливаем 0
+		if effectiveMonthlyPrice.IsNegative() {
+			effectiveMonthlyPrice = decimal.Zero
+		}
+		// Рассчитываем эффективную дневную цену
+		effectiveDailyPrice = effectiveMonthlyPrice.Div(decimal.NewFromInt(30)).Round(4)
+		s.DailyPrice = effectiveDailyPrice
+		
+		// Стоимость = эффективная дневная цена * количество объектов
+		s.CostBeforeDiscount = s.MonthlyPrice.Div(decimal.NewFromInt(30)).Mul(decimal.NewFromInt(int64(s.ActiveObjectsCount))).Round(2)
+		s.DiscountAmount = s.DiscountFixed.Div(decimal.NewFromInt(30)).Mul(decimal.NewFromInt(int64(s.ActiveObjectsCount))).Round(2)
+		s.DailyCost = effectiveDailyPrice.Mul(decimal.NewFromInt(int64(s.ActiveObjectsCount))).Round(2)
 	} else {
-		s.DiscountAmount = decimal.Zero
+		// Базовая дневная цена (без скидки)
+		baseDailyPrice := s.MonthlyPrice.Div(decimal.NewFromInt(30)).Round(4)
+		s.DailyPrice = baseDailyPrice
+		
+		// Стоимость до скидки
+		s.CostBeforeDiscount = baseDailyPrice.Mul(decimal.NewFromInt(int64(s.ActiveObjectsCount))).Round(2)
+		
+		// Процентная скидка применяется к стоимости
+		if s.DiscountPercent.GreaterThan(decimal.Zero) {
+			discountMultiplier := s.DiscountPercent.Div(decimal.NewFromInt(100))
+			s.DiscountAmount = s.CostBeforeDiscount.Mul(discountMultiplier).Round(2)
+		} else {
+			s.DiscountAmount = decimal.Zero
+		}
+		
+		// Итоговая стоимость
+		s.DailyCost = s.CostBeforeDiscount.Sub(s.DiscountAmount).Round(2)
 	}
-	
-	// Итоговая стоимость = стоимость до скидки - сумма скидки
-	s.DailyCost = s.CostBeforeDiscount.Sub(s.DiscountAmount).Round(2)
 	
 	return nil
 }

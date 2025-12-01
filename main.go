@@ -115,10 +115,13 @@ func main() {
 		defer axentaSyncScheduler.Stop()
 	}
 
-	// Инициализируем сервис ежедневных снимков партнерских договоров
-	partnerSnapshotService := services.NewPartnerSnapshotService()
-	partnerSnapshotService.StartDailySnapshotScheduler()
-	log.Println("✅ Partner Daily Snapshots Scheduler started (00:00 UTC)")
+	// Инициализируем планировщик ежедневных снимков партнерских договоров
+	partnerSnapshotScheduler := services.NewPartnerSnapshotScheduler()
+	if err := partnerSnapshotScheduler.Start(); err != nil {
+		log.Printf("⚠️ Partner Snapshot Scheduler failed to start: %v", err)
+	} else {
+		log.Println("✅ Partner Snapshot Scheduler started (daily at 00:00 UTC)")
+	}
 
 	// Инициализируем систему уведомлений - временно отключено
 	// cache := services.NewCacheService(database.RedisClient, log.New(log.Writer(), "CACHE: ", log.LstdFlags))
@@ -814,6 +817,21 @@ func main() {
 	apiGroup.POST("/contracts/partner-snapshots/create", api.CreatePartnerSnapshots)
 	apiGroup.POST("/contracts/:id/partner-snapshots/generate", api.GeneratePartnerSnapshotsForPeriod)
 	log.Println("✅ Зарегистрирован POST /api/auth/contracts/:id/partner-snapshots/generate -> GeneratePartnerSnapshotsForPeriod")
+	
+	// История задач создания снимков
+	apiGroup.GET("/snapshot-jobs", api.GetSnapshotJobs)
+	apiGroup.GET("/snapshot-jobs/stats", api.GetSnapshotJobStats)
+	apiGroup.GET("/snapshot-jobs/latest", api.GetLatestSnapshotJob)
+	apiGroup.GET("/snapshot-jobs/:id", api.GetSnapshotJob)
+	apiGroup.DELETE("/snapshot-jobs/cleanup", api.DeleteOldSnapshotJobs)
+	apiGroup.POST("/snapshot-jobs/trigger", api.TriggerManualSnapshot)
+	
+	// Тестовый endpoint без авторизации (TODO: удалить в продакшене)
+	r.POST("/api/test/snapshot-jobs/trigger", api.TriggerManualSnapshot)
+	log.Println("⚠️ Зарегистрирован ТЕСТОВЫЙ endpoint /api/test/snapshot-jobs/trigger (без авторизации)")
+	
+	log.Println("✅ Зарегистрированы роуты для истории создания снимков (snapshot-jobs)")
+	
 	log.Println("✅ Все роуты для договоров зарегистрированы")
 	// apiGroup.GET("/contracts/:contract_id/cost", api.CalculateContractCost) // Временно отключено
 

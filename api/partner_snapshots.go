@@ -106,31 +106,97 @@ func calculateSnapshotsSummary(snapshots []models.PartnerDailySnapshot) map[stri
 	totalDays := len(snapshots)
 	totalCost := decimal.Zero
 	totalObjects := 0
-	dailyPrice := decimal.Zero
-	monthlyPrice := decimal.Zero
+	baseDailyPrice := decimal.Zero       // Базовая дневная цена БЕЗ скидки
+	baseMonthlyPrice := decimal.Zero     // Базовая месячная цена БЕЗ скидки
+	
+	// Для расчета эффективных цен с учетом скидок
+	totalCostBeforeDiscount := decimal.Zero
+	totalDiscountAmount := decimal.Zero
+	discountType := "none" // Тип скидки (берем из первого снимка)
 
 	for _, snapshot := range snapshots {
 		totalCost = totalCost.Add(snapshot.DailyCost)
 		totalObjects += snapshot.ActiveObjectsCount
-		if dailyPrice.IsZero() {
-			dailyPrice = snapshot.DailyPrice
-			monthlyPrice = snapshot.MonthlyPrice
+		totalCostBeforeDiscount = totalCostBeforeDiscount.Add(snapshot.CostBeforeDiscount)
+		totalDiscountAmount = totalDiscountAmount.Add(snapshot.DiscountAmount)
+		
+		if baseDailyPrice.IsZero() {
+			baseDailyPrice = snapshot.DailyPrice
+			baseMonthlyPrice = snapshot.MonthlyPrice
+			discountType = snapshot.DiscountType
 		}
 	}
 
-	avgObjects := 0
+	// Рассчитываем среднее количество объектов (с точностью decimal для правильных расчетов)
+	avgObjectsDecimal := decimal.Zero
+	avgObjectsInt := 0
 	if totalDays > 0 {
-		avgObjects = totalObjects / totalDays
+		avgObjectsDecimal = decimal.NewFromInt(int64(totalObjects)).Div(decimal.NewFromInt(int64(totalDays)))
+		avgObjectsInt = totalObjects / totalDays
 	}
 
-	return map[string]interface{}{
-		"total_days":     totalDays,
-		"total_cost":     totalCost,
-		"avg_objects":    avgObjects,
-		"daily_price":    dailyPrice,
-		"monthly_price":  monthlyPrice,
-		"total_objects":  totalObjects,
+	// Рассчитываем эффективную (реальную) дневную цену с учетом скидки
+	// Это средняя цена за объект в день с учетом всех скидок
+	effectiveDailyPrice := decimal.Zero
+	if totalObjects > 0 {
+		effectiveDailyPrice = totalCost.Div(decimal.NewFromInt(int64(totalObjects)))
 	}
+
+	// Рассчитываем эффективную месячную цену с учетом скидки
+	// Это цена, которую партнер реально платит за месяц (30 дней)
+	effectiveMonthlyPrice := effectiveDailyPrice.Mul(decimal.NewFromInt(30))
+
+	// Расчет цены за объект за период (pricePerObjectForPeriod) С УЧЕТОМ СКИДКИ
+	// Формула: total_cost / avg_objects (используем точное decimal значение)
+	// Это цена, при умножении на которую среднее количество объектов даст общую стоимость
+	// avg_objects × price_per_object_for_period = total_cost
+	pricePerObjectForPeriod := decimal.Zero
+	if avgObjectsDecimal.GreaterThan(decimal.Zero) {
+		pricePerObjectForPeriod = totalCost.Div(avgObjectsDecimal)
+	}
+
+	log.Printf("💰 Расчет цены с учетом скидок:")
+	log.Printf("   Всего дней: %d", totalDays)
+	log.Printf("   Всего объектов: %d", totalObjects)
+	log.Printf("   Средних объектов (точное): %.2f", avgObjectsDecimal.InexactFloat64())
+	log.Printf("   Средних объектов (округл.): %d", avgObjectsInt)
+	log.Printf("   Общая стоимость: %.2f ₽", totalCost.InexactFloat64())
+	log.Printf("   Базовая месячная цена: %.2f ₽", baseMonthlyPrice.InexactFloat64())
+	log.Printf("   Эффективная месячная цена (с учетом скидок): %.4f ₽", effectiveMonthlyPrice.InexactFloat64())
+	log.Printf("   Базовая дневная цена: %.4f ₽", baseDailyPrice.InexactFloat64())
+	log.Printf("   Эффективная дневная цена (с учетом скидок): %.4f ₽", effectiveDailyPrice.InexactFloat64())
+	log.Printf("   Цена за объект/период: %.4f ₽", pricePerObjectForPeriod.InexactFloat64())
+	log.Printf("   Общая скидка за период: %.2f ₽", totalDiscountAmount.InexactFloat64())
+	log.Printf("   ✅ Проверка: %.2f × %.4f = %.2f ₽ (должно быть %.2f ₽)", 
+		avgObjectsDecimal.InexactFloat64(), 
+		pricePerObjectForPeriod.InexactFloat64(), 
+		avgObjectsDecimal.Mul(pricePerObjectForPeriod).InexactFloat64(),
+		totalCost.InexactFloat64())
+
+	// Средняя дневная скидка
+	avgDailyDiscount := decimal.Zero
+	if totalDays > 0 {
+		avgDailyDiscount = totalDiscountAmount.Div(decimal.NewFromInt(int64(totalDays)))
+	}
+
+	result := map[string]interface{}{
+		"total_days":                  totalDays,
+		"total_cost":                  totalCost.InexactFloat64(),
+		"avg_objects":                 avgObjectsDecimal.InexactFloat64(),       // Точное среднее с decimal
+		"daily_price":                 effectiveDailyPrice.InexactFloat64(),      // Реальная дневная цена С УЧЕТОМ скидки
+		"monthly_price":               effectiveMonthlyPrice.InexactFloat64(),    // Реальная месячная цена С УЧЕТОМ скидки
+		"total_objects":               totalObjects,
+		"price_per_object_for_period": pricePerObjectForPeriod.InexactFloat64(), // Реальная цена С УЧЕТОМ скидки
+		"base_monthly_price":          baseMonthlyPrice.InexactFloat64(),        // Базовая цена БЕЗ скидки (для справки)
+		"base_daily_price":            baseDailyPrice.InexactFloat64(),          // Базовая дневная цена БЕЗ скидки (для справки)
+		"total_discount":              totalDiscountAmount.InexactFloat64(),      // Общая сумма скидки за период
+		"discount_type":               discountType,                               // Тип скидки
+		"avg_daily_discount":          avgDailyDiscount.InexactFloat64(),         // Средняя дневная скидка
+	}
+
+	log.Printf("📦 Возвращаем summary: %+v", result)
+	
+	return result
 }
 
 // CreatePartnerSnapshots создает снимки для всех партнерских договоров (ручной запуск)

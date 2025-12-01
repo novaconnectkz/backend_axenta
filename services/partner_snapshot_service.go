@@ -98,7 +98,21 @@ func (s *PartnerSnapshotService) CreateSnapshotForContractWithTokenAndDB(contrac
 	if err := db.Unscoped().
 		Where("contract_id = ? AND snapshot_date = ?", contract.ID, snapshotDate).
 		First(&existingSnapshot).Error; err == nil {
-		log.Printf("ℹ️ Снимок для договора %d на дату %s уже существует, обновляем...", 
+		
+		// Проверяем является ли это сегодняшним снимком
+		today := time.Now().UTC()
+		todayStart := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
+		isToday := snapshotDate.Equal(todayStart)
+		
+		// Исторические снимки НЕ обновляются (данные за прошлые дни зафиксированы)
+		// Обновляем только сегодняшний снимок (данные за сегодня могут меняться)
+		if !isToday {
+			log.Printf("✅ Снимок для договора %d на дату %s уже существует (исторический), пропускаем обновление", 
+				contract.ID, snapshotDate.Format("2006-01-02"))
+			return nil
+		}
+		
+		log.Printf("ℹ️ Снимок для договора %d на дату %s уже существует (сегодняшний), обновляем...", 
 			contract.ID, snapshotDate.Format("2006-01-02"))
 		
 		// Обновляем существующий снимок вместо создания нового
@@ -119,8 +133,9 @@ func (s *PartnerSnapshotService) CreateSnapshotForContractWithTokenAndDB(contrac
 		// Расчет цен
 		monthlyPrice := tariffPlan.Price
 		
-		// Рассчитываем скидку
+		// Рассчитываем скидку (приоритет: фиксированная > процентная)
 		discountPercent := contract.GetDiscountPercent(activeObjectsCount)
+		discountFixed := contract.GetDiscountFixed()
 		
 		// Обновляем снимок
 		existingSnapshot.TotalObjectsCount = objectsCount
@@ -128,34 +143,55 @@ func (s *PartnerSnapshotService) CreateSnapshotForContractWithTokenAndDB(contrac
 		existingSnapshot.MonthlyPrice = monthlyPrice
 		existingSnapshot.DiscountType = contract.DiscountType
 		existingSnapshot.DiscountPercent = discountPercent
+		existingSnapshot.DiscountFixed = discountFixed
 		existingSnapshot.Status = "completed"
 		existingSnapshot.DeletedAt = gorm.DeletedAt{} // Восстанавливаем если был удален
 		
 		// DailyPrice, CostBeforeDiscount, DiscountAmount и DailyCost будут рассчитаны в BeforeCreate/BeforeSave
 		// Но так как это update, пересчитаем вручную
-		dailyPrice := monthlyPrice.Div(decimal.NewFromInt(30)).Round(4)
-		existingSnapshot.DailyPrice = dailyPrice
 		
-		costBeforeDiscount := dailyPrice.Mul(decimal.NewFromInt(int64(activeObjectsCount))).Round(2)
-		existingSnapshot.CostBeforeDiscount = costBeforeDiscount
-		
-		if discountPercent.GreaterThan(decimal.Zero) {
-			discountMultiplier := discountPercent.Div(decimal.NewFromInt(100))
-			existingSnapshot.DiscountAmount = costBeforeDiscount.Mul(discountMultiplier).Round(2)
+		// Для фиксированной скидки: применяем к месячному тарифу
+		// Для процентной скидки: применяем к дневной стоимости
+		if discountFixed.GreaterThan(decimal.Zero) {
+			// Фиксированная скидка применяется к МЕСЯЧНОМУ тарифу
+			effectiveMonthlyPrice := monthlyPrice.Sub(discountFixed)
+			if effectiveMonthlyPrice.IsNegative() {
+				effectiveMonthlyPrice = decimal.Zero
+			}
+			effectiveDailyPrice := effectiveMonthlyPrice.Div(decimal.NewFromInt(30)).Round(4)
+			existingSnapshot.DailyPrice = effectiveDailyPrice
+			
+			baseDailyPrice := monthlyPrice.Div(decimal.NewFromInt(30)).Round(4)
+			existingSnapshot.CostBeforeDiscount = baseDailyPrice.Mul(decimal.NewFromInt(int64(activeObjectsCount))).Round(2)
+			existingSnapshot.DiscountAmount = discountFixed.Div(decimal.NewFromInt(30)).Mul(decimal.NewFromInt(int64(activeObjectsCount))).Round(2)
+			existingSnapshot.DailyCost = effectiveDailyPrice.Mul(decimal.NewFromInt(int64(activeObjectsCount))).Round(2)
 		} else {
-			existingSnapshot.DiscountAmount = decimal.Zero
+			// Базовая дневная цена
+			baseDailyPrice := monthlyPrice.Div(decimal.NewFromInt(30)).Round(4)
+			existingSnapshot.DailyPrice = baseDailyPrice
+			
+			costBeforeDiscount := baseDailyPrice.Mul(decimal.NewFromInt(int64(activeObjectsCount))).Round(2)
+			existingSnapshot.CostBeforeDiscount = costBeforeDiscount
+			
+			// Процентная скидка применяется к стоимости
+			if discountPercent.GreaterThan(decimal.Zero) {
+				discountMultiplier := discountPercent.Div(decimal.NewFromInt(100))
+				existingSnapshot.DiscountAmount = costBeforeDiscount.Mul(discountMultiplier).Round(2)
+			} else {
+				existingSnapshot.DiscountAmount = decimal.Zero
+			}
+			
+			existingSnapshot.DailyCost = costBeforeDiscount.Sub(existingSnapshot.DiscountAmount).Round(2)
 		}
-		
-		existingSnapshot.DailyCost = costBeforeDiscount.Sub(existingSnapshot.DiscountAmount).Round(2)
 
 		// Используем Unscoped() для сохранения, чтобы обновить даже мягко удаленную запись
 		if err := db.Unscoped().Save(&existingSnapshot).Error; err != nil {
 			return fmt.Errorf("ошибка обновления снимка: %w", err)
 		}
 
-		log.Printf("✅ Снимок обновлен: договор=%s, дата=%s, объектов=%d (активных=%d), скидка=%.2f%%, стоимость=%.2f₽ (было %.2f₽)",
+		log.Printf("✅ Снимок обновлен: договор=%s, дата=%s, объектов=%d (активных=%d), стоимость=%.2f₽ (до скидки: %.2f₽)",
 			contract.Number, snapshotDate.Format("2006-01-02"), objectsCount, activeObjectsCount, 
-			discountPercent, existingSnapshot.DailyCost, costBeforeDiscount)
+			existingSnapshot.DailyCost, existingSnapshot.CostBeforeDiscount)
 
 		return nil
 	}
@@ -177,6 +213,7 @@ func (s *PartnerSnapshotService) CreateSnapshotForContractWithTokenAndDB(contrac
 	// Расчет цен и скидок
 	monthlyPrice := tariffPlan.Price
 	discountPercent := contract.GetDiscountPercent(activeObjectsCount)
+	discountFixed := contract.GetDiscountFixed()
 
 	// Создаем снимок
 	snapshot := models.PartnerDailySnapshot{
@@ -191,6 +228,7 @@ func (s *PartnerSnapshotService) CreateSnapshotForContractWithTokenAndDB(contrac
 		ActiveObjectsCount: activeObjectsCount,
 		DiscountType:       contract.DiscountType,
 		DiscountPercent:    discountPercent,
+		DiscountFixed:      discountFixed,
 		Status:             "completed",
 	}
 	// DailyPrice, CostBeforeDiscount, DiscountAmount и DailyCost будут рассчитаны в BeforeCreate

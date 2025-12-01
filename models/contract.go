@@ -84,9 +84,10 @@ type Contract struct {
 	TotalAmount decimal.Decimal `json:"total_amount" gorm:"type:decimal(15,2)"`
 	Currency    string          `json:"currency" gorm:"default:'RUB';type:varchar(3)"`
 
-	// Скидки (для партнерских договоров)
-	DiscountType          string          `json:"discount_type" gorm:"type:varchar(20);default:'none'"` // none, manual, auto
-	ManualDiscountPercent decimal.Decimal `json:"manual_discount_percent" gorm:"type:decimal(5,2);default:0"` // 0-100
+	// Скидки (для партнерских договоров) - используется только один тип
+	DiscountType          string          `json:"discount_type" gorm:"type:varchar(20);default:'none'"` // none, manual_percent, manual_fixed, auto
+	ManualDiscountPercent decimal.Decimal `json:"manual_discount_percent" gorm:"type:decimal(5,2);default:0"` // 0-100 (%)
+	ManualDiscountFixed   decimal.Decimal `json:"manual_discount_fixed" gorm:"type:decimal(12,2);default:0"` // Фиксированная скидка (₽)
 	UseAutoDiscount       bool            `json:"use_auto_discount" gorm:"default:false"` // Использовать автоматические скидки
 
 	// Страны и реквизиты (поля не используются в текущей версии БД)
@@ -164,12 +165,32 @@ func CalculateAutoDiscount(activeObjectsCount int) decimal.Decimal {
 
 // GetDiscountPercent возвращает применяемый процент скидки
 func (c *Contract) GetDiscountPercent(activeObjectsCount int) decimal.Decimal {
-	if c.DiscountType == "manual" {
+	if c.DiscountType == "manual_percent" || c.DiscountType == "manual" {
 		return c.ManualDiscountPercent
 	} else if c.DiscountType == "auto" || c.UseAutoDiscount {
 		return CalculateAutoDiscount(activeObjectsCount)
 	}
 	return decimal.Zero
+}
+
+// GetDiscountFixed возвращает фиксированную сумму скидки
+func (c *Contract) GetDiscountFixed() decimal.Decimal {
+	if c.DiscountType == "manual_fixed" {
+		return c.ManualDiscountFixed
+	}
+	return decimal.Zero
+}
+
+// GetDiscountType возвращает тип скидки для отображения
+func (c *Contract) GetDiscountType() string {
+	if c.DiscountType == "manual_fixed" {
+		return "fixed"
+	} else if c.DiscountType == "manual_percent" || c.DiscountType == "manual" {
+		return "percent"
+	} else if c.DiscountType == "auto" || c.UseAutoDiscount {
+		return "auto"
+	}
+	return "none"
 }
 
 // ContractAppendix представляет приложение к договору

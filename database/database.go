@@ -238,20 +238,21 @@ func GetTenantDB(c *gin.Context) *gorm.DB {
 
 // GetTenantDBByID возвращает базу данных для указанного tenant ID
 func GetTenantDBByID(tenantID uint) *gorm.DB {
-	// Получаем данные компании
+	// Получаем данные компании из схемы public
 	var company struct {
 		DatabaseSchema string `gorm:"column:database_schema"`
 	}
 
-	if err := DB.Table("companies").Select("database_schema").Where("id = ?", tenantID).First(&company).Error; err != nil {
+	// Явно указываем схему public для поиска компании
+	if err := DB.Table("public.companies").Select("database_schema").Where("id = ?", tenantID).First(&company).Error; err != nil {
 		log.Printf("Ошибка получения схемы для tenant %d: %v", tenantID, err)
 		return DB
 	}
 
-	// Переключаемся на схему компании
-	tenantDB := DB.Exec(fmt.Sprintf("SET search_path TO %s", company.DatabaseSchema))
-	if tenantDB.Error != nil {
-		log.Printf("Ошибка переключения на схему %s: %v", company.DatabaseSchema, tenantDB.Error)
+	// Используем кешированное подключение или создаем новое
+	tenantDB, err := ConnectToTenant(company.DatabaseSchema)
+	if err != nil {
+		log.Printf("Ошибка подключения к схеме %s: %v", company.DatabaseSchema, err)
 		return DB
 	}
 
