@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"log"
 	"net/http"
 	"strings"
 
@@ -20,7 +21,9 @@ type CustomCORSConfig struct {
 // CustomCORS creates a custom CORS middleware
 func CustomCORS(config CustomCORSConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		method := c.Request.Method
 		origin := c.Request.Header.Get("Origin")
+		path := c.Request.URL.Path
 
 		// Check if origin is allowed
 		originAllowed := false
@@ -33,16 +36,24 @@ func CustomCORS(config CustomCORSConfig) gin.HandlerFunc {
 			}
 		}
 
+		// Log CORS request for debugging
+		if !originAllowed && origin != "" {
+			log.Printf("⚠️ CORS: Origin not allowed - Origin: %s, Method: %s, Path: %s", origin, method, path)
+		}
+
 		// Set CORS headers for all requests (both preflight and actual)
 		if originAllowed {
 			c.Header("Access-Control-Allow-Origin", origin)
 			c.Header("Access-Control-Allow-Credentials", "true")
+			log.Printf("✅ CORS: Headers set - Origin: %s, Method: %s, Path: %s", origin, method, path)
 		}
 
 		c.Header("Access-Control-Allow-Methods", strings.Join(config.AllowMethods, ","))
 
 		// Handle preflight requests
 		if c.Request.Method == "OPTIONS" {
+			log.Printf("🔍 CORS: Handling OPTIONS preflight - Origin: %s, Path: %s", origin, path)
+			
 			// Get requested headers from Access-Control-Request-Headers
 			requestedHeaders := c.Request.Header.Get("Access-Control-Request-Headers")
 
@@ -59,6 +70,7 @@ func CustomCORS(config CustomCORSConfig) gin.HandlerFunc {
 
 			c.Header("Access-Control-Max-Age", "43200") // 12 hours
 			c.AbortWithStatus(http.StatusNoContent)
+			log.Printf("✅ CORS: OPTIONS handled successfully - Origin: %s, Path: %s", origin, path)
 			return
 		}
 
