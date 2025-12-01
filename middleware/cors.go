@@ -23,20 +23,22 @@ func CustomCORS(config CustomCORSConfig) gin.HandlerFunc {
 		origin := c.Request.Header.Get("Origin")
 
 		// Check if origin is allowed
+		originAllowed := false
 		if origin != "" {
-			allowed := false
 			for _, allowedOrigin := range config.AllowOrigins {
 				if origin == allowedOrigin {
-					allowed = true
+					originAllowed = true
 					break
 				}
 			}
-			if allowed {
-				c.Header("Access-Control-Allow-Origin", origin)
-			}
 		}
 
-		c.Header("Access-Control-Allow-Credentials", "true")
+		// Set CORS headers for all requests (both preflight and actual)
+		if originAllowed {
+			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Access-Control-Allow-Credentials", "true")
+		}
+
 		c.Header("Access-Control-Allow-Methods", strings.Join(config.AllowMethods, ","))
 
 		// Handle preflight requests
@@ -60,7 +62,8 @@ func CustomCORS(config CustomCORSConfig) gin.HandlerFunc {
 			return
 		}
 
-		// For non-preflight requests, set expose headers
+		// For non-preflight requests, set allow and expose headers
+		c.Header("Access-Control-Allow-Headers", strings.Join(config.AllowHeaders, ","))
 		if len(config.ExposeHeaders) > 0 {
 			c.Header("Access-Control-Expose-Headers", strings.Join(config.ExposeHeaders, ","))
 		}
