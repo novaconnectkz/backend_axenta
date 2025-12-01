@@ -216,7 +216,8 @@ func (s *PartnerSnapshotService) getPartnerObjectsCountWithToken(partnerCompanyI
 // getPartnerObjectsCountForDate получает количество объектов партнера на определенную дату
 // Фильтрует объекты: учитываются только те, что были созданы до или в день снимка
 func (s *PartnerSnapshotService) getPartnerObjectsCountForDate(partnerCompanyID uint, token string, snapshotDate time.Time) (total int, active int, err error) {
-	client := &http.Client{Timeout: 30 * time.Second}
+	// Увеличенный таймаут для больших объемов данных (до 5000+ объектов)
+	client := &http.Client{Timeout: 180 * time.Second}
 	
 	var allObjects []struct {
 		ID        uint   `json:"id"`
