@@ -187,13 +187,20 @@ func (api *CompaniesAPI) GetCompanies(c *gin.Context) {
 
 	// Параметры запроса
 	page := c.DefaultQuery("page", "1")
-	perPage := c.DefaultQuery("per_page", "50")
+	// Поддерживаем оба варианта: per_page (старый) и limit (новый)
+	perPage := c.Query("per_page")
+	if perPage == "" {
+		perPage = c.Query("limit")
+	}
+	if perPage == "" {
+		perPage = "50" // Значение по умолчанию
+	}
 	ordering := c.DefaultQuery("ordering", "name")
 	search := c.Query("search")
 	isActive := c.Query("is_active")
 	accountType := c.Query("type")
 
-	fmt.Printf("🔧 DEBUG: Received parameters - page: %s, per_page: %s, ordering: %s, search: %s, is_active: '%s', type: %s\n",
+	fmt.Printf("🔧 DEBUG: Received parameters - page: %s, per_page/limit: %s, ordering: %s, search: %s, is_active: '%s', type: %s\n",
 		page, perPage, ordering, search, isActive, accountType)
 
 	// Формируем URL для запроса к Axenta Cloud API
@@ -328,6 +335,7 @@ func (api *CompaniesAPI) GetCompanies(c *gin.Context) {
 	}
 
 	// Возвращаем ответ в том же формате, что ожидает фронтенд
+	fmt.Printf("🎯 DEBUG: ФИНАЛЬНЫЙ ОТВЕТ - Возвращаем %d компаний клиенту (type='%s')\n", len(companies), accountType)
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
 		"data": gin.H{
