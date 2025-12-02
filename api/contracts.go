@@ -464,6 +464,38 @@ func GetContracts(c *gin.Context) {
 			"%"+searchQuery+"%", "%"+searchQuery+"%", "%"+searchQuery+"%")
 	}
 
+	// 🔄 Серверная сортировка
+	sortBy := c.DefaultQuery("sort_by", "created_at")
+	sortOrder := c.DefaultQuery("sort_order", "desc")
+	
+	// Валидация поля сортировки (защита от SQL injection)
+	allowedSortFields := map[string]string{
+		"created_at":        "created_at",
+		"sequential_number": "sequential_number",
+		"number":            "number",
+		"title":             "title",
+		"client_name":       "client_name",
+		"start_date":        "start_date",
+		"end_date":          "end_date",
+		"total_amount":      "CAST(total_amount AS DECIMAL)",
+		"status":            "status",
+		"contract_type":     "contract_type",
+	}
+	
+	sortField, ok := allowedSortFields[sortBy]
+	if !ok {
+		sortField = "created_at"
+	}
+	
+	// Валидация направления сортировки
+	if sortOrder != "asc" && sortOrder != "desc" {
+		sortOrder = "desc"
+	}
+	
+	orderClause := fmt.Sprintf("%s %s", sortField, strings.ToUpper(sortOrder))
+	baseQuery = baseQuery.Order(orderClause)
+	log.Printf("🔄 GetContracts: сортировка по %s %s", sortField, sortOrder)
+
 	// Пагинация
 	page := 1
 	limit := 20
