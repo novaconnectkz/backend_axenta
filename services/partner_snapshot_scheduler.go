@@ -36,9 +36,9 @@ func NewPartnerSnapshotScheduler() *PartnerSnapshotScheduler {
 
 // Start запускает планировщик
 func (s *PartnerSnapshotScheduler) Start() error {
-	// Запускаем создание снимков каждый день в 21:01 UTC (00:01 MSK следующего дня)
-	_, err := s.cron.AddFunc("1 21 * * *", func() {
-		log.Println("🕐 Запуск автоматического создания ежедневных снимков (UTC 21:01 / MSK 00:01)")
+	// Запускаем создание снимков каждый день в 21:20 UTC (00:20 MSK следующего дня)
+	_, err := s.cron.AddFunc("20 21 * * *", func() {
+		log.Println("🕐 Запуск автоматического создания ежедневных снимков (UTC 21:20 / MSK 00:20)")
 		s.createDailySnapshots()
 	})
 
@@ -49,7 +49,7 @@ func (s *PartnerSnapshotScheduler) Start() error {
 	s.cron.Start()
 	s.isRunning = true
 
-	log.Println("✅ Планировщик ежедневных снимков запущен (каждый день в 21:01 UTC / 00:01 MSK)")
+	log.Println("✅ Планировщик ежедневных снимков запущен (каждый день в 21:20 UTC / 00:20 MSK)")
 
 	return nil
 }
