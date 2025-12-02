@@ -157,13 +157,13 @@ func GetAllMigrations() []MigrationInfo {
 			TableName:   "axenta_account_snapshots",
 			Model:       &models.AxentaAccountSnapshot{},
 			Description: "Снимки учетных записей Axenta",
-			IsGlobal:    true,
+			IsGlobal:    false, // Изолированы по тенантам
 		},
 		{
 			TableName:   "axenta_object_snapshots",
 			Model:       &models.AxentaObjectSnapshot{},
 			Description: "Снимки объектов Axenta",
-			IsGlobal:    true,
+			IsGlobal:    false, // Изолированы по тенантам
 		},
 		{
 			TableName:   "invoice_headers",
@@ -835,8 +835,7 @@ func CreateMissingGlobalTables() error {
 		&models.InvoiceItem{},
 		&models.Invoice{},
 		&models.BillingHistory{},
-		&models.AxentaAccountSnapshot{},
-		&models.AxentaObjectSnapshot{},
+		// AxentaAccountSnapshot и AxentaObjectSnapshot теперь тенант-специфичны (IsGlobal: false)
 	}
 
 	for _, model := range globalModels {
