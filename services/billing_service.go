@@ -255,7 +255,7 @@ func (bs *BillingService) CalculateBillingForContractWithTenantDB(contractID uin
 	for i := range objects {
 		if objects[i].ID > 0 {
 			objID := objects[i].ID
-			objectIDs = append(objectIDs, &objID)
+			objectIDs = append(objectIDs, &objID) // nolint:staticcheck
 		}
 	}
 

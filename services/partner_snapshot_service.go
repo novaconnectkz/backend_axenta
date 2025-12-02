@@ -413,7 +413,7 @@ func fetchPartnerObjects(token string, partnerCompanyID int) ([]axentaObject, er
 
 		if resp.StatusCode != http.StatusOK {
 			resp.Body.Close()
-			return nil, fmt.Errorf("Axenta Cloud вернул статус %d", resp.StatusCode)
+			return nil, fmt.Errorf("axenta Cloud вернул статус %d", resp.StatusCode)
 		}
 
 		var axentaResponse struct {
@@ -483,7 +483,7 @@ func (s *PartnerSnapshotService) getPartnerObjectsCountForDate(partnerCompanyID 
 
 		if resp.StatusCode != http.StatusOK {
 			resp.Body.Close()
-			return 0, 0, fmt.Errorf("Axenta Cloud вернул статус %d", resp.StatusCode)
+			return 0, 0, fmt.Errorf("axenta Cloud вернул статус %d", resp.StatusCode)
 		}
 
 		var axentaResponse struct {

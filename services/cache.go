@@ -28,7 +28,7 @@ func NewCacheService(redisClient *redis.Client, logger *log.Logger) *CacheServic
 // Get получает значение из кэша
 func (cs *CacheService) Get(ctx context.Context, key string) (string, error) {
 	if cs.redis == nil {
-		return "", fmt.Errorf("Redis не подключен")
+		return "", fmt.Errorf("redis не подключен")
 	}
 
 	val, err := cs.redis.Get(ctx, key).Result()

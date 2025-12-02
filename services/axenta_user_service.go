@@ -74,7 +74,7 @@ func (s *AxentaUserService) GetUserFromAxenta(token string) (*AxentaUserResponse
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("Axenta API returned status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("axenta API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	body, err := io.ReadAll(resp.Body)

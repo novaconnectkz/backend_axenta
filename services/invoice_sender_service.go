@@ -119,17 +119,17 @@ func (s *InvoiceSenderService) sendInvoiceViaEmail(invoice *models.Invoice, emai
 	err := s.DB.Where("company_id = ?", invoice.CompanyID).First(&settings).Error
 	if err != nil {
 		if err.Error() == "record not found" || strings.Contains(err.Error(), "record not found") {
-			return fmt.Errorf("Email интеграция не настроена. Перейдите в Настройки → Интеграции → Email SMTP для настройки")
+			return fmt.Errorf("email интеграция не настроена. Перейдите в Настройки → Интеграции → Email SMTP для настройки")
 		}
 		return fmt.Errorf("ошибка получения настроек email: %w", err)
 	}
 	
 	if !settings.EmailEnabled {
-		return fmt.Errorf("Email уведомления отключены. Включите их в Настройки → Интеграции → Email SMTP")
+		return fmt.Errorf("email уведомления отключены. Включите их в Настройки → Интеграции → Email SMTP")
 	}
 	
 	if settings.SMTPHost == "" || settings.SMTPUsername == "" {
-		return fmt.Errorf("Email не настроен полностью. Заполните все поля в Настройки → Интеграции → Email SMTP")
+		return fmt.Errorf("email не настроен полностью. Заполните все поля в Настройки → Интеграции → Email SMTP")
 	}
 	
 	// Формируем тему и текст письма
@@ -237,11 +237,11 @@ func (s *InvoiceSenderService) sendInvoiceViaTelegram(invoice *models.Invoice, t
 	ctx := context.Background()
 	config, err := s.telegramIntegrationService.GetConfig(ctx, invoice.CompanyID)
 	if err != nil {
-		return fmt.Errorf("Telegram не настроен. Перейдите в Настройки → Интеграции → Telegram")
+		return fmt.Errorf("telegram не настроен. Перейдите в Настройки → Интеграции → Telegram")
 	}
 	
 	if config.BotToken == "" {
-		return fmt.Errorf("Telegram токен не настроен. Перейдите в Настройки → Интеграции → Telegram")
+		return fmt.Errorf("telegram токен не настроен. Перейдите в Настройки → Интеграции → Telegram")
 	}
 	
 	// Формируем сообщение
@@ -266,11 +266,11 @@ func (s *InvoiceSenderService) sendInvoiceViaMax(invoice *models.Invoice, maxID 
 	ctx := context.Background()
 	config, err := s.maxIntegrationService.GetConfig(ctx, invoice.CompanyID)
 	if err != nil {
-		return fmt.Errorf("MAX не настроен. Перейдите в Настройки → Интеграции → MAX")
+		return fmt.Errorf("MAX не настроен. Перейдите в Настройки → Интеграции → MAX") // nolint:ST1005
 	}
 	
 	if config.BotToken == "" {
-		return fmt.Errorf("MAX токен не настроен. Перейдите в Настройки → Интеграции → MAX")
+		return fmt.Errorf("MAX токен не настроен. Перейдите в Настройки → Интеграции → MAX") // nolint:ST1005
 	}
 	
 	// Формируем сообщение

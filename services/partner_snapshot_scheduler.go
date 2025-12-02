@@ -79,8 +79,7 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 	log.Printf("📅 Дата снимка: %s", snapshotDate.Format("2006-01-02"))
 
 	// Создаем запись о задаче в ОСНОВНОЙ БД в схеме public (не tenant)
-	mainDB := database.DB.Exec("SET search_path TO public") // Явно устанавливаем схему public
-	mainDB = database.DB                                    // Используем основную БД для логов
+	mainDB := database.DB
 	job := &models.SnapshotJob{
 		JobType:     models.SnapshotJobTypeDailyAuto,
 		StartedAt:   startTime,
