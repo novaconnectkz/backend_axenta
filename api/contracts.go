@@ -427,8 +427,12 @@ func GetContracts(c *gin.Context) {
 	// GORM автоматически исключает записи с deleted_at (soft delete)
 	baseQuery := tenantDB.Model(&models.Contract{}).Where("admin_account_id = ?", adminAccountID)
 
+	// 🚀 Параметр skip_stats для ленивой загрузки (Progressive Loading)
+	// Если true - возвращает список быстро без статистики объектов
+	skipStats := c.Query("skip_stats") == "true"
+	
 	// Логируем запрос для отладки
-	log.Printf("🔍 GetContracts: admin_account_id=%d, tenantDB=%v", adminAccountID, tenantDB != nil)
+	log.Printf("🔍 GetContracts: admin_account_id=%d, tenantDB=%v, skip_stats=%v", adminAccountID, tenantDB != nil, skipStats)
 
 	// Фильтрация по статусу
 	if status := c.Query("status"); status != "" {
@@ -651,7 +655,8 @@ func GetContracts(c *gin.Context) {
 
 	// Получаем КОЛИЧЕСТВО объектов из /api/cms/accounts/ (ПРАВИЛЬНЫЙ источник, совпадает с веб-интерфейсом)
 	// 🚀 ПАРАЛЛЕЛЬНАЯ ЗАГРУЗКА для ускорения
-	if len(partnerCompanyIDs) > 0 && userToken != "" {
+	// ⚡ Пропускаем при skip_stats=true для быстрой загрузки (Progressive Loading)
+	if len(partnerCompanyIDs) > 0 && userToken != "" && !skipStats {
 		var wg sync.WaitGroup
 		var partnerObjectsMutex sync.Mutex
 		semaphore := make(chan struct{}, 10) // Ограничение: 10 параллельных запросов
@@ -766,6 +771,85 @@ func GetContracts(c *gin.Context) {
 		"total":  total,
 		"page":   page,
 		"limit":  limit,
+	})
+}
+
+// GetContractStats получает статистику объектов для конкретного договора (Progressive Loading)
+func GetContractStats(c *gin.Context) {
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	idStr := c.Param("id")
+	contractID, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Неверный формат ID договора",
+		})
+		return
+	}
+
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB == nil {
+		log.Printf("⚠️ GetContractStats: Не удалось получить tenant DB из контекста")
+		tenantDB = database.DB
+	}
+
+	// Получаем договор
+	var contract models.Contract
+	if err := tenantDB.
+		Where("id = ? AND admin_account_id = ?", uint(contractID), adminAccountID).
+		First(&contract).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"status": "error",
+			"error":  "Договор не найден",
+		})
+		return
+	}
+
+	// Получаем токен пользователя
+	authHeader := c.GetHeader("Authorization")
+	var userToken string
+	if strings.HasPrefix(authHeader, "Token ") {
+		userToken = strings.TrimPrefix(authHeader, "Token ")
+	} else if strings.HasPrefix(authHeader, "Bearer ") {
+		userToken = strings.TrimPrefix(authHeader, "Bearer ")
+	} else {
+		userToken = authHeader
+	}
+
+	objectsCount := 0
+
+	// Для партнерских договоров загружаем из Axenta Cloud
+	if contract.ContractType == "partner" && contract.PartnerCompanyID != nil && userToken != "" {
+		count, err := getPartnerObjectsCountFromAccount(*contract.PartnerCompanyID, userToken)
+		if err != nil {
+			log.Printf("⚠️ GetContractStats: Ошибка получения статистики для партнера ID=%d: %v", *contract.PartnerCompanyID, err)
+		} else {
+			objectsCount = count
+		}
+	} else {
+		// Для клиентских договоров считаем из contract_objects
+		var count int64
+		if err := tenantDB.Model(&models.ContractObject{}).
+			Where("contract_id = ? AND status = ?", contractID, "active").
+			Count(&count).Error; err == nil {
+			objectsCount = int(count)
+		}
+	}
+
+	log.Printf("📊 GetContractStats: договор ID=%d, objects_count=%d", contractID, objectsCount)
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":        "success",
+		"contract_id":   contractID,
+		"objects_count": objectsCount,
 	})
 }
 

@@ -806,6 +806,8 @@ func main() {
 	log.Printf("✅ Зарегистрирован POST /api/auth/contracts/fix-statuses -> FixContractStatuses")
 
 	// Общие роуты для договоров
+	// Важно: /contracts/:id/stats должен быть ПЕРЕД /contracts/:id чтобы не перехватывался
+	apiGroup.GET("/contracts/:id/stats", api.GetContractStats) // Progressive Loading
 	apiGroup.GET("/contracts", api.GetContracts)
 	apiGroup.GET("/contracts/:id", api.GetContract)
 	apiGroup.POST("/contracts", api.CreateContract)
