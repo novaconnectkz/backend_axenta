@@ -134,11 +134,9 @@ func (s *PartnerSnapshotScheduler) createDailySnapshots() {
 			continue
 		}
 
-		// НОВАЯ ЛОГИКА: Синхронизируем ВСЕ партнерские аккаунты из Axenta Cloud
-		log.Printf("🔄 Синхронизация всех партнерских аккаунтов для компании %s (ID=%d)...", company.DatabaseSchema, company.ID)
-		if err := s.syncAllPartnerAccounts(tenantDB, company.ID); err != nil {
-			log.Printf("⚠️ Ошибка синхронизации партнерских аккаунтов для компании %d: %v", company.ID, err)
-		}
+		// ИСПОЛЬЗУЕМ УЖЕ СИНХРОНИЗИРОВАННЫЕ данные (синхронизация происходит отдельно каждую минуту)
+		// Синхронизация занимает слишком много времени и блокирует создание снимков
+		log.Printf("📊 Используем синхронизированные данные для компании %s (ID=%d)...", company.DatabaseSchema, company.ID)
 
 		// Получаем ВСЕ партнерские аккаунты из snapshot (включая тех у кого НЕТ договоров)
 		var allPartnerAccounts []models.AxentaAccountSnapshot
@@ -158,7 +156,16 @@ func (s *PartnerSnapshotScheduler) createDailySnapshots() {
 		}
 
 		log.Printf("📋 Компания %s: найдено %d партнерских аккаунтов в Axenta Cloud", company.DatabaseSchema, len(allPartnerAccounts))
+		
+		// Если нет партнеров, пропускаем компанию
+		if len(allPartnerAccounts) == 0 {
+			log.Printf("ℹ️ Компания %s: нет партнерских аккаунтов, пропускаем", company.DatabaseSchema)
+			companyDetail.ProcessingTimeS = int(time.Since(companyStartTime).Seconds())
+			job.AddCompanyDetail(companyDetail)
+			continue
+		}
 
+		log.Printf("🔑 Получаем токен для доступа к Axenta API (компания %d)...", company.ID)
 		// Получаем токен для доступа к Axenta API
 		token, err := s.getAnyActiveToken(tenantDB, company.ID)
 		if err != nil {
@@ -172,7 +179,9 @@ func (s *PartnerSnapshotScheduler) createDailySnapshots() {
 			})
 			continue
 		}
+		log.Printf("✅ Токен получен для компании %d", company.ID)
 
+		log.Printf("📋 Загружаем существующие договоры для маппинга (компания %d)...", company.ID)
 		// Получаем существующие договоры для маппинга
 		var contracts []models.Contract
 		contractsByPartnerID := make(map[int64]*models.Contract)
@@ -184,7 +193,9 @@ func (s *PartnerSnapshotScheduler) createDailySnapshots() {
 					contractsByPartnerID[int64(*contracts[i].PartnerCompanyID)] = &contracts[i]
 				}
 			}
-			log.Printf("📋 Найдено %d партнерских договоров для маппинга", len(contracts))
+			log.Printf("✅ Найдено %d партнерских договоров для маппинга", len(contracts))
+		} else {
+			log.Printf("⚠️ Ошибка загрузки договоров: %v", err)
 		}
 
 		// Получаем дефолтный тарифный план для партнеров без договора
@@ -207,8 +218,12 @@ func (s *PartnerSnapshotScheduler) createDailySnapshots() {
 		companyDetail.ContractsCount = len(allPartnerAccounts) // Считаем все партнерские аккаунты
 		totalContracts += len(allPartnerAccounts)
 
+		log.Printf("🚀 Начинаем создание снимков для %d партнеров (компания %d)...", len(allPartnerAccounts), company.ID)
 		// Для каждого партнерского аккаунта создаем снимок
-		for _, partnerAccount := range allPartnerAccounts {
+		for idx, partnerAccount := range allPartnerAccounts {
+			if idx % 10 == 0 {
+				log.Printf("📊 Прогресс: обработано %d из %d партнеров", idx, len(allPartnerAccounts))
+			}
 			contractDetail := models.ContractJobDetail{
 				CompanyID:     company.ID,
 				DaysProcessed: 1,
