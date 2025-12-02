@@ -650,34 +650,68 @@ func GetContracts(c *gin.Context) {
 	}
 
 	// Получаем КОЛИЧЕСТВО объектов из /api/cms/accounts/ (ПРАВИЛЬНЫЙ источник, совпадает с веб-интерфейсом)
+	// 🚀 ПАРАЛЛЕЛЬНАЯ ЗАГРУЗКА для ускорения
 	if len(partnerCompanyIDs) > 0 && userToken != "" {
-		for partnerCompanyID := range partnerCompanyIDs {
-			objectsCount, err := getPartnerObjectsCountFromAccount(partnerCompanyID, userToken)
-			if err != nil {
-				log.Printf("⚠️ Ошибка получения статистики для партнера ID=%d: %v", partnerCompanyID, err)
-				continue
-			}
-			
-			// Создаем массив объектов нужной длины (frontend использует len(Objects))
-			fakeObjects := make([]models.Object, objectsCount)
-			for j := 0; j < objectsCount; j++ {
-				fakeObjects[j] = models.Object{
-					ID:        uint(j + 1),
-					CompanyID: partnerCompanyID,
-					Name:      fmt.Sprintf("Object %d", j+1),
-				}
-			}
-			
-			// Заполняем partnerObjectsMap для всех договоров этого партнера
-			for i := range contracts {
-				if contracts[i].ContractType == "partner" && 
-				   contracts[i].PartnerCompanyID != nil && 
-				   *contracts[i].PartnerCompanyID == partnerCompanyID {
-					partnerObjectsMap[contracts[i].ID] = fakeObjects
-					log.Printf("📊 Партнерский договор ID=%d: %d объектов (из /api/cms/accounts/)", contracts[i].ID, len(fakeObjects))
-				}
-			}
+		var wg sync.WaitGroup
+		var partnerObjectsMutex sync.Mutex
+		semaphore := make(chan struct{}, 10) // Ограничение: 10 параллельных запросов
+		
+		log.Printf("🚀 Начинаем параллельную загрузку статистики для %d партнерских компаний", len(partnerCompanyIDs))
+		startTime := time.Now()
+		
+		// Собираем partner company IDs в слайс для удобства
+		partnerCompanyIDsList := make([]uint, 0, len(partnerCompanyIDs))
+		for id := range partnerCompanyIDs {
+			partnerCompanyIDsList = append(partnerCompanyIDsList, id)
 		}
+		
+		// Параллельная загрузка статистики
+		for _, partnerCompanyID := range partnerCompanyIDsList {
+			wg.Add(1)
+			go func(companyID uint) {
+				defer wg.Done()
+				
+				// Занимаем слот в семафоре
+				semaphore <- struct{}{}
+				defer func() { <-semaphore }() // Освобождаем слот
+				
+				// Загружаем статистику
+				objectsCount, err := getPartnerObjectsCountFromAccount(companyID, userToken)
+				if err != nil {
+					log.Printf("⚠️ Ошибка получения статистики для партнера ID=%d: %v", companyID, err)
+					return
+				}
+				
+				// Создаем массив объектов нужной длины (frontend использует len(Objects))
+				fakeObjects := make([]models.Object, objectsCount)
+				for j := 0; j < objectsCount; j++ {
+					fakeObjects[j] = models.Object{
+						ID:        uint(j + 1),
+						CompanyID: companyID,
+						Name:      fmt.Sprintf("Object %d", j+1),
+					}
+				}
+				
+				// Потокобезопасная запись в карту
+				partnerObjectsMutex.Lock()
+				// Заполняем partnerObjectsMap для всех договоров этого партнера
+				for i := range contracts {
+					if contracts[i].ContractType == "partner" && 
+					   contracts[i].PartnerCompanyID != nil && 
+					   *contracts[i].PartnerCompanyID == companyID {
+						partnerObjectsMap[contracts[i].ID] = fakeObjects
+						log.Printf("📊 Партнерский договор ID=%d: %d объектов (из /api/cms/accounts/)", contracts[i].ID, len(fakeObjects))
+					}
+				}
+				partnerObjectsMutex.Unlock()
+			}(partnerCompanyID)
+		}
+		
+		// Ждем завершения всех goroutines
+		wg.Wait()
+		
+		elapsed := time.Since(startTime)
+		log.Printf("✅ Параллельная загрузка завершена за %.2f секунд", elapsed.Seconds())
 	}
 
 	// Присваиваем тарифные планы и объекты договорам
