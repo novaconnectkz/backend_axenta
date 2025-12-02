@@ -10,17 +10,18 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
 
 // PartnerSnapshotScheduler управляет автоматическим созданием ежедневных снимков
 type PartnerSnapshotScheduler struct {
-	cron               *cron.Cron
-	snapshotService    *PartnerSnapshotService
-	axentaSyncService  *AxentaSyncService
-	db                 *gorm.DB
-	lastSnapshotTime   time.Time
-	isRunning          bool
+	cron              *cron.Cron
+	snapshotService   *PartnerSnapshotService
+	axentaSyncService *AxentaSyncService
+	db                *gorm.DB
+	lastSnapshotTime  time.Time
+	isRunning         bool
 }
 
 // NewPartnerSnapshotScheduler создает новый планировщик снимков
@@ -40,16 +41,16 @@ func (s *PartnerSnapshotScheduler) Start() error {
 		log.Println("🕐 Запуск автоматического создания ежедневных снимков (UTC 00:00)")
 		s.createDailySnapshots()
 	})
-	
+
 	if err != nil {
 		return err
 	}
 
 	s.cron.Start()
 	s.isRunning = true
-	
+
 	log.Println("✅ Планировщик ежедневных снимков запущен (каждый день в 00:00 UTC)")
-	
+
 	return nil
 }
 
@@ -75,13 +76,13 @@ func (s *PartnerSnapshotScheduler) createDailySnapshots() {
 
 	// Создаем запись о задаче в ОСНОВНОЙ БД в схеме public (не tenant)
 	mainDB := database.DB.Exec("SET search_path TO public") // Явно устанавливаем схему public
-	mainDB = database.DB // Используем основную БД для логов
+	mainDB = database.DB                                    // Используем основную БД для логов
 	job := &models.SnapshotJob{
-		JobType:    models.SnapshotJobTypeDailyAuto,
-		StartedAt:  startTime,
-		DateFrom:   snapshotDate,
-		DateTo:     snapshotDate,
-		Status:     models.SnapshotJobStatusRunning,
+		JobType:     models.SnapshotJobTypeDailyAuto,
+		StartedAt:   startTime,
+		DateFrom:    snapshotDate,
+		DateTo:      snapshotDate,
+		Status:      models.SnapshotJobStatusRunning,
 		TriggeredBy: "cron",
 		ServerInfo: models.ServerInfo{
 			Hostname:  s.getHostname(),
@@ -133,17 +134,19 @@ func (s *PartnerSnapshotScheduler) createDailySnapshots() {
 			continue
 		}
 
-		// НОВАЯ ЛОГИКА: Синхронизируем ВСЕ партнерские аккаунты из Axenta Cloud для всех активных партнеров
+		// НОВАЯ ЛОГИКА: Синхронизируем ВСЕ партнерские аккаунты из Axenta Cloud
 		log.Printf("🔄 Синхронизация всех партнерских аккаунтов для компании %s (ID=%d)...", company.DatabaseSchema, company.ID)
-		s.syncAllPartnerAccounts(tenantDB, company.ID)
+		if err := s.syncAllPartnerAccounts(tenantDB, company.ID); err != nil {
+			log.Printf("⚠️ Ошибка синхронизации партнерских аккаунтов для компании %d: %v", company.ID, err)
+		}
 
-		// Получаем все активные партнерские договоры
-		var contracts []models.Contract
-		log.Printf("🔍 Ищем партнерские договоры для компании %s (ID=%d)...", company.DatabaseSchema, company.ID)
+		// Получаем ВСЕ партнерские аккаунты из snapshot (включая тех у кого НЕТ договоров)
+		var allPartnerAccounts []models.AxentaAccountSnapshot
+		log.Printf("🔍 Ищем ВСЕ партнерские аккаунты в снимках для компании %s (ID=%d)...", company.DatabaseSchema, company.ID)
 		if err := tenantDB.
-			Where("contract_type = ? AND status = ?", "partner", "active").
-			Find(&contracts).Error; err != nil {
-			errMsg := fmt.Sprintf("Ошибка получения договоров для %s: %v", company.DatabaseSchema, err)
+			Where("account_type = ? OR account_type = ?", "partner", "Partner").
+			Find(&allPartnerAccounts).Error; err != nil {
+			errMsg := fmt.Sprintf("Ошибка получения партнерских аккаунтов для %s: %v", company.DatabaseSchema, err)
 			log.Printf("❌ %s", errMsg)
 			job.AddError(models.JobError{
 				CompanyID:   company.ID,
@@ -154,55 +157,113 @@ func (s *PartnerSnapshotScheduler) createDailySnapshots() {
 			continue
 		}
 
-		log.Printf("📋 Компания %s: найдено %d партнерских договоров", company.DatabaseSchema, len(contracts))
-		companyDetail.ContractsCount = len(contracts)
-		totalContracts += len(contracts)
+		log.Printf("📋 Компания %s: найдено %d партнерских аккаунтов в Axenta Cloud", company.DatabaseSchema, len(allPartnerAccounts))
 
-		// Для каждого договора создаем снимок
-		for _, contract := range contracts {
+		// Получаем токен для доступа к Axenta API
+		token, err := s.getAnyActiveToken(tenantDB, company.ID)
+		if err != nil {
+			errMsg := fmt.Sprintf("Не удалось получить токен для компании %d: %v", company.ID, err)
+			log.Printf("⚠️ %s", errMsg)
+			job.AddError(models.JobError{
+				CompanyID:   company.ID,
+				Message:     errMsg,
+				ErrorType:   "api_error",
+				Recoverable: true,
+			})
+			continue
+		}
+
+		// Получаем существующие договоры для маппинга
+		var contracts []models.Contract
+		contractsByPartnerID := make(map[int64]*models.Contract)
+		if err := tenantDB.
+			Where("contract_type = ? AND status = ?", "partner", "active").
+			Find(&contracts).Error; err == nil {
+			for i := range contracts {
+				if contracts[i].PartnerCompanyID != nil && *contracts[i].PartnerCompanyID > 0 {
+					contractsByPartnerID[int64(*contracts[i].PartnerCompanyID)] = &contracts[i]
+				}
+			}
+			log.Printf("📋 Найдено %d партнерских договоров для маппинга", len(contracts))
+		}
+
+		// Получаем дефолтный тарифный план для партнеров без договора
+		var defaultPlan models.BillingPlan
+		if err := tenantDB.
+			Where("is_active = ? AND admin_account_id = ?", true, company.ID).
+			Order("created_at DESC").
+			First(&defaultPlan).Error; err != nil {
+			log.Printf("⚠️ Не найден тарифный план для компании %d: %v", company.ID, err)
+			// Создадим временный план с базовыми параметрами
+			adminAccountIDPtr := &company.ID
+			defaultPlan = models.BillingPlan{
+				Name:           "Базовый партнерский план",
+				Price:          decimal.NewFromFloat(70),
+				BillingPeriod:  "monthly",
+				AdminAccountID: *adminAccountIDPtr,
+			}
+		}
+
+		companyDetail.ContractsCount = len(allPartnerAccounts) // Считаем все партнерские аккаунты
+		totalContracts += len(allPartnerAccounts)
+
+		// Для каждого партнерского аккаунта создаем снимок
+		for _, partnerAccount := range allPartnerAccounts {
 			contractDetail := models.ContractJobDetail{
-				ContractID:     contract.ID,
-				ContractNumber: contract.Number,
-				CompanyID:      company.ID,
-				DaysProcessed:  1, // За один день
+				CompanyID:     company.ID,
+				DaysProcessed: 1,
 			}
 
-			// Получаем токен партнера для доступа к Axenta API
-			token, err := s.getPartnerToken(tenantDB, contract.AdminAccountID)
-			if err != nil {
-				errMsg := fmt.Sprintf("Не удалось получить токен для договора %d: %v", contract.ID, err)
-				log.Printf("⚠️ %s", errMsg)
-				contractDetail.ErrorCount = 1
-				contractDetail.ErrorMessage = errMsg
-				job.AddError(models.JobError{
-					CompanyID:   company.ID,
-					ContractID:  contract.ID,
-					Message:     errMsg,
-					ErrorType:   "api_error",
-					Recoverable: true,
-				})
-				errorCount++
-				companyDetail.ErrorCount++
-				job.AddContractDetail(contractDetail)
-				continue
+			// Проверяем есть ли договор для этого партнера
+			contract, hasContract := contractsByPartnerID[partnerAccount.ExternalAccountID]
+			if hasContract {
+				// Используем существующий договор
+				contractDetail.ContractID = contract.ID
+				contractDetail.ContractNumber = contract.Number
+				log.Printf("📄 Партнер %d (%s): есть договор #%s", partnerAccount.ExternalAccountID, partnerAccount.AccountName, contract.Number)
+			} else {
+				// Нет договора - создаем "виртуальный" снимок без привязки к договору
+				contractDetail.ContractID = 0
+				contractDetail.ContractNumber = fmt.Sprintf("VIRTUAL-%d", partnerAccount.ExternalAccountID)
+				log.Printf("📄 Партнер %d (%s): НЕТ договора, создаем виртуальный снимок", partnerAccount.ExternalAccountID, partnerAccount.AccountName)
 			}
-
 			// Создаем снимок
-			if err := s.snapshotService.CreateSnapshotForContractWithTokenAndDB(&contract, snapshotDate, token, tenantDB); err != nil {
-				if err.Error() == "snapshot already exists" {
+			var createErr error
+			if hasContract {
+				// Есть договор - используем стандартный метод
+				createErr = s.snapshotService.CreateSnapshotForContractWithTokenAndDB(contract, snapshotDate, token, tenantDB)
+			} else {
+				// Нет договора - создаем снимок напрямую
+				createErr = s.snapshotService.CreateSnapshotForPartnerAccountWithoutContract(
+					company.ID,
+					uint(partnerAccount.ExternalAccountID),
+					partnerAccount.AccountName,
+					snapshotDate,
+					token,
+					&defaultPlan,
+					tenantDB,
+				)
+			}
+
+			if createErr != nil {
+				if createErr.Error() == "snapshot already exists" {
 					skippedCount++
 					contractDetail.SuccessCount = 1 // Считаем существующий снимок как успех
-					log.Printf("ℹ️ Снимок для договора %d уже существует, пропускаем", contract.ID)
+					if hasContract {
+						log.Printf("ℹ️ Снимок для партнера %d (договор %d) уже существует, пропускаем", partnerAccount.ExternalAccountID, contract.ID)
+					} else {
+						log.Printf("ℹ️ Снимок для партнера %d (без договора) уже существует, пропускаем", partnerAccount.ExternalAccountID)
+					}
 				} else {
-					errMsg := fmt.Sprintf("Ошибка создания снимка для договора %d: %v", contract.ID, err)
+					errMsg := fmt.Sprintf("Ошибка создания снимка для партнера %d: %v", partnerAccount.ExternalAccountID, createErr)
 					log.Printf("❌ %s", errMsg)
 					contractDetail.ErrorCount = 1
-					contractDetail.ErrorMessage = err.Error()
+					contractDetail.ErrorMessage = createErr.Error()
 					job.AddError(models.JobError{
 						CompanyID:   company.ID,
-						ContractID:  contract.ID,
+						ContractID:  contractDetail.ContractID,
 						Date:        snapshotDate.Format("2006-01-02"),
-						Message:     err.Error(),
+						Message:     createErr.Error(),
 						ErrorType:   "api_error",
 						Recoverable: true,
 					})
@@ -213,7 +274,11 @@ func (s *PartnerSnapshotScheduler) createDailySnapshots() {
 				successCount++
 				contractDetail.SuccessCount = 1
 				companyDetail.SuccessCount++
-				log.Printf("✅ Снимок создан для договора %d (компания %s)", contract.ID, company.DatabaseSchema)
+				if hasContract {
+					log.Printf("✅ Снимок создан для партнера %d (договор %d)", partnerAccount.ExternalAccountID, contract.ID)
+				} else {
+					log.Printf("✅ Снимок создан для партнера %d (без договора)", partnerAccount.ExternalAccountID)
+				}
 			}
 
 			job.AddContractDetail(contractDetail)
@@ -248,7 +313,7 @@ func (s *PartnerSnapshotScheduler) createDailySnapshots() {
 
 	duration := time.Since(startTime)
 	log.Printf("✅ Создание ежедневных снимков завершено за %v", duration)
-	log.Printf("📊 Итого: компаний=%d, договоров=%d, успешно=%d, ошибок=%d, пропущено=%d", 
+	log.Printf("📊 Итого: компаний=%d, договоров=%d, успешно=%d, ошибок=%d, пропущено=%d",
 		len(companies), totalContracts, successCount, errorCount, skippedCount)
 
 	s.lastSnapshotTime = time.Now()
@@ -275,12 +340,31 @@ func (s *PartnerSnapshotScheduler) getPartnerToken(db *gorm.DB, adminAccountID u
 	return token.Token, nil
 }
 
+// getAnyActiveToken получает любой активный токен для доступа к Axenta API
+func (s *PartnerSnapshotScheduler) getAnyActiveToken(db *gorm.DB, companyID uint) (string, error) {
+	// Сначала пробуем системный токен из env
+	systemToken := os.Getenv("AXENTA_ADMIN_TOKEN")
+	if systemToken != "" {
+		return systemToken, nil
+	}
+
+	// Иначе берем любой активный токен из БД
+	var token models.UserToken
+	if err := db.
+		Where("is_active = ? AND expires_at > ?", true, time.Now()).
+		Order("updated_at DESC").
+		First(&token).Error; err != nil {
+		return "", fmt.Errorf("не найдено активных токенов: %w", err)
+	}
+	return token.Token, nil
+}
+
 // GetStatus возвращает статус планировщика
 func (s *PartnerSnapshotScheduler) GetStatus() map[string]interface{} {
 	return map[string]interface{}{
 		"is_running":         s.isRunning,
 		"last_snapshot_time": s.lastSnapshotTime,
-		"next_run":          "00:00 UTC daily",
+		"next_run":           "00:00 UTC daily",
 	}
 }
 
@@ -291,23 +375,23 @@ func (s *PartnerSnapshotScheduler) RunManualSnapshot() {
 }
 
 // syncAllPartnerAccounts синхронизирует все партнерские аккаунты из Axenta Cloud для данного тенанта
-func (s *PartnerSnapshotScheduler) syncAllPartnerAccounts(tenantDB *gorm.DB, companyID uint) {
+func (s *PartnerSnapshotScheduler) syncAllPartnerAccounts(tenantDB *gorm.DB, companyID uint) error {
 	// ПРИОРИТЕТ 1: Используем системный токен из переменной окружения
 	systemToken := os.Getenv("AXENTA_ADMIN_TOKEN")
 	if systemToken != "" {
 		log.Printf("🔑 Используем системный токен AXENTA_ADMIN_TOKEN для загрузки ВСЕХ аккаунтов (компания %d)", companyID)
-		
+
 		tempSyncService := NewAxentaSyncService(tenantDB)
-		
+
 		if err := s.syncWithSystemToken(tempSyncService, systemToken, companyID); err != nil {
 			log.Printf("⚠️ Ошибка синхронизации через системный токен из env (компания %d): %v", companyID, err)
 			// Не возвращаемся, попробуем токены из БД
 		} else {
 			log.Printf("✅ Синхронизация через системный токен завершена успешно (компания %d)", companyID)
-			return
+			return nil
 		}
 	}
-	
+
 	// ПРИОРИТЕТ 2: Используем любой действующий токен из БД для загрузки ВСЕХ аккаунтов
 	var tokens []models.UserToken
 	if err := tenantDB.
@@ -315,46 +399,50 @@ func (s *PartnerSnapshotScheduler) syncAllPartnerAccounts(tenantDB *gorm.DB, com
 		Order("expires_at DESC").
 		Limit(1).
 		Find(&tokens).Error; err != nil {
-		log.Printf("⚠️ Ошибка получения токенов из БД для компании %d: %v", companyID, err)
-		return
+		errMsg := fmt.Sprintf("ошибка получения токенов из БД для компании %d: %v", companyID, err)
+		log.Printf("⚠️ %s", errMsg)
+		return fmt.Errorf(errMsg)
 	}
-	
+
 	if len(tokens) > 0 {
 		token := tokens[0]
 		log.Printf("🔑 Используем токен пользователя (AccountID=%d) для загрузки ВСЕХ аккаунтов (компания %d)", token.AccountID, companyID)
-		
+
 		tempSyncService := NewAxentaSyncService(tenantDB)
-		
+
 		// Используем этот токен для загрузки ВСЕХ данных
 		if err := s.syncWithSystemToken(tempSyncService, token.Token, companyID); err != nil {
-			log.Printf("⚠️ Ошибка синхронизации через токен из БД (компания %d): %v", companyID, err)
+			errMsg := fmt.Sprintf("ошибка синхронизации через токен из БД (компания %d): %v", companyID, err)
+			log.Printf("⚠️ %s", errMsg)
+			return fmt.Errorf(errMsg)
 		} else {
 			log.Printf("✅ Синхронизация через токен из БД завершена успешно (компания %d)", companyID)
-			return
+			return nil
 		}
 	}
 
-	// Если не нашли токенов, выводим сообщение
-	log.Printf("⚠️ Не найдено действующих токенов для синхронизации в компании %d", companyID)
+	// Если не нашли токенов, возвращаем ошибку
+	errMsg := fmt.Sprintf("не найдено действующих токенов для синхронизации в компании %d", companyID)
+	log.Printf("⚠️ %s", errMsg)
 	log.Printf("💡 Для загрузки ВСЕХ объектов:")
 	log.Printf("   1. Установите AXENTA_ADMIN_TOKEN в переменные окружения")
 	log.Printf("   2. Или убедитесь, что есть действующий токен в настройках Axenta Cloud API")
+	return fmt.Errorf(errMsg)
 }
 
 // syncWithSystemToken синхронизирует ВСЕ аккаунты и объекты используя системный токен
 func (s *PartnerSnapshotScheduler) syncWithSystemToken(syncService *AxentaSyncService, token string, companyID uint) error {
 	log.Printf("🌐 Загрузка ВСЕХ аккаунтов из Axenta Cloud через системный токен...")
-	
+
 	// Используем admin_account_id = 0 для системной синхронизации (все аккаунты)
 	// Это специальный ID для обозначения системного уровня доступа
 	systemAdminID := uint(0)
-	
+
 	// Выполняем синхронизацию через существующий метод, передавая токен напрямую
 	if err := syncService.syncAdminWithToken(systemAdminID, token); err != nil {
 		return fmt.Errorf("ошибка синхронизации: %w", err)
 	}
-	
+
 	log.Printf("✅ Загружены ВСЕ аккаунты и объекты из Axenta Cloud для компании %d", companyID)
 	return nil
 }
-

@@ -88,6 +88,85 @@ func (s *PartnerSnapshotService) CreateSnapshotForContractWithToken(contract *mo
 	return s.CreateSnapshotForContractWithTokenAndDB(contract, snapshotDate, token, s.db)
 }
 
+// CreateSnapshotForPartnerAccountWithoutContract создает снимок для партнерского аккаунта БЕЗ договора
+func (s *PartnerSnapshotService) CreateSnapshotForPartnerAccountWithoutContract(
+	companyID uint,
+	partnerAccountID uint,
+	partnerName string,
+	snapshotDate time.Time,
+	token string,
+	defaultPlan *models.BillingPlan,
+	db *gorm.DB,
+) error {
+	log.Printf("📸 Создание снимка для партнера БЕЗ договора: ID=%d, name=%s на дату %s", 
+		partnerAccountID, partnerName, snapshotDate.Format("2006-01-02"))
+
+	// Проверяем есть ли уже снимок для этого партнера на эту дату (без привязки к договору)
+	var existingSnapshot models.PartnerDailySnapshot
+	if err := db.Unscoped().
+		Where("partner_company_id = ? AND snapshot_date = ? AND contract_id = 0", partnerAccountID, snapshotDate).
+		First(&existingSnapshot).Error; err == nil {
+		log.Printf("ℹ️ Снимок для партнера %d (без договора) на дату %s уже существует", partnerAccountID, snapshotDate.Format("2006-01-02"))
+		return fmt.Errorf("snapshot already exists")
+	}
+
+	// Получаем объекты партнера из Axenta Cloud
+	objects, err := fetchPartnerObjects(token, int(partnerAccountID))
+	if err != nil {
+		return fmt.Errorf("ошибка получения объектов партнера: %w", err)
+	}
+
+	// Подсчитываем активные объекты
+	activeCount := 0
+	for _, obj := range objects {
+		if obj.IsActive {
+			activeCount++
+		}
+	}
+
+	log.Printf("📊 Партнер %d (%s): всего=%d, активных=%d", 
+		partnerAccountID, partnerName, len(objects), activeCount)
+
+	// Рассчитываем стоимость
+	// Рассчитываем дневную стоимость из месячной
+	monthlyPrice := defaultPlan.Price
+	dailyPrice := monthlyPrice.Div(decimal.NewFromInt(30))
+
+	costBeforeDiscount := dailyPrice.Mul(decimal.NewFromInt(int64(activeCount)))
+	dailyCost := costBeforeDiscount // Без скидок для партнеров без договора
+
+	// Создаем снимок
+	snapshot := models.PartnerDailySnapshot{
+		AdminAccountID:     companyID,
+		CompanyID:          companyID,
+		ContractID:         0, // Нет договора
+		SnapshotDate:       snapshotDate,
+		PartnerCompanyID:   partnerAccountID,
+		TariffPlanID:       defaultPlan.ID,
+		MonthlyPrice:       monthlyPrice,
+		DailyPrice:         dailyPrice,
+		TotalObjectsCount:  len(objects),
+		ActiveObjectsCount: activeCount,
+		DiscountType:       "none",
+		DiscountPercent:    decimal.Zero,
+		DiscountFixed:      decimal.Zero,
+		CostBeforeDiscount: costBeforeDiscount,
+		DiscountAmount:     decimal.Zero,
+		DailyCost:          dailyCost,
+		Status:             "completed",
+		Notes:              fmt.Sprintf("Автоматический снимок партнера БЕЗ договора: %s", partnerName),
+	}
+
+	if err := db.Create(&snapshot).Error; err != nil {
+		return fmt.Errorf("ошибка сохранения снимка: %w", err)
+	}
+
+	log.Printf("✅ Снимок создан для партнера %d (без договора): ID=%d, активных объектов=%d, стоимость=%.2f", 
+		partnerAccountID, snapshot.ID, activeCount, dailyCost.InexactFloat64())
+
+	return nil
+}
+
 // CreateSnapshotForContractWithTokenAndDB создает снимок для конкретного договора с указанным токеном и базой данных
 func (s *PartnerSnapshotService) CreateSnapshotForContractWithTokenAndDB(contract *models.Contract, snapshotDate time.Time, token string, db *gorm.DB) error {
 	log.Printf("📸 Создание снимка для договора ID=%d, number=%s на дату %s", 
@@ -242,6 +321,78 @@ func (s *PartnerSnapshotService) CreateSnapshotForContractWithTokenAndDB(contrac
 		discountPercent, snapshot.DailyCost, snapshot.CostBeforeDiscount)
 
 	return nil
+}
+
+// fetchPartnerObjects получает все объекты партнера из Axenta Cloud API
+func fetchPartnerObjects(token string, partnerCompanyID int) ([]struct {
+	ID        uint   `json:"id"`
+	Name      string `json:"name"`
+	IsActive  bool   `json:"isActive"`
+	CreatedAt string `json:"createdAt"`
+	DeletedAt string `json:"deletedAt"`
+}, error) {
+	client := &http.Client{Timeout: 180 * time.Second}
+	
+	var allObjects []struct {
+		ID        uint   `json:"id"`
+		Name      string `json:"name"`
+		IsActive  bool   `json:"isActive"`
+		CreatedAt string `json:"createdAt"`
+		DeletedAt string `json:"deletedAt"`
+	}
+
+	page := 1
+	perPage := 1000
+
+	for {
+		axentaURL := fmt.Sprintf("https://axenta.cloud/api/cms/objects/?accountId=%d&page=%d&per_page=%d", 
+			partnerCompanyID, page, perPage)
+		
+		req, err := http.NewRequest("GET", axentaURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("ошибка создания запроса: %w", err)
+		}
+
+		req.Header.Set("Authorization", "Token "+token)
+
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("ошибка запроса к Axenta Cloud: %w", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return nil, fmt.Errorf("Axenta Cloud вернул статус %d", resp.StatusCode)
+		}
+
+		var axentaResponse struct {
+			Results []struct {
+				ID        uint   `json:"id"`
+				Name      string `json:"name"`
+				IsActive  bool   `json:"isActive"`
+				CreatedAt string `json:"createdAt"`
+				DeletedAt string `json:"deletedAt"`
+			} `json:"results"`
+			Count int     `json:"count"`
+			Next  *string `json:"next"`
+		}
+
+		if err := json.NewDecoder(resp.Body).Decode(&axentaResponse); err != nil {
+			resp.Body.Close()
+			return nil, fmt.Errorf("ошибка парсинга ответа: %w", err)
+		}
+		resp.Body.Close()
+
+		allObjects = append(allObjects, axentaResponse.Results...)
+
+		if len(axentaResponse.Results) < perPage || axentaResponse.Next == nil {
+			break
+		}
+
+		page++
+	}
+
+	return allObjects, nil
 }
 
 // getPartnerObjectsCountWithToken получает количество объектов партнера из Axenta Cloud с указанным токеном
