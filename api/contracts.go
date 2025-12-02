@@ -714,32 +714,32 @@ func GetContracts(c *gin.Context) {
 				
 				// Загружаем статистику
 				objectsCount, err := getPartnerObjectsCountFromAccount(companyID, userToken)
-				if err != nil {
+			if err != nil {
 					log.Printf("⚠️ Ошибка получения статистики для партнера ID=%d: %v", companyID, err)
 					return
-				}
-				
-				// Создаем массив объектов нужной длины (frontend использует len(Objects))
-				fakeObjects := make([]models.Object, objectsCount)
-				for j := 0; j < objectsCount; j++ {
-					fakeObjects[j] = models.Object{
-						ID:        uint(j + 1),
+			}
+			
+			// Создаем массив объектов нужной длины (frontend использует len(Objects))
+			fakeObjects := make([]models.Object, objectsCount)
+			for j := 0; j < objectsCount; j++ {
+				fakeObjects[j] = models.Object{
+					ID:        uint(j + 1),
 						CompanyID: companyID,
-						Name:      fmt.Sprintf("Object %d", j+1),
-					}
+					Name:      fmt.Sprintf("Object %d", j+1),
 				}
-				
+			}
+			
 				// Потокобезопасная запись в карту
 				partnerObjectsMutex.Lock()
-				// Заполняем partnerObjectsMap для всех договоров этого партнера
-				for i := range contracts {
-					if contracts[i].ContractType == "partner" && 
-					   contracts[i].PartnerCompanyID != nil && 
+			// Заполняем partnerObjectsMap для всех договоров этого партнера
+			for i := range contracts {
+				if contracts[i].ContractType == "partner" && 
+				   contracts[i].PartnerCompanyID != nil && 
 					   *contracts[i].PartnerCompanyID == companyID {
-						partnerObjectsMap[contracts[i].ID] = fakeObjects
-						log.Printf("📊 Партнерский договор ID=%d: %d объектов (из /api/cms/accounts/)", contracts[i].ID, len(fakeObjects))
-					}
+					partnerObjectsMap[contracts[i].ID] = fakeObjects
+					log.Printf("📊 Партнерский договор ID=%d: %d объектов (из /api/cms/accounts/)", contracts[i].ID, len(fakeObjects))
 				}
+			}
 				partnerObjectsMutex.Unlock()
 			}(partnerCompanyID)
 		}
