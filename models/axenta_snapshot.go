@@ -58,6 +58,15 @@ type AxentaObjectSnapshot struct {
 	ScheduledDeleteAt   *time.Time `json:"scheduled_delete_at"`
 	LastCommunicationAt *time.Time `json:"last_communication_at"`
 
+	// Новые поля из Axenta Cloud API (nullable для обратной совместимости)
+	CreatorName     *string    `json:"creator_name" gorm:"type:varchar(200)"`
+	CreatorID       *int       `json:"creator_id"`
+	CreatorIsActive *bool      `json:"creator_is_active"`
+	AccountIsActive *bool      `json:"account_is_active"`
+	PhoneNumbers    *string    `json:"phone_numbers" gorm:"type:jsonb"` // JSON массив телефонов
+	AxentaCreatedAt *time.Time `json:"axenta_created_at"`               // Дата создания в Axenta Cloud
+	AxentaDeletedAt *time.Time `json:"axenta_deleted_at"`               // Дата удаления в Axenta Cloud
+
 	LastSyncedAt time.Time `json:"last_synced_at" gorm:"not null;index"`
 	RawPayload   string    `json:"raw_payload" gorm:"type:jsonb"`
 }

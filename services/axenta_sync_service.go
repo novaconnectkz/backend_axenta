@@ -195,16 +195,24 @@ type axentaObjectsResponse struct {
 }
 
 type axentaObject struct {
-	ID                  int    `json:"id"`
-	Name                string `json:"name"`
-	UniqueID            string `json:"uniqueId"`
-	AccountID           int    `json:"accountId"`
-	AccountName         string `json:"accountName"`
-	AccountType         string `json:"accountType"`
-	DeviceTypeName      string `json:"deviceTypeName"`
-	LastMessageDatetime string `json:"lastMessageDatetime"`
-	IsActive            bool   `json:"isActive"`
-	Status              string `json:"status"`
+	ID                  int      `json:"id"`
+	Name                string   `json:"name"`
+	UniqueID            string   `json:"uniqueId"`
+	AccountID           int      `json:"accountId"`
+	AccountName         string   `json:"accountName"`
+	AccountType         string   `json:"accountType"`
+	DeviceTypeName      string   `json:"deviceTypeName"`
+	LastMessageDatetime string   `json:"lastMessageDatetime"`
+	IsActive            bool     `json:"isActive"`
+	Status              string   `json:"status"`
+	// Новые поля из Axenta Cloud API
+	CreatorName     string   `json:"creatorName"`
+	CreatorID       int      `json:"creatorId"`
+	CreatorIsActive bool     `json:"creatorIsActive"`
+	AccountIsActive bool     `json:"accountIsActive"`
+	PhoneNumbers    []string `json:"phoneNumbers"`
+	CreatedAt       string   `json:"createdAt"`
+	DeletedAt       string   `json:"deletedAt"`
 }
 
 func (s *AxentaSyncService) fetchObjects(token string, accountID int) ([]axentaObject, error) {
@@ -332,35 +340,73 @@ func (s *AxentaSyncService) syncObjectsForAccounts(adminAccountID uint, token st
 			continue
 		}
 
-		for _, obj := range objects {
-			rawPayload, _ := json.Marshal(obj)
-			snapshot := models.AxentaObjectSnapshot{
-				AdminAccountID:    adminAccountID,
-				AccountExternalID: int64(obj.AccountID),
-				ExternalObjectID:  int64(obj.ID),
-				ObjectName:        obj.Name,
-				UniqueID:          obj.UniqueID,
-				DeviceTypeName:    obj.DeviceTypeName,
-				AccountName:       obj.AccountName,
-				Status:            obj.Status,
-				IsActive:          obj.IsActive,
-				LastSyncedAt:      syncedAt,
-				RawPayload:        string(rawPayload),
-			}
+	for _, obj := range objects {
+		rawPayload, _ := json.Marshal(obj)
+		snapshot := models.AxentaObjectSnapshot{
+			AdminAccountID:    adminAccountID,
+			AccountExternalID: int64(obj.AccountID),
+			ExternalObjectID:  int64(obj.ID),
+			ObjectName:        obj.Name,
+			UniqueID:          obj.UniqueID,
+			DeviceTypeName:    obj.DeviceTypeName,
+			AccountName:       obj.AccountName,
+			Status:            obj.Status,
+			IsActive:          obj.IsActive,
+			LastSyncedAt:      syncedAt,
+			RawPayload:        string(rawPayload),
+		}
 
-			if obj.LastMessageDatetime != "" {
-				if parsed := parseAxentaTime(obj.LastMessageDatetime); parsed != nil {
-					snapshot.LastCommunicationAt = parsed
-				}
-			}
-
-			if err := s.db.Clauses(clause.OnConflict{
-				Columns:   []clause.Column{{Name: "admin_account_id"}, {Name: "external_object_id"}},
-				DoUpdates: clause.AssignmentColumns([]string{"account_external_id", "object_name", "unique_id", "device_type_name", "account_name", "status", "is_active", "last_synced_at", "raw_payload", "last_communication_at"}),
-			}).Create(&snapshot).Error; err != nil {
-				return err
+		// Парсим последнее сообщение
+		if obj.LastMessageDatetime != "" {
+			if parsed := parseAxentaTime(obj.LastMessageDatetime); parsed != nil {
+				snapshot.LastCommunicationAt = parsed
 			}
 		}
+
+		// Новые поля из API (с проверкой на пустые значения)
+		if obj.CreatorName != "" {
+			snapshot.CreatorName = &obj.CreatorName
+		}
+		if obj.CreatorID != 0 {
+			snapshot.CreatorID = &obj.CreatorID
+		}
+		snapshot.CreatorIsActive = &obj.CreatorIsActive
+		snapshot.AccountIsActive = &obj.AccountIsActive
+
+		// Конвертируем массив телефонов в JSON
+		if len(obj.PhoneNumbers) > 0 {
+			phonesJSON, _ := json.Marshal(obj.PhoneNumbers)
+			phonesStr := string(phonesJSON)
+			snapshot.PhoneNumbers = &phonesStr
+		}
+
+		// Парсим дату создания в Axenta
+		if obj.CreatedAt != "" {
+			if parsed := parseAxentaTime(obj.CreatedAt); parsed != nil {
+				snapshot.AxentaCreatedAt = parsed
+			}
+		}
+
+		// Парсим дату удаления в Axenta
+		if obj.DeletedAt != "" {
+			if parsed := parseAxentaTime(obj.DeletedAt); parsed != nil {
+				snapshot.AxentaDeletedAt = parsed
+			}
+		}
+
+		if err := s.db.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "admin_account_id"}, {Name: "external_object_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"account_external_id", "object_name", "unique_id", "device_type_name", "account_name",
+				"status", "is_active", "last_synced_at", "raw_payload", "last_communication_at",
+				// Новые поля
+				"creator_name", "creator_id", "creator_is_active", "account_is_active",
+				"phone_numbers", "axenta_created_at", "axenta_deleted_at",
+			}),
+		}).Create(&snapshot).Error; err != nil {
+			return err
+		}
+	}
 	}
 
 	return nil
