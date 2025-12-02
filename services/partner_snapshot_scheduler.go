@@ -65,12 +65,16 @@ func (s *PartnerSnapshotScheduler) Stop() {
 
 // createDailySnapshots создает снимки для всех активных партнерских договоров и синхронизирует все аккаунты из Axenta Cloud
 func (s *PartnerSnapshotScheduler) createDailySnapshots() {
-	startTime := time.Now()
-	log.Println("📸 Начало создания ежедневных снимков и синхронизации партнерских аккаунтов")
-
 	// Получаем вчерашнюю дату (снимок создается в 00:00 UTC за предыдущий день)
 	yesterday := time.Now().UTC().AddDate(0, 0, -1)
 	snapshotDate := time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 0, 0, 0, 0, time.UTC)
+	s.createDailySnapshotsForDate(snapshotDate)
+}
+
+// createDailySnapshotsForDate создает снимки за указанную дату
+func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time.Time) {
+	startTime := time.Now()
+	log.Printf("📸 Начало создания ежедневных снимков за дату: %s", snapshotDate.Format("2006-01-02"))
 
 	log.Printf("📅 Дата снимка: %s", snapshotDate.Format("2006-01-02"))
 
@@ -156,7 +160,7 @@ func (s *PartnerSnapshotScheduler) createDailySnapshots() {
 		}
 
 		log.Printf("📋 Компания %s: найдено %d партнерских аккаунтов в Axenta Cloud", company.DatabaseSchema, len(allPartnerAccounts))
-		
+
 		// Если нет партнеров, пропускаем компанию
 		if len(allPartnerAccounts) == 0 {
 			log.Printf("ℹ️ Компания %s: нет партнерских аккаунтов, пропускаем", company.DatabaseSchema)
@@ -180,6 +184,42 @@ func (s *PartnerSnapshotScheduler) createDailySnapshots() {
 			continue
 		}
 		log.Printf("✅ Токен получен для компании %d", company.ID)
+		
+		// Получаем общую статистику объектов из /stats/ (как на странице /objects)
+		totalFromStats, activeFromStats, statsErr := s.snapshotService.getTotalObjectsFromStats(token)
+		if statsErr != nil {
+			log.Printf("⚠️ Не удалось получить статистику из /stats/ для компании %d: %v", company.ID, statsErr)
+			// Продолжаем без этой статистики
+		} else {
+			log.Printf("📊 Компания %d: общая статистика из /stats/: всего=%d, активных=%d (как на /objects)", 
+				company.ID, totalFromStats, activeFromStats)
+		}
+		
+		// Загружаем иерархию всех аккаунтов и распределяем объекты БЕЗ ДУБЛЕЙ
+		log.Printf("🌳 Загружаем иерархию всех аккаунтов...")
+		hierarchyService := NewAccountHierarchyService(token)
+		if err := hierarchyService.LoadAllAccounts(); err != nil {
+			log.Printf("⚠️ Не удалось загрузить иерархию аккаунтов: %v", err)
+			continue
+		}
+		
+		// Загружаем ВСЕ объекты и распределяем их по партнёрам без дублей
+		log.Printf("📦 Загружаем ВСЕ объекты и распределяем по партнёрам (без дублей)...")
+		partnerObjectsMap, err := hierarchyService.DistributeObjectsByPartner(token, snapshotDate)
+		if err != nil {
+			log.Printf("⚠️ Не удалось загрузить и распределить объекты: %v", err)
+			continue
+		}
+		
+		// Выводим статистику
+		totalObjects := 0
+		totalActive := 0
+		for _, stats := range partnerObjectsMap {
+			totalObjects += stats.TotalObjects
+			totalActive += stats.ActiveObjects
+		}
+		log.Printf("📊 Распределено %d объектов по %d партнёрам (активных: %d)", 
+			totalObjects, len(partnerObjectsMap), totalActive)
 
 		log.Printf("📋 Загружаем существующие договоры для маппинга (компания %d)...", company.ID)
 		// Получаем существующие договоры для маппинга
@@ -218,70 +258,53 @@ func (s *PartnerSnapshotScheduler) createDailySnapshots() {
 		companyDetail.ContractsCount = len(allPartnerAccounts) // Считаем все партнерские аккаунты
 		totalContracts += len(allPartnerAccounts)
 
-		log.Printf("🚀 Начинаем создание снимков для %d партнеров (компания %d)...", len(allPartnerAccounts), company.ID)
-		// Для каждого партнерского аккаунта создаем снимок
-		for idx, partnerAccount := range allPartnerAccounts {
-			if idx % 10 == 0 {
-				log.Printf("📊 Прогресс: обработано %d из %d партнеров", idx, len(allPartnerAccounts))
+		log.Printf("🚀 Начинаем создание снимков для %d партнеров (компания %d)...", len(partnerObjectsMap), company.ID)
+		// Для каждого партнера из распределённых объектов создаём снимок
+		processedCount := 0
+		for partnerID, objectStats := range partnerObjectsMap {
+			processedCount++
+			if processedCount%10 == 0 {
+				log.Printf("📊 Прогресс: обработано %d из %d партнеров", processedCount, len(partnerObjectsMap))
 			}
+			
 			contractDetail := models.ContractJobDetail{
 				CompanyID:     company.ID,
 				DaysProcessed: 1,
 			}
 
 			// Проверяем есть ли договор для этого партнера
-			contract, hasContract := contractsByPartnerID[partnerAccount.ExternalAccountID]
-			if hasContract {
-				// Используем существующий договор
-				contractDetail.ContractID = contract.ID
-				contractDetail.ContractNumber = contract.Number
-				log.Printf("📄 Партнер %d (%s): есть договор #%s", partnerAccount.ExternalAccountID, partnerAccount.AccountName, contract.Number)
-			} else {
-				// Нет договора - создаем "виртуальный" снимок без привязки к договору
-				contractDetail.ContractID = 0
-				contractDetail.ContractNumber = fmt.Sprintf("VIRTUAL-%d", partnerAccount.ExternalAccountID)
-				log.Printf("📄 Партнер %d (%s): НЕТ договора, создаем виртуальный снимок", partnerAccount.ExternalAccountID, partnerAccount.AccountName)
+			contract, hasContract := contractsByPartnerID[partnerID]
+			
+			// Определяем название для партнёра ID=186
+			partnerName := ""
+			if partnerID == 186 {
+				partnerName = "Объекты наших клиентов"
+				log.Printf("📄 GLOMOS (186 - %s): %d активных объектов", partnerName, objectStats.ActiveObjects)
 			}
-			// Создаем снимок
-			var createErr error
-			if hasContract {
-				// Есть договор - используем стандартный метод
-				createErr = s.snapshotService.CreateSnapshotForContractWithTokenAndDB(contract, snapshotDate, token, tenantDB)
-			} else {
-				// Нет договора - создаем снимок напрямую
-				createErr = s.snapshotService.CreateSnapshotForPartnerAccountWithoutContract(
-					company.ID,
-					uint(partnerAccount.ExternalAccountID),
-					partnerAccount.AccountName,
-					snapshotDate,
-					token,
-					&defaultPlan,
-					tenantDB,
-				)
-			}
+			
+			// Создаём снимок напрямую с данными из распределения
+			createErr := s.snapshotService.CreateSnapshotWithObjectCounts(
+				company.ID,
+				uint(partnerID),
+				objectStats.TotalObjects,
+				objectStats.ActiveObjects,
+				snapshotDate,
+				&defaultPlan,
+				contract,
+				partnerName,
+				tenantDB,
+			)
 
 			if createErr != nil {
 				if createErr.Error() == "snapshot already exists" {
 					skippedCount++
-					contractDetail.SuccessCount = 1 // Считаем существующий снимок как успех
-					if hasContract {
-						log.Printf("ℹ️ Снимок для партнера %d (договор %d) уже существует, пропускаем", partnerAccount.ExternalAccountID, contract.ID)
-					} else {
-						log.Printf("ℹ️ Снимок для партнера %d (без договора) уже существует, пропускаем", partnerAccount.ExternalAccountID)
-					}
+					contractDetail.SuccessCount = 1
+					log.Printf("ℹ️ Снимок для партнера %d уже существует, пропускаем", partnerID)
 				} else {
-					errMsg := fmt.Sprintf("Ошибка создания снимка для партнера %d: %v", partnerAccount.ExternalAccountID, createErr)
+					errMsg := fmt.Sprintf("Ошибка создания снимка для партнера %d: %v", partnerID, createErr)
 					log.Printf("❌ %s", errMsg)
 					contractDetail.ErrorCount = 1
 					contractDetail.ErrorMessage = createErr.Error()
-					job.AddError(models.JobError{
-						CompanyID:   company.ID,
-						ContractID:  contractDetail.ContractID,
-						Date:        snapshotDate.Format("2006-01-02"),
-						Message:     createErr.Error(),
-						ErrorType:   "api_error",
-						Recoverable: true,
-					})
 					errorCount++
 					companyDetail.ErrorCount++
 				}
@@ -290,13 +313,70 @@ func (s *PartnerSnapshotScheduler) createDailySnapshots() {
 				contractDetail.SuccessCount = 1
 				companyDetail.SuccessCount++
 				if hasContract {
-					log.Printf("✅ Снимок создан для партнера %d (договор %d)", partnerAccount.ExternalAccountID, contract.ID)
+					log.Printf("✅ Снимок создан для партнера %d (договор %s): %d/%d объектов", 
+						partnerID, contract.Number, objectStats.ActiveObjects, objectStats.TotalObjects)
+				} else if partnerID == 186 {
+					log.Printf("✅ Снимок создан для GLOMOS (186 - %s): %d/%d объектов", 
+						partnerName, objectStats.ActiveObjects, objectStats.TotalObjects)
 				} else {
-					log.Printf("✅ Снимок создан для партнера %d (без договора)", partnerAccount.ExternalAccountID)
+					log.Printf("✅ Снимок создан для партнера %d (без договора): %d/%d объектов", 
+						partnerID, objectStats.ActiveObjects, objectStats.TotalObjects)
 				}
 			}
 
+			if hasContract {
+				contractDetail.ContractID = contract.ID
+				contractDetail.ContractNumber = contract.Number
+			}
 			job.AddContractDetail(contractDetail)
+		}
+		
+		companyDetail.ContractsCount = len(partnerObjectsMap)
+		totalContracts += len(partnerObjectsMap)
+
+		// НЕ создаём снимок для GLOMOS (186), потому что:
+		// 1. API запрос ?accountId=партнёр УЖЕ включает всех дочерних клиентов
+		// 2. Прямые клиенты GLOMOS тоже включены в партнёрские запросы
+		// 3. Создание отдельного снимка приведёт к двойному подсчёту
+		
+		if hierarchyService != nil {
+			directClients := hierarchyService.GetDirectGLOMOSClients()
+			if len(directClients) > 0 {
+				directTotal := 0
+				directActive := 0
+				for _, client := range directClients {
+					directTotal += client.ObjectsTotal
+					directActive += client.ObjectsActive
+				}
+				log.Printf("ℹ️ Прямых клиентов GLOMOS: %d аккаунтов, %d активных объектов (УЖЕ учтены в партнёрских снимках)", 
+					len(directClients), directActive)
+			}
+		}
+		
+		// Проверяем совпадение с общей статистикой из /stats/
+		if totalFromStats > 0 {
+			var sumTotal, sumActive int64
+			if err := tenantDB.Model(&models.PartnerDailySnapshot{}).
+				Where("DATE(snapshot_date AT TIME ZONE 'UTC') = ?", snapshotDate.Format("2006-01-02")).
+				Select("COALESCE(SUM(total_objects_count), 0) as sum_total, COALESCE(SUM(active_objects_count), 0) as sum_active").
+				Row().Scan(&sumTotal, &sumActive); err == nil {
+				
+				diffTotal := totalFromStats - int(sumTotal)
+				diffActive := activeFromStats - int(sumActive)
+				
+				log.Printf("📊 Итоговое сравнение:")
+				log.Printf("   - Общая статистика (/objects): %d всего, %d активных", totalFromStats, activeFromStats)
+				log.Printf("   - Сумма партнёрских снимков:   %d всего, %d активных", int(sumTotal), int(sumActive))
+				log.Printf("   - Расхождение:                 %d всего, %d активных", diffTotal, diffActive)
+				
+				if diffTotal == 0 && diffActive == 0 {
+					log.Printf("✅ Идеальное совпадение! Все объекты учтены.")
+				} else if diffTotal < 0 || diffActive < 0 {
+					log.Printf("⚠️ Сумма снимков БОЛЬШЕ чем общая статистика (двойной подсчёт из-за иерархии)")
+				} else {
+					log.Printf("⚠️ Есть объекты не учтённые в партнёрских снимках")
+				}
+			}
 		}
 
 		// Сохраняем время обработки компании
@@ -319,11 +399,42 @@ func (s *PartnerSnapshotScheduler) createDailySnapshots() {
 		job.FinishJob(models.SnapshotJobStatusFailed, "Все попытки создания снимков завершились с ошибками")
 	}
 
+	// Подсчитываем общее количество объектов из созданных снимков
+	var totalObjectsSum, activeObjectsSum int64
+	for _, company := range companies {
+		tenantDB := database.DB.Session(&gorm.Session{})
+		if err := tenantDB.Exec(fmt.Sprintf("SET search_path TO tenant_%d, public", company.ID)).Error; err != nil {
+			continue
+		}
+		
+		var companyTotal, companyActive int64
+		if err := tenantDB.Model(&models.PartnerDailySnapshot{}).
+			Where("DATE(snapshot_date AT TIME ZONE 'UTC') = ?", snapshotDate.Format("2006-01-02")).
+			Select("COALESCE(SUM(total_objects_count), 0) as total, COALESCE(SUM(active_objects_count), 0) as active").
+			Row().Scan(&companyTotal, &companyActive); err == nil {
+			totalObjectsSum += companyTotal
+			activeObjectsSum += companyActive
+		}
+	}
+	
+	job.TotalObjects = int(totalObjectsSum)
+	job.ActiveObjects = int(activeObjectsSum)
+	job.SkippedCount = skippedCount
+	
+	// Устанавливаем scheduled_time для автоматических задач (21:00 UTC / 00:00 MSK следующего дня)
+	// Снимок за 01.12.2025 создаётся в 00:00 MSK 02.12.2025 (т.е. в 21:00 UTC 01.12.2025)
+	if job.JobType == models.SnapshotJobTypeDailyAuto {
+		// scheduled_time = дата снимка + 1 день в 00:00 MSK = дата снимка в 21:00 UTC
+		scheduledTime := time.Date(snapshotDate.Year(), snapshotDate.Month(), snapshotDate.Day(), 21, 0, 0, 0, time.UTC)
+		job.ScheduledTime = &scheduledTime
+	}
+	
 	// Сохраняем финальное состояние задачи в основную БД
 	if err := mainDB.Save(job).Error; err != nil {
 		log.Printf("❌ Ошибка сохранения финального состояния задачи: %v", err)
 	} else {
-		log.Printf("✅ Финальное состояние задачи сохранено: ID=%d, статус=%s", job.ID, job.Status)
+		log.Printf("✅ Финальное состояние задачи сохранено: ID=%d, статус=%s, объектов=%d/%d", 
+			job.ID, job.Status, job.ActiveObjects, job.TotalObjects)
 	}
 
 	duration := time.Since(startTime)
@@ -387,6 +498,12 @@ func (s *PartnerSnapshotScheduler) GetStatus() map[string]interface{} {
 func (s *PartnerSnapshotScheduler) RunManualSnapshot() {
 	log.Println("🧪 Запуск ТЕСТОВОГО создания снимков вручную")
 	s.createDailySnapshots()
+}
+
+// RunManualSnapshotForDate создает снимки за указанную дату (для ручного запуска)
+func (s *PartnerSnapshotScheduler) RunManualSnapshotForDate(targetDate time.Time) {
+	log.Printf("🧪 Запуск ТЕСТОВОГО создания снимков вручную за дату: %s", targetDate.Format("2006-01-02"))
+	s.createDailySnapshotsForDate(targetDate)
 }
 
 // syncAllPartnerAccounts синхронизирует все партнерские аккаунты из Axenta Cloud для данного тенанта

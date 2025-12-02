@@ -20,6 +20,66 @@ type PartnerSnapshotService struct {
 	db *gorm.DB
 }
 
+// getTotalObjectsFromStats получает общее количество объектов (как на странице /objects)
+// Использует тот же метод что и frontend: /cms/objects/?page=1&per_page=1 и берет count
+func (s *PartnerSnapshotService) getTotalObjectsFromStats(token string) (total int, active int, err error) {
+	client := &http.Client{Timeout: 30 * time.Second}
+	
+	// Запрашиваем первую страницу с 1 объектом чтобы получить общий count
+	req, err := http.NewRequest("GET", "https://axenta.cloud/api/cms/objects/?page=1&per_page=1", nil)
+	if err != nil {
+		return 0, 0, fmt.Errorf("ошибка создания запроса: %w", err)
+	}
+	
+	req.Header.Set("Authorization", "Token "+token)
+	
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, 0, fmt.Errorf("ошибка запроса: %w", err)
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != http.StatusOK {
+		return 0, 0, fmt.Errorf("API вернул статус %d", resp.StatusCode)
+	}
+	
+	var response struct {
+		Count   int            `json:"count"`
+		Results []axentaObject `json:"results"`
+	}
+	
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return 0, 0, fmt.Errorf("ошибка парсинга: %w", err)
+	}
+	
+	// Подсчитываем активные объекты (нужно запросить все или использовать фильтр)
+	// Для простоты делаем еще один запрос с фильтром is_active=true
+	reqActive, _ := http.NewRequest("GET", "https://axenta.cloud/api/cms/objects/?page=1&per_page=1&is_active=true", nil)
+	reqActive.Header.Set("Authorization", "Token "+token)
+	
+	respActive, err := client.Do(reqActive)
+	if err == nil && respActive.StatusCode == http.StatusOK {
+		var activeResponse struct {
+			Count int `json:"count"`
+		}
+		json.NewDecoder(respActive.Body).Decode(&activeResponse)
+		respActive.Body.Close()
+		active = activeResponse.Count
+	} else {
+		// Если не удалось получить активные, оставляем 0
+		active = 0
+		if respActive != nil {
+			respActive.Body.Close()
+		}
+	}
+	
+	total = response.Count
+	
+	log.Printf("📊 Общая статистика (как на /objects): всего=%d, активных=%d", total, active)
+	
+	return total, active, nil
+}
+
 // NewPartnerSnapshotService создает новый сервис снимков партнеров
 func NewPartnerSnapshotService() *PartnerSnapshotService {
 	return &PartnerSnapshotService{
@@ -35,7 +95,7 @@ func (s *PartnerSnapshotService) CreateDailySnapshots() error {
 	// Дата снимка - начало текущего дня в UTC
 	now := time.Now().UTC()
 	snapshotDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	
+
 	log.Printf("📅 Дата снимка: %s", snapshotDate.Format("2006-01-02"))
 
 	// Получаем все партнерские договоры
@@ -98,7 +158,7 @@ func (s *PartnerSnapshotService) CreateSnapshotForPartnerAccountWithoutContract(
 	defaultPlan *models.BillingPlan,
 	db *gorm.DB,
 ) error {
-	log.Printf("📸 Создание снимка для партнера БЕЗ договора: ID=%d, name=%s на дату %s", 
+	log.Printf("📸 Создание снимка для партнера БЕЗ договора: ID=%d, name=%s на дату %s",
 		partnerAccountID, partnerName, snapshotDate.Format("2006-01-02"))
 
 	// Проверяем есть ли уже снимок для этого партнера на эту дату (без привязки к договору)
@@ -124,7 +184,7 @@ func (s *PartnerSnapshotService) CreateSnapshotForPartnerAccountWithoutContract(
 		}
 	}
 
-	log.Printf("📊 Партнер %d (%s): всего=%d, активных=%d", 
+	log.Printf("📊 Партнер %d (%s): всего=%d, активных=%d",
 		partnerAccountID, partnerName, len(objects), activeCount)
 
 	// Рассчитываем стоимость
@@ -161,7 +221,7 @@ func (s *PartnerSnapshotService) CreateSnapshotForPartnerAccountWithoutContract(
 		return fmt.Errorf("ошибка сохранения снимка: %w", err)
 	}
 
-	log.Printf("✅ Снимок создан для партнера %d (без договора): ID=%d, активных объектов=%d, стоимость=%.2f", 
+	log.Printf("✅ Снимок создан для партнера %d (без договора): ID=%d, активных объектов=%d, стоимость=%.2f",
 		partnerAccountID, snapshot.ID, activeCount, dailyCost.InexactFloat64())
 
 	return nil
@@ -169,7 +229,7 @@ func (s *PartnerSnapshotService) CreateSnapshotForPartnerAccountWithoutContract(
 
 // CreateSnapshotForContractWithTokenAndDB создает снимок для конкретного договора с указанным токеном и базой данных
 func (s *PartnerSnapshotService) CreateSnapshotForContractWithTokenAndDB(contract *models.Contract, snapshotDate time.Time, token string, db *gorm.DB) error {
-	log.Printf("📸 Создание снимка для договора ID=%d, number=%s на дату %s", 
+	log.Printf("📸 Создание снимка для договора ID=%d, number=%s на дату %s",
 		contract.ID, contract.Number, snapshotDate.Format("2006-01-02"))
 
 	// Проверяем, не создан ли уже снимок на эту дату (включая мягко удаленные)
@@ -177,23 +237,23 @@ func (s *PartnerSnapshotService) CreateSnapshotForContractWithTokenAndDB(contrac
 	if err := db.Unscoped().
 		Where("contract_id = ? AND snapshot_date = ?", contract.ID, snapshotDate).
 		First(&existingSnapshot).Error; err == nil {
-		
+
 		// Проверяем является ли это сегодняшним снимком
 		today := time.Now().UTC()
 		todayStart := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
 		isToday := snapshotDate.Equal(todayStart)
-		
+
 		// Исторические снимки НЕ обновляются (данные за прошлые дни зафиксированы)
 		// Обновляем только сегодняшний снимок (данные за сегодня могут меняться)
 		if !isToday {
-			log.Printf("✅ Снимок для договора %d на дату %s уже существует (исторический), пропускаем обновление", 
+			log.Printf("✅ Снимок для договора %d на дату %s уже существует (исторический), пропускаем обновление",
 				contract.ID, snapshotDate.Format("2006-01-02"))
 			return nil
 		}
-		
-		log.Printf("ℹ️ Снимок для договора %d на дату %s уже существует (сегодняшний), обновляем...", 
+
+		log.Printf("ℹ️ Снимок для договора %d на дату %s уже существует (сегодняшний), обновляем...",
 			contract.ID, snapshotDate.Format("2006-01-02"))
-		
+
 		// Обновляем существующий снимок вместо создания нового
 		// Загружаем тарифный план из глобальной БД (billing_plans в public схеме)
 		var tariffPlan models.BillingPlan
@@ -211,11 +271,11 @@ func (s *PartnerSnapshotService) CreateSnapshotForContractWithTokenAndDB(contrac
 
 		// Расчет цен
 		monthlyPrice := tariffPlan.Price
-		
+
 		// Рассчитываем скидку (приоритет: фиксированная > процентная)
 		discountPercent := contract.GetDiscountPercent(activeObjectsCount)
 		discountFixed := contract.GetDiscountFixed()
-		
+
 		// Обновляем снимок
 		existingSnapshot.TotalObjectsCount = objectsCount
 		existingSnapshot.ActiveObjectsCount = activeObjectsCount
@@ -225,10 +285,10 @@ func (s *PartnerSnapshotService) CreateSnapshotForContractWithTokenAndDB(contrac
 		existingSnapshot.DiscountFixed = discountFixed
 		existingSnapshot.Status = "completed"
 		existingSnapshot.DeletedAt = gorm.DeletedAt{} // Восстанавливаем если был удален
-		
+
 		// DailyPrice, CostBeforeDiscount, DiscountAmount и DailyCost будут рассчитаны в BeforeCreate/BeforeSave
 		// Но так как это update, пересчитаем вручную
-		
+
 		// Для фиксированной скидки: применяем к месячному тарифу
 		// Для процентной скидки: применяем к дневной стоимости
 		if discountFixed.GreaterThan(decimal.Zero) {
@@ -239,7 +299,7 @@ func (s *PartnerSnapshotService) CreateSnapshotForContractWithTokenAndDB(contrac
 			}
 			effectiveDailyPrice := effectiveMonthlyPrice.Div(decimal.NewFromInt(30)).Round(4)
 			existingSnapshot.DailyPrice = effectiveDailyPrice
-			
+
 			baseDailyPrice := monthlyPrice.Div(decimal.NewFromInt(30)).Round(4)
 			existingSnapshot.CostBeforeDiscount = baseDailyPrice.Mul(decimal.NewFromInt(int64(activeObjectsCount))).Round(2)
 			existingSnapshot.DiscountAmount = discountFixed.Div(decimal.NewFromInt(30)).Mul(decimal.NewFromInt(int64(activeObjectsCount))).Round(2)
@@ -248,10 +308,10 @@ func (s *PartnerSnapshotService) CreateSnapshotForContractWithTokenAndDB(contrac
 			// Базовая дневная цена
 			baseDailyPrice := monthlyPrice.Div(decimal.NewFromInt(30)).Round(4)
 			existingSnapshot.DailyPrice = baseDailyPrice
-			
+
 			costBeforeDiscount := baseDailyPrice.Mul(decimal.NewFromInt(int64(activeObjectsCount))).Round(2)
 			existingSnapshot.CostBeforeDiscount = costBeforeDiscount
-			
+
 			// Процентная скидка применяется к стоимости
 			if discountPercent.GreaterThan(decimal.Zero) {
 				discountMultiplier := discountPercent.Div(decimal.NewFromInt(100))
@@ -259,7 +319,7 @@ func (s *PartnerSnapshotService) CreateSnapshotForContractWithTokenAndDB(contrac
 			} else {
 				existingSnapshot.DiscountAmount = decimal.Zero
 			}
-			
+
 			existingSnapshot.DailyCost = costBeforeDiscount.Sub(existingSnapshot.DiscountAmount).Round(2)
 		}
 
@@ -269,7 +329,7 @@ func (s *PartnerSnapshotService) CreateSnapshotForContractWithTokenAndDB(contrac
 		}
 
 		log.Printf("✅ Снимок обновлен: договор=%s, дата=%s, объектов=%d (активных=%d), стоимость=%.2f₽ (до скидки: %.2f₽)",
-			contract.Number, snapshotDate.Format("2006-01-02"), objectsCount, activeObjectsCount, 
+			contract.Number, snapshotDate.Format("2006-01-02"), objectsCount, activeObjectsCount,
 			existingSnapshot.DailyCost, existingSnapshot.CostBeforeDiscount)
 
 		return nil
@@ -317,37 +377,28 @@ func (s *PartnerSnapshotService) CreateSnapshotForContractWithTokenAndDB(contrac
 	}
 
 	log.Printf("✅ Снимок создан: договор=%s, дата=%s, объектов=%d (активных=%d), скидка=%.2f%%, стоимость=%.2f₽ (было %.2f₽)",
-		contract.Number, snapshotDate.Format("2006-01-02"), objectsCount, activeObjectsCount, 
+		contract.Number, snapshotDate.Format("2006-01-02"), objectsCount, activeObjectsCount,
 		discountPercent, snapshot.DailyCost, snapshot.CostBeforeDiscount)
 
 	return nil
 }
 
 // fetchPartnerObjects получает все объекты партнера из Axenta Cloud API
-func fetchPartnerObjects(token string, partnerCompanyID int) ([]struct {
-	ID        uint   `json:"id"`
-	Name      string `json:"name"`
-	IsActive  bool   `json:"isActive"`
-	CreatedAt string `json:"createdAt"`
-	DeletedAt string `json:"deletedAt"`
-}, error) {
+// Загружает ВСЕ объекты и фильтрует на сервере по accountId
+func fetchPartnerObjects(token string, partnerCompanyID int) ([]axentaObject, error) {
 	client := &http.Client{Timeout: 180 * time.Second}
-	
-	var allObjects []struct {
-		ID        uint   `json:"id"`
-		Name      string `json:"name"`
-		IsActive  bool   `json:"isActive"`
-		CreatedAt string `json:"createdAt"`
-		DeletedAt string `json:"deletedAt"`
-	}
+
+	var allObjects []axentaObject
 
 	page := 1
 	perPage := 1000
 
 	for {
-		axentaURL := fmt.Sprintf("https://axenta.cloud/api/cms/objects/?accountId=%d&page=%d&per_page=%d", 
+		// Загружаем объекты для конкретного партнера через параметр accountId
+		// API Axenta автоматически включает объекты всех дочерних аккаунтов
+		axentaURL := fmt.Sprintf("https://axenta.cloud/api/cms/objects/?accountId=%d&page=%d&per_page=%d",
 			partnerCompanyID, page, perPage)
-		
+
 		req, err := http.NewRequest("GET", axentaURL, nil)
 		if err != nil {
 			return nil, fmt.Errorf("ошибка создания запроса: %w", err)
@@ -366,15 +417,9 @@ func fetchPartnerObjects(token string, partnerCompanyID int) ([]struct {
 		}
 
 		var axentaResponse struct {
-			Results []struct {
-				ID        uint   `json:"id"`
-				Name      string `json:"name"`
-				IsActive  bool   `json:"isActive"`
-				CreatedAt string `json:"createdAt"`
-				DeletedAt string `json:"deletedAt"`
-			} `json:"results"`
-			Count int     `json:"count"`
-			Next  *string `json:"next"`
+			Results []axentaObject `json:"results"`
+			Count   int            `json:"count"`
+			Next    *string        `json:"next"`
 		}
 
 		if err := json.NewDecoder(resp.Body).Decode(&axentaResponse); err != nil {
@@ -392,6 +437,10 @@ func fetchPartnerObjects(token string, partnerCompanyID int) ([]struct {
 		page++
 	}
 
+	// API Axenta Cloud уже отфильтровал объекты по партнеру (включая дочерние аккаунты)
+	log.Printf("✅ Загружено %d объектов партнера %d (включая дочерние аккаунты)",
+		len(allObjects), partnerCompanyID)
+
 	return allObjects, nil
 }
 
@@ -407,23 +456,18 @@ func (s *PartnerSnapshotService) getPartnerObjectsCountWithToken(partnerCompanyI
 func (s *PartnerSnapshotService) getPartnerObjectsCountForDate(partnerCompanyID uint, token string, snapshotDate time.Time) (total int, active int, err error) {
 	// Увеличенный таймаут для больших объемов данных (до 5000+ объектов)
 	client := &http.Client{Timeout: 180 * time.Second}
-	
-	var allObjects []struct {
-		ID        uint   `json:"id"`
-		Name      string `json:"name"`
-		IsActive  bool   `json:"isActive"`
-		CreatedAt string `json:"createdAt"`
-		DeletedAt string `json:"deletedAt"`
-	}
+
+	var allObjects []axentaObject
 
 	page := 1
 	perPage := 1000
 
 	for {
-		// Запрос к Axenta Cloud API с пагинацией
-		axentaURL := fmt.Sprintf("https://axenta.cloud/api/cms/objects/?accountId=%d&page=%d&per_page=%d", 
+		// Запрос к Axenta Cloud API с фильтром accountId
+		// API автоматически включает объекты всех дочерних аккаунтов партнера
+		axentaURL := fmt.Sprintf("https://axenta.cloud/api/cms/objects/?accountId=%d&page=%d&per_page=%d",
 			partnerCompanyID, page, perPage)
-		
+
 		req, err := http.NewRequest("GET", axentaURL, nil)
 		if err != nil {
 			return 0, 0, fmt.Errorf("ошибка создания запроса: %w", err)
@@ -443,15 +487,9 @@ func (s *PartnerSnapshotService) getPartnerObjectsCountForDate(partnerCompanyID 
 		}
 
 		var axentaResponse struct {
-			Results []struct {
-				ID        uint   `json:"id"`
-				Name      string `json:"name"`
-				IsActive  bool   `json:"isActive"`
-				CreatedAt string `json:"createdAt"`
-				DeletedAt string `json:"deletedAt"`
-			} `json:"results"`
-			Count int     `json:"count"`
-			Next  *string `json:"next"` // URL следующей страницы (если есть)
+			Results []axentaObject `json:"results"`
+			Count   int            `json:"count"`
+			Next    *string        `json:"next"` // URL следующей страницы (если есть)
 		}
 
 		if err := json.NewDecoder(resp.Body).Decode(&axentaResponse); err != nil {
@@ -463,7 +501,7 @@ func (s *PartnerSnapshotService) getPartnerObjectsCountForDate(partnerCompanyID 
 		// Добавляем объекты с текущей страницы
 		allObjects = append(allObjects, axentaResponse.Results...)
 
-		log.Printf("📄 Страница %d: получено %d объектов, всего загружено %d из %d", 
+		log.Printf("📄 Страница %d: получено %d объектов, всего загружено %d из %d",
 			page, len(axentaResponse.Results), len(allObjects), axentaResponse.Count)
 
 		// Если получили меньше объектов, чем per_page, или нет следующей страницы - это последняя страница
@@ -477,10 +515,13 @@ func (s *PartnerSnapshotService) getPartnerObjectsCountForDate(partnerCompanyID 
 	// Подсчитываем объекты с учетом даты снимка
 	total = 0
 	active = 0
-	
+
+	log.Printf("📦 Загружено %d объектов партнера %d, подсчитываем с учетом даты %s",
+		len(allObjects), partnerCompanyID, snapshotDate.Format("2006-01-02"))
+
 	// Устанавливаем конец дня для снимка (23:59:59)
 	snapshotEndOfDay := time.Date(snapshotDate.Year(), snapshotDate.Month(), snapshotDate.Day(), 23, 59, 59, 0, time.UTC)
-	
+
 	for _, obj := range allObjects {
 		// Парсим дату создания объекта
 		var createdAt time.Time
@@ -493,7 +534,7 @@ func (s *PartnerSnapshotService) getPartnerObjectsCountForDate(partnerCompanyID 
 				"2006-01-02 15:04:05",
 				"2006-01-02",
 			}
-			
+
 			parsed := false
 			for _, format := range formats {
 				if t, err := time.Parse(format, obj.CreatedAt); err == nil {
@@ -502,7 +543,7 @@ func (s *PartnerSnapshotService) getPartnerObjectsCountForDate(partnerCompanyID 
 					break
 				}
 			}
-			
+
 			if !parsed {
 				log.Printf("⚠️ Не удалось распарсить дату создания объекта %d: %s, пропускаем", obj.ID, obj.CreatedAt)
 				continue
@@ -511,7 +552,7 @@ func (s *PartnerSnapshotService) getPartnerObjectsCountForDate(partnerCompanyID 
 			// Если нет даты создания, считаем что объект существовал всегда
 			createdAt = time.Time{}
 		}
-		
+
 		// Проверяем, был ли объект удален до даты снимка
 		var deletedAt time.Time
 		if obj.DeletedAt != "" {
@@ -523,7 +564,7 @@ func (s *PartnerSnapshotService) getPartnerObjectsCountForDate(partnerCompanyID 
 				"2006-01-02 15:04:05",
 				"2006-01-02",
 			}
-			
+
 			for _, format := range formats {
 				if t, err := time.Parse(format, obj.DeletedAt); err == nil {
 					deletedAt = t
@@ -531,12 +572,12 @@ func (s *PartnerSnapshotService) getPartnerObjectsCountForDate(partnerCompanyID 
 				}
 			}
 		}
-		
+
 		// Учитываем объект только если:
 		// 1. Он был создан до или в день снимка
 		// 2. Он не был удален до даты снимка (или не удален вообще)
 		if (createdAt.IsZero() || createdAt.Before(snapshotEndOfDay) || createdAt.Equal(snapshotEndOfDay)) &&
-		   (deletedAt.IsZero() || deletedAt.After(snapshotEndOfDay)) {
+			(deletedAt.IsZero() || deletedAt.After(snapshotEndOfDay)) {
 			total++
 			if obj.IsActive {
 				active++
@@ -544,16 +585,200 @@ func (s *PartnerSnapshotService) getPartnerObjectsCountForDate(partnerCompanyID 
 		}
 	}
 
-	log.Printf("✅ Объектов партнера %d на дату %s: %d (активных: %d, неактивных: %d)", 
+	log.Printf("✅ Объектов партнера %d на дату %s: %d (активных: %d, неактивных: %d)",
 		partnerCompanyID, snapshotDate.Format("2006-01-02"), total, active, total-active)
 
 	return total, active, nil
 }
 
+// CreateVirtualOthersSnapshot создает снимок для виртуального партнера "Прочие объекты"
+// Используется для учета прямых клиентов GLOMOS или разницы
+func (s *PartnerSnapshotService) CreateVirtualOthersSnapshot(
+	companyID uint,
+	totalObjects int,
+	activeObjects int,
+	snapshotDate time.Time,
+	defaultPlan *models.BillingPlan,
+	tenantDB *gorm.DB,
+) error {
+	// ID = 186 для прямых клиентов GLOMOS
+	const virtualPartnerID = 186
+	
+	// Проверяем существует ли уже снимок
+	var existingSnapshot models.PartnerDailySnapshot
+	err := tenantDB.
+		Where("partner_company_id = ? AND DATE(snapshot_date AT TIME ZONE 'UTC') = ?", 
+			virtualPartnerID, snapshotDate.Format("2006-01-02")).
+		First(&existingSnapshot).Error
+	
+	if err == nil {
+		// Снимок уже существует, обновляем
+		existingSnapshot.TotalObjectsCount = totalObjects
+		existingSnapshot.ActiveObjectsCount = activeObjects
+		
+		// Расчет стоимости
+		dailyRate := defaultPlan.Price.Div(decimal.NewFromInt(30))
+		costBeforeDiscount := dailyRate.Mul(decimal.NewFromInt(int64(activeObjects)))
+		existingSnapshot.DailyPrice = dailyRate
+		existingSnapshot.CostBeforeDiscount = costBeforeDiscount
+		existingSnapshot.DiscountAmount = decimal.Zero
+		existingSnapshot.DailyCost = costBeforeDiscount
+		
+		if err := tenantDB.Save(&existingSnapshot).Error; err != nil {
+			return fmt.Errorf("ошибка обновления снимка 'Прочие': %w", err)
+		}
+		
+		log.Printf("♻️ Обновлен снимок 'Прочие': всего=%d, активных=%d, стоимость=%.2f₽", 
+			totalObjects, activeObjects, costBeforeDiscount)
+		return nil
+	}
+	
+	// Создаем новый снимок
+	dailyRate := defaultPlan.Price.Div(decimal.NewFromInt(30))
+	costBeforeDiscount := dailyRate.Mul(decimal.NewFromInt(int64(activeObjects)))
+	
+	snapshot := models.PartnerDailySnapshot{
+		AdminAccountID:      companyID,
+		CompanyID:           companyID,
+		ContractID:          0, // Нет договора
+		SnapshotDate:        snapshotDate,
+		PartnerCompanyID:    virtualPartnerID, // 0 = виртуальный партнер "Прочие"
+		TariffPlanID:        defaultPlan.ID,
+		MonthlyPrice:        defaultPlan.Price,
+		DailyPrice:          dailyRate,
+		TotalObjectsCount:   totalObjects,
+		ActiveObjectsCount:  activeObjects,
+		DiscountType:        "none",
+		DiscountPercent:     decimal.Zero,
+		DiscountFixed:       decimal.Zero,
+		CostBeforeDiscount:  costBeforeDiscount,
+		DiscountAmount:      decimal.Zero,
+		DailyCost:           costBeforeDiscount,
+		Status:              "completed",
+		Notes:               "Учётная запись GLOMOS (186) - прямые клиенты без партнёров в иерархии",
+	}
+	
+	if err := tenantDB.Create(&snapshot).Error; err != nil {
+		return fmt.Errorf("ошибка создания снимка 'Прочие': %w", err)
+	}
+	
+	log.Printf("✨ Создан снимок 'Прочие': всего=%d, активных=%d, стоимость=%.2f₽", 
+		totalObjects, activeObjects, costBeforeDiscount)
+	
+	return nil
+}
+
+// CreateSnapshotWithObjectCounts создаёт снимок с уже подсчитанными объектами (без API запросов)
+func (s *PartnerSnapshotService) CreateSnapshotWithObjectCounts(
+	companyID uint,
+	partnerID uint,
+	totalObjects int,
+	activeObjects int,
+	snapshotDate time.Time,
+	defaultPlan *models.BillingPlan,
+	contract *models.Contract,
+	partnerName string,
+	tenantDB *gorm.DB,
+) error {
+	// Проверяем существует ли уже снимок
+	var existingSnapshot models.PartnerDailySnapshot
+	err := tenantDB.
+		Where("partner_company_id = ? AND DATE(snapshot_date AT TIME ZONE 'UTC') = ?",
+			partnerID, snapshotDate.Format("2006-01-02")).
+		First(&existingSnapshot).Error
+
+	if err == nil {
+		// Снимок уже существует
+		return fmt.Errorf("snapshot already exists")
+	}
+
+	// Определяем тарифный план
+	var tariffPlan models.BillingPlan
+	if contract != nil && contract.TariffPlanID != nil {
+		if err := tenantDB.Where("id = ?", *contract.TariffPlanID).First(&tariffPlan).Error; err != nil {
+			tariffPlan = *defaultPlan
+		}
+	} else {
+		tariffPlan = *defaultPlan
+	}
+
+	// Расчёт стоимости
+	monthlyPrice := tariffPlan.Price
+	dailyRate := monthlyPrice.Div(decimal.NewFromInt(30))
+	costBeforeDiscount := dailyRate.Mul(decimal.NewFromInt(int64(activeObjects)))
+
+	// Расчёт скидки
+	var discountAmount decimal.Decimal
+	var discountType string
+	var discountPercent decimal.Decimal
+	var discountFixed decimal.Decimal
+
+	if contract != nil {
+		discountPercent = contract.GetDiscountPercent(activeObjects)
+		discountFixed = contract.GetDiscountFixed()
+		discountType = contract.DiscountType
+
+		if discountType == "fixed" && discountFixed.GreaterThan(decimal.Zero) {
+			discountAmount = discountFixed
+		} else if discountType == "percentage" && discountPercent.GreaterThan(decimal.Zero) {
+			discountAmount = costBeforeDiscount.Mul(discountPercent).Div(decimal.NewFromInt(100))
+		}
+	} else {
+		discountType = "none"
+		discountPercent = decimal.Zero
+		discountFixed = decimal.Zero
+		discountAmount = decimal.Zero
+	}
+
+	dailyCost := costBeforeDiscount.Sub(discountAmount)
+	if dailyCost.LessThan(decimal.Zero) {
+		dailyCost = decimal.Zero
+	}
+
+	// Создаём снимок
+	contractID := uint(0)
+	if contract != nil {
+		contractID = contract.ID
+	}
+
+	// Формируем примечание
+	notes := "Снимок создан через точное распределение всех объектов (без дублей)"
+	if partnerName != "" {
+		notes = fmt.Sprintf("%s - %s", partnerName, notes)
+	}
+
+	snapshot := models.PartnerDailySnapshot{
+		AdminAccountID:      companyID,
+		CompanyID:           companyID,
+		ContractID:          contractID,
+		SnapshotDate:        snapshotDate,
+		PartnerCompanyID:    partnerID,
+		TariffPlanID:        tariffPlan.ID,
+		MonthlyPrice:        monthlyPrice,
+		DailyPrice:          dailyRate,
+		TotalObjectsCount:   totalObjects,
+		ActiveObjectsCount:  activeObjects,
+		DiscountType:        discountType,
+		DiscountPercent:     discountPercent,
+		DiscountFixed:       discountFixed,
+		CostBeforeDiscount:  costBeforeDiscount,
+		DiscountAmount:      discountAmount,
+		DailyCost:           dailyCost,
+		Status:              "completed",
+		Notes:               notes,
+	}
+
+	if err := tenantDB.Create(&snapshot).Error; err != nil {
+		return fmt.Errorf("ошибка создания снимка: %w", err)
+	}
+
+	return nil
+}
+
 // GetSnapshotsForContract получает снимки для договора за период
 func (s *PartnerSnapshotService) GetSnapshotsForContract(contractID uint, startDate, endDate time.Time) ([]models.PartnerDailySnapshot, error) {
 	var snapshots []models.PartnerDailySnapshot
-	
+
 	if err := s.db.
 		Where("contract_id = ? AND snapshot_date >= ? AND snapshot_date <= ?", contractID, startDate, endDate).
 		Order("snapshot_date ASC").
@@ -586,7 +811,7 @@ func (s *PartnerSnapshotService) StartDailySnapshotScheduler() {
 	go func() {
 		for {
 			now := time.Now().UTC()
-			
+
 			// Вычисляем время до следующего полуночи UTC
 			nextMidnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
 			durationUntilMidnight := nextMidnight.Sub(now)
@@ -603,4 +828,3 @@ func (s *PartnerSnapshotService) StartDailySnapshotScheduler() {
 		}
 	}()
 }
-

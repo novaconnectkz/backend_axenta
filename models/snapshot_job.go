@@ -99,6 +99,14 @@ type SnapshotJob struct {
 	TotalDaysProcessed int `gorm:"default:0" json:"total_days_processed"`
 	SuccessCount       int `gorm:"default:0" json:"success_count"`
 	ErrorCount         int `gorm:"default:0" json:"error_count"`
+	SkippedCount       int `gorm:"default:0" json:"skipped_count"`
+	
+	// Статистика объектов
+	TotalObjects  int `gorm:"default:0" json:"total_objects"`
+	ActiveObjects int `gorm:"default:0" json:"active_objects"`
+	
+	// Время запуска по расписанию (для отображения в UI)
+	ScheduledTime *time.Time `json:"scheduled_time,omitempty"`
 
 	// Детали
 	ErrorMessage string             `gorm:"type:text" json:"error_message,omitempty"`

@@ -4,8 +4,10 @@ import (
 	"backend_axenta/database"
 	"backend_axenta/models"
 	"backend_axenta/services"
+	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -174,16 +176,40 @@ func DeleteOldSnapshotJobs(c *gin.Context) {
 
 // TriggerManualSnapshot запускает создание снимков вручную (для тестирования)
 // POST /api/auth/snapshot-jobs/trigger
+// Опциональный параметр date в формате YYYY-MM-DD (по умолчанию - вчера)
 func TriggerManualSnapshot(c *gin.Context) {
-	// Создаем планировщик и запускаем вручную
+	// Создаем планировщик
 	scheduler := services.NewPartnerSnapshotScheduler()
 	
-	// Запускаем в горутине чтобы не блокировать ответ
-	go scheduler.RunManualSnapshot()
+	// Проверяем параметр date
+	dateParam := c.Query("date")
 	
-	c.JSON(http.StatusOK, gin.H{
-		"status":  "success",
-		"message": "Тестовый запуск создания снимков инициирован. Проверьте историю через несколько минут.",
-	})
+	if dateParam != "" {
+		// Парсим дату из параметра
+		targetDate, err := time.Parse("2006-01-02", dateParam)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  "error",
+				"message": "Неверный формат даты. Используйте YYYY-MM-DD (например: 2025-12-02)",
+			})
+			return
+		}
+		
+		// Запускаем снимки за указанную дату
+		go scheduler.RunManualSnapshotForDate(targetDate)
+		
+		c.JSON(http.StatusOK, gin.H{
+			"status":  "success",
+			"message": fmt.Sprintf("Тестовый запуск создания снимков за %s инициирован. Проверьте историю через несколько минут.", dateParam),
+		})
+	} else {
+		// Запускаем стандартный снимок (за вчера)
+		go scheduler.RunManualSnapshot()
+		
+		c.JSON(http.StatusOK, gin.H{
+			"status":  "success",
+			"message": "Тестовый запуск создания снимков инициирован. Проверьте историю через несколько минут.",
+		})
+	}
 }
 
