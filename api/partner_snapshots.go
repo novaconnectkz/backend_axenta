@@ -88,13 +88,34 @@ func GetPartnerContractSnapshots(c *gin.Context) {
 
 	db := tenantDB.(*gorm.DB)
 
+	// Получаем информацию о договоре для определения partner_company_id
+	var contract models.Contract
+	if err := db.Where("id = ? AND admin_account_id = ?", contractID, adminAccountID).First(&contract).Error; err != nil {
+		log.Printf("❌ Договор не найден: %v", err)
+		c.JSON(http.StatusNotFound, gin.H{
+			"status": "error",
+			"error":  "Договор не найден",
+		})
+		return
+	}
+
 	// Получаем снимки из базы данных (tenant schema)
+	// Ищем снимки по contract_id, а если не найдены - по partner_company_id
+	// Это нужно для случаев, когда снимок был создан с contract_id=0 (для "Объекты наших клиентов")
 	var snapshots []models.PartnerDailySnapshot
-	if err := db.
-		Where("contract_id = ? AND admin_account_id = ? AND snapshot_date >= ? AND snapshot_date <= ?",
-			contractID, adminAccountID, startDate, endDate).
-		Order("snapshot_date ASC").
-		Find(&snapshots).Error; err != nil {
+	
+	// Сначала ищем по contract_id
+	query := db.Where("contract_id = ? AND admin_account_id = ? AND snapshot_date >= ? AND snapshot_date <= ?",
+		contractID, adminAccountID, startDate, endDate)
+	
+	// Если у договора есть partner_company_id, также ищем снимки по partner_company_id
+	// Это нужно для случаев, когда снимок был создан с contract_id=0
+	if contract.PartnerCompanyID != nil && *contract.PartnerCompanyID > 0 {
+		query = db.Where("admin_account_id = ? AND snapshot_date >= ? AND snapshot_date <= ? AND ((contract_id = ?) OR (partner_company_id = ? AND contract_id = 0))",
+			adminAccountID, startDate, endDate, contractID, *contract.PartnerCompanyID)
+	}
+	
+	if err := query.Order("snapshot_date ASC").Find(&snapshots).Error; err != nil {
 		log.Printf("❌ Ошибка получения снимков: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
@@ -103,7 +124,7 @@ func GetPartnerContractSnapshots(c *gin.Context) {
 		return
 	}
 
-	log.Printf("✅ Найдено снимков: %d", len(snapshots))
+	log.Printf("✅ Найдено снимков: %d (для договора ID=%s, partner_company_id=%v)", len(snapshots), contractID, contract.PartnerCompanyID)
 
 	// Рассчитываем сводную информацию
 	summary := calculateSnapshotsSummary(snapshots, startDate, endDate)
