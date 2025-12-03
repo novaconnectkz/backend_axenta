@@ -398,27 +398,34 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 		job.FinishJob(models.SnapshotJobStatusFailed, "Все попытки создания снимков завершились с ошибками")
 	}
 
-	// Подсчитываем общее количество объектов из созданных снимков
+	// Подсчитываем общее количество объектов из РЕАЛЬНО созданных снимков
+	// Это важно, так как некоторые снимки могли быть пропущены или созданы с другими данными
 	var totalObjectsSum, activeObjectsSum int64
 	for _, company := range companies {
 		tenantDB := database.DB.Session(&gorm.Session{})
 		if err := tenantDB.Exec(fmt.Sprintf("SET search_path TO tenant_%d, public", company.ID)).Error; err != nil {
+			log.Printf("⚠️ Не удалось переключиться на схему tenant_%d для подсчета объектов: %v", company.ID, err)
 			continue
 		}
 		
 		var companyTotal, companyActive int64
 		if err := tenantDB.Model(&models.PartnerDailySnapshot{}).
-			Where("DATE(snapshot_date AT TIME ZONE 'UTC') = ?", snapshotDate.Format("2006-01-02")).
+			Where("DATE(snapshot_date AT TIME ZONE 'UTC') = ? AND deleted_at IS NULL", snapshotDate.Format("2006-01-02")).
 			Select("COALESCE(SUM(total_objects_count), 0) as total, COALESCE(SUM(active_objects_count), 0) as active").
 			Row().Scan(&companyTotal, &companyActive); err == nil {
 			totalObjectsSum += companyTotal
 			activeObjectsSum += companyActive
+			log.Printf("📊 Компания %d: %d объектов (активных: %d) из созданных снимков", company.ID, companyTotal, companyActive)
+		} else {
+			log.Printf("⚠️ Ошибка подсчета объектов для компании %d: %v", company.ID, err)
 		}
 	}
 	
 	job.TotalObjects = int(totalObjectsSum)
 	job.ActiveObjects = int(activeObjectsSum)
 	job.SkippedCount = skippedCount
+	
+	log.Printf("📊 ИТОГО из созданных снимков: %d объектов (активных: %d)", totalObjectsSum, activeObjectsSum)
 	
 	// Устанавливаем scheduled_time для автоматических задач (21:00 UTC / 00:00 MSK следующего дня)
 	// Снимок за 01.12.2025 создаётся в 00:00 MSK 02.12.2025 (т.е. в 21:00 UTC 01.12.2025)
