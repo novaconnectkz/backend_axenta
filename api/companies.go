@@ -294,11 +294,37 @@ func (api *CompaniesAPI) GetCompanies(c *gin.Context) {
 	// Передаем данные с дополнением реальной статистики объектов
 	companies := make([]gin.H, len(axentaResponse.Results))
 	for i, account := range axentaResponse.Results {
-		fmt.Printf("🔧 DEBUG: Processing account %d: name='%s', hierarchy='%s'\n", account.ID, account.Name, account.Hierarchy)
+		fmt.Printf("🔧 DEBUG: Processing account %d: name='%s', hierarchy='%s', type='%s', adminId=%d\n", 
+			account.ID, account.Name, account.Hierarchy, account.Type, account.AdminID)
 
-		// Получаем реальное количество объектов из локальной БД для этой компании
-		objectsTotal := api.getObjectsCountForCompany(account.ID)
-		objectsActive := api.getActiveObjectsCountForCompany(account.ID)
+		// Сначала пробуем использовать данные из Axenta Cloud API
+		objectsTotal := int64(account.ObjectsTotal)
+		objectsActive := int64(account.ObjectsActive)
+		
+		// Если данных нет в API или они равны 0, пытаемся получить из локальных источников
+		if objectsTotal == 0 && objectsActive == 0 {
+			fmt.Printf("🔧 DEBUG: Account %d has no objects in API response, trying local sources...\n", account.ID)
+			
+			// Определяем AdminAccountID для поиска в локальной БД
+			// Используем AdminID из аккаунта, если он есть, иначе из контекста
+			adminAccountID := uint(account.AdminID)
+			if adminAccountID == 0 {
+				adminAccountID = api.getAdminAccountIDFromContext(c)
+			}
+			
+			// Для партнеров и клиентов пытаемся найти через AxentaAccountSnapshot
+			if account.Type == "partner" || account.Type == "client" {
+				if adminAccountID > 0 {
+					objectsTotal, objectsActive = api.getObjectsCountFromSnapshot(int64(account.ID), adminAccountID)
+				} else {
+					fmt.Printf("⚠️ WARNING: Cannot get objects count for account %d: AdminAccountID is 0\n", account.ID)
+				}
+			} else {
+				// Для других типов пытаемся найти через локальную БД
+				objectsTotal = api.getObjectsCountForCompany(account.ID, account.AdminID, adminAccountID)
+				objectsActive = api.getActiveObjectsCountForCompany(account.ID, account.AdminID, adminAccountID)
+			}
+		}
 
 		// Возвращаем все поля с реальной статистикой объектов
 		companies[i] = gin.H{
@@ -529,41 +555,123 @@ func (api *CompaniesAPI) TestCompanyConnection(c *gin.Context) {
 	})
 }
 
-// getObjectsCountForCompany получает общее количество объектов для компании
-func (api *CompaniesAPI) getObjectsCountForCompany(companyID int) int64 {
-	// Получаем подключение к БД компании по ID
-	tenantDB := api.TenantMiddleware.GetTenantDBByCompanyID(uint(companyID))
+// getAdminAccountIDFromContext получает AdminAccountID из контекста запроса
+func (api *CompaniesAPI) getAdminAccountIDFromContext(c *gin.Context) uint {
+	// Пробуем получить через middleware
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err == nil && adminAccountID > 0 {
+		return adminAccountID
+	}
+	
+	// Пробуем получить из контекста напрямую
+	if adminAccountID, exists := c.Get("admin_account_id"); exists {
+		if id, ok := adminAccountID.(uint); ok && id > 0 {
+			return id
+		}
+	}
+	
+	return 0
+}
+
+// getObjectsCountFromSnapshot получает количество объектов из AxentaAccountSnapshot
+func (api *CompaniesAPI) getObjectsCountFromSnapshot(externalAccountID int64, adminAccountID uint) (int64, int64) {
+	if adminAccountID == 0 {
+		fmt.Printf("⚠️ WARNING: AdminAccountID is 0, cannot get objects from snapshot\n")
+		return 0, 0
+	}
+	
+	// Находим локальную компанию по AdminAccountID
+	var adminCompany models.Company
+	if err := api.DB.Where("id = ? AND is_active = ?", adminAccountID, true).First(&adminCompany).Error; err != nil {
+		fmt.Printf("⚠️ WARNING: Admin company %d not found: %v\n", adminAccountID, err)
+		return 0, 0
+	}
+	
+	// Получаем подключение к tenant схеме административной компании
+	tenantDB := api.TenantMiddleware.GetTenantDBByCompanyID(adminAccountID)
 	if tenantDB == nil {
-		fmt.Printf("⚠️ WARNING: No tenant DB found for company ID %d\n", companyID)
+		fmt.Printf("⚠️ WARNING: No tenant DB found for admin company ID %d\n", adminAccountID)
+		return 0, 0
+	}
+	
+	// Ищем снимок аккаунта
+	var snapshot models.AxentaAccountSnapshot
+	if err := tenantDB.Where("external_account_id = ? AND admin_account_id = ?", externalAccountID, adminAccountID).
+		Order("last_synced_at DESC").
+		First(&snapshot).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			fmt.Printf("🔍 INFO: No snapshot found for external account ID %d (admin %d)\n", externalAccountID, adminAccountID)
+		} else {
+			fmt.Printf("❌ ERROR: Failed to get snapshot for external account ID %d: %v\n", externalAccountID, err)
+		}
+		return 0, 0
+	}
+	
+	fmt.Printf("📊 INFO: Found snapshot for external account ID %d: total=%d, active=%d\n",
+		externalAccountID, snapshot.ObjectsTotal, snapshot.ObjectsActive)
+	
+	return int64(snapshot.ObjectsTotal), int64(snapshot.ObjectsActive)
+}
+
+// getObjectsCountForCompany получает общее количество объектов для компании
+// Эта функция используется только для других типов аккаунтов (не партнеры/клиенты)
+func (api *CompaniesAPI) getObjectsCountForCompany(externalAccountID int, adminAccountIDFromAxenta int, adminAccountID uint) int64 {
+	// Пытаемся найти локальную компанию по ID из Axenta Cloud
+	var company models.Company
+	if err := api.DB.Where("id = ? AND is_active = ?", uint(externalAccountID), true).First(&company).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			fmt.Printf("🔍 INFO: No local company found for external account ID %d\n", externalAccountID)
+		} else {
+			fmt.Printf("❌ ERROR: Failed to find company for external account ID %d: %v\n", externalAccountID, err)
+		}
+		return 0
+	}
+
+	// Получаем подключение к БД компании
+	tenantDB := api.TenantMiddleware.GetTenantDBByCompanyID(company.ID)
+	if tenantDB == nil {
+		fmt.Printf("⚠️ WARNING: No tenant DB found for company ID %d\n", company.ID)
 		return 0
 	}
 
 	var count int64
 	if err := tenantDB.Table("objects").Count(&count).Error; err != nil {
-		fmt.Printf("❌ ERROR: Failed to count objects for company %d: %v\n", companyID, err)
+		fmt.Printf("❌ ERROR: Failed to count objects for company %d: %v\n", externalAccountID, err)
 		return 0
 	}
 
-	fmt.Printf("📊 INFO: Company %d has %d total objects\n", companyID, count)
+	fmt.Printf("📊 INFO: Company %d has %d total objects\n", externalAccountID, count)
 	return count
 }
 
 // getActiveObjectsCountForCompany получает количество активных объектов для компании
-func (api *CompaniesAPI) getActiveObjectsCountForCompany(companyID int) int64 {
-	// Получаем подключение к БД компании по ID
-	tenantDB := api.TenantMiddleware.GetTenantDBByCompanyID(uint(companyID))
+// Эта функция используется только для других типов аккаунтов (не партнеры/клиенты)
+func (api *CompaniesAPI) getActiveObjectsCountForCompany(externalAccountID int, adminAccountIDFromAxenta int, adminAccountID uint) int64 {
+	// Пытаемся найти локальную компанию по ID из Axenta Cloud
+	var company models.Company
+	if err := api.DB.Where("id = ? AND is_active = ?", uint(externalAccountID), true).First(&company).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			fmt.Printf("🔍 INFO: No local company found for external account ID %d\n", externalAccountID)
+		} else {
+			fmt.Printf("❌ ERROR: Failed to find company for external account ID %d: %v\n", externalAccountID, err)
+		}
+		return 0
+	}
+
+	// Получаем подключение к БД компании
+	tenantDB := api.TenantMiddleware.GetTenantDBByCompanyID(company.ID)
 	if tenantDB == nil {
-		fmt.Printf("⚠️ WARNING: No tenant DB found for company ID %d\n", companyID)
+		fmt.Printf("⚠️ WARNING: No tenant DB found for company ID %d\n", company.ID)
 		return 0
 	}
 
 	var count int64
 	if err := tenantDB.Table("objects").Where("status = ?", "active").Count(&count).Error; err != nil {
-		fmt.Printf("❌ ERROR: Failed to count active objects for company %d: %v\n", companyID, err)
+		fmt.Printf("❌ ERROR: Failed to count active objects for company %d: %v\n", externalAccountID, err)
 		return 0
 	}
 
-	fmt.Printf("📊 INFO: Company %d has %d active objects\n", companyID, count)
+	fmt.Printf("📊 INFO: Company %d has %d active objects\n", externalAccountID, count)
 	return count
 }
 

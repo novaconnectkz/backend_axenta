@@ -133,6 +133,32 @@ func getPartnerObjectsCountFromAccount(partnerCompanyID uint, userToken string) 
 	return objectsActive, nil
 }
 
+// getPartnerObjectsCountFromSnapshot получает количество активных объектов партнера из AxentaAccountSnapshot
+func getPartnerObjectsCountFromSnapshot(partnerCompanyID uint, adminAccountID uint, tenantDB *gorm.DB) int {
+	if tenantDB == nil {
+		log.Printf("⚠️ getPartnerObjectsCountFromSnapshot: tenantDB is nil")
+		return 0
+	}
+	
+	// Ищем снимок аккаунта
+	var snapshot models.AxentaAccountSnapshot
+	if err := tenantDB.Where("external_account_id = ? AND admin_account_id = ?", int64(partnerCompanyID), adminAccountID).
+		Order("last_synced_at DESC").
+		First(&snapshot).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			log.Printf("🔍 getPartnerObjectsCountFromSnapshot: No snapshot found for external account ID %d (admin %d)", partnerCompanyID, adminAccountID)
+		} else {
+			log.Printf("❌ getPartnerObjectsCountFromSnapshot: Failed to get snapshot for external account ID %d: %v", partnerCompanyID, err)
+		}
+		return 0
+	}
+	
+	log.Printf("📊 getPartnerObjectsCountFromSnapshot: Found snapshot for external account ID %d: total=%d, active=%d",
+		partnerCompanyID, snapshot.ObjectsTotal, snapshot.ObjectsActive)
+	
+	return snapshot.ObjectsActive
+}
+
 // getPartnerObjectsFromCache получает объекты из кэша или загружает их
 func getPartnerObjectsFromCache(partnerCompanyID uint, userToken string) ([]models.Object, error) {
 	// Проверяем кэш
@@ -865,6 +891,16 @@ func GetContractStats(c *gin.Context) {
 			log.Printf("⚠️ GetContractStats: Ошибка получения статистики для партнера ID=%d: %v", *contract.PartnerCompanyID, err)
 		} else {
 			objectsCount = count
+		}
+		
+		// Если из API получили 0, пробуем получить из snapshot
+		if objectsCount == 0 {
+			log.Printf("🔍 GetContractStats: Количество объектов из API = 0, пробуем получить из snapshot для партнера ID=%d", *contract.PartnerCompanyID)
+			snapshotCount := getPartnerObjectsCountFromSnapshot(*contract.PartnerCompanyID, adminAccountID, tenantDB)
+			if snapshotCount > 0 {
+				objectsCount = snapshotCount
+				log.Printf("✅ GetContractStats: Получено количество объектов из snapshot: %d", objectsCount)
+			}
 		}
 	} else {
 		// Для клиентских договоров считаем из contract_objects
