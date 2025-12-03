@@ -456,12 +456,17 @@ func GeneratePartnerSnapshotsForPeriod(c *gin.Context) {
 
 	log.Printf("✅ Снимки за период созданы: успешно %d, ошибок %d", successCount, errorCount)
 
+	// Нормализуем даты до начала дня для точного расчета количества дней
+	startDay := time.Date(startDate.Year(), startDate.Month(), startDate.Day(), 0, 0, 0, 0, startDate.Location())
+	endDay := time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 0, 0, 0, 0, endDate.Location())
+	periodDays := int(endDay.Sub(startDay).Hours()/24) + 1
+
 	c.JSON(http.StatusOK, gin.H{
 		"status":        "success",
 		"message":       "Снимки за период созданы",
 		"success_count": successCount,
 		"error_count":   errorCount,
-		"period_days":   int(endDate.Sub(startDate).Hours()/24) + 1,
+		"period_days":   periodDays,
 	})
 }
 
