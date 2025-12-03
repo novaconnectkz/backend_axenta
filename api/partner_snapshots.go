@@ -106,7 +106,7 @@ func GetPartnerContractSnapshots(c *gin.Context) {
 	log.Printf("✅ Найдено снимков: %d", len(snapshots))
 
 	// Рассчитываем сводную информацию
-	summary := calculateSnapshotsSummary(snapshots)
+	summary := calculateSnapshotsSummary(snapshots, startDate, endDate)
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":    "success",
@@ -116,8 +116,18 @@ func GetPartnerContractSnapshots(c *gin.Context) {
 }
 
 // calculateSnapshotsSummary рассчитывает сводную информацию по снимкам
-func calculateSnapshotsSummary(snapshots []models.PartnerDailySnapshot) map[string]interface{} {
-	totalDays := len(snapshots)
+func calculateSnapshotsSummary(snapshots []models.PartnerDailySnapshot, startDate, endDate time.Time) map[string]interface{} {
+	// Нормализуем даты до начала дня для точного расчета
+	startDay := time.Date(startDate.Year(), startDate.Month(), startDate.Day(), 0, 0, 0, 0, startDate.Location())
+	endDay := time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 0, 0, 0, 0, endDate.Location())
+	
+	// Рассчитываем количество дней в периоде (включительно)
+	// Например, с 1 по 3 декабря = 3 дня (1, 2, 3)
+	daysDiff := int(endDay.Sub(startDay).Hours() / 24)
+	totalDays := daysDiff + 1
+	
+	log.Printf("📅 Период: %s - %s, количество дней в периоде: %d (найдено снимков: %d)", 
+		startDay.Format("2006-01-02"), endDay.Format("2006-01-02"), totalDays, len(snapshots))
 	totalCost := decimal.Zero
 	totalObjects := 0
 	baseDailyPrice := decimal.Zero       // Базовая дневная цена БЕЗ скидки
