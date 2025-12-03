@@ -277,14 +277,15 @@ func GetTrashStats(c *gin.Context) {
 	var stats TrashStats
 	stats.ItemsByType = make(map[string]int)
 
-	// Общее количество
+	// Общее количество (только не восстановленные и не удаленные навсегда)
+	// Это соответствует фильтрам по умолчанию в GetTrashItems
 	var total int64
 	db.Model(&models.DeletedItem{}).
-		Where("company_id = ? AND is_permanently_deleted = ?", companyID, false).
+		Where("company_id = ? AND is_restored = ? AND is_permanently_deleted = ?", companyID, false, false).
 		Count(&total)
 	stats.TotalItems = int(total)
 
-	// Количество по типам
+	// Количество по типам (только не восстановленные и не удаленные навсегда)
 	type TypeCount struct {
 		EntityType string
 		Count      int64
@@ -292,7 +293,7 @@ func GetTrashStats(c *gin.Context) {
 	var typeCounts []TypeCount
 	db.Model(&models.DeletedItem{}).
 		Select("entity_type, COUNT(*) as count").
-		Where("company_id = ? AND is_permanently_deleted = ?", companyID, false).
+		Where("company_id = ? AND is_restored = ? AND is_permanently_deleted = ?", companyID, false, false).
 		Group("entity_type").
 		Scan(&typeCounts)
 
@@ -314,17 +315,17 @@ func GetTrashStats(c *gin.Context) {
 		Count(&canBeRestoredCount)
 	stats.CanBeRestored = int(canBeRestoredCount)
 
-	// Самое старое удаление
+	// Самое старое удаление (только не восстановленные и не удаленные навсегда)
 	var oldestItem models.DeletedItem
-	if err := db.Where("company_id = ? AND is_permanently_deleted = ?", companyID, false).
+	if err := db.Where("company_id = ? AND is_restored = ? AND is_permanently_deleted = ?", companyID, false, false).
 		Order("deleted_at_custom ASC").
 		First(&oldestItem).Error; err == nil {
 		stats.OldestDeletedAt = &oldestItem.DeletedAtCustom
 	}
 
-	// Самое недавнее удаление
+	// Самое недавнее удаление (только не восстановленные и не удаленные навсегда)
 	var recentItem models.DeletedItem
-	if err := db.Where("company_id = ? AND is_permanently_deleted = ?", companyID, false).
+	if err := db.Where("company_id = ? AND is_restored = ? AND is_permanently_deleted = ?", companyID, false, false).
 		Order("deleted_at_custom DESC").
 		First(&recentItem).Error; err == nil {
 		stats.RecentDeletedAt = &recentItem.DeletedAtCustom
