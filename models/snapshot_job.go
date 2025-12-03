@@ -36,12 +36,14 @@ type SnapshotJobDetails struct {
 
 // CompanyJobDetail - информация о обработке компании
 type CompanyJobDetail struct {
-	CompanyID       uint   `json:"company_id"`
-	CompanyName     string `json:"company_name"`
-	ContractsCount  int    `json:"contracts_count"`
-	SuccessCount    int    `json:"success_count"`
-	ErrorCount      int    `json:"error_count"`
-	ProcessingTimeS int    `json:"processing_time_s,omitempty"`
+	CompanyID          uint   `json:"company_id"`
+	CompanyName        string `json:"company_name"`
+	ContractsCount     int    `json:"contracts_count"`
+	SuccessCount       int    `json:"success_count"`
+	ErrorCount         int    `json:"error_count"`
+	ProcessingTimeS    int    `json:"processing_time_s,omitempty"`
+	RealTotalObjects   int    `json:"real_total_objects,omitempty"`   // Реальное количество из API
+	RealActiveObjects  int    `json:"real_active_objects,omitempty"`  // Реальное количество активных из API
 }
 
 // ContractJobDetail - информация о обработке договора

@@ -194,6 +194,10 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 				company.ID, totalFromStats, activeFromStats)
 		}
 		
+		// Сохраняем реальное количество объектов из API для проверки
+		companyDetail.RealTotalObjects = totalFromStats
+		companyDetail.RealActiveObjects = activeFromStats
+		
 		// Загружаем иерархию всех аккаунтов и распределяем объекты БЕЗ ДУБЛЕЙ
 		log.Printf("🌳 Загружаем иерархию всех аккаунтов...")
 		hierarchyService := NewAccountHierarchyService(token)
@@ -401,6 +405,19 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 	// Подсчитываем общее количество объектов из РЕАЛЬНО созданных снимков
 	// Это важно, так как некоторые снимки могли быть пропущены или созданы с другими данными
 	var totalObjectsSum, activeObjectsSum int64
+	var realTotalFromAPI, realActiveFromAPI int
+	
+	// Сначала пытаемся получить реальное количество из API (из CompanyJobDetail)
+	for _, companyDetail := range job.Details.Companies {
+		if companyDetail.RealTotalObjects > 0 {
+			realTotalFromAPI = companyDetail.RealTotalObjects
+			realActiveFromAPI = companyDetail.RealActiveObjects
+			log.Printf("📊 Реальное количество из API: %d объектов (активных: %d)", realTotalFromAPI, realActiveFromAPI)
+			break
+		}
+	}
+	
+	// Подсчитываем из созданных снимков
 	for _, company := range companies {
 		tenantDB := database.DB.Session(&gorm.Session{})
 		if err := tenantDB.Exec(fmt.Sprintf("SET search_path TO tenant_%d, public", company.ID)).Error; err != nil {
@@ -421,11 +438,32 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 		}
 	}
 	
-	job.TotalObjects = int(totalObjectsSum)
-	job.ActiveObjects = int(activeObjectsSum)
+	// Используем реальное количество из API, если оно доступно и отличается от суммы снимков
+	// Это более точное значение, так как API возвращает точное количество объектов
+	if realTotalFromAPI > 0 {
+		// Если разница больше 5%, используем значение из API
+		diffPercent := float64(totalObjectsSum-int64(realTotalFromAPI)) / float64(realTotalFromAPI) * 100
+		if diffPercent > 5 || diffPercent < -5 {
+			log.Printf("⚠️ Расхождение между API (%d) и суммой снимков (%d): %.1f%%. Используем значение из API.", 
+				realTotalFromAPI, totalObjectsSum, diffPercent)
+			job.TotalObjects = realTotalFromAPI
+			job.ActiveObjects = realActiveFromAPI
+		} else {
+			log.Printf("✅ Расхождение в пределах нормы (%.1f%%). Используем сумму из снимков.", diffPercent)
+			job.TotalObjects = int(totalObjectsSum)
+			job.ActiveObjects = int(activeObjectsSum)
+		}
+	} else {
+		// Если нет данных из API, используем сумму из снимков
+		job.TotalObjects = int(totalObjectsSum)
+		job.ActiveObjects = int(activeObjectsSum)
+	}
+	
 	job.SkippedCount = skippedCount
 	
-	log.Printf("📊 ИТОГО из созданных снимков: %d объектов (активных: %d)", totalObjectsSum, activeObjectsSum)
+	log.Printf("📊 ИТОГО: %d объектов (активных: %d) - %s", 
+		job.TotalObjects, job.ActiveObjects, 
+		map[bool]string{true: "из API", false: "из снимков"}[realTotalFromAPI > 0 && (job.TotalObjects == realTotalFromAPI)])
 	
 	// Устанавливаем scheduled_time для автоматических задач (21:00 UTC / 00:00 MSK следующего дня)
 	// Снимок за 01.12.2025 создаётся в 00:00 MSK 02.12.2025 (т.е. в 21:00 UTC 01.12.2025)

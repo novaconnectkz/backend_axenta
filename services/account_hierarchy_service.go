@@ -363,8 +363,8 @@ func (s *AccountHierarchyService) DistributeObjectsByPartner(token string, snaps
 			}
 		}
 		
-		// Пропускаем удалённые до даты снимка
-		if !deletedAt.IsZero() && deletedAt.Before(snapshotEndOfDay) {
+		// Пропускаем удалённые до или в день снимка (до конца дня снимка)
+		if !deletedAt.IsZero() && (deletedAt.Before(snapshotEndOfDay) || deletedAt.Equal(snapshotEndOfDay)) {
 			continue
 		}
 		

@@ -2316,8 +2316,18 @@ func GetInvoice(c *gin.Context) {
 
 	id := c.Param("id")
 
+	// Убеждаемся, что мы в схеме public для глобальных таблиц
+	publicDB := database.DB.Session(&gorm.Session{})
+	if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка подключения к базе данных",
+		})
+		return
+	}
+
 	var invoice models.Invoice
-	if err := database.DB.
+	if err := publicDB.
 		Preload("Contract", "admin_account_id = ?", adminAccountID).
 		Preload("TariffPlan", "admin_account_id = ?", adminAccountID).
 		Preload("Items").
@@ -2556,18 +2566,53 @@ func ProcessPayment(c *gin.Context) {
 	}
 
 	// Получаем обновленный счет
+	// Убеждаемся, что мы в схеме public для глобальных таблиц
+	publicDB := database.DB.Session(&gorm.Session{})
+	if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка подключения к базе данных",
+		})
+		return
+	}
+
 	var invoice models.Invoice
-	if err := database.DB.
-		Preload("Contract", "admin_account_id = ?", adminAccountID).
-		Preload("TariffPlan", "admin_account_id = ?", adminAccountID).
+	if err := publicDB.
 		Preload("Items").
 		Where("id = ? AND admin_account_id = ?", invoiceID, adminAccountID).
 		First(&invoice).Error; err != nil {
+		log.Printf("❌ Ошибка получения обновленного счета: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Ошибка получения обновленного счета",
+			"error":  fmt.Sprintf("Ошибка получения обновленного счета: %v", err),
 		})
 		return
+	}
+
+	// Загружаем Contract отдельно из tenant схемы, если он есть (опционально)
+	if invoice.ContractID != nil && *invoice.ContractID > 0 {
+		tenantDB := middleware.GetTenantDB(c)
+		if tenantDB != nil {
+			var contract models.Contract
+			if err := tenantDB.Where("id = ? AND admin_account_id = ?", *invoice.ContractID, adminAccountID).
+				Select("id, number, client_name, client_short_name, client_email").
+				First(&contract).Error; err == nil {
+				invoice.Contract = &contract
+			} else {
+				log.Printf("⚠️ Не удалось загрузить договор для счета %d: %v", invoice.ID, err)
+			}
+		}
+	}
+
+	// Загружаем TariffPlan из public схемы (опционально)
+	var billingPlan models.BillingPlan
+	if err := publicDB.Where("id = ? AND admin_account_id = ?", invoice.TariffPlanID, adminAccountID).
+		First(&billingPlan).Error; err == nil {
+		// Преобразуем BillingPlan в TariffPlan
+		tariffPlan := models.TariffPlan{BillingPlan: billingPlan}
+		invoice.TariffPlan = &tariffPlan
+	} else {
+		log.Printf("⚠️ Не удалось загрузить тарифный план для счета %d: %v", invoice.ID, err)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
