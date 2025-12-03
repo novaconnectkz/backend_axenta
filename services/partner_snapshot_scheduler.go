@@ -505,6 +505,22 @@ func (s *PartnerSnapshotScheduler) RunManualSnapshotForDate(targetDate time.Time
 	s.createDailySnapshotsForDate(targetDate)
 }
 
+// RunManualSnapshotForPeriod создает снимки за указанный период (для ручного запуска)
+func (s *PartnerSnapshotScheduler) RunManualSnapshotForPeriod(dateFrom time.Time, dateTo time.Time) {
+	log.Printf("🧪 Запуск создания снимков вручную за период: %s - %s", 
+		dateFrom.Format("2006-01-02"), dateTo.Format("2006-01-02"))
+	
+	// Итерируемся по всем дням в периоде
+	currentDate := dateFrom
+	for !currentDate.After(dateTo) {
+		s.createDailySnapshotsForDate(currentDate)
+		// Переходим к следующему дню
+		currentDate = currentDate.AddDate(0, 0, 1)
+	}
+	
+	log.Printf("✅ Создание снимков за период завершено")
+}
+
 // syncAllPartnerAccounts синхронизирует все партнерские аккаунты из Axenta Cloud для данного тенанта
 func (s *PartnerSnapshotScheduler) syncAllPartnerAccounts(tenantDB *gorm.DB, companyID uint) error {
 	// ПРИОРИТЕТ 1: Используем системный токен из переменной окружения

@@ -174,16 +174,104 @@ func DeleteOldSnapshotJobs(c *gin.Context) {
 	})
 }
 
+// TriggerManualSnapshotRequest представляет запрос на ручное создание снимков
+type TriggerManualSnapshotRequest struct {
+	Date     string `json:"date"`      // Опционально: одна дата в формате YYYY-MM-DD
+	DateFrom string `json:"date_from"` // Опционально: начало периода в формате YYYY-MM-DD
+	DateTo   string `json:"date_to"`   // Опционально: конец периода в формате YYYY-MM-DD
+}
+
 // TriggerManualSnapshot запускает создание снимков вручную (для тестирования)
 // POST /api/auth/snapshot-jobs/trigger
-// Опциональный параметр date в формате YYYY-MM-DD (по умолчанию - вчера)
+// Поддерживает:
+//   - Query параметр date (одна дата) - для обратной совместимости
+//   - POST body с полями date, date_from и date_to
+//   - Если ничего не указано - создает снимки за вчера
 func TriggerManualSnapshot(c *gin.Context) {
 	// Создаем планировщик
 	scheduler := services.NewPartnerSnapshotScheduler()
 	
-	// Проверяем параметр date
-	dateParam := c.Query("date")
+	// Проверяем, есть ли данные в body
+	var requestBody TriggerManualSnapshotRequest
+	hasBody := false
 	
+	// Пытаемся прочитать body (может быть пустым)
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&requestBody); err == nil {
+			hasBody = true
+		}
+	}
+	
+	// Определяем режим работы
+	if hasBody {
+		// Используем данные из body
+		
+		// Проверяем период (date_from и date_to)
+		if requestBody.DateFrom != "" && requestBody.DateTo != "" {
+			dateFrom, errFrom := time.Parse("2006-01-02", requestBody.DateFrom)
+			dateTo, errTo := time.Parse("2006-01-02", requestBody.DateTo)
+			
+			if errFrom != nil || errTo != nil {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"status":  "error",
+					"message": "Неверный формат дат. Используйте YYYY-MM-DD (например: 2025-12-01)",
+				})
+				return
+			}
+			
+			if dateFrom.After(dateTo) {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"status":  "error",
+					"message": "Дата начала не может быть позже даты окончания",
+				})
+				return
+			}
+			
+			// Проверяем, что период не слишком большой (максимум 90 дней)
+			daysDiff := int(dateTo.Sub(dateFrom).Hours() / 24)
+			if daysDiff > 90 {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"status":  "error",
+					"message": fmt.Sprintf("Период не может превышать 90 дней. Выбранный период: %d дней", daysDiff),
+				})
+				return
+			}
+			
+			// Запускаем создание снимков за период
+			go scheduler.RunManualSnapshotForPeriod(dateFrom, dateTo)
+			
+			c.JSON(http.StatusOK, gin.H{
+				"status":  "success",
+				"message": fmt.Sprintf("Запрос на создание снимков за период %s - %s принят. Проверьте историю через несколько минут.", 
+					requestBody.DateFrom, requestBody.DateTo),
+			})
+			return
+		}
+		
+		// Проверяем одну дату
+		if requestBody.Date != "" {
+			targetDate, err := time.Parse("2006-01-02", requestBody.Date)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"status":  "error",
+					"message": "Неверный формат даты. Используйте YYYY-MM-DD (например: 2025-12-02)",
+				})
+				return
+			}
+			
+			// Запускаем снимки за указанную дату
+			go scheduler.RunManualSnapshotForDate(targetDate)
+			
+			c.JSON(http.StatusOK, gin.H{
+				"status":  "success",
+				"message": fmt.Sprintf("Запрос на создание снимков за %s принят. Проверьте историю через несколько минут.", requestBody.Date),
+			})
+			return
+		}
+	}
+	
+	// Проверяем query параметр date (для обратной совместимости)
+	dateParam := c.Query("date")
 	if dateParam != "" {
 		// Парсим дату из параметра
 		targetDate, err := time.Parse("2006-01-02", dateParam)
@@ -200,16 +288,17 @@ func TriggerManualSnapshot(c *gin.Context) {
 		
 		c.JSON(http.StatusOK, gin.H{
 			"status":  "success",
-			"message": fmt.Sprintf("Тестовый запуск создания снимков за %s инициирован. Проверьте историю через несколько минут.", dateParam),
+			"message": fmt.Sprintf("Запрос на создание снимков за %s принят. Проверьте историю через несколько минут.", dateParam),
 		})
-	} else {
-		// Запускаем стандартный снимок (за вчера)
-		go scheduler.RunManualSnapshot()
-		
-		c.JSON(http.StatusOK, gin.H{
-			"status":  "success",
-			"message": "Тестовый запуск создания снимков инициирован. Проверьте историю через несколько минут.",
-		})
+		return
 	}
+	
+	// По умолчанию - запускаем стандартный снимок (за вчера)
+	go scheduler.RunManualSnapshot()
+	
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Запрос на создание снимков за вчера принят. Проверьте историю через несколько минут.",
+	})
 }
 
