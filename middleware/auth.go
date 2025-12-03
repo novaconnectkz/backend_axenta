@@ -13,6 +13,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// getMapKeys возвращает список ключей из map (вспомогательная функция)
+func getMapKeys(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
 // AuthMiddleware проверяет аутентификацию пользователя
 type AuthMiddleware struct{}
 
@@ -107,17 +116,48 @@ func (am *AuthMiddleware) RequireAuth() gin.HandlerFunc {
 		c.Set("user", user)
 		c.Set("token", token)
 
-		// Логируем успешную авторизацию
-		userID := ""
+		// Извлекаем и устанавливаем user_id в контекст для удобства
+		var userID uint
 		if id, ok := user["id"]; ok {
-			userID = fmt.Sprintf("%v", id)
+			fmt.Printf("🔍 AuthMiddleware: найден id в user, тип: %T, значение: %v\n", id, id)
+			switch v := id.(type) {
+			case float64:
+				userID = uint(v)
+			case int:
+				userID = uint(v)
+			case int64:
+				userID = uint(v)
+			case string:
+				if parsed, err := strconv.ParseUint(v, 10, 32); err == nil {
+					userID = uint(parsed)
+				} else {
+					fmt.Printf("⚠️ AuthMiddleware: не удалось распарсить id из строки: %s, ошибка: %v\n", v, err)
+				}
+			default:
+				fmt.Printf("⚠️ AuthMiddleware: неизвестный тип id: %T, значение: %v\n", v, v)
+			}
+		} else {
+			fmt.Printf("⚠️ AuthMiddleware: поле 'id' не найдено в объекте user. Доступные ключи: %v\n", getMapKeys(user))
+		}
+		
+		if userID > 0 {
+			c.Set("user_id", userID)
+			fmt.Printf("✅ AuthMiddleware: user_id установлен в контекст: %d\n", userID)
+		} else {
+			fmt.Printf("❌ AuthMiddleware: не удалось установить user_id (userID = 0)\n")
+		}
+
+		// Логируем успешную авторизацию
+		userIDStr := ""
+		if id, ok := user["id"]; ok {
+			userIDStr = fmt.Sprintf("%v", id)
 		}
 		username := ""
 		if name, ok := user["username"].(string); ok {
 			username = name
 		}
 		audit.LogSuccess(c, "auth.success", gin.H{
-			"user_id":  userID,
+			"user_id":  userIDStr,
 			"username": username,
 		})
 

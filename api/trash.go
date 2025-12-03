@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"backend_axenta/database"
+	"backend_axenta/middleware"
 	"backend_axenta/models"
 
 	"github.com/gin-gonic/gin"
@@ -26,6 +27,130 @@ type TrashStats struct {
 	CanBeRestored     int            `json:"can_be_restored"`
 	OldestDeletedAt   *time.Time     `json:"oldest_deleted_at"`
 	RecentDeletedAt   *time.Time     `json:"recent_deleted_at"`
+}
+
+// getUserIDFromContext извлекает user_id из контекста
+// Сначала пытается получить напрямую из user_id, затем из объекта user
+func getUserIDFromContext(c *gin.Context) (uint, error) {
+	// Пробуем получить напрямую из user_id
+	if userID, exists := c.Get("user_id"); exists {
+		log.Printf("🔍 getUserIDFromContext: найден user_id в контексте, тип: %T, значение: %v", userID, userID)
+		if id, ok := userID.(uint); ok {
+			return id, nil
+		}
+		// Пробуем преобразовать из других типов
+		switch v := userID.(type) {
+		case int:
+			return uint(v), nil
+		case int64:
+			return uint(v), nil
+		case float64:
+			return uint(v), nil
+		case string:
+			if parsed, err := strconv.ParseUint(v, 10, 32); err == nil {
+				return uint(parsed), nil
+			}
+			log.Printf("⚠️ getUserIDFromContext: не удалось распарсить user_id из строки: %s", v)
+		default:
+			log.Printf("⚠️ getUserIDFromContext: неизвестный тип user_id: %T", v)
+		}
+	} else {
+		log.Printf("🔍 getUserIDFromContext: user_id не найден напрямую в контексте")
+	}
+
+	// Пробуем извлечь из объекта user
+	user := middleware.GetCurrentUser(c)
+	if user != nil {
+		log.Printf("🔍 getUserIDFromContext: найден объект user, ключи: %v", getMapKeys(user))
+		// Пробуем различные поля
+		if id, ok := user["id"]; ok {
+			log.Printf("🔍 getUserIDFromContext: найден id в user, тип: %T, значение: %v", id, id)
+			switch v := id.(type) {
+			case float64:
+				return uint(v), nil
+			case int:
+				return uint(v), nil
+			case int64:
+				return uint(v), nil
+			case string:
+				if parsed, err := strconv.ParseUint(v, 10, 32); err == nil {
+					return uint(parsed), nil
+				}
+				log.Printf("⚠️ getUserIDFromContext: не удалось распарсить id из строки: %s", v)
+			default:
+				log.Printf("⚠️ getUserIDFromContext: неизвестный тип id в user: %T", v)
+			}
+		}
+		// Пробуем user_id
+		if id, ok := user["user_id"]; ok {
+			log.Printf("🔍 getUserIDFromContext: найден user_id в user, тип: %T, значение: %v", id, id)
+			switch v := id.(type) {
+			case float64:
+				return uint(v), nil
+			case int:
+				return uint(v), nil
+			case int64:
+				return uint(v), nil
+			case string:
+				if parsed, err := strconv.ParseUint(v, 10, 32); err == nil {
+					return uint(parsed), nil
+				}
+				log.Printf("⚠️ getUserIDFromContext: не удалось распарсить user_id из строки: %s", v)
+			default:
+				log.Printf("⚠️ getUserIDFromContext: неизвестный тип user_id в user: %T", v)
+			}
+		}
+	} else {
+		log.Printf("🔍 getUserIDFromContext: объект user не найден в контексте")
+	}
+
+	return 0, fmt.Errorf("user_id not found in context")
+}
+
+// getMapKeys возвращает список ключей из map
+func getMapKeys(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// getCompanyIDFromContext извлекает company_id из контекста и преобразует в uint
+func getCompanyIDFromContext(c *gin.Context) (uint, error) {
+	companyID, exists := c.Get("company_id")
+	if !exists {
+		return 0, fmt.Errorf("company_id not found in context")
+	}
+
+	// Пробуем преобразовать в uint
+	switch v := companyID.(type) {
+	case uint:
+		return v, nil
+	case int:
+		if v < 0 {
+			return 0, fmt.Errorf("company_id cannot be negative")
+		}
+		return uint(v), nil
+	case int64:
+		if v < 0 {
+			return 0, fmt.Errorf("company_id cannot be negative")
+		}
+		return uint(v), nil
+	case float64:
+		if v < 0 {
+			return 0, fmt.Errorf("company_id cannot be negative")
+		}
+		return uint(v), nil
+	case string:
+		parsed, err := strconv.ParseUint(v, 10, 32)
+		if err != nil {
+			return 0, fmt.Errorf("failed to parse company_id from string: %w", err)
+		}
+		return uint(parsed), nil
+	default:
+		return 0, fmt.Errorf("unknown company_id type: %T", v)
+	}
 }
 
 // GetTrashItems возвращает список удаленных элементов
@@ -236,22 +361,61 @@ func RestoreItem(c *gin.Context) {
 		return
 	}
 
-	companyID, exists := c.Get("company_id")
-	if !exists {
+	companyID, err := getCompanyIDFromContext(c)
+	if err != nil {
+		log.Printf("❌ RestoreItem: ошибка получения company_id: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
-			"error":  "Company ID not found",
+			"error":  "Company ID not found: " + err.Error(),
 		})
 		return
 	}
 
-	userID, exists := c.Get("user_id")
-	if !exists {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status": "error",
-			"error":  "User ID not found",
-		})
-		return
+	// Пытаемся получить user_id - сначала из контекста напрямую, затем из объекта user
+	var userID uint
+	
+	// Попытка 1: из контекста напрямую
+	if id, exists := c.Get("user_id"); exists {
+		switch v := id.(type) {
+		case uint:
+			userID = v
+		case int:
+			userID = uint(v)
+		case int64:
+			userID = uint(v)
+		case float64:
+			userID = uint(v)
+		case string:
+			if parsed, err := strconv.ParseUint(v, 10, 32); err == nil {
+				userID = uint(parsed)
+			}
+		}
+	}
+	
+	// Попытка 2: из объекта user
+	if userID == 0 {
+		user := middleware.GetCurrentUser(c)
+		if user != nil {
+			if id, ok := user["id"]; ok {
+				switch v := id.(type) {
+				case float64:
+					userID = uint(v)
+				case int:
+					userID = uint(v)
+				case int64:
+					userID = uint(v)
+				case string:
+					if parsed, err := strconv.ParseUint(v, 10, 32); err == nil {
+						userID = uint(parsed)
+					}
+				}
+			}
+		}
+	}
+	
+	if userID == 0 {
+		log.Printf("⚠️ RestoreItem: user_id не найден, продолжаем без user_id")
+		// Продолжаем без user_id - поле RestoredBy будет nil
 	}
 
 	// Находим запись об удалении
@@ -289,6 +453,22 @@ func RestoreItem(c *gin.Context) {
 		} else {
 			restoredByName = user.Username
 		}
+	} else {
+		// Если не нашли в БД, пробуем получить из контекста
+		userMap := middleware.GetCurrentUser(c)
+		if userMap != nil {
+			if username, ok := userMap["username"].(string); ok {
+				restoredByName = username
+			} else if firstName, ok := userMap["first_name"].(string); ok {
+				restoredByName = firstName
+				if lastName, ok := userMap["last_name"].(string); ok {
+					restoredByName = fmt.Sprintf("%s %s", firstName, lastName)
+				}
+			}
+		}
+		if restoredByName == "" {
+			restoredByName = fmt.Sprintf("User %d", userID)
+		}
 	}
 
 	// Начинаем транзакцию
@@ -312,6 +492,8 @@ func RestoreItem(c *gin.Context) {
 		restored, restoreError = restoreObject(tx, deletedItem.EntityID)
 	case "warehouse":
 		restored, restoreError = restoreWarehouse(tx, deletedItem.EntityID)
+	case "subscription":
+		restored, restoreError = restoreSubscription(tx, deletedItem.EntityID)
 	case "template":
 		restored, restoreError = restoreTemplate(tx, deletedItem.EntityType, deletedItem.EntityID)
 	default:
@@ -343,10 +525,13 @@ func RestoreItem(c *gin.Context) {
 
 	// Обновляем запись об удалении
 	now := time.Now()
-	userIDUint := userID.(uint)
 	deletedItem.IsRestored = true
 	deletedItem.RestoredAt = &now
-	deletedItem.RestoredBy = &userIDUint
+	if userID > 0 {
+		deletedItem.RestoredBy = &userID
+	} else {
+		deletedItem.RestoredBy = nil
+	}
 	deletedItem.RestoredByName = restoredByName
 
 	if err := tx.Save(&deletedItem).Error; err != nil {
@@ -369,8 +554,12 @@ func RestoreItem(c *gin.Context) {
 
 // PermanentlyDeleteItem окончательно удаляет элемент
 func PermanentlyDeleteItem(c *gin.Context) {
+	fmt.Printf("🔍 PermanentlyDeleteItem: начало обработки запроса, путь: %s\n", c.Request.URL.Path)
+	log.Printf("🔍 PermanentlyDeleteItem: начало обработки запроса, путь: %s", c.Request.URL.Path)
+	
 	db := database.GetTenantDB(c)
 	if db == nil {
+		log.Printf("❌ PermanentlyDeleteItem: подключение к БД недоступно")
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  "Подключение к базе данных недоступно",
@@ -379,6 +568,7 @@ func PermanentlyDeleteItem(c *gin.Context) {
 	}
 
 	itemID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	log.Printf("🔍 PermanentlyDeleteItem: itemID = %d", itemID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
@@ -387,22 +577,81 @@ func PermanentlyDeleteItem(c *gin.Context) {
 		return
 	}
 
-	companyID, exists := c.Get("company_id")
-	if !exists {
+	companyID, err := getCompanyIDFromContext(c)
+	if err != nil {
+		log.Printf("❌ PermanentlyDeleteItem: ошибка получения company_id: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
-			"error":  "Company ID not found",
+			"error":  "Company ID not found: " + err.Error(),
 		})
 		return
 	}
+	log.Printf("🔍 PermanentlyDeleteItem: company_id получен: %d", companyID)
 
-	userID, exists := c.Get("user_id")
-	if !exists {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status": "error",
-			"error":  "User ID not found",
-		})
-		return
+	// Пытаемся получить user_id - сначала из контекста напрямую, затем из объекта user
+	var userID uint
+	
+	// Попытка 1: из контекста напрямую
+	if id, exists := c.Get("user_id"); exists {
+		fmt.Printf("🔍 PermanentlyDeleteItem: user_id найден в контексте, тип: %T, значение: %v\n", id, id)
+		switch v := id.(type) {
+		case uint:
+			userID = v
+		case int:
+			userID = uint(v)
+		case int64:
+			userID = uint(v)
+		case float64:
+			userID = uint(v)
+		case string:
+			if parsed, err := strconv.ParseUint(v, 10, 32); err == nil {
+				userID = uint(parsed)
+			}
+		}
+	}
+	
+	// Попытка 2: из объекта user
+	if userID == 0 {
+		user := middleware.GetCurrentUser(c)
+		if user != nil {
+			fmt.Printf("🔍 PermanentlyDeleteItem: объект user найден, ключи: %v\n", getMapKeys(user))
+			if id, ok := user["id"]; ok {
+				fmt.Printf("🔍 PermanentlyDeleteItem: найден id в user, тип: %T, значение: %v\n", id, id)
+				switch v := id.(type) {
+				case float64:
+					userID = uint(v)
+					fmt.Printf("✅ PermanentlyDeleteItem: user_id извлечен из user как float64: %d\n", userID)
+				case int:
+					userID = uint(v)
+					fmt.Printf("✅ PermanentlyDeleteItem: user_id извлечен из user как int: %d\n", userID)
+				case int64:
+					userID = uint(v)
+					fmt.Printf("✅ PermanentlyDeleteItem: user_id извлечен из user как int64: %d\n", userID)
+				case string:
+					if parsed, err := strconv.ParseUint(v, 10, 32); err == nil {
+						userID = uint(parsed)
+						fmt.Printf("✅ PermanentlyDeleteItem: user_id извлечен из user как string: %d\n", userID)
+					} else {
+						fmt.Printf("❌ PermanentlyDeleteItem: не удалось распарсить id из строки: %s\n", v)
+					}
+				default:
+					fmt.Printf("❌ PermanentlyDeleteItem: неизвестный тип id: %T, значение: %v\n", v, v)
+				}
+			} else {
+				fmt.Printf("❌ PermanentlyDeleteItem: поле 'id' не найдено в объекте user\n")
+			}
+		} else {
+			fmt.Printf("❌ PermanentlyDeleteItem: объект user не найден в контексте\n")
+		}
+	}
+	
+	if userID == 0 {
+		fmt.Printf("⚠️ PermanentlyDeleteItem: user_id не найден после всех попыток, продолжаем без user_id\n")
+		log.Printf("⚠️ PermanentlyDeleteItem: user_id не найден после всех попыток, продолжаем без user_id")
+		// Продолжаем без user_id - поле PermanentlyDeletedBy будет nil
+	} else {
+		fmt.Printf("✅ PermanentlyDeleteItem: user_id успешно получен: %d\n", userID)
+		log.Printf("✅ PermanentlyDeleteItem: user_id получен: %d", userID)
 	}
 
 	// Находим запись об удалении
@@ -451,6 +700,8 @@ func PermanentlyDeleteItem(c *gin.Context) {
 		deleteError = permanentlyDeleteObject(tx, deletedItem.EntityID)
 	case "warehouse":
 		deleteError = permanentlyDeleteWarehouse(tx, deletedItem.EntityID)
+	case "subscription":
+		deleteError = permanentlyDeleteSubscription(tx, deletedItem.EntityID)
 	case "template":
 		deleteError = permanentlyDeleteTemplate(tx, deletedItem.EntityType, deletedItem.EntityID)
 	default:
@@ -473,10 +724,14 @@ func PermanentlyDeleteItem(c *gin.Context) {
 
 	// Обновляем запись об удалении
 	now := time.Now()
-	userIDUint := userID.(uint)
 	deletedItem.IsPermanentlyDeleted = true
 	deletedItem.PermanentlyDeletedAt = &now
-	deletedItem.PermanentlyDeletedBy = &userIDUint
+	if userID > 0 {
+		deletedItem.PermanentlyDeletedBy = &userID
+	} else {
+		deletedItem.PermanentlyDeletedBy = nil
+		fmt.Printf("⚠️ PermanentlyDeleteItem: PermanentlyDeletedBy установлен в nil, так как user_id не найден\n")
+	}
 
 	if err := tx.Save(&deletedItem).Error; err != nil {
 		tx.Rollback()
@@ -541,6 +796,17 @@ func restoreWarehouse(db *gorm.DB, entityID uint) (bool, error) {
 	return true, nil
 }
 
+func restoreSubscription(db *gorm.DB, entityID uint) (bool, error) {
+	var subscription models.Subscription
+	if err := db.Unscoped().First(&subscription, entityID).Error; err != nil {
+		return false, err
+	}
+	if err := db.Unscoped().Model(&subscription).Update("deleted_at", nil).Error; err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func restoreTemplate(db *gorm.DB, entityType string, entityID uint) (bool, error) {
 	// Определяем тип шаблона и восстанавливаем
 	switch entityType {
@@ -590,6 +856,10 @@ func permanentlyDeleteObject(db *gorm.DB, entityID uint) error {
 
 func permanentlyDeleteWarehouse(db *gorm.DB, entityID uint) error {
 	return db.Unscoped().Delete(&models.Equipment{}, entityID).Error
+}
+
+func permanentlyDeleteSubscription(db *gorm.DB, entityID uint) error {
+	return db.Unscoped().Delete(&models.Subscription{}, entityID).Error
 }
 
 func permanentlyDeleteTemplate(db *gorm.DB, entityType string, entityID uint) error {
