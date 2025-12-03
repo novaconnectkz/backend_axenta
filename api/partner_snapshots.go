@@ -32,11 +32,14 @@ func GetPartnerContractSnapshots(c *gin.Context) {
 	startDateStr := c.Query("start_date")
 	endDateStr := c.Query("end_date")
 
+	log.Printf("📅 Получены параметры периода: start_date=%s, end_date=%s", startDateStr, endDateStr)
+
 	// Парсим даты
 	var startDate, endDate time.Time
 	if startDateStr != "" {
 		startDate, err = time.Parse(time.RFC3339, startDateStr)
 		if err != nil {
+			log.Printf("❌ Ошибка парсинга start_date: %v", err)
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "error",
 				"error":  "Неверный формат start_date",
@@ -51,15 +54,26 @@ func GetPartnerContractSnapshots(c *gin.Context) {
 	if endDateStr != "" {
 		endDate, err = time.Parse(time.RFC3339, endDateStr)
 		if err != nil {
+			log.Printf("❌ Ошибка парсинга end_date: %v", err)
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "error",
 				"error":  "Неверный формат end_date",
 			})
 			return
 		}
+		// Если endDate имеет время 00:00:00 (начало дня), добавляем время до конца дня
+		// чтобы включить все снимки за этот день
+		if endDate.Hour() == 0 && endDate.Minute() == 0 && endDate.Second() == 0 {
+			endDate = time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 23, 59, 59, 999999999, endDate.Location())
+			log.Printf("📅 endDate был началом дня, установлен конец дня: %s", endDate.Format(time.RFC3339))
+		}
 	} else {
-		endDate = time.Now()
+		// По умолчанию - конец текущего дня
+		now := time.Now()
+		endDate = time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 59, 999999999, now.Location())
 	}
+
+	log.Printf("📅 Период поиска: start_date=%s, end_date=%s", startDate.Format(time.RFC3339), endDate.Format(time.RFC3339))
 
 	// Получаем tenant DB из контекста
 	tenantDB, exists := c.Get("tenant_db")
