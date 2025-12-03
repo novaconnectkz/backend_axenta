@@ -718,9 +718,11 @@ func (s *PartnerSnapshotService) CreateSnapshotWithObjectCounts(
 		discountFixed = contract.GetDiscountFixed()
 		discountType = contract.DiscountType
 
-		if discountType == "fixed" && discountFixed.GreaterThan(decimal.Zero) {
-			discountAmount = discountFixed
-		} else if discountType == "percentage" && discountPercent.GreaterThan(decimal.Zero) {
+		if discountType == "manual_fixed" && discountFixed.GreaterThan(decimal.Zero) {
+			// Фиксированная скидка применяется к месячному тарифу, пересчитываем на дневную
+			discountAmount = discountFixed.Div(decimal.NewFromInt(30))
+		} else if (discountType == "manual_percent" || discountType == "manual" || discountType == "auto") && discountPercent.GreaterThan(decimal.Zero) {
+			// Процентная скидка (включая автоматическую) применяется к стоимости
 			discountAmount = costBeforeDiscount.Mul(discountPercent).Div(decimal.NewFromInt(100))
 		}
 	} else {
