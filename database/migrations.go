@@ -189,6 +189,12 @@ func GetAllMigrations() []MigrationInfo {
 		Description: "Ежедневные снимки объектов партнеров для тарификации",
 		IsGlobal:    false, // Тенантная таблица - каждая компания имеет свои снимки
 	},
+	{
+		TableName:   "snapshot_settings",
+		Model:       &models.SnapshotSettings{},
+		Description: "Настройки автоматического создания снимков (токен для Axenta API)",
+		IsGlobal:    false, // Тенантная таблица - хранится в схеме суперадмина (ID=1)
+	},
 
 		// Тенантные таблицы (в схемах компаний)
 		{

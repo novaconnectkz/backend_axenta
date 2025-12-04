@@ -5,11 +5,13 @@ import (
 	"backend_axenta/models"
 	"backend_axenta/services"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // GetSnapshotJobs возвращает список задач создания снимков
@@ -35,8 +37,16 @@ func GetSnapshotJobs(c *gin.Context) {
 	status := c.Query("status")     // completed, failed, partial, running
 	jobType := c.Query("job_type")  // daily_auto, manual, scheduled
 
+	// Таблица snapshot_jobs находится в схеме public (глобальная)
+	// Переключаемся на схему public для чтения
+	publicDB := database.DB.Session(&gorm.Session{})
+	if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка переключения на схему public"})
+		return
+	}
+
 	// Базовый запрос
-	query := database.DB.Model(&models.SnapshotJob{})
+	query := publicDB.Model(&models.SnapshotJob{})
 
 	// Применяем фильтры
 	if status != "" {
@@ -77,8 +87,15 @@ func GetSnapshotJobs(c *gin.Context) {
 func GetSnapshotJob(c *gin.Context) {
 	jobID := c.Param("id")
 
+	// Таблица snapshot_jobs находится в схеме public
+	publicDB := database.DB.Session(&gorm.Session{})
+	if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка переключения на схему public"})
+		return
+	}
+
 	var job models.SnapshotJob
-	if err := database.DB.First(&job, jobID).Error; err != nil {
+	if err := publicDB.First(&job, jobID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Задача не найдена"})
 		return
 	}
@@ -89,6 +106,13 @@ func GetSnapshotJob(c *gin.Context) {
 // GetSnapshotJobStats возвращает статистику по задачам
 // GET /api/auth/snapshot-jobs/stats
 func GetSnapshotJobStats(c *gin.Context) {
+	// Таблица snapshot_jobs находится в схеме public
+	publicDB := database.DB.Session(&gorm.Session{})
+	if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка переключения на схему public"})
+		return
+	}
+
 	type Stats struct {
 		TotalJobs         int64   `json:"total_jobs"`
 		CompletedJobs     int64   `json:"completed_jobs"`
@@ -104,27 +128,27 @@ func GetSnapshotJobStats(c *gin.Context) {
 	stats := Stats{}
 
 	// Общее количество задач
-	database.DB.Model(&models.SnapshotJob{}).Count(&stats.TotalJobs)
+	publicDB.Model(&models.SnapshotJob{}).Count(&stats.TotalJobs)
 
 	// По статусам
-	database.DB.Model(&models.SnapshotJob{}).Where("status = ?", "completed").Count(&stats.CompletedJobs)
-	database.DB.Model(&models.SnapshotJob{}).Where("status = ?", "failed").Count(&stats.FailedJobs)
-	database.DB.Model(&models.SnapshotJob{}).Where("status = ?", "partial").Count(&stats.PartialJobs)
-	database.DB.Model(&models.SnapshotJob{}).Where("status = ?", "running").Count(&stats.RunningJobs)
+	publicDB.Model(&models.SnapshotJob{}).Where("status = ?", "completed").Count(&stats.CompletedJobs)
+	publicDB.Model(&models.SnapshotJob{}).Where("status = ?", "failed").Count(&stats.FailedJobs)
+	publicDB.Model(&models.SnapshotJob{}).Where("status = ?", "partial").Count(&stats.PartialJobs)
+	publicDB.Model(&models.SnapshotJob{}).Where("status = ?", "running").Count(&stats.RunningJobs)
 
 	// Суммарная статистика
-	database.DB.Model(&models.SnapshotJob{}).Select("COALESCE(SUM(success_count), 0)").Scan(&stats.TotalSnapshots)
-	database.DB.Model(&models.SnapshotJob{}).Select("COALESCE(SUM(error_count), 0)").Scan(&stats.TotalErrors)
+	publicDB.Model(&models.SnapshotJob{}).Select("COALESCE(SUM(success_count), 0)").Scan(&stats.TotalSnapshots)
+	publicDB.Model(&models.SnapshotJob{}).Select("COALESCE(SUM(error_count), 0)").Scan(&stats.TotalErrors)
 
 	// Средняя длительность (только завершенных задач)
-	database.DB.Model(&models.SnapshotJob{}).
+	publicDB.Model(&models.SnapshotJob{}).
 		Where("finished_at IS NOT NULL AND duration_seconds IS NOT NULL").
 		Select("COALESCE(AVG(duration_seconds), 0)").
 		Scan(&stats.AvgDurationS)
 
 	// Последняя задача
 	var lastJob models.SnapshotJob
-	if err := database.DB.Model(&models.SnapshotJob{}).
+	if err := publicDB.Model(&models.SnapshotJob{}).
 		Order("started_at DESC").
 		First(&lastJob).Error; err == nil {
 		lastJobTime := lastJob.StartedAt.Format("2006-01-02 15:04:05")
@@ -137,13 +161,154 @@ func GetSnapshotJobStats(c *gin.Context) {
 // GetLatestSnapshotJob возвращает последнюю задачу
 // GET /api/auth/snapshot-jobs/latest
 func GetLatestSnapshotJob(c *gin.Context) {
+	// Таблица snapshot_jobs находится в схеме public
+	publicDB := database.DB.Session(&gorm.Session{})
+	if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка переключения на схему public"})
+		return
+	}
+
 	var job models.SnapshotJob
-	if err := database.DB.Order("started_at DESC").First(&job).Error; err != nil {
+	if err := publicDB.Order("started_at DESC").First(&job).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Задачи не найдены"})
 		return
 	}
 
 	c.JSON(http.StatusOK, job)
+}
+
+// ClearAllSnapshotHistory удаляет ВСЮ историю снимков (задачи и снимки партнеров)
+// DELETE /api/auth/snapshot-jobs/clear-all
+func ClearAllSnapshotHistory(c *gin.Context) {
+	// Обработка паники
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("ClearAllSnapshotHistory: ПАНИКА: %v", r)
+			log.Printf("ClearAllSnapshotHistory: Стек паники: %+v", r)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status":  "error",
+				"message": fmt.Sprintf("Внутренняя ошибка сервера: %v", r),
+			})
+		}
+	}()
+
+	log.Printf("ClearAllSnapshotHistory: ===== НАЧАЛО ОЧИСТКИ ИСТОРИИ СНИМКОВ =====")
+	log.Printf("ClearAllSnapshotHistory: Функция вызвана, начинаем обработку...")
+	
+	// Таблица snapshot_jobs находится в схеме public (глобальная)
+	// Переключаемся на схему public для удаления
+	publicDB := database.DB.Session(&gorm.Session{})
+	if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
+		log.Printf("ClearAllSnapshotHistory: Ошибка переключения на схему public: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Ошибка переключения на схему public: " + err.Error(),
+		})
+		return
+	}
+	
+	log.Printf("ClearAllSnapshotHistory: Переключились на схему public, проверяем наличие таблицы snapshot_jobs...")
+	
+	var jobsDeleted int64 = 0
+	if !publicDB.Migrator().HasTable(&models.SnapshotJob{}) {
+		log.Printf("ClearAllSnapshotHistory: Таблица snapshot_jobs не существует в схеме public, пропускаем удаление")
+	} else {
+		log.Printf("ClearAllSnapshotHistory: Таблица snapshot_jobs найдена, удаляем задачи...")
+		// GORM требует условие WHERE при удалении, используем Where("1=1") для удаления всех записей
+		result := publicDB.Unscoped().Where("1=1").Delete(&models.SnapshotJob{})
+		if result.Error != nil {
+			log.Printf("ClearAllSnapshotHistory: Ошибка удаления задач: %v", result.Error)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status":  "error",
+				"message": "Ошибка удаления задач: " + result.Error.Error(),
+			})
+			return
+		} else {
+			jobsDeleted = result.RowsAffected
+			log.Printf("ClearAllSnapshotHistory: Удалено задач из схемы public: %d", jobsDeleted)
+		}
+	}
+
+	// Получаем все компании для очистки тенантных таблиц
+	// Используем ту же сессию publicDB для получения списка компаний
+	log.Printf("ClearAllSnapshotHistory: Получаем список компаний...")
+	var companies []models.Company
+	if err := publicDB.Find(&companies).Error; err != nil {
+		log.Printf("ClearAllSnapshotHistory: Ошибка получения списка компаний: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Ошибка получения списка компаний: " + err.Error(),
+		})
+		return
+	}
+	log.Printf("ClearAllSnapshotHistory: Найдено компаний: %d", len(companies))
+
+	totalSnapshotsDeleted := int64(0)
+	totalObjectsDeleted := int64(0)
+	totalAccountsDeleted := int64(0)
+
+	// Очищаем тенантные таблицы для каждой компании
+	log.Printf("ClearAllSnapshotHistory: Начинаем очистку тенантных таблиц...")
+	for _, company := range companies {
+		log.Printf("ClearAllSnapshotHistory: Обрабатываем компанию %d (%s, схема: %s)", company.ID, company.Name, company.DatabaseSchema)
+		tenantDB := database.GetTenantDBByID(company.ID)
+		if tenantDB == nil {
+			log.Printf("ClearAllSnapshotHistory: Не удалось получить DB для компании %d (%s), пропускаем", company.ID, company.DatabaseSchema)
+			continue
+		}
+		log.Printf("ClearAllSnapshotHistory: Получена DB для компании %d, начинаем удаление...", company.ID)
+
+		// Удаляем partner_daily_snapshots
+		// GORM требует условие WHERE при удалении, используем Where("1=1") для удаления всех записей
+		result := tenantDB.Unscoped().Where("1=1").Delete(&models.PartnerDailySnapshot{})
+		if result.Error != nil {
+			// Логируем ошибку, но продолжаем (таблица может не существовать)
+			log.Printf("ClearAllSnapshotHistory: Ошибка удаления partner_daily_snapshots для компании %d: %v", company.ID, result.Error)
+		} else {
+			totalSnapshotsDeleted += result.RowsAffected
+			if result.RowsAffected > 0 {
+				log.Printf("ClearAllSnapshotHistory: Удалено partner_daily_snapshots для компании %d: %d", company.ID, result.RowsAffected)
+			}
+		}
+
+		// Опционально: удаляем axenta_object_snapshots и axenta_account_snapshots
+		result = tenantDB.Unscoped().Where("1=1").Delete(&models.AxentaObjectSnapshot{})
+		if result.Error != nil {
+			// Логируем ошибку, но продолжаем (таблица может не существовать)
+			log.Printf("ClearAllSnapshotHistory: Ошибка удаления axenta_object_snapshots для компании %d: %v", company.ID, result.Error)
+		} else {
+			totalObjectsDeleted += result.RowsAffected
+			if result.RowsAffected > 0 {
+				log.Printf("ClearAllSnapshotHistory: Удалено axenta_object_snapshots для компании %d: %d", company.ID, result.RowsAffected)
+			}
+		}
+
+		result = tenantDB.Unscoped().Where("1=1").Delete(&models.AxentaAccountSnapshot{})
+		if result.Error != nil {
+			// Логируем ошибку, но продолжаем (таблица может не существовать)
+			log.Printf("ClearAllSnapshotHistory: Ошибка удаления axenta_account_snapshots для компании %d: %v", company.ID, result.Error)
+		} else {
+			totalAccountsDeleted += result.RowsAffected
+			if result.RowsAffected > 0 {
+				log.Printf("ClearAllSnapshotHistory: Удалено axenta_account_snapshots для компании %d: %d", company.ID, result.RowsAffected)
+			}
+		}
+	}
+
+	log.Printf("ClearAllSnapshotHistory: Очистка завершена. Итого удалено: jobs=%d, partner_snapshots=%d, object_snapshots=%d, account_snapshots=%d", 
+		jobsDeleted, totalSnapshotsDeleted, totalObjectsDeleted, totalAccountsDeleted)
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "История снимков полностью очищена",
+		"deleted": gin.H{
+			"jobs":              jobsDeleted,
+			"partner_snapshots": totalSnapshotsDeleted,
+			"object_snapshots":  totalObjectsDeleted,
+			"account_snapshots": totalAccountsDeleted,
+			"total":             jobsDeleted + totalSnapshotsDeleted + totalObjectsDeleted + totalAccountsDeleted,
+		},
+	})
 }
 
 // DeleteOldSnapshotJobs удаляет старые записи о задачах (старше N дней)

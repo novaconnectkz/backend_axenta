@@ -182,7 +182,12 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 			})
 			continue
 		}
-		log.Printf("✅ Токен получен для компании %d", company.ID)
+		// Показываем информацию о токене (первые 10 символов для безопасности)
+		tokenPreview := token
+		if len(tokenPreview) > 10 {
+			tokenPreview = tokenPreview[:10] + "..."
+		}
+		log.Printf("✅ Токен получен для компании %d: %s (длина: %d символов)", company.ID, tokenPreview, len(token))
 		
 		// Получаем общую статистику объектов из /stats/ (как на странице /objects)
 		totalFromStats, activeFromStats, statsErr := s.snapshotService.getTotalObjectsFromStats(token)
@@ -512,20 +517,61 @@ func (s *PartnerSnapshotScheduler) getPartnerToken(db *gorm.DB, adminAccountID u
 
 // getAnyActiveToken получает любой активный токен для доступа к Axenta API
 func (s *PartnerSnapshotScheduler) getAnyActiveToken(db *gorm.DB, companyID uint) (string, error) {
-	// Сначала пробуем системный токен из env
-	systemToken := os.Getenv("AXENTA_ADMIN_TOKEN")
-	if systemToken != "" {
-		return systemToken, nil
+	// ПРИОРИТЕТ 1: Пробуем токен из настроек снимков (для суперадмина, ID=1)
+	const superAdminCompanyID = 1
+	superAdminTenantDB := database.GetTenantDBByID(superAdminCompanyID)
+	if superAdminTenantDB != nil {
+		var snapshotSettings models.SnapshotSettings
+		if err := superAdminTenantDB.
+			Where("company_id = ? AND is_active = ?", superAdminCompanyID, true).
+			First(&snapshotSettings).Error; err == nil {
+			if snapshotSettings.AxentaToken != "" {
+				tokenPreview := snapshotSettings.AxentaToken
+				if len(tokenPreview) > 10 {
+					tokenPreview = tokenPreview[:10] + "..."
+				}
+				log.Printf("🔑 [Компания %d] Используем токен из настроек снимков: %s (длина: %d)", 
+					companyID, tokenPreview, len(snapshotSettings.AxentaToken))
+				return snapshotSettings.AxentaToken, nil
+			} else {
+				log.Printf("⚠️ [Компания %d] Настройки снимков найдены, но токен пустой", companyID)
+			}
+		} else {
+			log.Printf("⚠️ [Компания %d] Настройки снимков не найдены: %v", companyID, err)
+		}
+	} else {
+		log.Printf("⚠️ [Компания %d] Не удалось получить tenant DB для суперадмина (ID=1)", companyID)
 	}
 
-	// Иначе берем любой активный токен из БД
+	// ПРИОРИТЕТ 2: Пробуем системный токен из env
+	systemToken := os.Getenv("AXENTA_ADMIN_TOKEN")
+	if systemToken != "" {
+		tokenPreview := systemToken
+		if len(tokenPreview) > 10 {
+			tokenPreview = tokenPreview[:10] + "..."
+		}
+		log.Printf("🔑 [Компания %d] Используем системный токен из переменной окружения AXENTA_ADMIN_TOKEN: %s", 
+			companyID, tokenPreview)
+		return systemToken, nil
+	} else {
+		log.Printf("⚠️ [Компания %d] Системный токен AXENTA_ADMIN_TOKEN не установлен", companyID)
+	}
+
+	// ПРИОРИТЕТ 3: Берем любой активный токен из БД текущего тенанта
 	var token models.UserToken
 	if err := db.
 		Where("is_active = ? AND expires_at > ?", true, time.Now()).
 		Order("updated_at DESC").
 		First(&token).Error; err != nil {
+		log.Printf("❌ [Компания %d] Не найдено активных токенов в user_tokens: %v", companyID, err)
 		return "", fmt.Errorf("не найдено активных токенов: %w", err)
 	}
+	tokenPreview := token.Token
+	if len(tokenPreview) > 10 {
+		tokenPreview = tokenPreview[:10] + "..."
+	}
+	log.Printf("🔑 [Компания %d] Используем токен из user_tokens (account_id=%d, username=%s): %s", 
+		companyID, token.AccountID, token.Username, tokenPreview)
 	return token.Token, nil
 }
 

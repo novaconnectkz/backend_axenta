@@ -87,6 +87,7 @@ type AxentaConfig struct {
 	Timeout       time.Duration `json:"timeout"`
 	MaxRetries    int           `json:"max_retries"`
 	EncryptionKey string        `json:"encryption_key"`
+	SyncInterval  int           `json:"sync_interval"` // Интервал синхронизации в минутах
 }
 
 type CORSConfig struct {
@@ -202,6 +203,7 @@ func LoadConfig() (*Config, error) {
 			Timeout:       getEnvDuration("AXENTA_TIMEOUT", 30*time.Second),
 			MaxRetries:    getEnvInt("AXENTA_MAX_RETRIES", 3),
 			EncryptionKey: getEnv("ENCRYPTION_KEY", ""),
+			SyncInterval:  getEnvInt("AXENTA_SYNC_INTERVAL", 5), // По умолчанию 5 минут
 		},
 		CORS: CORSConfig{
 			AllowedOrigins:   getEnvSlice("CORS_ALLOWED_ORIGINS", []string{"*"}),

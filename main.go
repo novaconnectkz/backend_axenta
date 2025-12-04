@@ -107,7 +107,7 @@ func main() {
 
 	// Инициализируем сервис синхронизации Axenta
 	axentaSyncService := services.NewAxentaSyncService(database.DB)
-	axentaSyncScheduler := services.NewAxentaSyncScheduler(axentaSyncService)
+	axentaSyncScheduler := services.NewAxentaSyncScheduler(axentaSyncService, cfg.Axenta.SyncInterval)
 	if err := axentaSyncScheduler.Start(); err != nil {
 		log.Printf("⚠️ Axenta Sync Scheduler failed to start: %v", err)
 	} else {
@@ -835,6 +835,7 @@ func main() {
 	apiGroup.GET("/snapshot-jobs/latest", api.GetLatestSnapshotJob)
 	apiGroup.GET("/snapshot-jobs/:id", api.GetSnapshotJob)
 	apiGroup.DELETE("/snapshot-jobs/cleanup", api.DeleteOldSnapshotJobs)
+	apiGroup.DELETE("/snapshot-jobs/clear-all", api.ClearAllSnapshotHistory)
 	apiGroup.POST("/snapshot-jobs/trigger", api.TriggerManualSnapshot)
 	
 	// Тестовый endpoint без авторизации (TODO: удалить в продакшене)
@@ -842,6 +843,21 @@ func main() {
 	log.Println("⚠️ Зарегистрирован ТЕСТОВЫЙ endpoint /api/test/snapshot-jobs/trigger (без авторизации)")
 	
 	log.Println("✅ Зарегистрированы роуты для истории создания снимков (snapshot-jobs)")
+
+	// Настройки снимков
+	apiGroup.GET("/snapshot-settings", api.GetSnapshotSettings)
+	apiGroup.POST("/snapshot-settings", api.UpdateSnapshotSettings)
+	log.Println("✅ Зарегистрированы роуты для настроек снимков (snapshot-settings)")
+
+	// Эндпоинт для ручного запуска синхронизации Axenta
+	apiGroup.POST("/axenta-sync/trigger", api.TriggerAxentaSync)
+	apiGroup.POST("/axenta-sync/trigger/", api.TriggerAxentaSync)
+	log.Println("✅ Зарегистрирован POST /api/auth/axenta-sync/trigger -> TriggerAxentaSync")
+
+	// Тестовый endpoint без авторизации
+	r.POST("/api/test/axenta-sync/trigger", api.TriggerAxentaSync)
+	r.POST("/api/test/axenta-sync/trigger/", api.TriggerAxentaSync)
+	log.Println("⚠️ Зарегистрирован ТЕСТОВЫЙ endpoint /api/test/axenta-sync/trigger (без авторизации)")
 	
 	log.Println("✅ Все роуты для договоров зарегистрированы")
 	// apiGroup.POST("/contracts/:contract_id/appendices", api.CreateContractAppendix)
@@ -923,6 +939,10 @@ func main() {
 	// Системные настройки
 	apiGroup.GET("/system/settings", api.GetSystemSettings)
 	apiGroup.PUT("/system/settings", api.UpdateSystemSettings)
+	
+	// Настройки синхронизации AxentaSync
+	apiGroup.GET("/system/axenta-sync-settings", api.GetAxentaSyncSettings)
+	apiGroup.PUT("/system/axenta-sync-settings", api.UpdateAxentaSyncSettings)
 
 	// Аудит-логи (только для авторизованных пользователей)
 	auditAPI := api.NewAuditAPI(database.DB)
