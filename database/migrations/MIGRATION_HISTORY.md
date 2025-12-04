@@ -442,3 +442,62 @@ WHERE table_schema = 'public'
 ### Статус
 ✅ **ГОТОВО! Колонки добавлены, настройки сохраняются!**
 
+
+## Применение миграций 003-009 на продакшене (2025-12-03)
+
+### Дата применения: 2025-12-03
+
+### Примененные миграции:
+
+1. **003_add_vat_rate_fields.sql** ✅
+   - Добавлены колонки `vat_rate_preset` и `vat_rate_custom` в `public.billing_settings`
+   - Статус: Применена успешно
+
+2. **004_create_system_settings.sql** ✅
+   - Создана таблица `public.system_settings` для системных настроек компаний
+   - Статус: Применена успешно
+
+3. **005_fix_subscriptions_columns.sql** ✅
+   - Добавлена колонка `contract_id` в `public.subscriptions`
+   - Создан индекс `idx_subscriptions_contract_id`
+   - Статус: Применена успешно
+
+4. **006_add_sync_columns.sql** ✅
+   - Добавлены колонки синхронизации в `public.contracts`, `public.objects`, `public.users`:
+     - `last_synced_at`, `sync_status`, `sync_version`, `sync_checksum`
+     - `is_dirty`, `sync_error`, `source_of_truth`
+     - `sync_queued_at`, `sync_attempted_at`
+   - Для `contracts`: `sequential_number`, `client_short_name`
+   - Статус: Применена успешно
+
+5. **007_add_sync_columns_to_tenants.sql** ✅
+   - Те же колонки синхронизации добавлены во все tenant схемы (tenant_186, tenant_default и др.)
+   - Статус: Применена успешно
+
+6. **008_add_max_messenger_columns.sql** ✅
+   - Добавлены колонки для интеграции MAX messenger в `public.notification_settings`:
+     - `max_bot_token`, `max_webhook_url`, `max_enabled`
+     - `max_use_polling`, `max_parse_mode`
+   - Статус: Применена успешно
+
+7. **009_add_sequential_numbers.sql** ✅
+   - Добавлена колонка `sequential_number` в `public.invoices`
+   - Добавлена колонка `sequential_number` в `public.subscriptions`
+   - Созданы индексы для производительности
+   - Статус: Применена успешно
+
+### Проверка после применения:
+
+Все ключевые элементы проверены и подтверждены:
+- ✅ Таблица `system_settings` существует
+- ✅ Колонки `vat_rate_preset` и `vat_rate_custom` в `billing_settings`
+- ✅ Колонки синхронизации в `contracts` (sync_status, is_dirty и др.)
+- ✅ Колонка `contract_id` в `subscriptions`
+- ✅ Колонка `sequential_number` в `invoices`
+
+### Примечания:
+
+- Миграции использовали `IF NOT EXISTS` для безопасности
+- Некоторые колонки уже существовали (пропущены с NOTICE)
+- Все миграции применены без ошибок
+

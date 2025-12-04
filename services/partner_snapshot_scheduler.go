@@ -216,6 +216,17 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 		partnerObjectsMap, err := hierarchyService.DistributeObjectsByPartner(token, snapshotDate)
 		if err != nil {
 			log.Printf("⚠️ Не удалось загрузить и распределить объекты: %v", err)
+			companyDetail.ProcessingTimeS = int(time.Since(companyStartTime).Seconds())
+			job.AddCompanyDetail(companyDetail)
+			continue
+		}
+		
+		// Проверяем, есть ли партнеры для обработки
+		if len(partnerObjectsMap) == 0 {
+			log.Printf("⚠️ Компания %s: нет партнеров в распределении объектов, пропускаем", company.DatabaseSchema)
+			companyDetail.ContractsCount = 0
+			companyDetail.ProcessingTimeS = int(time.Since(companyStartTime).Seconds())
+			job.AddCompanyDetail(companyDetail)
 			continue
 		}
 		
@@ -263,8 +274,8 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 			}
 		}
 
-		companyDetail.ContractsCount = len(allPartnerAccounts) // Считаем все партнерские аккаунты
-		totalContracts += len(allPartnerAccounts)
+		// НЕ увеличиваем totalContracts здесь, так как мы будем считать только реально обработанных партнеров
+		// companyDetail.ContractsCount будет установлен ниже после обработки всех партнеров
 
 		log.Printf("🚀 Начинаем создание снимков для %d партнеров (компания %d)...", len(partnerObjectsMap), company.ID)
 		// Для каждого партнера из распределённых объектов создаём снимок
@@ -339,7 +350,9 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 			job.AddContractDetail(contractDetail)
 		}
 		
+		// Устанавливаем количество обработанных договоров/партнеров
 		companyDetail.ContractsCount = len(partnerObjectsMap)
+		// Увеличиваем totalContracts только на реально обработанных партнеров
 		totalContracts += len(partnerObjectsMap)
 
 		// НЕ создаём снимок для GLOMOS (186), потому что:

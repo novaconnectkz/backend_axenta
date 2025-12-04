@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"backend_axenta/database"
@@ -681,14 +682,26 @@ func (s *PartnerSnapshotService) CreateSnapshotWithObjectCounts(
 	tenantDB *gorm.DB,
 ) error {
 	// Проверяем существует ли уже снимок
+	// Учитываем partner_company_id, snapshot_date и contract_id (для правильной проверки уникальности)
+	// Используем Unscoped для проверки всех записей (включая мягко удаленные)
 	var existingSnapshot models.PartnerDailySnapshot
-	err := tenantDB.
+	query := tenantDB.Unscoped().
 		Where("partner_company_id = ? AND DATE(snapshot_date AT TIME ZONE 'UTC') = ?",
-			partnerID, snapshotDate.Format("2006-01-02")).
-		First(&existingSnapshot).Error
+			partnerID, snapshotDate.Format("2006-01-02"))
+	
+	// Если есть договор, проверяем с учетом contract_id, иначе проверяем снимки без договора (contract_id = 0)
+	var contractID uint = 0
+	if contract != nil {
+		contractID = contract.ID
+	}
+	query = query.Where("contract_id = ?", contractID)
+	
+	err := query.First(&existingSnapshot).Error
 
 	if err == nil {
 		// Снимок уже существует
+		log.Printf("⚠️ Снимок для партнера %d (договор %d) на дату %s уже существует (ID: %d), пропускаем создание",
+			partnerID, contractID, snapshotDate.Format("2006-01-02"), existingSnapshot.ID)
 		return fmt.Errorf("snapshot already exists")
 	}
 
@@ -738,10 +751,7 @@ func (s *PartnerSnapshotService) CreateSnapshotWithObjectCounts(
 	}
 
 	// Создаём снимок
-	contractID := uint(0)
-	if contract != nil {
-		contractID = contract.ID
-	}
+	// contractID уже определен выше при проверке существования снимка
 
 	// Формируем примечание
 	notes := "Снимок создан через точное распределение всех объектов (без дублей)"
@@ -771,10 +781,30 @@ func (s *PartnerSnapshotService) CreateSnapshotWithObjectCounts(
 	}
 
 	if err := tenantDB.Create(&snapshot).Error; err != nil {
+		// Проверяем, является ли ошибка нарушением уникального ограничения
+		if isDuplicateKeyError(err) {
+			// Это нормальная ситуация - снимок уже существует (возможно, создан параллельно)
+			log.Printf("⚠️ Снимок для партнера %d (договор %d) на дату %s уже существует (возможно, создан параллельно), пропускаем",
+				partnerID, contractID, snapshotDate.Format("2006-01-02"))
+			return fmt.Errorf("snapshot already exists")
+		}
 		return fmt.Errorf("ошибка создания снимка: %w", err)
 	}
 
 	return nil
+}
+
+// isDuplicateKeyError проверяет, является ли ошибка нарушением уникального ограничения
+func isDuplicateKeyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "duplicate key") ||
+		strings.Contains(errStr, "unique constraint") ||
+		strings.Contains(errStr, "violates unique constraint") ||
+		strings.Contains(errStr, "23505") || // PostgreSQL error code for unique violation
+		strings.Contains(errStr, "idx_partner_snapshot_unique")
 }
 
 // GetSnapshotsForContract получает снимки для договора за период
