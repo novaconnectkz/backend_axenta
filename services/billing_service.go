@@ -843,6 +843,11 @@ func (bs *BillingService) GenerateInvoiceForContractWithTenantDB(contractID uint
 
 // ProcessPayment обрабатывает платеж по счету
 func (bs *BillingService) ProcessPayment(invoiceID uint, amount decimal.Decimal, paymentMethod string, notes string) error {
+	return bs.ProcessPaymentWithDate(invoiceID, amount, paymentMethod, notes, nil)
+}
+
+// ProcessPaymentWithDate обрабатывает платеж по счету с указанной датой
+func (bs *BillingService) ProcessPaymentWithDate(invoiceID uint, amount decimal.Decimal, paymentMethod string, notes string, paymentDate *time.Time) error {
 	// Устанавливаем схему public для работы с таблицами Invoice и BillingHistory
 	publicDB := bs.db.Session(&gorm.Session{})
 	if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
@@ -871,8 +876,13 @@ func (bs *BillingService) ProcessPayment(invoiceID uint, amount decimal.Decimal,
 
 	if newPaidAmount.GreaterThanOrEqual(invoice.TotalAmount) {
 		newStatus = "paid"
-		now := time.Now()
-		paidAt = &now
+		// Используем указанную дату или текущую дату
+		if paymentDate != nil {
+			paidAt = paymentDate
+		} else {
+			now := time.Now()
+			paidAt = &now
+		}
 	} else if newPaidAmount.GreaterThan(decimal.Zero) {
 		newStatus = "partially_paid"
 	}

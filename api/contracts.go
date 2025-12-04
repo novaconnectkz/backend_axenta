@@ -843,7 +843,7 @@ func GetContractStats(c *gin.Context) {
 		return
 	}
 
-	idStr := c.Param("id")
+	idStr := c.Param("contract_id")
 	contractID, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -932,7 +932,7 @@ func GetContract(c *gin.Context) {
 		return
 	}
 
-	idStr := c.Param("id")
+	idStr := c.Param("contract_id")
 	contractID, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -978,6 +978,25 @@ func GetContract(c *gin.Context) {
 				First(&billingPlan).Error; err == nil {
 				contract.TariffPlan = billingPlan
 			}
+		}
+	}
+
+	// Загружаем подписку для договора
+	var subscription *models.Subscription
+	publicDB := database.DB.Session(&gorm.Session{})
+	if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
+		log.Printf("⚠️ Не удалось переключиться на public для загрузки подписки: %v", err)
+	} else {
+		var sub models.Subscription
+		if err := publicDB.
+			Preload("BillingPlan").
+			Where("contract_id = ? AND admin_account_id = ?", uint(contractID), adminAccountID).
+			Order("created_at DESC").
+			First(&sub).Error; err == nil {
+			subscription = &sub
+			log.Printf("✅ Найдена подписка ID=%d для договора %d", sub.ID, contract.ID)
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("⚠️ Ошибка при загрузке подписки для договора %d: %v", contract.ID, err)
 		}
 	}
 
@@ -1066,9 +1085,19 @@ func GetContract(c *gin.Context) {
 		contract.ContractObjects = make([]models.ContractObject, 0)
 	}
 
+	// Формируем ответ с договором и подпиской
+	responseData := make(map[string]interface{})
+	responseDataBytes, _ := json.Marshal(contract)
+	json.Unmarshal(responseDataBytes, &responseData)
+	
+	// Добавляем подписку, если она найдена
+	if subscription != nil {
+		responseData["subscription"] = subscription
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
-		"data":   contract,
+		"data":   responseData,
 	})
 }
 
@@ -2114,7 +2143,7 @@ func UpdateContract(c *gin.Context) {
 		return
 	}
 
-	id := c.Param("id")
+	id := c.Param("contract_id")
 
 	tenantDB := middleware.GetTenantDB(c)
 	if tenantDB == nil {
@@ -2218,7 +2247,7 @@ func DeleteContract(c *gin.Context) {
 		return
 	}
 
-	id := c.Param("id")
+	id := c.Param("contract_id")
 
 	// Получаем tenant DB для работы с договорами и объектами
 	tenantDB := middleware.GetTenantDB(c)
@@ -2367,7 +2396,15 @@ func GetContractAppendices(c *gin.Context) {
 		return
 	}
 
-	contractID := c.Param("contract_id")
+	contractIDStr := c.Param("contract_id")
+	contractID, err := strconv.ParseUint(contractIDStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Неверный формат ID договора",
+		})
+		return
+	}
 
 	// Получаем tenant DB из контекста
 	tenantDB := middleware.GetTenantDB(c)
@@ -2378,7 +2415,7 @@ func GetContractAppendices(c *gin.Context) {
 
 	// Проверяем, что договор принадлежит текущей компании
 	var contract models.Contract
-	if err := tenantDB.Where("id = ? AND admin_account_id = ?", contractID, adminAccountID).First(&contract).Error; err != nil {
+	if err := tenantDB.Where("id = ? AND admin_account_id = ?", uint(contractID), adminAccountID).First(&contract).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{
 				"status": "error",
@@ -2394,7 +2431,7 @@ func GetContractAppendices(c *gin.Context) {
 	}
 
 	var appendices []models.ContractAppendix
-	if err := tenantDB.Where("contract_id = ? AND admin_account_id = ?", contractID, adminAccountID).Find(&appendices).Error; err != nil {
+	if err := tenantDB.Where("contract_id = ? AND admin_account_id = ?", uint(contractID), adminAccountID).Find(&appendices).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  "Ошибка при получении приложений",
@@ -4505,7 +4542,7 @@ func AttachObjectsToContract(c *gin.Context) {
 	log.Printf("🔗 [START] AttachObjectsToContract вызван: path=%s, method=%s", c.Request.URL.Path, c.Request.Method)
 	log.Printf("🔍 Content-Type: %s, Content-Length: %s", c.Request.Header.Get("Content-Type"), c.Request.Header.Get("Content-Length"))
 
-	contractID := c.Param("id")
+	contractID := c.Param("contract_id")
 	log.Printf("🔗 Contract ID из параметра: %s", contractID)
 	contractIDUint, err := strconv.ParseUint(contractID, 10, 32)
 	if err != nil {
@@ -5439,7 +5476,7 @@ func AttachObjectsToContract(c *gin.Context) {
 
 // DetachObjectFromContract отвязывает объект от договора
 func DetachObjectFromContract(c *gin.Context) {
-	contractID := c.Param("id")
+	contractID := c.Param("contract_id")
 	objectID := c.Param("object_id")
 
 	contractIDUint, err := strconv.ParseUint(contractID, 10, 32)
@@ -5524,7 +5561,7 @@ func SyncContractFromSubscription(c *gin.Context) {
 		return
 	}
 
-	contractIDStr := c.Param("id")
+	contractIDStr := c.Param("contract_id")
 	contractID, err := strconv.ParseUint(contractIDStr, 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{

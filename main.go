@@ -791,34 +791,43 @@ func main() {
 	apiGroup.GET("/contracts/expiring", api.GetExpiringContracts)
 
 	// Роуты для работы с объектами договора (регистрируем ПЕРЕД общими роутами)
-	apiGroup.POST("/contracts/:id/objects", api.AttachObjectsToContract)
-	log.Printf("✅ Зарегистрирован POST /api/auth/contracts/:id/objects -> AttachObjectsToContract")
+	apiGroup.POST("/contracts/:contract_id/objects", api.AttachObjectsToContract)
+	log.Printf("✅ Зарегистрирован POST /api/auth/contracts/:contract_id/objects -> AttachObjectsToContract")
 
-	apiGroup.DELETE("/contracts/:id/objects/:object_id", api.DetachObjectFromContract)
-	log.Printf("✅ Зарегистрирован DELETE /api/auth/contracts/:id/objects/:object_id -> DetachObjectFromContract")
+	apiGroup.DELETE("/contracts/:contract_id/objects/:object_id", api.DetachObjectFromContract)
+	log.Printf("✅ Зарегистрирован DELETE /api/auth/contracts/:contract_id/objects/:object_id -> DetachObjectFromContract")
 
 	// Синхронизация договора с подпиской
-	apiGroup.POST("/contracts/:id/sync-from-subscription", api.SyncContractFromSubscription)
-	log.Printf("✅ Зарегистрирован POST /api/auth/contracts/:id/sync-from-subscription -> SyncContractFromSubscription")
+	apiGroup.POST("/contracts/:contract_id/sync-from-subscription", api.SyncContractFromSubscription)
+	log.Printf("✅ Зарегистрирован POST /api/auth/contracts/:contract_id/sync-from-subscription -> SyncContractFromSubscription")
 
 	// Утилита для исправления статусов договоров без подписок
 	apiGroup.POST("/contracts/fix-statuses", api.FixContractStatuses)
 	log.Printf("✅ Зарегистрирован POST /api/auth/contracts/fix-statuses -> FixContractStatuses")
 
 	// Общие роуты для договоров
-	// Важно: /contracts/:id/stats должен быть ПЕРЕД /contracts/:id чтобы не перехватывался
-	apiGroup.GET("/contracts/:id/stats", api.GetContractStats) // Progressive Loading
-	apiGroup.GET("/contracts", api.GetContracts)
-	apiGroup.GET("/contracts/:id", api.GetContract)
-	apiGroup.POST("/contracts", api.CreateContract)
-	apiGroup.PUT("/contracts/:id", api.UpdateContract)
-	apiGroup.DELETE("/contracts/:id", api.DeleteContract)
+	// ВАЖНО: Специфичные роуты должны быть ПЕРЕД общими, чтобы не перехватывались
+	// Приложения к договорам (специфичный маршрут - ПЕРЕД общими)
+	apiGroup.GET("/contracts/:contract_id/appendices", api.GetContractAppendices)
+	log.Println("✅ Зарегистрирован GET /api/auth/contracts/:contract_id/appendices -> GetContractAppendices")
 	
-	// Снимки для партнерских договоров
-	apiGroup.GET("/contracts/:id/partner-snapshots", api.GetPartnerContractSnapshots)
+	// Специфичные роуты для договоров
+	apiGroup.GET("/contracts/:contract_id/stats", api.GetContractStats) // Progressive Loading
+	apiGroup.GET("/contracts/:contract_id/partner-snapshots", api.GetPartnerContractSnapshots)
 	apiGroup.POST("/contracts/partner-snapshots/create", api.CreatePartnerSnapshots)
-	apiGroup.POST("/contracts/:id/partner-snapshots/generate", api.GeneratePartnerSnapshotsForPeriod)
-	log.Println("✅ Зарегистрирован POST /api/auth/contracts/:id/partner-snapshots/generate -> GeneratePartnerSnapshotsForPeriod")
+	apiGroup.POST("/contracts/:contract_id/partner-snapshots/generate", api.GeneratePartnerSnapshotsForPeriod)
+	log.Println("✅ Зарегистрирован POST /api/auth/contracts/:contract_id/partner-snapshots/generate -> GeneratePartnerSnapshotsForPeriod")
+	
+	// Расчет стоимости договора (специфичный маршрут - ПЕРЕД общими)
+	apiGroup.GET("/contracts/:contract_id/calculate", api.CalculateContractCost)
+	log.Println("✅ Зарегистрирован GET /api/auth/contracts/:contract_id/calculate -> CalculateContractCost")
+	
+	// Общие роуты для договоров (ПОСЛЕ специфичных)
+	apiGroup.GET("/contracts", api.GetContracts)
+	apiGroup.GET("/contracts/:contract_id", api.GetContract)
+	apiGroup.POST("/contracts", api.CreateContract)
+	apiGroup.PUT("/contracts/:contract_id", api.UpdateContract)
+	apiGroup.DELETE("/contracts/:contract_id", api.DeleteContract)
 	
 	// История задач создания снимков
 	apiGroup.GET("/snapshot-jobs", api.GetSnapshotJobs)
@@ -835,10 +844,6 @@ func main() {
 	log.Println("✅ Зарегистрированы роуты для истории создания снимков (snapshot-jobs)")
 	
 	log.Println("✅ Все роуты для договоров зарегистрированы")
-	// apiGroup.GET("/contracts/:contract_id/cost", api.CalculateContractCost) // Временно отключено
-
-	// Приложения к договорам - временно отключено
-	// apiGroup.GET("/contracts/:contract_id/appendices", api.GetContractAppendices)
 	// apiGroup.POST("/contracts/:contract_id/appendices", api.CreateContractAppendix)
 	// apiGroup.PUT("/contract-appendices/:id", api.UpdateContractAppendix)
 	// apiGroup.DELETE("/contract-appendices/:id", api.DeleteContractAppendix)
@@ -872,16 +877,21 @@ func main() {
 	// Расчеты и счета
 	apiGroup.GET("/billing/contracts/:contract_id/calculate", api.CalculateBilling)
 	apiGroup.GET("/billing/contracts/:contract_id/breakdown", api.GetContractBillingBreakdown)
+	apiGroup.GET("/billing/contracts/by-number/:number/analysis", api.GetContractBillingAnalysis) // Отладочный эндпоинт для анализа договора
 	apiGroup.POST("/billing/contracts/:contract_id/invoice", api.GenerateInvoice)
 	
 	// Счета - ВАЖНО: специфичные роуты (/overdue) ПЕРЕД параметризованными (/:id)
+	log.Println("🔧 Регистрация роутов для счетов (invoices)...")
 	apiGroup.GET("/billing/invoices", api.GetInvoices)
 	apiGroup.GET("/billing/invoices/overdue", api.GetOverdueInvoices) // Переместили сюда!
 	apiGroup.GET("/billing/invoices/:id", api.GetInvoice)
 	apiGroup.POST("/billing/invoices/:id/send", api.SendInvoice)      // Отправка счета клиенту
 	apiGroup.POST("/billing/invoices/:id/payment", api.ProcessPayment)
+	apiGroup.POST("/billing/invoices/:id/manual-payment", api.AddManualPayment) // Ручной платёж
+	log.Println("✅ Зарегистрирован POST /api/auth/billing/invoices/:id/manual-payment -> AddManualPayment")
 	apiGroup.POST("/billing/invoices/:id/cancel", api.CancelInvoice)
 	apiGroup.DELETE("/billing/invoices/:id", api.DeleteInvoice)
+	log.Println("✅ Все роуты для счетов зарегистрированы")
 	apiGroup.GET("/billing/invoice-numerators", api.GetInvoiceNumerators)
 	apiGroup.POST("/billing/invoice-numerators", api.CreateInvoiceNumerator)
 	apiGroup.PUT("/billing/invoice-numerators/:id", api.UpdateInvoiceNumerator)

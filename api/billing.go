@@ -1801,6 +1801,16 @@ func GetContractBillingBreakdown(c *gin.Context) {
 		Amount         decimal.Decimal `json:"amount"`
 		Description    string          `json:"description"`
 	}
+	
+	// ВРЕМЕННО: Информация о фактических счетах за месяц
+	type TempInvoiceInfo struct {
+		Count            int             `json:"count"`
+		ActualInvoiced   decimal.Decimal `json:"actual_invoiced"`
+		ActualPaid       decimal.Decimal `json:"actual_paid"`
+		ActualOutstanding decimal.Decimal `json:"actual_outstanding"`
+		Invoices         []gin.H         `json:"invoices"`
+		CalculationDiff  decimal.Decimal `json:"calculation_diff"` // Разница между расчетной и фактической суммой
+	}
 
 	type MonthlyCharge struct {
 		Month          string                 `json:"month"`           // YYYY-MM
@@ -1808,6 +1818,8 @@ func GetContractBillingBreakdown(c *gin.Context) {
 		IsCompleted    bool                   `json:"is_completed"`    // Прошедший месяц
 		Subscriptions  []SubscriptionCharge   `json:"subscriptions"`
 		TotalAmount    decimal.Decimal        `json:"total_amount"`
+		// ВРЕМЕННО: Информация о фактических списаниях
+		TempInvoices   *TempInvoiceInfo       `json:"_temp_invoices,omitempty"`
 	}
 
 	monthlyCharges := make([]MonthlyCharge, 0)
@@ -1908,10 +1920,88 @@ func GetContractBillingBreakdown(c *gin.Context) {
 		monthlyCharges = append(monthlyCharges, monthlyCharge)
 	}
 
+	// ВРЕМЕННО: Загружаем счета по договору для детализации фактических списаний
+	publicDB := database.DB.Session(&gorm.Session{})
+	if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
+		log.Printf("⚠️ Не удалось переключиться на public: %v", err)
+	}
+
+	var invoices []models.Invoice
+	invoiceMapByMonth := make(map[string][]models.Invoice) // месяц -> счета
+	
+	if err := publicDB.
+		Where("contract_id = ? AND admin_account_id = ?", uint(contractID), adminAccountID).
+		Order("invoice_date DESC").
+		Find(&invoices).Error; err == nil {
+		
+		// Группируем счета по месяцам
+		for _, invoice := range invoices {
+			monthKey := invoice.BillingPeriodStart.Format("2006-01")
+			invoiceMapByMonth[monthKey] = append(invoiceMapByMonth[monthKey], invoice)
+		}
+	} else {
+		log.Printf("⚠️ Ошибка загрузки счетов: %v", err)
+	}
+
+	// ВРЕМЕННО: Добавляем информацию о фактических списаниях к каждому месяцу
+	for i := range monthlyCharges {
+		monthKey := monthlyCharges[i].Month
+		monthInvoices := invoiceMapByMonth[monthKey]
+		
+		// Подсчитываем статистику по счетам за месяц
+		actualInvoiced := decimal.Zero
+		actualPaid := decimal.Zero
+		actualOutstanding := decimal.Zero
+		invoiceCount := len(monthInvoices)
+		
+		for _, inv := range monthInvoices {
+			actualInvoiced = actualInvoiced.Add(inv.TotalAmount)
+			actualPaid = actualPaid.Add(inv.PaidAmount)
+			outstanding := inv.TotalAmount.Sub(inv.PaidAmount)
+			if inv.Status != "paid" && inv.Status != "cancelled" {
+				actualOutstanding = actualOutstanding.Add(outstanding)
+			}
+		}
+		
+		// Добавляем информацию о счетах
+		invoiceInfo := make([]gin.H, 0, len(monthInvoices))
+		for _, inv := range monthInvoices {
+			invoiceInfo = append(invoiceInfo, gin.H{
+				"id":              inv.ID,
+				"number":          inv.Number,
+				"invoice_date":    inv.InvoiceDate,
+				"due_date":        inv.DueDate,
+				"total_amount":    inv.TotalAmount,
+				"paid_amount":     inv.PaidAmount,
+				"outstanding":     inv.TotalAmount.Sub(inv.PaidAmount),
+				"status":          inv.Status,
+				"billing_period_start": inv.BillingPeriodStart,
+				"billing_period_end":   inv.BillingPeriodEnd,
+			})
+		}
+		
+		// ВРЕМЕННО: Добавляем информацию о фактических списаниях
+		if invoiceCount > 0 {
+			monthlyCharges[i].TempInvoices = &TempInvoiceInfo{
+				Count:             invoiceCount,
+				ActualInvoiced:    actualInvoiced,
+				ActualPaid:        actualPaid,
+				ActualOutstanding: actualOutstanding,
+				Invoices:          invoiceInfo,
+				CalculationDiff:   actualInvoiced.Sub(monthlyCharges[i].TotalAmount),
+			}
+		}
+	}
+
 	// Рассчитываем итоговые суммы
 	totalPaid := decimal.Zero
 	totalFuture := decimal.Zero
 	totalAmount := decimal.Zero
+	
+	// ВРЕМЕННО: Итоговая статистика по фактическим счетам
+	totalActualInvoiced := decimal.Zero
+	totalActualPaid := decimal.Zero
+	totalActualOutstanding := decimal.Zero
 
 	for _, charge := range monthlyCharges {
 		totalAmount = totalAmount.Add(charge.TotalAmount)
@@ -1919,6 +2009,13 @@ func GetContractBillingBreakdown(c *gin.Context) {
 			totalPaid = totalPaid.Add(charge.TotalAmount)
 		} else {
 			totalFuture = totalFuture.Add(charge.TotalAmount)
+		}
+		
+		// ВРЕМЕННО: Собираем статистику по фактическим счетам
+		if charge.TempInvoices != nil {
+			totalActualInvoiced = totalActualInvoiced.Add(charge.TempInvoices.ActualInvoiced)
+			totalActualPaid = totalActualPaid.Add(charge.TempInvoices.ActualPaid)
+			totalActualOutstanding = totalActualOutstanding.Add(charge.TempInvoices.ActualOutstanding)
 		}
 	}
 
@@ -1938,6 +2035,15 @@ func GetContractBillingBreakdown(c *gin.Context) {
 				"total_paid":    totalPaid,
 				"total_future":  totalFuture,
 				"months_count":  len(monthlyCharges),
+			},
+			// ВРЕМЕННО: Добавляем информацию о фактических списаниях
+			"_temp_actual_billing": gin.H{
+				"total_invoiced":    totalActualInvoiced,
+				"total_paid":        totalActualPaid,
+				"total_outstanding": totalActualOutstanding,
+				"total_invoices":    len(invoices),
+				"calculation_diff":  totalActualInvoiced.Sub(totalAmount), // Разница между расчетной и фактической суммой
+				"note":              "⚠️ ВРЕМЕННАЯ информация для отладки",
 			},
 		},
 	})
@@ -2618,6 +2724,142 @@ func ProcessPayment(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
 		"message": "Платеж успешно обработан",
+		"data":    invoice,
+	})
+}
+
+// AddManualPayment добавляет ручной платеж к счету
+func AddManualPayment(c *gin.Context) {
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	id := c.Param("id")
+	invoiceID, err := strconv.ParseUint(id, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Неверный формат ID счета",
+		})
+		return
+	}
+
+	var paymentData struct {
+		Amount      string  `json:"amount" binding:"required"`
+		PaymentDate *string `json:"payment_date"` // Опциональная дата платежа (YYYY-MM-DD)
+		Comment     string  `json:"comment"`
+	}
+
+	if err := c.ShouldBindJSON(&paymentData); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Неверный формат данных",
+		})
+		return
+	}
+
+	// Парсим сумму
+	amount, err := decimal.NewFromString(paymentData.Amount)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Неверный формат суммы",
+		})
+		return
+	}
+
+	if amount.LessThanOrEqual(decimal.Zero) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Сумма должна быть больше нуля",
+		})
+		return
+	}
+
+	// Парсим дату платежа (обязательное поле)
+	var paymentDate time.Time
+	if paymentData.PaymentDate != nil && *paymentData.PaymentDate != "" {
+		parsedDate, err := time.Parse("2006-01-02", *paymentData.PaymentDate)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error",
+				"error":  "Неверный формат даты платежа (ожидается YYYY-MM-DD)",
+			})
+			return
+		}
+		paymentDate = parsedDate
+	} else {
+		// Если дата не указана, используем текущую дату
+		paymentDate = time.Now()
+	}
+
+	// Создаем сервис биллинга
+	billingService := services.NewBillingService(adminAccountID)
+
+	// Обрабатываем платеж (используем "manual" как метод оплаты по умолчанию)
+	paymentMethod := "manual"
+	notes := paymentData.Comment
+	if notes != "" {
+		notes = fmt.Sprintf("Ручной платёж. %s", notes)
+	} else {
+		notes = "Ручной платёж"
+	}
+
+	// Используем ProcessPaymentWithDate для поддержки даты платежа
+	if err := billingService.ProcessPaymentWithDate(uint(invoiceID), amount, paymentMethod, notes, &paymentDate); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	// Получаем обновленный счет
+	publicDB := database.DB.Session(&gorm.Session{})
+	if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка подключения к базе данных",
+		})
+		return
+	}
+
+	var invoice models.Invoice
+	if err := publicDB.
+		Preload("Items").
+		Where("id = ? AND admin_account_id = ?", invoiceID, adminAccountID).
+		First(&invoice).Error; err != nil {
+		log.Printf("❌ Ошибка получения обновленного счета: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("Ошибка получения обновленного счета: %v", err),
+		})
+		return
+	}
+
+	// Загружаем Contract отдельно из tenant схемы, если он есть
+	if invoice.ContractID != nil && *invoice.ContractID > 0 {
+		tenantDB := middleware.GetTenantDB(c)
+		if tenantDB != nil {
+			var contract models.Contract
+			if err := tenantDB.Where("id = ? AND admin_account_id = ?", *invoice.ContractID, adminAccountID).
+				Select("id, number, client_name, client_short_name, client_email").
+				First(&contract).Error; err == nil {
+				invoice.Contract = &contract
+			} else {
+				log.Printf("⚠️ Не удалось загрузить договор для счета %d: %v", invoice.ID, err)
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Ручной платёж успешно добавлен",
 		"data":    invoice,
 	})
 }

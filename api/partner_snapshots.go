@@ -25,7 +25,7 @@ func GetPartnerContractSnapshots(c *gin.Context) {
 		return
 	}
 
-	contractID := c.Param("id")
+	contractID := c.Param("contract_id")
 	log.Printf("📊 Запрос снимков для партнерского договора ID=%s", contractID)
 
 	// Получаем параметры периода
@@ -352,7 +352,7 @@ func GeneratePartnerSnapshotsForPeriod(c *gin.Context) {
 		return
 	}
 
-	contractID := c.Param("id")
+	contractID := c.Param("contract_id")
 	log.Printf("📸 Создание снимков для договора ID=%s за период", contractID)
 
 	// Получаем токен пользователя из заголовка
