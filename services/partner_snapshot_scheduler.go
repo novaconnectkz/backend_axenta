@@ -215,18 +215,29 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 		log.Printf("📦 Загружаем ВСЕ объекты и распределяем по партнёрам (без дублей)...")
 		partnerObjectsMap, err := hierarchyService.DistributeObjectsByPartner(token, snapshotDate)
 		if err != nil {
-			log.Printf("⚠️ Не удалось загрузить и распределить объекты: %v", err)
+			errMsg := fmt.Sprintf("Не удалось загрузить и распределить объекты для компании %d: %v", company.ID, err)
+			log.Printf("⚠️ %s", errMsg)
+			job.AddError(models.JobError{
+				CompanyID:   company.ID,
+				Message:     errMsg,
+				ErrorType:   "api_error",
+				Recoverable: true,
+			})
+			companyDetail.ContractsCount = 0
+			companyDetail.ErrorCount = 1
 			companyDetail.ProcessingTimeS = int(time.Since(companyStartTime).Seconds())
 			job.AddCompanyDetail(companyDetail)
+			errorCount++
 			continue
 		}
 		
 		// Проверяем, есть ли партнеры для обработки
 		if len(partnerObjectsMap) == 0 {
-			log.Printf("⚠️ Компания %s: нет партнеров в распределении объектов, пропускаем", company.DatabaseSchema)
+			log.Printf("⚠️ Компания %s: нет партнеров в распределении объектов (возможно, нет объектов или все объекты удалены до даты снимка)", company.DatabaseSchema)
 			companyDetail.ContractsCount = 0
 			companyDetail.ProcessingTimeS = int(time.Since(companyStartTime).Seconds())
 			job.AddCompanyDetail(companyDetail)
+			// НЕ увеличиваем errorCount, так как это нормальная ситуация (нет объектов)
 			continue
 		}
 		

@@ -316,6 +316,11 @@ func (s *AccountHierarchyService) DistributeObjectsByPartner(token string, snaps
 	
 	log.Printf("✅ Загружено %d объектов. Начинаем распределение по партнёрам...", totalLoaded)
 	
+	if totalLoaded == 0 {
+		log.Printf("⚠️ ВНИМАНИЕ: Загружено 0 объектов! Возможно, проблема с токеном или API.")
+		return make(map[int64]*PartnerObjectStats), nil // Возвращаем пустую map, но не ошибку
+	}
+	
 	// Распределяем объекты по партнёрам
 	partnerStats := make(map[int64]*PartnerObjectStats)
 	snapshotEndOfDay := time.Date(snapshotDate.Year(), snapshotDate.Month(), snapshotDate.Day(), 23, 59, 59, 0, time.UTC)
