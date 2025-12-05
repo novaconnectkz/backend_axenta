@@ -20,13 +20,13 @@ func GetSnapshotJobs(c *gin.Context) {
 	// Параметры пагинации
 	limit := 50
 	offset := 0
-	
+
 	if limitStr := c.Query("limit"); limitStr != "" {
 		if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
 			limit = parsedLimit
 		}
 	}
-	
+
 	if offsetStr := c.Query("offset"); offsetStr != "" {
 		if parsedOffset, err := strconv.Atoi(offsetStr); err == nil && parsedOffset >= 0 {
 			offset = parsedOffset
@@ -34,8 +34,8 @@ func GetSnapshotJobs(c *gin.Context) {
 	}
 
 	// Фильтры
-	status := c.Query("status")     // completed, failed, partial, running
-	jobType := c.Query("job_type")  // daily_auto, manual, scheduled
+	status := c.Query("status")    // completed, failed, partial, running
+	jobType := c.Query("job_type") // daily_auto, manual, scheduled
 
 	// Таблица snapshot_jobs находится в схеме public (глобальная)
 	// Переключаемся на схему public для чтения
@@ -114,15 +114,15 @@ func GetSnapshotJobStats(c *gin.Context) {
 	}
 
 	type Stats struct {
-		TotalJobs         int64   `json:"total_jobs"`
-		CompletedJobs     int64   `json:"completed_jobs"`
-		FailedJobs        int64   `json:"failed_jobs"`
-		PartialJobs       int64   `json:"partial_jobs"`
-		RunningJobs       int64   `json:"running_jobs"`
-		TotalSnapshots    int     `json:"total_snapshots"`
-		TotalErrors       int     `json:"total_errors"`
-		AvgDurationS      float64 `json:"avg_duration_s"`
-		LastJobStartedAt  *string `json:"last_job_started_at,omitempty"`
+		TotalJobs        int64   `json:"total_jobs"`
+		CompletedJobs    int64   `json:"completed_jobs"`
+		FailedJobs       int64   `json:"failed_jobs"`
+		PartialJobs      int64   `json:"partial_jobs"`
+		RunningJobs      int64   `json:"running_jobs"`
+		TotalSnapshots   int     `json:"total_snapshots"`
+		TotalErrors      int     `json:"total_errors"`
+		AvgDurationS     float64 `json:"avg_duration_s"`
+		LastJobStartedAt *string `json:"last_job_started_at,omitempty"`
 	}
 
 	stats := Stats{}
@@ -151,6 +151,7 @@ func GetSnapshotJobStats(c *gin.Context) {
 	if err := publicDB.Model(&models.SnapshotJob{}).
 		Order("started_at DESC").
 		First(&lastJob).Error; err == nil {
+		// Форматируем время без изменения (часовой пояс будет применен на фронтенде)
 		lastJobTime := lastJob.StartedAt.Format("2006-01-02 15:04:05")
 		stats.LastJobStartedAt = &lastJobTime
 	}
@@ -194,7 +195,7 @@ func ClearAllSnapshotHistory(c *gin.Context) {
 
 	log.Printf("ClearAllSnapshotHistory: ===== НАЧАЛО ОЧИСТКИ ИСТОРИИ СНИМКОВ =====")
 	log.Printf("ClearAllSnapshotHistory: Функция вызвана, начинаем обработку...")
-	
+
 	// Таблица snapshot_jobs находится в схеме public (глобальная)
 	// Переключаемся на схему public для удаления
 	publicDB := database.DB.Session(&gorm.Session{})
@@ -206,9 +207,9 @@ func ClearAllSnapshotHistory(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	log.Printf("ClearAllSnapshotHistory: Переключились на схему public, проверяем наличие таблицы snapshot_jobs...")
-	
+
 	var jobsDeleted int64 = 0
 	if !publicDB.Migrator().HasTable(&models.SnapshotJob{}) {
 		log.Printf("ClearAllSnapshotHistory: Таблица snapshot_jobs не существует в схеме public, пропускаем удаление")
@@ -295,7 +296,7 @@ func ClearAllSnapshotHistory(c *gin.Context) {
 		}
 	}
 
-	log.Printf("ClearAllSnapshotHistory: Очистка завершена. Итого удалено: jobs=%d, partner_snapshots=%d, object_snapshots=%d, account_snapshots=%d", 
+	log.Printf("ClearAllSnapshotHistory: Очистка завершена. Итого удалено: jobs=%d, partner_snapshots=%d, object_snapshots=%d, account_snapshots=%d",
 		jobsDeleted, totalSnapshotsDeleted, totalObjectsDeleted, totalAccountsDeleted)
 
 	c.JSON(http.StatusOK, gin.H{
@@ -315,7 +316,7 @@ func ClearAllSnapshotHistory(c *gin.Context) {
 // DELETE /api/auth/snapshot-jobs/cleanup?days=90
 func DeleteOldSnapshotJobs(c *gin.Context) {
 	days := 90 // По умолчанию 90 дней
-	
+
 	if daysStr := c.Query("days"); daysStr != "" {
 		if parsedDays, err := strconv.Atoi(daysStr); err == nil && parsedDays > 0 {
 			days = parsedDays
@@ -323,7 +324,7 @@ func DeleteOldSnapshotJobs(c *gin.Context) {
 	}
 
 	// Удаляем записи старше N дней
-	result := database.DB.Where("started_at < ?", 
+	result := database.DB.Where("started_at < ?",
 		database.DB.NowFunc().AddDate(0, 0, -days)).
 		Delete(&models.SnapshotJob{})
 
@@ -355,27 +356,27 @@ type TriggerManualSnapshotRequest struct {
 func TriggerManualSnapshot(c *gin.Context) {
 	// Создаем планировщик
 	scheduler := services.NewPartnerSnapshotScheduler()
-	
+
 	// Проверяем, есть ли данные в body
 	var requestBody TriggerManualSnapshotRequest
 	hasBody := false
-	
+
 	// Пытаемся прочитать body (может быть пустым)
 	if c.Request.ContentLength > 0 {
 		if err := c.ShouldBindJSON(&requestBody); err == nil {
 			hasBody = true
 		}
 	}
-	
+
 	// Определяем режим работы
 	if hasBody {
 		// Используем данные из body
-		
+
 		// Проверяем период (date_from и date_to)
 		if requestBody.DateFrom != "" && requestBody.DateTo != "" {
 			dateFrom, errFrom := time.Parse("2006-01-02", requestBody.DateFrom)
 			dateTo, errTo := time.Parse("2006-01-02", requestBody.DateTo)
-			
+
 			if errFrom != nil || errTo != nil {
 				c.JSON(http.StatusBadRequest, gin.H{
 					"status":  "error",
@@ -383,7 +384,7 @@ func TriggerManualSnapshot(c *gin.Context) {
 				})
 				return
 			}
-			
+
 			if dateFrom.After(dateTo) {
 				c.JSON(http.StatusBadRequest, gin.H{
 					"status":  "error",
@@ -391,7 +392,7 @@ func TriggerManualSnapshot(c *gin.Context) {
 				})
 				return
 			}
-			
+
 			// Проверяем, что период не слишком большой (максимум 90 дней)
 			daysDiff := int(dateTo.Sub(dateFrom).Hours() / 24)
 			if daysDiff > 90 {
@@ -401,18 +402,18 @@ func TriggerManualSnapshot(c *gin.Context) {
 				})
 				return
 			}
-			
+
 			// Запускаем создание снимков за период
 			go scheduler.RunManualSnapshotForPeriod(dateFrom, dateTo)
-			
+
 			c.JSON(http.StatusOK, gin.H{
-				"status":  "success",
-				"message": fmt.Sprintf("Запрос на создание снимков за период %s - %s принят. Проверьте историю через несколько минут.", 
+				"status": "success",
+				"message": fmt.Sprintf("Запрос на создание снимков за период %s - %s принят. Проверьте историю через несколько минут.",
 					requestBody.DateFrom, requestBody.DateTo),
 			})
 			return
 		}
-		
+
 		// Проверяем одну дату
 		if requestBody.Date != "" {
 			targetDate, err := time.Parse("2006-01-02", requestBody.Date)
@@ -423,10 +424,10 @@ func TriggerManualSnapshot(c *gin.Context) {
 				})
 				return
 			}
-			
+
 			// Запускаем снимки за указанную дату
 			go scheduler.RunManualSnapshotForDate(targetDate)
-			
+
 			c.JSON(http.StatusOK, gin.H{
 				"status":  "success",
 				"message": fmt.Sprintf("Запрос на создание снимков за %s принят. Проверьте историю через несколько минут.", requestBody.Date),
@@ -434,7 +435,7 @@ func TriggerManualSnapshot(c *gin.Context) {
 			return
 		}
 	}
-	
+
 	// Проверяем query параметр date (для обратной совместимости)
 	dateParam := c.Query("date")
 	if dateParam != "" {
@@ -447,23 +448,22 @@ func TriggerManualSnapshot(c *gin.Context) {
 			})
 			return
 		}
-		
+
 		// Запускаем снимки за указанную дату
 		go scheduler.RunManualSnapshotForDate(targetDate)
-		
+
 		c.JSON(http.StatusOK, gin.H{
 			"status":  "success",
 			"message": fmt.Sprintf("Запрос на создание снимков за %s принят. Проверьте историю через несколько минут.", dateParam),
 		})
 		return
 	}
-	
+
 	// По умолчанию - запускаем стандартный снимок (за вчера)
 	go scheduler.RunManualSnapshot()
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
 		"message": "Запрос на создание снимков за вчера принят. Проверьте историю через несколько минут.",
 	})
 }
-
