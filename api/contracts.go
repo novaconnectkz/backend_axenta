@@ -29,7 +29,7 @@ var (
 	globalPartnerObjectsCache = make(map[uint]*partnerObjectsCacheEntry)
 	partnerObjectsCacheMutex  sync.RWMutex
 	partnerObjectsCacheTTL    = 60 * time.Second // Кэш на 60 секунд
-	
+
 	// Защита от одновременной загрузки (single-flight)
 	partnerObjectsLoading      = make(map[uint]bool)
 	partnerObjectsLoadingMutex sync.Mutex
@@ -43,47 +43,47 @@ type partnerObjectsCacheEntry struct {
 // getPartnerObjectsCountFromAccount получает количество активных объектов партнера из /api/cms/accounts/
 func getPartnerObjectsCountFromAccount(partnerCompanyID uint, userToken string) (int, error) {
 	client := &http.Client{Timeout: 30 * time.Second}
-	
+
 	// Используем СПИСОК accounts БЕЗ фильтра и найдем нужную компанию
 	// (параметр ?id= фильтрует не по полю id, а по другому критерию)
 	accountURL := "https://axenta.cloud/api/cms/accounts/?page=1&per_page=10000"
-	
+
 	req, err := http.NewRequest("GET", accountURL, nil)
 	if err != nil {
 		return 0, fmt.Errorf("ошибка создания запроса: %w", err)
 	}
 	req.Header.Set("Authorization", "Token "+userToken)
-	
+
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, fmt.Errorf("ошибка запроса к Axenta Cloud: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		return 0, fmt.Errorf("Axenta Cloud вернул статус %d: %s", resp.StatusCode, string(bodyBytes))
 	}
-	
+
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return 0, fmt.Errorf("ошибка чтения тела ответа: %w", err)
 	}
-	
+
 	responsePreview := string(bodyBytes)
 	if len(responsePreview) > 500 {
 		responsePreview = responsePreview[:500] + "..."
 	}
 	log.Printf("🔍 Сырой ответ от /api/cms/accounts/?id=%d: %s", partnerCompanyID, responsePreview)
-	
+
 	// Пробуем сначала как объект с results
 	var listResponse struct {
 		Results []map[string]interface{} `json:"results"`
 		Count   int                      `json:"count"`
 	}
-	
+
 	var accounts []map[string]interface{}
-	
+
 	// Если это объект с results
 	if err := json.Unmarshal(bodyBytes, &listResponse); err == nil && len(listResponse.Results) > 0 {
 		accounts = listResponse.Results
@@ -95,7 +95,7 @@ func getPartnerObjectsCountFromAccount(partnerCompanyID uint, userToken string) 
 		}
 		log.Printf("✅ Парсим как массив, найдено аккаунтов: %d", len(accounts))
 	}
-	
+
 	// Ищем компанию с нужным ID
 	var account map[string]interface{}
 	found := false
@@ -106,12 +106,12 @@ func getPartnerObjectsCountFromAccount(partnerCompanyID uint, userToken string) 
 			break
 		}
 	}
-	
+
 	if !found {
 		log.Printf("⚠️ Учетная запись ID=%d не найдена в /api/cms/accounts/", partnerCompanyID)
 		return 0, nil
 	}
-	
+
 	// Пробуем разные варианты названий полей
 	objectsActive := 0
 	if val, ok := account["objectsActive"].(float64); ok {
@@ -119,17 +119,17 @@ func getPartnerObjectsCountFromAccount(partnerCompanyID uint, userToken string) 
 	} else if val, ok := account["objects_active"].(float64); ok {
 		objectsActive = int(val)
 	}
-	
+
 	objectsTotal := 0
 	if val, ok := account["objectsTotal"].(float64); ok {
 		objectsTotal = int(val)
 	} else if val, ok := account["objects_total"].(float64); ok {
 		objectsTotal = int(val)
 	}
-	
+
 	log.Printf("✅ Статистика из /api/cms/accounts/?id=%d: активных=%d, всего=%d (источник: список accounts)",
 		partnerCompanyID, objectsActive, objectsTotal)
-	
+
 	return objectsActive, nil
 }
 
@@ -139,7 +139,7 @@ func getPartnerObjectsCountFromSnapshot(partnerCompanyID uint, adminAccountID ui
 		log.Printf("⚠️ getPartnerObjectsCountFromSnapshot: tenantDB is nil")
 		return 0
 	}
-	
+
 	// Ищем снимок аккаунта
 	var snapshot models.AxentaAccountSnapshot
 	if err := tenantDB.Where("external_account_id = ? AND admin_account_id = ?", int64(partnerCompanyID), adminAccountID).
@@ -152,10 +152,10 @@ func getPartnerObjectsCountFromSnapshot(partnerCompanyID uint, adminAccountID ui
 		}
 		return 0
 	}
-	
+
 	log.Printf("📊 getPartnerObjectsCountFromSnapshot: Found snapshot for external account ID %d: total=%d, active=%d",
 		partnerCompanyID, snapshot.ObjectsTotal, snapshot.ObjectsActive)
-	
+
 	return snapshot.ObjectsActive
 }
 
@@ -165,51 +165,51 @@ func getPartnerObjectsFromCache(partnerCompanyID uint, userToken string) ([]mode
 	partnerObjectsCacheMutex.RLock()
 	cached, exists := globalPartnerObjectsCache[partnerCompanyID]
 	partnerObjectsCacheMutex.RUnlock()
-	
+
 	// Если кэш валиден, возвращаем данные из кэша
 	if exists && time.Since(cached.timestamp) < partnerObjectsCacheTTL {
-		log.Printf("📦 Используем кэшированные данные для партнера ID=%d (возраст кэша: %.1f сек)", 
+		log.Printf("📦 Используем кэшированные данные для партнера ID=%d (возраст кэша: %.1f сек)",
 			partnerCompanyID, time.Since(cached.timestamp).Seconds())
 		return cached.objects, nil
 	}
-	
+
 	// Single-flight pattern: проверяем идет ли уже загрузка
 	partnerObjectsLoadingMutex.Lock()
 	if partnerObjectsLoading[partnerCompanyID] {
 		// Другой запрос уже загружает данные, ждем
 		partnerObjectsLoadingMutex.Unlock()
 		log.Printf("⏳ Ожидаем завершения загрузки для партнера ID=%d...", partnerCompanyID)
-		
+
 		// Ждем максимум 30 секунд с проверками каждые 100мс
 		for i := 0; i < 300; i++ {
 			time.Sleep(100 * time.Millisecond)
-			
+
 			partnerObjectsCacheMutex.RLock()
 			cached, exists := globalPartnerObjectsCache[partnerCompanyID]
 			partnerObjectsCacheMutex.RUnlock()
-			
+
 			if exists && time.Since(cached.timestamp) < partnerObjectsCacheTTL {
 				log.Printf("✅ Дождались загрузки для партнера ID=%d, используем свежий кэш", partnerCompanyID)
 				return cached.objects, nil
 			}
 		}
-		
+
 		return nil, fmt.Errorf("таймаут ожидания загрузки объектов для партнера ID=%d", partnerCompanyID)
 	}
-	
+
 	// Отмечаем что мы начинаем загрузку
 	partnerObjectsLoading[partnerCompanyID] = true
 	partnerObjectsLoadingMutex.Unlock()
-	
+
 	// После загрузки снимаем флаг
 	defer func() {
 		partnerObjectsLoadingMutex.Lock()
 		delete(partnerObjectsLoading, partnerCompanyID)
 		partnerObjectsLoadingMutex.Unlock()
 	}()
-	
+
 	log.Printf("🌐 Загружаем свежие данные для партнера ID=%d из Axenta Cloud", partnerCompanyID)
-	
+
 	// Загружаем данные из Axenta Cloud
 	client := &http.Client{Timeout: 30 * time.Second}
 	var allObjects []struct {
@@ -217,31 +217,31 @@ func getPartnerObjectsFromCache(partnerCompanyID uint, userToken string) ([]mode
 		Name     string `json:"name"`
 		IsActive bool   `json:"isActive"`
 	}
-	
+
 	page := 1
 	perPage := 1000
-	
+
 	for {
 		// Запрос к Axenta Cloud API с пагинацией (получаем ВСЕ объекты, фильтруем на клиенте)
-		axentaCloudURL := fmt.Sprintf("https://axenta.cloud/api/cms/objects/?accountId=%d&page=%d&per_page=%d", 
+		axentaCloudURL := fmt.Sprintf("https://axenta.cloud/api/cms/objects/?accountId=%d&page=%d&per_page=%d",
 			partnerCompanyID, page, perPage)
-		
+
 		req, err := http.NewRequest("GET", axentaCloudURL, nil)
 		if err != nil {
 			return nil, fmt.Errorf("ошибка создания запроса: %w", err)
 		}
 		req.Header.Set("Authorization", "Token "+userToken)
-		
+
 		resp, err := client.Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("ошибка запроса к Axenta Cloud: %w", err)
 		}
-		
+
 		if resp.StatusCode != http.StatusOK {
 			resp.Body.Close()
 			return nil, fmt.Errorf("Axenta Cloud вернул статус %d", resp.StatusCode)
 		}
-		
+
 		var axentaResponse struct {
 			Results []struct {
 				ID       uint   `json:"id"`
@@ -251,27 +251,27 @@ func getPartnerObjectsFromCache(partnerCompanyID uint, userToken string) ([]mode
 			Count int     `json:"count"`
 			Next  *string `json:"next"`
 		}
-		
+
 		if err := json.NewDecoder(resp.Body).Decode(&axentaResponse); err != nil {
 			resp.Body.Close()
 			return nil, fmt.Errorf("ошибка декодирования ответа: %w", err)
 		}
 		resp.Body.Close()
-		
+
 		// Добавляем объекты с текущей страницы
 		allObjects = append(allObjects, axentaResponse.Results...)
-		
+
 		log.Printf("📄 Партнер ID=%d, Страница %d: получено %d объектов, всего загружено %d, Axenta Cloud Count=%d",
 			partnerCompanyID, page, len(axentaResponse.Results), len(allObjects), axentaResponse.Count)
-		
+
 		// Если получили меньше объектов, чем per_page, или нет следующей страницы - это последняя страница
 		if len(axentaResponse.Results) < perPage || axentaResponse.Next == nil {
 			break
 		}
-		
+
 		page++
 	}
-	
+
 	// Фильтруем только активные объекты (дополнительная проверка на клиенте)
 	var objects []models.Object
 	var activeObjectIDs []uint
@@ -280,7 +280,7 @@ func getPartnerObjectsFromCache(partnerCompanyID uint, userToken string) ([]mode
 		Name     string
 		IsActive bool
 	}
-	
+
 	for _, obj := range allObjects {
 		if obj.IsActive {
 			objects = append(objects, models.Object{
@@ -301,15 +301,15 @@ func getPartnerObjectsFromCache(partnerCompanyID uint, userToken string) ([]mode
 			}
 		}
 	}
-	
+
 	inactiveCount := len(allObjects) - len(objects)
-	log.Printf("✅ Загружено %d активных объектов из %d всего для партнерской компании ID=%d (неактивных: %d)", 
+	log.Printf("✅ Загружено %d активных объектов из %d всего для партнерской компании ID=%d (неактивных: %d)",
 		len(objects), len(allObjects), partnerCompanyID, inactiveCount)
 	log.Printf("📋 Первые 10 активных объектов (ID): %v", activeObjectIDs)
 	if len(inactiveObjects) > 0 {
 		log.Printf("⚠️ Первые неактивные объекты: %+v", inactiveObjects)
 	}
-	
+
 	// Сохраняем в кэш
 	partnerObjectsCacheMutex.Lock()
 	globalPartnerObjectsCache[partnerCompanyID] = &partnerObjectsCacheEntry{
@@ -317,7 +317,7 @@ func getPartnerObjectsFromCache(partnerCompanyID uint, userToken string) ([]mode
 		timestamp: time.Now(),
 	}
 	partnerObjectsCacheMutex.Unlock()
-	
+
 	return objects, nil
 }
 
@@ -456,7 +456,7 @@ func GetContracts(c *gin.Context) {
 	// 🚀 Параметр skip_stats для ленивой загрузки (Progressive Loading)
 	// Если true - возвращает список быстро без статистики объектов
 	skipStats := c.Query("skip_stats") == "true"
-	
+
 	// Логируем запрос для отладки
 	log.Printf("🔍 GetContracts: admin_account_id=%d, tenantDB=%v, skip_stats=%v", adminAccountID, tenantDB != nil, skipStats)
 
@@ -493,7 +493,7 @@ func GetContracts(c *gin.Context) {
 	// 🔄 Серверная сортировка
 	sortBy := c.DefaultQuery("sort_by", "created_at")
 	sortOrder := c.DefaultQuery("sort_order", "desc")
-	
+
 	// Валидация поля сортировки (защита от SQL injection)
 	allowedSortFields := map[string]string{
 		"created_at":        "created_at",
@@ -507,17 +507,17 @@ func GetContracts(c *gin.Context) {
 		"status":            "status",
 		"contract_type":     "contract_type",
 	}
-	
+
 	sortField, ok := allowedSortFields[sortBy]
 	if !ok {
 		sortField = "created_at"
 	}
-	
+
 	// Валидация направления сортировки
 	if sortOrder != "asc" && sortOrder != "desc" {
 		sortOrder = "desc"
 	}
-	
+
 	orderClause := fmt.Sprintf("%s %s", sortField, strings.ToUpper(sortOrder))
 	baseQuery = baseQuery.Order(orderClause)
 	log.Printf("🔄 GetContracts: сортировка по %s %s", sortField, sortOrder)
@@ -718,61 +718,61 @@ func GetContracts(c *gin.Context) {
 		var wg sync.WaitGroup
 		var partnerObjectsMutex sync.Mutex
 		semaphore := make(chan struct{}, 10) // Ограничение: 10 параллельных запросов
-		
+
 		log.Printf("🚀 Начинаем параллельную загрузку статистики для %d партнерских компаний", len(partnerCompanyIDs))
 		startTime := time.Now()
-		
+
 		// Собираем partner company IDs в слайс для удобства
 		partnerCompanyIDsList := make([]uint, 0, len(partnerCompanyIDs))
 		for id := range partnerCompanyIDs {
 			partnerCompanyIDsList = append(partnerCompanyIDsList, id)
 		}
-		
+
 		// Параллельная загрузка статистики
 		for _, partnerCompanyID := range partnerCompanyIDsList {
 			wg.Add(1)
 			go func(companyID uint) {
 				defer wg.Done()
-				
+
 				// Занимаем слот в семафоре
 				semaphore <- struct{}{}
 				defer func() { <-semaphore }() // Освобождаем слот
-				
+
 				// Загружаем статистику
 				objectsCount, err := getPartnerObjectsCountFromAccount(companyID, userToken)
-			if err != nil {
+				if err != nil {
 					log.Printf("⚠️ Ошибка получения статистики для партнера ID=%d: %v", companyID, err)
 					return
-			}
-			
-			// Создаем массив объектов нужной длины (frontend использует len(Objects))
-			fakeObjects := make([]models.Object, objectsCount)
-			for j := 0; j < objectsCount; j++ {
-				fakeObjects[j] = models.Object{
-					ID:        uint(j + 1),
-						CompanyID: companyID,
-					Name:      fmt.Sprintf("Object %d", j+1),
 				}
-			}
-			
+
+				// Создаем массив объектов нужной длины (frontend использует len(Objects))
+				fakeObjects := make([]models.Object, objectsCount)
+				for j := 0; j < objectsCount; j++ {
+					fakeObjects[j] = models.Object{
+						ID:        uint(j + 1),
+						CompanyID: companyID,
+						Name:      fmt.Sprintf("Object %d", j+1),
+					}
+				}
+
 				// Потокобезопасная запись в карту
 				partnerObjectsMutex.Lock()
-			// Заполняем partnerObjectsMap для всех договоров этого партнера
-			for i := range contracts {
-				if contracts[i].ContractType == "partner" && 
-				   contracts[i].PartnerCompanyID != nil && 
-					   *contracts[i].PartnerCompanyID == companyID {
-					partnerObjectsMap[contracts[i].ID] = fakeObjects
-					log.Printf("📊 Партнерский договор ID=%d: %d объектов (из /api/cms/accounts/)", contracts[i].ID, len(fakeObjects))
+				// Заполняем partnerObjectsMap для всех договоров этого партнера
+				for i := range contracts {
+					if contracts[i].ContractType == "partner" &&
+						contracts[i].PartnerCompanyID != nil &&
+						*contracts[i].PartnerCompanyID == companyID {
+						partnerObjectsMap[contracts[i].ID] = fakeObjects
+						log.Printf("📊 Партнерский договор ID=%d: %d объектов (из /api/cms/accounts/)", contracts[i].ID, len(fakeObjects))
+					}
 				}
-			}
 				partnerObjectsMutex.Unlock()
 			}(partnerCompanyID)
 		}
-		
+
 		// Ждем завершения всех goroutines
 		wg.Wait()
-		
+
 		elapsed := time.Since(startTime)
 		log.Printf("✅ Параллельная загрузка завершена за %.2f секунд", elapsed.Seconds())
 	}
@@ -791,8 +791,82 @@ func GetContracts(c *gin.Context) {
 			if partnerObjects, ok := partnerObjectsMap[contracts[i].ID]; ok {
 				contracts[i].Objects = partnerObjects
 				log.Printf("📊 Партнерский договор ID=%d: %d объектов", contracts[i].ID, len(partnerObjects))
+
+				// Если сумма договора = 0, но есть объекты, пересчитываем сумму
+				if contracts[i].TotalAmount.IsZero() && len(partnerObjects) > 0 && contracts[i].TariffPlanID != nil {
+					if plan, ok := tariffPlansMap[*contracts[i].TariffPlanID]; ok && !plan.Price.IsZero() {
+						// Рассчитываем количество месяцев
+						months := 1
+						if contracts[i].StartDate != nil && contracts[i].EndDate != nil {
+							duration := contracts[i].EndDate.Sub(*contracts[i].StartDate)
+							days := int(duration.Hours() / 24)
+							if days > 0 {
+								months = days / 30
+								if months == 0 {
+									months = 1
+								}
+							}
+						}
+
+						// Пересчитываем сумму: количество объектов × цена тарифа за месяц × количество месяцев
+						objectsCount := len(partnerObjects)
+						totalAmount := plan.Price.Mul(decimal.NewFromInt(int64(objectsCount))).Mul(decimal.NewFromInt(int64(months)))
+
+						// Обновляем сумму в БД
+						contracts[i].TotalAmount = totalAmount
+						if err := tenantDB.Model(&contracts[i]).Update("total_amount", totalAmount).Error; err != nil {
+							log.Printf("⚠️ Ошибка обновления total_amount договора %d: %v", contracts[i].ID, err)
+						} else {
+							log.Printf("✅ Автоматически пересчитана сумма договора %d: %s (объектов: %d, месяцев: %d, цена/мес: %s)",
+								contracts[i].ID, totalAmount.String(), objectsCount, months, plan.Price.String())
+						}
+					}
+				}
 			} else {
 				contracts[i].Objects = make([]models.Object, 0)
+				// Если объектов нет, но сумма не 0, пробуем получить из snapshot
+				if contracts[i].TotalAmount.IsZero() && contracts[i].PartnerCompanyID != nil && userToken != "" {
+					snapshotCount := getPartnerObjectsCountFromSnapshot(*contracts[i].PartnerCompanyID, adminAccountID, tenantDB)
+					if snapshotCount > 0 {
+						// Создаем fake объекты для отображения
+						fakeObjects := make([]models.Object, snapshotCount)
+						for j := 0; j < snapshotCount; j++ {
+							fakeObjects[j] = models.Object{
+								ID:        uint(j + 1),
+								CompanyID: *contracts[i].PartnerCompanyID,
+								Name:      fmt.Sprintf("Object %d", j+1),
+							}
+						}
+						contracts[i].Objects = fakeObjects
+						log.Printf("📊 Партнерский договор ID=%d: %d объектов (из snapshot)", contracts[i].ID, snapshotCount)
+
+						// Пересчитываем сумму, если есть тарифный план
+						if contracts[i].TariffPlanID != nil {
+							if plan, ok := tariffPlansMap[*contracts[i].TariffPlanID]; ok && !plan.Price.IsZero() {
+								months := 1
+								if contracts[i].StartDate != nil && contracts[i].EndDate != nil {
+									duration := contracts[i].EndDate.Sub(*contracts[i].StartDate)
+									days := int(duration.Hours() / 24)
+									if days > 0 {
+										months = days / 30
+										if months == 0 {
+											months = 1
+										}
+									}
+								}
+
+								totalAmount := plan.Price.Mul(decimal.NewFromInt(int64(snapshotCount))).Mul(decimal.NewFromInt(int64(months)))
+								contracts[i].TotalAmount = totalAmount
+								if err := tenantDB.Model(&contracts[i]).Update("total_amount", totalAmount).Error; err != nil {
+									log.Printf("⚠️ Ошибка обновления total_amount договора %d: %v", contracts[i].ID, err)
+								} else {
+									log.Printf("✅ Автоматически пересчитана сумма договора %d из snapshot: %s (объектов: %d)",
+										contracts[i].ID, totalAmount.String(), snapshotCount)
+								}
+							}
+						}
+					}
+				}
 			}
 			contracts[i].ContractObjects = make([]models.ContractObject, 0) // У партнерских договоров нет contract_objects
 		} else {
@@ -813,6 +887,34 @@ func GetContracts(c *gin.Context) {
 				}
 				contracts[i].Objects = objects
 				contracts[i].ContractObjects = contractObjects
+
+				// Если сумма договора = 0, но есть объекты, пересчитываем сумму
+				if contracts[i].TotalAmount.IsZero() && len(objects) > 0 && contracts[i].TariffPlanID != nil {
+					if plan, ok := tariffPlansMap[*contracts[i].TariffPlanID]; ok && !plan.Price.IsZero() {
+						months := 1
+						if contracts[i].StartDate != nil && contracts[i].EndDate != nil {
+							duration := contracts[i].EndDate.Sub(*contracts[i].StartDate)
+							days := int(duration.Hours() / 24)
+							if days > 0 {
+								months = days / 30
+								if months == 0 {
+									months = 1
+								}
+							}
+						}
+
+						objectsCount := len(objects)
+						totalAmount := plan.Price.Mul(decimal.NewFromInt(int64(objectsCount))).Mul(decimal.NewFromInt(int64(months)))
+
+						contracts[i].TotalAmount = totalAmount
+						if err := tenantDB.Model(&contracts[i]).Update("total_amount", totalAmount).Error; err != nil {
+							log.Printf("⚠️ Ошибка обновления total_amount договора %d: %v", contracts[i].ID, err)
+						} else {
+							log.Printf("✅ Автоматически пересчитана сумма клиентского договора %d: %s (объектов: %d)",
+								contracts[i].ID, totalAmount.String(), objectsCount)
+						}
+					}
+				}
 			} else {
 				contracts[i].Objects = make([]models.Object, 0)
 				contracts[i].ContractObjects = make([]models.ContractObject, 0)
@@ -892,7 +994,7 @@ func GetContractStats(c *gin.Context) {
 		} else {
 			objectsCount = count
 		}
-		
+
 		// Если из API получили 0, пробуем получить из snapshot
 		if objectsCount == 0 {
 			log.Printf("🔍 GetContractStats: Количество объектов из API = 0, пробуем получить из snapshot для партнера ID=%d", *contract.PartnerCompanyID)
@@ -1089,7 +1191,7 @@ func GetContract(c *gin.Context) {
 	responseData := make(map[string]interface{})
 	responseDataBytes, _ := json.Marshal(contract)
 	json.Unmarshal(responseDataBytes, &responseData)
-	
+
 	// Добавляем подписку, если она найдена
 	if subscription != nil {
 		responseData["subscription"] = subscription
@@ -5922,10 +6024,10 @@ func SyncContractFromSubscription(c *gin.Context) {
 // ClearPartnerObjectsCache очищает кэш партнерских объектов
 func ClearPartnerObjectsCache(c *gin.Context) {
 	partnerCompanyIDStr := c.Query("partner_company_id")
-	
+
 	partnerObjectsCacheMutex.Lock()
 	defer partnerObjectsCacheMutex.Unlock()
-	
+
 	if partnerCompanyIDStr != "" {
 		// Очищаем для конкретного партнера
 		partnerCompanyID, err := strconv.ParseUint(partnerCompanyIDStr, 10, 64)
@@ -5935,14 +6037,14 @@ func ClearPartnerObjectsCache(c *gin.Context) {
 		}
 		delete(globalPartnerObjectsCache, uint(partnerCompanyID))
 		c.JSON(http.StatusOK, gin.H{
-			"status": "success",
+			"status":  "success",
 			"message": fmt.Sprintf("Кэш для партнера ID=%d очищен", partnerCompanyID),
 		})
 	} else {
 		// Очищаем весь кэш
 		globalPartnerObjectsCache = make(map[uint]*partnerObjectsCacheEntry)
 		c.JSON(http.StatusOK, gin.H{
-			"status": "success",
+			"status":  "success",
 			"message": "Весь кэш партнерских объектов очищен",
 		})
 	}
@@ -5955,41 +6057,41 @@ func DebugAxentaPartnerObjects(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "partner_company_id обязателен"})
 		return
 	}
-	
+
 	partnerCompanyID, err := strconv.ParseUint(partnerCompanyIDStr, 10, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Неверный partner_company_id"})
 		return
 	}
-	
+
 	userToken := c.GetHeader("X-Axenta-Token")
 	if userToken == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Нет токена Axenta"})
 		return
 	}
-	
+
 	client := &http.Client{Timeout: 30 * time.Second}
-	
+
 	// Делаем прямой запрос к Axenta Cloud
-	axentaCloudURL := fmt.Sprintf("https://axenta.cloud/api/cms/objects/?accountId=%d&page=1&per_page=1000&is_active=true", 
+	axentaCloudURL := fmt.Sprintf("https://axenta.cloud/api/cms/objects/?accountId=%d&page=1&per_page=1000&is_active=true",
 		partnerCompanyID)
-	
+
 	req, err := http.NewRequest("GET", axentaCloudURL, nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	req.Header.Set("Authorization", "Token "+userToken)
-	
+
 	resp, err := client.Do(req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	defer resp.Body.Close()
-	
+
 	body, _ := io.ReadAll(resp.Body)
-	
+
 	var axentaResponse struct {
 		Results []struct {
 			ID       uint   `json:"id"`
@@ -5999,9 +6101,9 @@ func DebugAxentaPartnerObjects(c *gin.Context) {
 		Count int     `json:"count"`
 		Next  *string `json:"next"`
 	}
-	
+
 	json.Unmarshal(body, &axentaResponse)
-	
+
 	activeCount := 0
 	inactiveCount := 0
 	for _, obj := range axentaResponse.Results {
@@ -6011,16 +6113,16 @@ func DebugAxentaPartnerObjects(c *gin.Context) {
 			inactiveCount++
 		}
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"partner_company_id": partnerCompanyID,
-		"url": axentaCloudURL,
+		"url":                axentaCloudURL,
 		"axenta_response": gin.H{
-			"count": axentaResponse.Count,
-			"results_length": len(axentaResponse.Results),
-			"active_in_results": activeCount,
+			"count":               axentaResponse.Count,
+			"results_length":      len(axentaResponse.Results),
+			"active_in_results":   activeCount,
 			"inactive_in_results": inactiveCount,
-			"has_next": axentaResponse.Next != nil,
+			"has_next":            axentaResponse.Next != nil,
 		},
 		"raw_response": string(body),
 	})
