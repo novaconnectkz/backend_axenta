@@ -40,21 +40,25 @@ func GetPartnerContractSnapshots(c *gin.Context) {
 	// Поддерживаем два формата: RFC3339 (с временем) и YYYY-MM-DD (только дата)
 	var startDate, endDate time.Time
 	if startDateStr != "" {
-		// Сначала пробуем парсить как RFC3339 (с временем и часовым поясом)
-		startDate, err = time.Parse(time.RFC3339, startDateStr)
-		if err != nil {
-			// Если не получилось, пробуем парсить как YYYY-MM-DD (только дата)
-			startDate, err = time.Parse("2006-01-02", startDateStr)
+		log.Printf("📅 Парсинг start_date: %s", startDateStr)
+		// Сначала пробуем парсить как YYYY-MM-DD (более простой формат, который использует фронтенд)
+		parsedDate, parseErr := time.Parse("2006-01-02", startDateStr)
+		if parseErr == nil {
+			// Успешно распарсили как YYYY-MM-DD, устанавливаем начало дня в UTC
+			startDate = time.Date(parsedDate.Year(), parsedDate.Month(), parsedDate.Day(), 0, 0, 0, 0, time.UTC)
+			log.Printf("✅ start_date распарсен как YYYY-MM-DD: %s", startDate.Format(time.RFC3339))
+		} else {
+			// Если не получилось, пробуем парсить как RFC3339 (с временем и часовым поясом)
+			startDate, err = time.Parse(time.RFC3339, startDateStr)
 			if err != nil {
-				log.Printf("❌ Ошибка парсинга start_date: %v", err)
+				log.Printf("❌ Ошибка парсинга start_date: %v (значение: %s)", err, startDateStr)
 				c.JSON(http.StatusBadRequest, gin.H{
 					"status": "error",
-					"error":  "Неверный формат start_date (ожидается RFC3339 или YYYY-MM-DD)",
+					"error":  fmt.Sprintf("Неверный формат start_date: %s (ожидается YYYY-MM-DD или RFC3339)", startDateStr),
 				})
 				return
 			}
-			// Если парсили как YYYY-MM-DD, устанавливаем начало дня в UTC
-			startDate = time.Date(startDate.Year(), startDate.Month(), startDate.Day(), 0, 0, 0, 0, time.UTC)
+			log.Printf("✅ start_date распарсен как RFC3339: %s", startDate.Format(time.RFC3339))
 		}
 	} else {
 		// По умолчанию - последние 30 дней
@@ -62,28 +66,29 @@ func GetPartnerContractSnapshots(c *gin.Context) {
 	}
 
 	if endDateStr != "" {
-		// Сначала пробуем парсить как RFC3339 (с временем и часовым поясом)
-		endDate, err = time.Parse(time.RFC3339, endDateStr)
-		if err != nil {
-			// Если не получилось, пробуем парсить как YYYY-MM-DD (только дата)
-			endDate, err = time.Parse("2006-01-02", endDateStr)
+		log.Printf("📅 Парсинг end_date: %s", endDateStr)
+		// Сначала пробуем парсить как YYYY-MM-DD (более простой формат, который использует фронтенд)
+		parsedDate, parseErr := time.Parse("2006-01-02", endDateStr)
+		if parseErr == nil {
+			// Успешно распарсили как YYYY-MM-DD, устанавливаем конец дня в UTC
+			endDate = time.Date(parsedDate.Year(), parsedDate.Month(), parsedDate.Day(), 23, 59, 59, 999999999, time.UTC)
+			log.Printf("✅ end_date распарсен как YYYY-MM-DD: %s (конец дня)", endDate.Format(time.RFC3339))
+		} else {
+			// Если не получилось, пробуем парсить как RFC3339 (с временем и часовым поясом)
+			endDate, err = time.Parse(time.RFC3339, endDateStr)
 			if err != nil {
-				log.Printf("❌ Ошибка парсинга end_date: %v", err)
+				log.Printf("❌ Ошибка парсинга end_date: %v (значение: %s)", err, endDateStr)
 				c.JSON(http.StatusBadRequest, gin.H{
 					"status": "error",
-					"error":  "Неверный формат end_date (ожидается RFC3339 или YYYY-MM-DD)",
+					"error":  fmt.Sprintf("Неверный формат end_date: %s (ожидается YYYY-MM-DD или RFC3339)", endDateStr),
 				})
 				return
 			}
-			// Если парсили как YYYY-MM-DD, устанавливаем конец дня в UTC
-			endDate = time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 23, 59, 59, 999999999, time.UTC)
-		} else {
 			// Если endDate имеет время 00:00:00 (начало дня), добавляем время до конца дня
-			// чтобы включить все снимки за этот день
 			if endDate.Hour() == 0 && endDate.Minute() == 0 && endDate.Second() == 0 {
 				endDate = time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 23, 59, 59, 999999999, endDate.Location())
-				log.Printf("📅 endDate был началом дня, установлен конец дня: %s", endDate.Format(time.RFC3339))
 			}
+			log.Printf("✅ end_date распарсен как RFC3339: %s", endDate.Format(time.RFC3339))
 		}
 	} else {
 		// По умолчанию - конец текущего дня
@@ -195,110 +200,152 @@ func GetPartnerContractSnapshots(c *gin.Context) {
 				// Находим все дочерние аккаунты партнера из axenta_account_snapshots
 				// API Axenta при запросе с accountId=partner_company_id возвращает объекты партнера и всех дочерних аккаунтов
 				// Эти объекты сохраняются с account_external_id дочерних аккаунтов
-				// Поэтому нужно найти все аккаунты, которые являются дочерними для партнера
+				// ВАЖНО: Аккаунты могут быть в любой tenant схеме, поэтому ищем во всех схемах
 				var childAccountIDs []int64
 				childAccountIDs = append(childAccountIDs, int64(*contract.PartnerCompanyID)) // Добавляем сам партнер
 
-				// Ищем дочерние аккаунты партнера
-				// Иерархия может содержать ID партнера в разных форматах: "/123/", "123", "/123"
-				// Ищем аккаунты, у которых в hierarchy есть ID партнера
-				var childAccounts []models.AxentaAccountSnapshot
-				partnerIDStr := fmt.Sprintf("%d", *contract.PartnerCompanyID)
-				if err := db.Model(&models.AxentaAccountSnapshot{}).
-					Where("admin_account_id = ?", adminAccountID).
-					Where("(hierarchy LIKE ? OR hierarchy LIKE ? OR hierarchy LIKE ? OR external_account_id = ?)",
-						fmt.Sprintf("%%/%%%s/%%", partnerIDStr), // формат: /.../123/...
-						fmt.Sprintf("%%/%%%s%%", partnerIDStr),  // формат: /.../123...
-						fmt.Sprintf("%%/%s/%%", partnerIDStr),   // формат: /123/...
-						int64(*contract.PartnerCompanyID)).      // сам партнер
-					Find(&childAccounts).Error; err == nil {
-					for _, acc := range childAccounts {
-						// Проверяем, что это действительно дочерний аккаунт или сам партнер
-						// Добавляем все найденные аккаунты
-						childAccountIDs = append(childAccountIDs, acc.ExternalAccountID)
-					}
-					log.Printf("🔍 Найдено аккаунтов для партнера %d: %d (включая сам партнер и дочерние)",
-						*contract.PartnerCompanyID, len(childAccountIDs))
-				} else {
-					log.Printf("⚠️ Не удалось найти дочерние аккаунты для партнера %d: %v (используем только партнера)",
-						*contract.PartnerCompanyID, err)
+				// Получаем все компании для поиска аккаунтов во всех tenant схемах
+				var allCompanies []models.Company
+				if err := database.DB.Find(&allCompanies).Error; err != nil {
+					log.Printf("⚠️ Ошибка получения списка компаний для поиска аккаунтов: %v", err)
+					allCompanies = []models.Company{} // Продолжаем с пустым списком
 				}
 
+				// Ищем дочерние аккаунты партнера во всех схемах
+				// Иерархия может содержать ID партнера в разных форматах: "/123/", "123", "/123"
+				// Ищем аккаунты, у которых в hierarchy есть ID партнера
+				partnerIDStr := fmt.Sprintf("%d", *contract.PartnerCompanyID)
+				seenAccountIDs := make(map[int64]bool)
+				seenAccountIDs[int64(*contract.PartnerCompanyID)] = true // Помечаем сам партнер
+
+				for _, company := range allCompanies {
+					tenantDBForSearch := database.GetTenantDBByID(company.ID)
+					if tenantDBForSearch == nil {
+						continue
+					}
+
+					var childAccounts []models.AxentaAccountSnapshot
+					if err := tenantDBForSearch.Model(&models.AxentaAccountSnapshot{}).
+						Where("admin_account_id = ?", adminAccountID).
+						Where("(hierarchy LIKE ? OR hierarchy LIKE ? OR hierarchy LIKE ? OR external_account_id = ?)",
+							fmt.Sprintf("%%/%%%s/%%", partnerIDStr), // формат: /.../123/...
+							fmt.Sprintf("%%/%%%s%%", partnerIDStr),  // формат: /.../123...
+							fmt.Sprintf("%%/%s/%%", partnerIDStr),   // формат: /123/...
+							int64(*contract.PartnerCompanyID)).      // сам партнер
+						Find(&childAccounts).Error; err == nil {
+						for _, acc := range childAccounts {
+							// Добавляем только уникальные аккаунты
+							if !seenAccountIDs[acc.ExternalAccountID] {
+								childAccountIDs = append(childAccountIDs, acc.ExternalAccountID)
+								seenAccountIDs[acc.ExternalAccountID] = true
+							}
+						}
+						if len(childAccounts) > 0 {
+							log.Printf("🔍 Найдено аккаунтов в схеме %s для партнера %d: %d",
+								company.DatabaseSchema, *contract.PartnerCompanyID, len(childAccounts))
+						}
+					}
+				}
+
+				log.Printf("🔍 Всего найдено аккаунтов для партнера %d (во всех схемах): %d (включая сам партнер и дочерние)",
+					*contract.PartnerCompanyID, len(childAccountIDs))
+
 				// Подсчитываем объекты партнера и его дочерних аккаунтов на эту дату
+				// ВАЖНО: Объекты могут быть в любой tenant схеме, поэтому ищем во всех схемах
 				// Используем подзапрос для получения последнего снимка каждого объекта на эту дату
 				// Это гарантирует, что мы берем актуальные данные на дату снимка
 				var totalObjectsCount int64
 				var activeObjectsCount int64
 
-				// Сначала проверяем, есть ли вообще объекты для этих аккаунтов
+				log.Printf("🔍 Ищем объекты для partner_company_id=%d во всех tenant схемах (%d компаний)", *contract.PartnerCompanyID, len(allCompanies))
+
+				// Сначала проверяем, есть ли вообще объекты для этих аккаунтов во всех схемах
 				var testCount int64
-				db.Model(&models.AxentaObjectSnapshot{}).
-					Where("account_external_id IN ?", childAccountIDs).
-					Count(&testCount)
-				log.Printf("🔍 Всего объектов в БД для аккаунтов %v: %d", childAccountIDs, testCount)
+				for _, company := range allCompanies {
+					tenantDBForSearch := database.GetTenantDBByID(company.ID)
+					if tenantDBForSearch == nil {
+						continue
+					}
+					var count int64
+					tenantDBForSearch.Model(&models.AxentaObjectSnapshot{}).
+						Where("account_external_id IN ?", childAccountIDs).
+						Count(&count)
+					testCount += count
+				}
+				log.Printf("🔍 Всего объектов в БД для аккаунтов %v (во всех схемах): %d", childAccountIDs, testCount)
 
-				// Подсчитываем всего объектов партнера и его дочерних аккаунтов на эту дату
-				// ВАЖНО: Ищем объекты, которые СУЩЕСТВОВАЛИ на дату снимка (по axenta_created_at и axenta_deleted_at),
-				// независимо от того, когда они были синхронизированы (last_synced_at).
-				// Это нужно, потому что объекты могут быть синхронизированы позже (например, 05.12 или 06.12),
-				// но существовали на историческую дату (например, 01.12).
-				// Используем подзапрос для получения последнего снимка каждого объекта (на любую дату),
-				// но проверяем, что объект существовал на дату снимка.
-				err := db.Raw(`
-					SELECT COUNT(DISTINCT aos1.external_object_id)
-					FROM axenta_object_snapshots aos1
-					WHERE aos1.account_external_id IN ?
-						AND (aos1.axenta_created_at IS NULL OR aos1.axenta_created_at <= ?)
-						AND (aos1.axenta_deleted_at IS NULL OR aos1.axenta_deleted_at > ?)
-						AND aos1.last_synced_at = (
-							SELECT MAX(aos2.last_synced_at)
-							FROM axenta_object_snapshots aos2
-							WHERE aos2.external_object_id = aos1.external_object_id
-						)
-				`, childAccountIDs, snapshotEndOfDay, snapshotEndOfDay).
-					Scan(&totalObjectsCount).Error
+				// Собираем все уникальные external_object_id из всех схем
+				allObjectIDs := make(map[int64]bool)
+				activeObjectIDs := make(map[int64]bool)
 
-				if err != nil {
-					log.Printf("⚠️ Ошибка подсчета объектов из axenta_object_snapshots для даты %s (partner_company_id=%d): %v",
-						dateKey, *contract.PartnerCompanyID, err)
-				} else {
-					log.Printf("✅ Найдено объектов для даты %s: %d", dateKey, totalObjectsCount)
+				// Ищем объекты во всех tenant схемах
+				for _, company := range allCompanies {
+					tenantDBForSearch := database.GetTenantDBByID(company.ID)
+					if tenantDBForSearch == nil {
+						continue
+					}
+
+					// Подсчитываем всего объектов партнера и его дочерних аккаунтов на эту дату
+					// ВАЖНО: Ищем объекты, которые СУЩЕСТВОВАЛИ на дату снимка (по axenta_created_at и axenta_deleted_at),
+					// независимо от того, когда они были синхронизированы (last_synced_at).
+					var objects []struct {
+						ExternalObjectID int64 `gorm:"column:external_object_id"`
+						IsActive         bool  `gorm:"column:is_active"`
+					}
+
+					err := tenantDBForSearch.Raw(`
+						SELECT DISTINCT aos1.external_object_id, aos1.is_active
+						FROM axenta_object_snapshots aos1
+						WHERE aos1.account_external_id IN ?
+							AND (aos1.axenta_created_at IS NULL OR aos1.axenta_created_at <= ?)
+							AND (aos1.axenta_deleted_at IS NULL OR aos1.axenta_deleted_at > ?)
+							AND aos1.last_synced_at = (
+								SELECT MAX(aos2.last_synced_at)
+								FROM axenta_object_snapshots aos2
+								WHERE aos2.external_object_id = aos1.external_object_id
+							)
+					`, childAccountIDs, snapshotEndOfDay, snapshotEndOfDay).
+						Scan(&objects).Error
+
+					if err != nil {
+						log.Printf("⚠️ Ошибка поиска объектов в схеме %s для даты %s (partner_company_id=%d): %v",
+							company.DatabaseSchema, dateKey, *contract.PartnerCompanyID, err)
+						continue
+					}
+
+					// Добавляем найденные объекты в общий список
+					for _, obj := range objects {
+						allObjectIDs[obj.ExternalObjectID] = true
+						if obj.IsActive {
+							activeObjectIDs[obj.ExternalObjectID] = true
+						}
+					}
+
+					if len(objects) > 0 {
+						log.Printf("✅ Найдено объектов в схеме %s для даты %s: %d", company.DatabaseSchema, dateKey, len(objects))
+					}
 				}
 
-				// Подсчитываем активных объектов партнера и его дочерних аккаунтов на эту дату
-				// ВАЖНО: Используем последний снимок объекта (на любую дату), но проверяем,
-				// что объект существовал и был активен на дату снимка.
-				// Для исторических дат нужно использовать состояние объекта из последнего снимка,
-				// но проверять, что объект существовал на эту дату.
-				err = db.Raw(`
-					SELECT COUNT(DISTINCT aos1.external_object_id)
-					FROM axenta_object_snapshots aos1
-					WHERE aos1.account_external_id IN ?
-						AND aos1.is_active = true
-						AND (aos1.axenta_created_at IS NULL OR aos1.axenta_created_at <= ?)
-						AND (aos1.axenta_deleted_at IS NULL OR aos1.axenta_deleted_at > ?)
-						AND aos1.last_synced_at = (
-							SELECT MAX(aos2.last_synced_at)
-							FROM axenta_object_snapshots aos2
-							WHERE aos2.external_object_id = aos1.external_object_id
-						)
-				`, childAccountIDs, snapshotEndOfDay, snapshotEndOfDay).
-					Scan(&activeObjectsCount).Error
+				totalObjectsCount = int64(len(allObjectIDs))
+				activeObjectsCount = int64(len(activeObjectIDs))
 
-				if err != nil {
-					log.Printf("⚠️ Ошибка подсчета активных объектов из axenta_object_snapshots для даты %s (partner_company_id=%d): %v",
-						dateKey, *contract.PartnerCompanyID, err)
-				} else {
-					log.Printf("✅ Найдено активных объектов для даты %s: %d", dateKey, activeObjectsCount)
-				}
+				log.Printf("✅ Всего найдено уникальных объектов для даты %s: %d (активных: %d)", dateKey, totalObjectsCount, activeObjectsCount)
 
 				// Если не нашли объекты в axenta_object_snapshots, проверяем, есть ли они вообще в БД
 				if totalObjectsCount == 0 && activeObjectsCount == 0 {
-					// Проверяем, есть ли объекты для этих аккаунтов вообще (без фильтра по дате)
+					// Проверяем, есть ли объекты для этих аккаунтов вообще (без фильтра по дате) во всех схемах
 					var anyObjectsCount int64
-					db.Model(&models.AxentaObjectSnapshot{}).
-						Where("account_external_id IN ?", childAccountIDs).
-						Count(&anyObjectsCount)
+					for _, company := range allCompanies {
+						tenantDBForSearch := database.GetTenantDBByID(company.ID)
+						if tenantDBForSearch == nil {
+							continue
+						}
+						var count int64
+						tenantDBForSearch.Model(&models.AxentaObjectSnapshot{}).
+							Where("account_external_id IN ?", childAccountIDs).
+							Count(&count)
+						anyObjectsCount += count
+					}
 
 					if anyObjectsCount > 0 {
 						log.Printf("⚠️ Объекты в axenta_object_snapshots для даты %s не найдены, но есть %d объектов для этих аккаунтов в БД (возможно, они были синхронизированы в другие дни)",
