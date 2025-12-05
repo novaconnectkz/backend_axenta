@@ -11,6 +11,7 @@ import (
 
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -49,7 +50,7 @@ func main() {
 		MaxFileSize: cfg.Audit.MaxFileSize,
 		MaxBackups:  cfg.Audit.MaxBackups,
 	}
-	
+
 	if cfg.Audit.LogToDB {
 		// Создаем таблицу для аудит-логов
 		if err := database.DB.AutoMigrate(&audit.AuditLog{}); err != nil {
@@ -57,7 +58,7 @@ func main() {
 		} else {
 			log.Println("✅ Audit logs table created/verified")
 		}
-		
+
 		// Инициализируем логгер с поддержкой БД
 		dbLogger, err := audit.NewDBLogger(auditCfg, database.DB)
 		if err != nil {
@@ -96,11 +97,11 @@ func main() {
 	// Инициализируем сервис интеграции с 1С
 	api.InitOneCService()
 	log.Println("✅ 1C Integration Service initialized successfully")
-	
+
 	// Инициализируем сервис интеграции с Telegram
 	api.InitTelegramService()
 	log.Println("✅ Telegram Integration Service initialized successfully")
-	
+
 	// Инициализируем сервис интеграции с MAX
 	api.InitMaxService()
 	log.Println("✅ MAX Integration Service initialized successfully")
@@ -116,11 +117,29 @@ func main() {
 	}
 
 	// Инициализируем планировщик ежедневных снимков партнерских договоров
-	partnerSnapshotScheduler := services.NewPartnerSnapshotScheduler()
-	if err := partnerSnapshotScheduler.Start(); err != nil {
-		log.Printf("⚠️ Partner Snapshot Scheduler failed to start: %v", err)
+	// Проверяем, включен ли планировщик через переменную окружения
+	enableSnapshotScheduler := os.Getenv("ENABLE_SNAPSHOT_SCHEDULER")
+	if enableSnapshotScheduler == "" {
+		// По умолчанию включаем планировщик только в development режиме
+		// В production нужно явно установить ENABLE_SNAPSHOT_SCHEDULER=true
+		enableSnapshotScheduler = "false"
+		if cfg.IsDevelopment() {
+			enableSnapshotScheduler = "true"
+			log.Println("ℹ️ Планировщик снимков включен по умолчанию в development режиме")
+		} else {
+			log.Println("ℹ️ Планировщик снимков отключен по умолчанию в production. Установите ENABLE_SNAPSHOT_SCHEDULER=true для включения")
+		}
+	}
+
+	if enableSnapshotScheduler == "true" || enableSnapshotScheduler == "1" {
+		partnerSnapshotScheduler := services.NewPartnerSnapshotScheduler()
+		if err := partnerSnapshotScheduler.Start(); err != nil {
+			log.Printf("⚠️ Partner Snapshot Scheduler failed to start: %v", err)
+		} else {
+			log.Println("✅ Partner Snapshot Scheduler started (daily at 21:20 UTC / 00:20 MSK)")
+		}
 	} else {
-		log.Println("✅ Partner Snapshot Scheduler started (daily at 21:01 UTC / 00:01 MSK)")
+		log.Println("⚠️ Partner Snapshot Scheduler отключен (ENABLE_SNAPSHOT_SCHEDULER != true)")
 	}
 
 	// Инициализируем систему уведомлений - временно отключено
@@ -223,7 +242,7 @@ func main() {
 		c.JSON(200, gin.H{"status": "success", "message": "pong"})
 	})
 	r.POST("/api/auth/login", api.Login)
-	
+
 	// Документация по интеграциям (публичный доступ)
 	r.GET("/docs/TELEGRAM_INTEGRATION.md", api.GetTelegramIntegrationDocs)
 	r.GET("/api/docs/telegram", api.GetTelegramIntegrationDocs) // Альтернативный маршрут
@@ -779,15 +798,15 @@ func main() {
 	// Важно: более специфичные роуты (с дополнительными параметрами) должны быть зарегистрированы ПЕРЕД общими
 	// Например: /contracts/:id/objects должен быть ПЕРЕД /contracts/:id
 	log.Println("🔧 Регистрация роутов для договоров...")
-	
+
 	// Временный эндпоинт для отладки данных из Axenta Cloud
 	apiGroup.GET("/contracts/debug-axenta-objects", api.DebugAxentaPartnerObjects)
 	log.Println("✅ Зарегистрирован GET /api/auth/contracts/debug-axenta-objects -> DebugAxentaPartnerObjects")
-	
+
 	// Эндпоинт для очистки кэша партнерских объектов
 	apiGroup.POST("/contracts/clear-partner-cache", api.ClearPartnerObjectsCache)
 	log.Println("✅ Зарегистрирован POST /api/auth/contracts/clear-partner-cache -> ClearPartnerObjectsCache")
-	
+
 	apiGroup.GET("/contracts/expiring", api.GetExpiringContracts)
 
 	// Роуты для работы с объектами договора (регистрируем ПЕРЕД общими роутами)
@@ -810,25 +829,25 @@ func main() {
 	// Приложения к договорам (специфичный маршрут - ПЕРЕД общими)
 	apiGroup.GET("/contracts/:contract_id/appendices", api.GetContractAppendices)
 	log.Println("✅ Зарегистрирован GET /api/auth/contracts/:contract_id/appendices -> GetContractAppendices")
-	
+
 	// Специфичные роуты для договоров
 	apiGroup.GET("/contracts/:contract_id/stats", api.GetContractStats) // Progressive Loading
 	apiGroup.GET("/contracts/:contract_id/partner-snapshots", api.GetPartnerContractSnapshots)
 	apiGroup.POST("/contracts/partner-snapshots/create", api.CreatePartnerSnapshots)
 	apiGroup.POST("/contracts/:contract_id/partner-snapshots/generate", api.GeneratePartnerSnapshotsForPeriod)
 	log.Println("✅ Зарегистрирован POST /api/auth/contracts/:contract_id/partner-snapshots/generate -> GeneratePartnerSnapshotsForPeriod")
-	
+
 	// Расчет стоимости договора (специфичный маршрут - ПЕРЕД общими)
 	apiGroup.GET("/contracts/:contract_id/calculate", api.CalculateContractCost)
 	log.Println("✅ Зарегистрирован GET /api/auth/contracts/:contract_id/calculate -> CalculateContractCost")
-	
+
 	// Общие роуты для договоров (ПОСЛЕ специфичных)
 	apiGroup.GET("/contracts", api.GetContracts)
 	apiGroup.GET("/contracts/:contract_id", api.GetContract)
 	apiGroup.POST("/contracts", api.CreateContract)
 	apiGroup.PUT("/contracts/:contract_id", api.UpdateContract)
 	apiGroup.DELETE("/contracts/:contract_id", api.DeleteContract)
-	
+
 	// История задач создания снимков
 	apiGroup.GET("/snapshot-jobs", api.GetSnapshotJobs)
 	apiGroup.GET("/snapshot-jobs/stats", api.GetSnapshotJobStats)
@@ -837,11 +856,11 @@ func main() {
 	apiGroup.DELETE("/snapshot-jobs/cleanup", api.DeleteOldSnapshotJobs)
 	apiGroup.DELETE("/snapshot-jobs/clear-all", api.ClearAllSnapshotHistory)
 	apiGroup.POST("/snapshot-jobs/trigger", api.TriggerManualSnapshot)
-	
+
 	// Тестовый endpoint без авторизации (TODO: удалить в продакшене)
 	r.POST("/api/test/snapshot-jobs/trigger", api.TriggerManualSnapshot)
 	log.Println("⚠️ Зарегистрирован ТЕСТОВЫЙ endpoint /api/test/snapshot-jobs/trigger (без авторизации)")
-	
+
 	log.Println("✅ Зарегистрированы роуты для истории создания снимков (snapshot-jobs)")
 
 	// Настройки снимков
@@ -858,7 +877,7 @@ func main() {
 	r.POST("/api/test/axenta-sync/trigger", api.TriggerAxentaSync)
 	r.POST("/api/test/axenta-sync/trigger/", api.TriggerAxentaSync)
 	log.Println("⚠️ Зарегистрирован ТЕСТОВЫЙ endpoint /api/test/axenta-sync/trigger (без авторизации)")
-	
+
 	log.Println("✅ Все роуты для договоров зарегистрированы")
 	// apiGroup.POST("/contracts/:contract_id/appendices", api.CreateContractAppendix)
 	// apiGroup.PUT("/contract-appendices/:id", api.UpdateContractAppendix)
@@ -895,13 +914,13 @@ func main() {
 	apiGroup.GET("/billing/contracts/:contract_id/breakdown", api.GetContractBillingBreakdown)
 	apiGroup.GET("/billing/contracts/by-number/:number/analysis", api.GetContractBillingAnalysis) // Отладочный эндпоинт для анализа договора
 	apiGroup.POST("/billing/contracts/:contract_id/invoice", api.GenerateInvoice)
-	
+
 	// Счета - ВАЖНО: специфичные роуты (/overdue) ПЕРЕД параметризованными (/:id)
 	log.Println("🔧 Регистрация роутов для счетов (invoices)...")
 	apiGroup.GET("/billing/invoices", api.GetInvoices)
 	apiGroup.GET("/billing/invoices/overdue", api.GetOverdueInvoices) // Переместили сюда!
 	apiGroup.GET("/billing/invoices/:id", api.GetInvoice)
-	apiGroup.POST("/billing/invoices/:id/send", api.SendInvoice)      // Отправка счета клиенту
+	apiGroup.POST("/billing/invoices/:id/send", api.SendInvoice) // Отправка счета клиенту
 	apiGroup.POST("/billing/invoices/:id/payment", api.ProcessPayment)
 	apiGroup.POST("/billing/invoices/:id/manual-payment", api.AddManualPayment) // Ручной платёж
 	log.Println("✅ Зарегистрирован POST /api/auth/billing/invoices/:id/manual-payment -> AddManualPayment")
@@ -939,7 +958,7 @@ func main() {
 	// Системные настройки
 	apiGroup.GET("/system/settings", api.GetSystemSettings)
 	apiGroup.PUT("/system/settings", api.UpdateSystemSettings)
-	
+
 	// Настройки синхронизации AxentaSync
 	apiGroup.GET("/system/axenta-sync-settings", api.GetAxentaSyncSettings)
 	apiGroup.PUT("/system/axenta-sync-settings", api.UpdateAxentaSyncSettings)
@@ -1095,9 +1114,9 @@ func main() {
 
 	// Корзина (удаленные элементы)
 	log.Println("🔧 Регистрация роутов для корзины...")
-	apiGroup.GET("/trash/items", api.GetTrashItems)                      // Список удаленных элементов
-	apiGroup.GET("/trash/stats", api.GetTrashStats)                      // Статистика корзины
-	apiGroup.POST("/trash/items/:id/restore", api.RestoreItem)           // Восстановить элемент
+	apiGroup.GET("/trash/items", api.GetTrashItems)                          // Список удаленных элементов
+	apiGroup.GET("/trash/stats", api.GetTrashStats)                          // Статистика корзины
+	apiGroup.POST("/trash/items/:id/restore", api.RestoreItem)               // Восстановить элемент
 	apiGroup.DELETE("/trash/items/:id/permanent", api.PermanentlyDeleteItem) // Окончательно удалить элемент
 
 	// Категории оборудования - временно отключено
@@ -1149,8 +1168,8 @@ func main() {
 	// Email SMTP интеграция (требует tenant middleware для company_id)
 	// КРИТИЧНО: Хотя NotificationSettings в public схеме, данные фильтруются по company_id
 	emailAuthGroup := r.Group("/api/auth/email")
-	emailAuthGroup.Use(authMiddleware.RequireAuth())      // Auth middleware для проверки токена
-	emailAuthGroup.Use(tenantMiddleware.SetTenant())      // Tenant middleware для установки company_id
+	emailAuthGroup.Use(authMiddleware.RequireAuth()) // Auth middleware для проверки токена
+	emailAuthGroup.Use(tenantMiddleware.SetTenant()) // Tenant middleware для установки company_id
 	emailAuthGroup.POST("/setup", api.SetupEmailIntegration)
 	emailAuthGroup.PUT("/setup", api.UpdateEmailIntegration)
 	emailAuthGroup.GET("/config", api.GetEmailConfig)
