@@ -46,49 +46,55 @@ func (s *AxentaSyncService) SyncAllAdmins() {
 
 	log.Printf("AxentaSync: найдено %d активных компаний для синхронизации", len(companies))
 
-	// Получаем токен из настроек снимков (хранится в базе суперадмина, ID=1)
-	const superAdminCompanyID = 1
-	superAdminTenantDB := database.GetTenantDBByID(superAdminCompanyID)
-	if superAdminTenantDB == nil {
-		log.Printf("AxentaSync: не удалось получить tenant DB для суперадмина (ID=1)")
+	// Получаем токен из настроек снимков (хранится в схеме первой компании с минимальным ID)
+	// Ищем первую компанию из списка
+	if len(companies) == 0 {
+		log.Printf("AxentaSync: нет активных компаний для синхронизации")
 		return
 	}
 
-	// Получаем токен из настроек снимков
+	firstCompany := companies[0]
+	firstCompanyTenantDB := database.GetTenantDBByID(firstCompany.ID)
+	if firstCompanyTenantDB == nil {
+		log.Printf("AxentaSync: не удалось получить tenant DB для первой компании (ID=%d)", firstCompany.ID)
+		return
+	}
+
+	// Получаем токен из настроек снимков (с company_id = 1 - глобальные настройки)
 	var snapshotSettings models.SnapshotSettings
 	var syncToken string
-	var adminAccountID uint = superAdminCompanyID
+	var adminAccountID uint = firstCompany.ID
 
-	if err := superAdminTenantDB.
-		Where("company_id = ? AND is_active = ?", superAdminCompanyID, true).
+	if err := firstCompanyTenantDB.
+		Where("company_id = ? AND is_active = ?", 1, true).
 		First(&snapshotSettings).Error; err != nil {
-		log.Printf("AxentaSync: не найдено настроек снимков в базе суперадмина (ID=1): %v", err)
+		log.Printf("AxentaSync: не найдено настроек снимков в схеме %s (company_id=1): %v", firstCompany.DatabaseSchema, err)
 		log.Printf("AxentaSync: попытка найти токен в user_tokens...")
-		
-		// Fallback: пытаемся найти токен в user_tokens
+
+		// Fallback: пытаемся найти токен в user_tokens первой компании
 		var userToken models.UserToken
-		if err := superAdminTenantDB.
+		if err := firstCompanyTenantDB.
 			Where("is_active = ? AND expires_at > ?", true, time.Now()).
 			Order("updated_at DESC").
 			First(&userToken).Error; err != nil {
-			log.Printf("AxentaSync: не найдено активных токенов в базе суперадмина (ID=1): %v", err)
+			log.Printf("AxentaSync: не найдено активных токенов в схеме %s: %v", firstCompany.DatabaseSchema, err)
 			return
 		}
-		
+
 		syncToken = userToken.Token
 		adminAccountID = userToken.AccountID
 		if adminAccountID == 0 {
-			adminAccountID = superAdminCompanyID
+			adminAccountID = firstCompany.ID
 		}
 		log.Printf("AxentaSync: используем токен из user_tokens (account_id=%d) для синхронизации всех компаний", adminAccountID)
-		
-		// Сохраняем токен в настройки для будущего использования
+
+		// Сохраняем токен в настройки для будущего использования (с company_id = 1 - глобальные настройки)
 		snapshotSettings = models.SnapshotSettings{
-			CompanyID:   superAdminCompanyID,
+			CompanyID:   1, // Глобальные настройки с company_id = 1
 			AxentaToken: syncToken,
 			IsActive:    true,
 		}
-		if err := superAdminTenantDB.Save(&snapshotSettings).Error; err != nil {
+		if err := firstCompanyTenantDB.Save(&snapshotSettings).Error; err != nil {
 			log.Printf("AxentaSync: предупреждение - не удалось сохранить токен в настройки: %v", err)
 		}
 	} else {
@@ -98,7 +104,7 @@ func (s *AxentaSyncService) SyncAllAdmins() {
 			log.Printf("AxentaSync: токен в настройках пустой, пропускаем синхронизацию")
 			return
 		}
-		log.Printf("AxentaSync: используем токен из настроек снимков (ID=1) для синхронизации всех компаний")
+		log.Printf("AxentaSync: используем токен из настроек снимков (схема: %s, company_id=1) для синхронизации всех компаний", firstCompany.DatabaseSchema)
 	}
 
 	// Для каждой компании синхронизируем данные в её tenant схему используя найденный токен
@@ -110,7 +116,7 @@ func (s *AxentaSyncService) SyncAllAdmins() {
 			continue
 		}
 
-		log.Printf("AxentaSync: синхронизация для компании %d (%s), используя токен с admin_account_id=%d", 
+		log.Printf("AxentaSync: синхронизация для компании %d (%s), используя токен с admin_account_id=%d",
 			company.ID, company.DatabaseSchema, adminAccountID)
 
 		// Синхронизируем используя tenant DB и найденный токен (который имеет доступ ко всей иерархии)
