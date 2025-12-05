@@ -28,14 +28,14 @@ type Contract struct {
 
 	// Тип договора
 	ContractType string `json:"contract_type" gorm:"type:varchar(20);default:'client'"` // client или partner
-	
+
 	// Для партнерских договоров - ID учетной записи партнера
 	// Все объекты из этой учетной записи будут тарифицироваться
 	PartnerCompanyID *uint    `json:"partner_company_id" gorm:"index"`
 	PartnerCompany   *Company `json:"partner_company,omitempty" gorm:"foreignKey:PartnerCompanyID;constraint:-"`
 
 	// Клиент
-	ClientType      string `json:"client_type" gorm:"type:varchar(20)"` // individual или organization
+	ClientType      string `json:"client_type" gorm:"type:varchar(50)"` // organization, individual_entrepreneur, physical_person
 	ClientName      string `json:"client_name" gorm:"not null;type:varchar(200)"`
 	ClientShortName string `json:"client_short_name" gorm:"type:varchar(200)"` // Сокращенное название с ОПФ (для организаций)
 	ClientINN       string `json:"client_inn" gorm:"type:varchar(20)"`
@@ -85,10 +85,10 @@ type Contract struct {
 	Currency    string          `json:"currency" gorm:"default:'RUB';type:varchar(3)"`
 
 	// Скидки (для партнерских договоров) - используется только один тип
-	DiscountType          string          `json:"discount_type" gorm:"type:varchar(20);default:'none'"` // none, manual_percent, manual_fixed, auto
+	DiscountType          string          `json:"discount_type" gorm:"type:varchar(20);default:'none'"`       // none, manual_percent, manual_fixed, auto
 	ManualDiscountPercent decimal.Decimal `json:"manual_discount_percent" gorm:"type:decimal(5,2);default:0"` // 0-100 (%)
-	ManualDiscountFixed   decimal.Decimal `json:"manual_discount_fixed" gorm:"type:decimal(12,2);default:0"` // Фиксированная скидка (₽)
-	UseAutoDiscount       bool            `json:"use_auto_discount" gorm:"default:false"` // Использовать автоматические скидки
+	ManualDiscountFixed   decimal.Decimal `json:"manual_discount_fixed" gorm:"type:decimal(12,2);default:0"`  // Фиксированная скидка (₽)
+	UseAutoDiscount       bool            `json:"use_auto_discount" gorm:"default:false"`                     // Использовать автоматические скидки
 
 	// Страны и реквизиты (поля не используются в текущей версии БД)
 	SellerCountryCode string           `json:"seller_country_code" gorm:"-"` // Страна продавца (не используется)
@@ -246,10 +246,10 @@ type TariffPlan struct {
 
 	// Дополнительные поля для тарификации
 	SetupFee         decimal.Decimal `json:"setup_fee" gorm:"type:decimal(10,2);default:0.00"`       // Плата за подключение
-	MinimumPeriod    int             `json:"minimum_period" gorm:"default:1"`                     // Минимальный период в месяцах
+	MinimumPeriod    int             `json:"minimum_period" gorm:"default:1"`                        // Минимальный период в месяцах
 	DiscountPercent  decimal.Decimal `json:"discount_percent" gorm:"type:decimal(5,2);default:0.00"` // Скидка в процентах
-	IsPromotional    bool            `json:"is_promotional" gorm:"default:false"`                 // Акционный тариф
-	PromotionalUntil *time.Time      `json:"promotional_until"`                                   // До какой даты действует акция
+	IsPromotional    bool            `json:"is_promotional" gorm:"default:false"`                    // Акционный тариф
+	PromotionalUntil *time.Time      `json:"promotional_until"`                                      // До какой даты действует акция
 
 	// Тарификация по объектам
 	PricePerObject   decimal.Decimal `json:"price_per_object" gorm:"type:decimal(10,2)"` // Цена за объект

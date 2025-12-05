@@ -42,95 +42,134 @@ type partnerObjectsCacheEntry struct {
 
 // getPartnerObjectsCountFromAccount получает количество активных объектов партнера из /api/cms/accounts/
 func getPartnerObjectsCountFromAccount(partnerCompanyID uint, userToken string) (int, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: 60 * time.Second} // Увеличиваем timeout для пагинации
 
-	// Используем СПИСОК accounts БЕЗ фильтра и найдем нужную компанию
-	// (параметр ?id= фильтрует не по полю id, а по другому критерию)
-	accountURL := "https://axenta.cloud/api/cms/accounts/?page=1&per_page=10000"
-
-	req, err := http.NewRequest("GET", accountURL, nil)
-	if err != nil {
-		return 0, fmt.Errorf("ошибка создания запроса: %w", err)
-	}
-	req.Header.Set("Authorization", "Token "+userToken)
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, fmt.Errorf("ошибка запроса к Axenta Cloud: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return 0, fmt.Errorf("Axenta Cloud вернул статус %d: %s", resp.StatusCode, string(bodyBytes))
+	// Функция-помощник для извлечения числа из разных типов
+	getIntValue := func(val interface{}) (int, bool) {
+		switch v := val.(type) {
+		case float64:
+			return int(v), true
+		case int:
+			return v, true
+		case int64:
+			return int(v), true
+		case int32:
+			return int(v), true
+		case float32:
+			return int(v), true
+		default:
+			return 0, false
+		}
 	}
 
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return 0, fmt.Errorf("ошибка чтения тела ответа: %w", err)
+	// Функция для получения ID из аккаунта
+	getAccountID := func(acc map[string]interface{}) (uint, bool) {
+		if val, ok := acc["id"]; ok {
+			if id, ok := getIntValue(val); ok {
+				return uint(id), true
+			}
+		}
+		return 0, false
 	}
 
-	responsePreview := string(bodyBytes)
-	if len(responsePreview) > 500 {
-		responsePreview = responsePreview[:500] + "..."
-	}
-	log.Printf("🔍 Сырой ответ от /api/cms/accounts/?id=%d: %s", partnerCompanyID, responsePreview)
+	// Пробуем сначала прямую загрузку по ID (если такой эндпоинт существует)
+	// Но пока используем пагинацию
 
-	// Пробуем сначала как объект с results
-	var listResponse struct {
-		Results []map[string]interface{} `json:"results"`
-		Count   int                      `json:"count"`
-	}
+	page := 1
+	perPage := 10000
+	maxPages := 10 // Ограничение для безопасности
 
-	var accounts []map[string]interface{}
+	for page <= maxPages {
+		accountURL := fmt.Sprintf("https://axenta.cloud/api/cms/accounts/?page=%d&per_page=%d", page, perPage)
 
-	// Если это объект с results
-	if err := json.Unmarshal(bodyBytes, &listResponse); err == nil && len(listResponse.Results) > 0 {
-		accounts = listResponse.Results
-		log.Printf("✅ Парсим как объект с results, найдено аккаунтов: %d", len(accounts))
-	} else {
-		// Если это просто массив
-		if err := json.Unmarshal(bodyBytes, &accounts); err != nil {
+		req, err := http.NewRequest("GET", accountURL, nil)
+		if err != nil {
+			return 0, fmt.Errorf("ошибка создания запроса: %w", err)
+		}
+		req.Header.Set("Authorization", "Token "+userToken)
+
+		resp, err := client.Do(req)
+		if err != nil {
+			return 0, fmt.Errorf("ошибка запроса к Axenta Cloud: %w", err)
+		}
+
+		bodyBytes, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if err != nil {
+			return 0, fmt.Errorf("ошибка чтения тела ответа: %w", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			return 0, fmt.Errorf("Axenta Cloud вернул статус %d: %s", resp.StatusCode, string(bodyBytes))
+		}
+
+		// Парсим ответ
+		var listResponse struct {
+			Results  []map[string]interface{} `json:"results"`
+			Count    int                      `json:"count"`
+			Next     string                   `json:"next"`
+			Previous string                   `json:"previous"`
+		}
+
+		if err := json.Unmarshal(bodyBytes, &listResponse); err != nil {
 			return 0, fmt.Errorf("ошибка декодирования ответа: %w", err)
 		}
-		log.Printf("✅ Парсим как массив, найдено аккаунтов: %d", len(accounts))
-	}
 
-	// Ищем компанию с нужным ID
-	var account map[string]interface{}
-	found := false
-	for _, acc := range accounts {
-		if accID, ok := acc["id"].(float64); ok && uint(accID) == partnerCompanyID {
-			account = acc
-			found = true
-			break
+		log.Printf("🔍 Страница %d: найдено аккаунтов: %d, всего: %d, следующая страница: %v",
+			page, len(listResponse.Results), listResponse.Count, listResponse.Next != "")
+
+		// Ищем компанию с нужным ID на текущей странице
+		for _, acc := range listResponse.Results {
+			if accID, ok := getAccountID(acc); ok && accID == partnerCompanyID {
+				log.Printf("✅ Найдена учетная запись ID=%d на странице %d", partnerCompanyID, page)
+
+				// Извлекаем количество объектов
+				objectsActive := 0
+				fieldNames := []string{"objectsActive", "objects_active", "objects_count", "objectsCount"}
+				for _, fieldName := range fieldNames {
+					if val, ok := acc[fieldName]; ok {
+						if count, ok := getIntValue(val); ok && count > 0 {
+							objectsActive = count
+							log.Printf("✅ Найдено количество активных объектов в поле '%s': %d", fieldName, count)
+							break
+						}
+					}
+				}
+
+				// Если не нашли активных, пробуем total
+				if objectsActive == 0 {
+					totalFieldNames := []string{"objectsTotal", "objects_total", "objects_count", "objectsCount"}
+					for _, fieldName := range totalFieldNames {
+						if val, ok := acc[fieldName]; ok {
+							if count, ok := getIntValue(val); ok && count > 0 {
+								objectsActive = count
+								log.Printf("✅ Используем общее количество объектов из поля '%s': %d", fieldName, count)
+								break
+							}
+						}
+					}
+				}
+
+				log.Printf("✅ Статистика из /api/cms/accounts/ для ID=%d: активных=%d (найдено на странице %d)",
+					partnerCompanyID, objectsActive, page)
+				return objectsActive, nil
+			}
 		}
+
+		// Если следующей страницы нет, прекращаем поиск
+		if listResponse.Next == "" {
+			log.Printf("⚠️ Учетная запись ID=%d не найдена ни на одной странице (проверено страниц: %d, всего аккаунтов: %d)",
+				partnerCompanyID, page, listResponse.Count)
+			return 0, nil
+		}
+
+		// Переходим на следующую страницу
+		page++
 	}
 
-	if !found {
-		log.Printf("⚠️ Учетная запись ID=%d не найдена в /api/cms/accounts/", partnerCompanyID)
-		return 0, nil
-	}
-
-	// Пробуем разные варианты названий полей
-	objectsActive := 0
-	if val, ok := account["objectsActive"].(float64); ok {
-		objectsActive = int(val)
-	} else if val, ok := account["objects_active"].(float64); ok {
-		objectsActive = int(val)
-	}
-
-	objectsTotal := 0
-	if val, ok := account["objectsTotal"].(float64); ok {
-		objectsTotal = int(val)
-	} else if val, ok := account["objects_total"].(float64); ok {
-		objectsTotal = int(val)
-	}
-
-	log.Printf("✅ Статистика из /api/cms/accounts/?id=%d: активных=%d, всего=%d (источник: список accounts)",
-		partnerCompanyID, objectsActive, objectsTotal)
-
-	return objectsActive, nil
+	log.Printf("⚠️ Учетная запись ID=%d не найдена (проверено максимум страниц: %d)", partnerCompanyID, maxPages)
+	return 0, nil
 }
 
 // getPartnerObjectsCountFromSnapshot получает количество активных объектов партнера из AxentaAccountSnapshot
@@ -722,6 +761,14 @@ func GetContracts(c *gin.Context) {
 		log.Printf("🚀 Начинаем параллельную загрузку статистики для %d партнерских компаний", len(partnerCompanyIDs))
 		startTime := time.Now()
 
+		// Создаем карту partnerCompanyID -> adminAccountID для быстрого доступа
+		partnerToAdminMap := make(map[uint]uint)
+		for i := range contracts {
+			if contracts[i].ContractType == "partner" && contracts[i].PartnerCompanyID != nil {
+				partnerToAdminMap[*contracts[i].PartnerCompanyID] = contracts[i].AdminAccountID
+			}
+		}
+
 		// Собираем partner company IDs в слайс для удобства
 		partnerCompanyIDsList := make([]uint, 0, len(partnerCompanyIDs))
 		for id := range partnerCompanyIDs {
@@ -738,11 +785,34 @@ func GetContracts(c *gin.Context) {
 				semaphore <- struct{}{}
 				defer func() { <-semaphore }() // Освобождаем слот
 
-				// Загружаем статистику
+				// Загружаем статистику из API
 				objectsCount, err := getPartnerObjectsCountFromAccount(companyID, userToken)
-				if err != nil {
-					log.Printf("⚠️ Ошибка получения статистики для партнера ID=%d: %v", companyID, err)
-					return
+				source := "API"
+
+				// Если ошибка или количество = 0, пробуем получить из snapshot
+				if err != nil || objectsCount == 0 {
+					if err != nil {
+						log.Printf("⚠️ Ошибка получения статистики из API для партнера ID=%d: %v, пробуем snapshot", companyID, err)
+					} else {
+						log.Printf("⚠️ Количество объектов из API = 0 для партнера ID=%d, пробуем snapshot", companyID)
+					}
+
+					// Получаем adminAccountID из карты
+					adminAccountID, hasAdmin := partnerToAdminMap[companyID]
+
+					if hasAdmin && adminAccountID > 0 {
+						// Используем tenantDB для получения snapshot
+						snapshotCount := getPartnerObjectsCountFromSnapshot(companyID, adminAccountID, tenantDB)
+						if snapshotCount > 0 {
+							objectsCount = snapshotCount
+							source = "snapshot"
+							log.Printf("✅ Получено количество объектов из snapshot для партнера ID=%d: %d", companyID, snapshotCount)
+						} else {
+							log.Printf("⚠️ Snapshot тоже не содержит объектов для партнера ID=%d", companyID)
+						}
+					} else {
+						log.Printf("⚠️ Не удалось найти adminAccountID для партнера ID=%d", companyID)
+					}
 				}
 
 				// Создаем массив объектов нужной длины (frontend использует len(Objects))
@@ -763,7 +833,7 @@ func GetContracts(c *gin.Context) {
 						contracts[i].PartnerCompanyID != nil &&
 						*contracts[i].PartnerCompanyID == companyID {
 						partnerObjectsMap[contracts[i].ID] = fakeObjects
-						log.Printf("📊 Партнерский договор ID=%d: %d объектов (из /api/cms/accounts/)", contracts[i].ID, len(fakeObjects))
+						log.Printf("📊 Партнерский договор ID=%d: %d объектов (из %s)", contracts[i].ID, len(fakeObjects), source)
 					}
 				}
 				partnerObjectsMutex.Unlock()
@@ -789,11 +859,32 @@ func GetContracts(c *gin.Context) {
 		// Для партнерских договоров используем объекты из учетной записи партнера
 		if contracts[i].ContractType == "partner" {
 			if partnerObjects, ok := partnerObjectsMap[contracts[i].ID]; ok {
+				objectsCount := len(partnerObjects)
 				contracts[i].Objects = partnerObjects
-				log.Printf("📊 Партнерский договор ID=%d: %d объектов", contracts[i].ID, len(partnerObjects))
+				log.Printf("📊 Партнерский договор ID=%d: %d объектов (из API)", contracts[i].ID, objectsCount)
+
+				// Если количество объектов = 0, пробуем получить из snapshot
+				if objectsCount == 0 && contracts[i].PartnerCompanyID != nil {
+					log.Printf("⚠️ Партнерский договор ID=%d: количество объектов из API = 0, пробуем snapshot", contracts[i].ID)
+					snapshotCount := getPartnerObjectsCountFromSnapshot(*contracts[i].PartnerCompanyID, adminAccountID, tenantDB)
+					if snapshotCount > 0 {
+						objectsCount = snapshotCount
+						// Обновляем массив объектов
+						fakeObjects := make([]models.Object, snapshotCount)
+						for j := 0; j < snapshotCount; j++ {
+							fakeObjects[j] = models.Object{
+								ID:        uint(j + 1),
+								CompanyID: *contracts[i].PartnerCompanyID,
+								Name:      fmt.Sprintf("Object %d", j+1),
+							}
+						}
+						contracts[i].Objects = fakeObjects
+						log.Printf("✅ Получено %d объектов из snapshot для договора ID=%d", snapshotCount, contracts[i].ID)
+					}
+				}
 
 				// Если сумма договора = 0, но есть объекты, пересчитываем сумму
-				if contracts[i].TotalAmount.IsZero() && len(partnerObjects) > 0 && contracts[i].TariffPlanID != nil {
+				if contracts[i].TotalAmount.IsZero() && objectsCount > 0 && contracts[i].TariffPlanID != nil {
 					if plan, ok := tariffPlansMap[*contracts[i].TariffPlanID]; ok && !plan.Price.IsZero() {
 						// Рассчитываем количество месяцев
 						months := 1
@@ -809,7 +900,6 @@ func GetContracts(c *gin.Context) {
 						}
 
 						// Пересчитываем сумму: количество объектов × цена тарифа за месяц × количество месяцев
-						objectsCount := len(partnerObjects)
 						totalAmount := plan.Price.Mul(decimal.NewFromInt(int64(objectsCount))).Mul(decimal.NewFromInt(int64(months)))
 
 						// Обновляем сумму в БД
@@ -820,12 +910,18 @@ func GetContracts(c *gin.Context) {
 							log.Printf("✅ Автоматически пересчитана сумма договора %d: %s (объектов: %d, месяцев: %d, цена/мес: %s)",
 								contracts[i].ID, totalAmount.String(), objectsCount, months, plan.Price.String())
 						}
+					} else {
+						log.Printf("⚠️ Не удалось найти тарифный план для договора %d (TariffPlanID=%v)", contracts[i].ID, contracts[i].TariffPlanID)
 					}
+				} else if objectsCount == 0 {
+					log.Printf("⚠️ Партнерский договор ID=%d: количество объектов = 0, сумма не пересчитывается", contracts[i].ID)
 				}
 			} else {
 				contracts[i].Objects = make([]models.Object, 0)
-				// Если объектов нет, но сумма не 0, пробуем получить из snapshot
-				if contracts[i].TotalAmount.IsZero() && contracts[i].PartnerCompanyID != nil && userToken != "" {
+				// Если объектов нет, но сумма = 0, пробуем получить из snapshot (snapshot не требует userToken)
+				if contracts[i].TotalAmount.IsZero() && contracts[i].PartnerCompanyID != nil {
+					log.Printf("🔍 Партнерский договор ID=%d: объекты не загружены, пробуем snapshot (PartnerCompanyID=%d)",
+						contracts[i].ID, *contracts[i].PartnerCompanyID)
 					snapshotCount := getPartnerObjectsCountFromSnapshot(*contracts[i].PartnerCompanyID, adminAccountID, tenantDB)
 					if snapshotCount > 0 {
 						// Создаем fake объекты для отображения
@@ -860,12 +956,22 @@ func GetContracts(c *gin.Context) {
 								if err := tenantDB.Model(&contracts[i]).Update("total_amount", totalAmount).Error; err != nil {
 									log.Printf("⚠️ Ошибка обновления total_amount договора %d: %v", contracts[i].ID, err)
 								} else {
-									log.Printf("✅ Автоматически пересчитана сумма договора %d из snapshot: %s (объектов: %d)",
-										contracts[i].ID, totalAmount.String(), snapshotCount)
+									log.Printf("✅ Автоматически пересчитана сумма договора %d из snapshot: %s (объектов: %d, месяцев: %d, цена/мес: %s)",
+										contracts[i].ID, totalAmount.String(), snapshotCount, months, plan.Price.String())
 								}
+							} else {
+								log.Printf("⚠️ Не удалось найти тарифный план для договора %d (TariffPlanID=%v)", contracts[i].ID, contracts[i].TariffPlanID)
 							}
+						} else {
+							log.Printf("⚠️ У договора %d не установлен тарифный план (TariffPlanID=nil)", contracts[i].ID)
 						}
+					} else {
+						log.Printf("⚠️ Snapshot не содержит объектов для партнерского договора ID=%d (PartnerCompanyID=%d)",
+							contracts[i].ID, *contracts[i].PartnerCompanyID)
 					}
+				} else if !contracts[i].TotalAmount.IsZero() {
+					log.Printf("ℹ️ Партнерский договор ID=%d: сумма уже установлена (%s), пропускаем пересчет",
+						contracts[i].ID, contracts[i].TotalAmount.String())
 				}
 			}
 			contracts[i].ContractObjects = make([]models.ContractObject, 0) // У партнерских договоров нет contract_objects
@@ -986,22 +1092,32 @@ func GetContractStats(c *gin.Context) {
 
 	objectsCount := 0
 
-	// Для партнерских договоров загружаем из Axenta Cloud
-	if contract.ContractType == "partner" && contract.PartnerCompanyID != nil && userToken != "" {
-		count, err := getPartnerObjectsCountFromAccount(*contract.PartnerCompanyID, userToken)
-		if err != nil {
-			log.Printf("⚠️ GetContractStats: Ошибка получения статистики для партнера ID=%d: %v", *contract.PartnerCompanyID, err)
+	// Для партнерских договоров загружаем из Axenta Cloud или snapshot
+	if contract.ContractType == "partner" && contract.PartnerCompanyID != nil {
+		// Сначала пробуем получить из API, если есть токен
+		if userToken != "" {
+			count, err := getPartnerObjectsCountFromAccount(*contract.PartnerCompanyID, userToken)
+			if err != nil {
+				log.Printf("⚠️ GetContractStats: Ошибка получения статистики из API для партнера ID=%d: %v, пробуем snapshot", *contract.PartnerCompanyID, err)
+			} else {
+				objectsCount = count
+				if objectsCount > 0 {
+					log.Printf("✅ GetContractStats: Получено количество объектов из API для партнера ID=%d: %d", *contract.PartnerCompanyID, objectsCount)
+				}
+			}
 		} else {
-			objectsCount = count
+			log.Printf("⚠️ GetContractStats: userToken отсутствует для договора %d, пробуем snapshot", contractID)
 		}
 
-		// Если из API получили 0, пробуем получить из snapshot
+		// Если из API получили 0 или токена нет, пробуем получить из snapshot
 		if objectsCount == 0 {
-			log.Printf("🔍 GetContractStats: Количество объектов из API = 0, пробуем получить из snapshot для партнера ID=%d", *contract.PartnerCompanyID)
+			log.Printf("🔍 GetContractStats: Количество объектов = 0, пробуем получить из snapshot для партнера ID=%d", *contract.PartnerCompanyID)
 			snapshotCount := getPartnerObjectsCountFromSnapshot(*contract.PartnerCompanyID, adminAccountID, tenantDB)
 			if snapshotCount > 0 {
 				objectsCount = snapshotCount
 				log.Printf("✅ GetContractStats: Получено количество объектов из snapshot: %d", objectsCount)
+			} else {
+				log.Printf("⚠️ GetContractStats: Snapshot тоже не содержит объектов для партнера ID=%d", *contract.PartnerCompanyID)
 			}
 		}
 	} else {
@@ -1011,10 +1127,45 @@ func GetContractStats(c *gin.Context) {
 			Where("contract_id = ? AND status = ?", contractID, "active").
 			Count(&count).Error; err == nil {
 			objectsCount = int(count)
+			log.Printf("✅ GetContractStats: Для клиентского договора %d найдено объектов: %d", contractID, objectsCount)
 		}
 	}
 
 	log.Printf("📊 GetContractStats: договор ID=%d, objects_count=%d", contractID, objectsCount)
+
+	// Пересчитываем сумму договора, если она = 0 и есть объекты
+	if contract.TotalAmount.IsZero() && objectsCount > 0 && contract.ContractType == "partner" && contract.TariffPlanID != nil {
+		// Получаем тарифный план
+		var tariffPlan models.BillingPlan
+		if err := tenantDB.Where("id = ?", *contract.TariffPlanID).First(&tariffPlan).Error; err == nil {
+			if !tariffPlan.Price.IsZero() {
+				// Рассчитываем количество месяцев
+				months := 1
+				if contract.StartDate != nil && contract.EndDate != nil {
+					duration := contract.EndDate.Sub(*contract.StartDate)
+					days := int(duration.Hours() / 24)
+					if days > 0 {
+						months = days / 30
+						if months == 0 {
+							months = 1
+						}
+					}
+				}
+
+				// Пересчитываем сумму: количество объектов × цена тарифа за месяц × количество месяцев
+				totalAmount := tariffPlan.Price.Mul(decimal.NewFromInt(int64(objectsCount))).Mul(decimal.NewFromInt(int64(months)))
+
+				// Обновляем сумму в БД
+				if err := tenantDB.Model(&contract).Update("total_amount", totalAmount).Error; err != nil {
+					log.Printf("⚠️ GetContractStats: Ошибка обновления total_amount договора %d: %v", contractID, err)
+				} else {
+					contract.TotalAmount = totalAmount
+					log.Printf("✅ GetContractStats: Автоматически пересчитана сумма договора %d: %s (объектов: %d, месяцев: %d, цена/мес: %s)",
+						contractID, totalAmount.String(), objectsCount, months, tariffPlan.Price.String())
+				}
+			}
+		}
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":        "success",
