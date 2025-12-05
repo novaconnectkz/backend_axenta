@@ -131,10 +131,18 @@ func GetPartnerContractSnapshots(c *gin.Context) {
 	// Если у договора есть partner_company_id, заполняем пропуски данными из axenta_account_snapshots
 	if contract.PartnerCompanyID != nil && *contract.PartnerCompanyID > 0 {
 		// Создаем карту существующих снимков по датам
+		// Также проверяем, не содержат ли они подозрительно мало объектов (возможно, это старые неправильные данные)
 		existingSnapshotsByDate := make(map[string]bool)
+		suspiciousSnapshotsByDate := make(map[string]bool) // Снимки с подозрительно малым количеством объектов
 		for _, snapshot := range snapshots {
 			dateKey := snapshot.SnapshotDate.Format("2006-01-02")
 			existingSnapshotsByDate[dateKey] = true
+			// Если снимок содержит 1 объект или меньше, считаем его подозрительным
+			// (обычно у партнеров должно быть больше объектов)
+			if snapshot.ActiveObjectsCount <= 1 {
+				suspiciousSnapshotsByDate[dateKey] = true
+				log.Printf("⚠️ Обнаружен подозрительный снимок для даты %s: только %d объектов, проверим axenta_account_snapshots", dateKey, snapshot.ActiveObjectsCount)
+			}
 		}
 
 		// Генерируем все даты в периоде
@@ -156,19 +164,66 @@ func GetPartnerContractSnapshots(c *gin.Context) {
 		for !currentDate.After(endDay) {
 			dateKey := currentDate.Format("2006-01-02")
 
-			// Если снимка нет для этой даты, пытаемся получить данные из axenta_account_snapshots
-			if !existingSnapshotsByDate[dateKey] {
-				log.Printf("🔍 Снимок для даты %s не найден, ищем в axenta_account_snapshots для partner_company_id=%d", dateKey, *contract.PartnerCompanyID)
+			// Если снимка нет для этой даты ИЛИ снимок подозрительный (мало объектов),
+			// пытаемся получить данные из axenta_account_snapshots
+			if !existingSnapshotsByDate[dateKey] || suspiciousSnapshotsByDate[dateKey] {
+				log.Printf("🔍 Снимок для даты %s не найден или подозрительный, ищем в axenta_account_snapshots для partner_company_id=%d", dateKey, *contract.PartnerCompanyID)
 
-				// Ищем ближайший снимок в axenta_account_snapshots (до или в этот день)
+				// Ищем снимок в axenta_account_snapshots, который был синхронизирован ДО или В этот день
+				// НЕ используем снимки после этой даты - это неправильно для исторических данных
 				var axentaSnapshot models.AxentaAccountSnapshot
-				// Ищем снимок, который был синхронизирован до или в этот день
 				snapshotEndOfDay := time.Date(currentDate.Year(), currentDate.Month(), currentDate.Day(), 23, 59, 59, 999999999, time.UTC)
 
-				if err := db.Where("external_account_id = ? AND admin_account_id = ? AND last_synced_at <= ?",
+				err := db.Where("external_account_id = ? AND admin_account_id = ? AND last_synced_at <= ?",
 					int64(*contract.PartnerCompanyID), adminAccountID, snapshotEndOfDay).
 					Order("last_synced_at DESC").
-					First(&axentaSnapshot).Error; err == nil {
+					First(&axentaSnapshot).Error
+
+				// Если не нашли снимок до этой даты, создаем запись с информацией об отсутствии данных
+				if err != nil {
+					log.Printf("⚠️ Снимок в axenta_account_snapshots для даты %s не найден (partner_company_id=%d): %v. Создаем запись об отсутствии данных.", dateKey, *contract.PartnerCompanyID, err)
+
+					// Создаем запись об отсутствии данных, чтобы пользователь мог видеть, что нужно запросить снимок
+					missingDataSnapshot := models.PartnerDailySnapshot{
+						AdminAccountID:     adminAccountID,
+						CompanyID:          adminAccountID,
+						ContractID:         contract.ID,
+						SnapshotDate:       currentDate,
+						PartnerCompanyID:   *contract.PartnerCompanyID,
+						TariffPlanID:       0, // Нет тарифа, т.к. данных нет
+						MonthlyPrice:       decimal.Zero,
+						DailyPrice:         decimal.Zero,
+						TotalObjectsCount:  0,
+						ActiveObjectsCount: 0,
+						DiscountType:       "none",
+						DiscountPercent:    decimal.Zero,
+						DiscountFixed:      decimal.Zero,
+						CostBeforeDiscount: decimal.Zero,
+						DiscountAmount:     decimal.Zero,
+						DailyCost:          decimal.Zero,
+						Status:             "missing_data", // Специальный статус для отсутствующих данных
+						Notes:              fmt.Sprintf("Данные за %s отсутствуют. Необходимо запросить снимок через Axenta Cloud API.", dateKey),
+					}
+
+					// Если это подозрительный снимок, удаляем его из массива перед добавлением записи об отсутствии данных
+					if suspiciousSnapshotsByDate[dateKey] {
+						for i := len(snapshots) - 1; i >= 0; i-- {
+							if snapshots[i].SnapshotDate.Format("2006-01-02") == dateKey {
+								log.Printf("🗑️ Удаляем подозрительный снимок для даты %s (было %d объектов)", dateKey, snapshots[i].ActiveObjectsCount)
+								snapshots = append(snapshots[:i], snapshots[i+1:]...)
+								break
+							}
+						}
+					}
+
+					snapshots = append(snapshots, missingDataSnapshot)
+					log.Printf("📋 Создана запись об отсутствии данных для даты %s", dateKey)
+
+					currentDate = currentDate.AddDate(0, 0, 1)
+					continue
+				}
+
+				if err == nil {
 
 					log.Printf("✅ Найден снимок axenta_account_snapshots для даты %s: активных=%d, всего=%d (last_synced_at=%s)",
 						dateKey, axentaSnapshot.ObjectsActive, axentaSnapshot.ObjectsTotal, axentaSnapshot.LastSyncedAt.Format("2006-01-02 15:04:05"))
@@ -234,6 +289,18 @@ func GetPartnerContractSnapshots(c *gin.Context) {
 							Notes:              fmt.Sprintf("Создан из axenta_account_snapshots (last_synced_at: %s)", axentaSnapshot.LastSyncedAt.Format("2006-01-02 15:04:05")),
 						}
 
+						// Если это подозрительный снимок, удаляем его из массива перед добавлением виртуального
+						if suspiciousSnapshotsByDate[dateKey] {
+							// Удаляем подозрительный снимок из массива
+							for i := len(snapshots) - 1; i >= 0; i-- {
+								if snapshots[i].SnapshotDate.Format("2006-01-02") == dateKey {
+									log.Printf("🗑️ Удаляем подозрительный снимок для даты %s (было %d объектов)", dateKey, snapshots[i].ActiveObjectsCount)
+									snapshots = append(snapshots[:i], snapshots[i+1:]...)
+									break
+								}
+							}
+						}
+
 						snapshots = append(snapshots, virtualSnapshot)
 						log.Printf("✅ Создан виртуальный снимок для даты %s: активных=%d, стоимость=%.2f₽",
 							dateKey, axentaSnapshot.ObjectsActive, dailyCost.InexactFloat64())
@@ -241,8 +308,7 @@ func GetPartnerContractSnapshots(c *gin.Context) {
 						log.Printf("⚠️ Не удалось создать виртуальный снимок: тарифный план не найден или цена = 0")
 					}
 				} else {
-					log.Printf("⚠️ Не найден снимок в axenta_account_snapshots для даты %s (partner_company_id=%d): %v",
-						dateKey, *contract.PartnerCompanyID, err)
+					log.Printf("⚠️ Не удалось создать виртуальный снимок для даты %s: данные найдены, но ошибка при создании", dateKey)
 				}
 			}
 

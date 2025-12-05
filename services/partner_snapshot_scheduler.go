@@ -287,6 +287,18 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 		log.Printf("📊 Распределено %d объектов по %d партнёрам (активных: %d)",
 			totalObjects, len(partnerObjectsMap), totalActive)
 
+		// Сохраняем все объекты в БД один раз после загрузки всех объектов
+		log.Printf("💾 Сохранение всех объектов в БД для компании %d...", company.ID)
+		if err := s.snapshotService.SaveAllObjectsToDBForSnapshot(
+			company.ID,
+			token,
+			snapshotDate,
+			tenantDB,
+		); err != nil {
+			log.Printf("⚠️ Ошибка сохранения всех объектов для компании %d: %v (продолжаем)", company.ID, err)
+			// Не прерываем процесс из-за ошибки сохранения объектов
+		}
+
 		log.Printf("📋 Загружаем существующие договоры для маппинга (компания %d)...", company.ID)
 		// Получаем существующие договоры для маппинга
 		var contracts []models.Contract
@@ -361,11 +373,12 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 				tenantDB,
 			)
 
+			// Объекты уже сохранены выше для всех партнеров сразу, не нужно сохранять для каждого партнера отдельно
 			if createErr != nil {
 				if createErr.Error() == "snapshot already exists" {
 					skippedCount++
 					contractDetail.SuccessCount = 1
-					log.Printf("ℹ️ Снимок для партнера %d уже существует, пропускаем", partnerID)
+					log.Printf("ℹ️ Снимок для партнера %d уже существует", partnerID)
 				} else {
 					errMsg := fmt.Sprintf("Ошибка создания снимка для партнера %d: %v", partnerID, createErr)
 					log.Printf("❌ %s", errMsg)

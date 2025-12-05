@@ -518,7 +518,7 @@ func (s *AxentaSyncService) syncAllObjectsWithDB(adminAccountID uint, token stri
 	for _, obj := range objects {
 		rawPayload, _ := json.Marshal(obj)
 		snapshot := models.AxentaObjectSnapshot{
-			AdminAccountID:    adminAccountID,
+			// AdminAccountID больше не используется - объекты хранятся глобально
 			AccountExternalID: int64(obj.AccountID),
 			ExternalObjectID:  int64(obj.ID),
 			ObjectName:        obj.Name,
@@ -600,7 +600,7 @@ func (s *AxentaSyncService) syncObjectsForAccounts(adminAccountID uint, token st
 		for _, obj := range objects {
 			rawPayload, _ := json.Marshal(obj)
 			snapshot := models.AxentaObjectSnapshot{
-				AdminAccountID:    adminAccountID,
+				// AdminAccountID больше не используется - объекты хранятся глобально
 				AccountExternalID: int64(obj.AccountID),
 				ExternalObjectID:  int64(obj.ID),
 				ObjectName:        obj.Name,

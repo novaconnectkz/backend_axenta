@@ -46,9 +46,11 @@ type AxentaObjectSnapshot struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
 
-	AdminAccountID      uint       `json:"admin_account_id" gorm:"not null;index;uniqueIndex:idx_axenta_object_admin_external"`
+	// AdminAccountID оставляем для обратной совместимости, но не используем в уникальном ключе
+	// Объекты хранятся глобально один раз, привязка к партнерам через account_external_id и иерархию
+	AdminAccountID      *uint      `json:"admin_account_id" gorm:"index"` // Nullable для обратной совместимости
 	AccountExternalID   int64      `json:"account_external_id" gorm:"not null;index"`
-	ExternalObjectID    int64      `json:"external_object_id" gorm:"not null;uniqueIndex:idx_axenta_object_admin_external"`
+	ExternalObjectID    int64      `json:"external_object_id" gorm:"not null;uniqueIndex:idx_axenta_object_external"`
 	ObjectName          string     `json:"object_name" gorm:"type:varchar(200)"`
 	UniqueID            string     `json:"unique_id" gorm:"type:varchar(100)"`
 	DeviceTypeName      string     `json:"device_type_name" gorm:"type:varchar(200)"`
