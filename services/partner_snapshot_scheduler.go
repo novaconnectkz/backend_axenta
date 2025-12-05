@@ -188,21 +188,21 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 			tokenPreview = tokenPreview[:10] + "..."
 		}
 		log.Printf("✅ Токен получен для компании %d: %s (длина: %d символов)", company.ID, tokenPreview, len(token))
-		
+
 		// Получаем общую статистику объектов из /stats/ (как на странице /objects)
 		totalFromStats, activeFromStats, statsErr := s.snapshotService.getTotalObjectsFromStats(token)
 		if statsErr != nil {
 			log.Printf("⚠️ Не удалось получить статистику из /stats/ для компании %d: %v", company.ID, statsErr)
 			// Продолжаем без этой статистики
 		} else {
-			log.Printf("📊 Компания %d: общая статистика из /stats/: всего=%d, активных=%d (как на /objects)", 
+			log.Printf("📊 Компания %d: общая статистика из /stats/: всего=%d, активных=%d (как на /objects)",
 				company.ID, totalFromStats, activeFromStats)
 		}
-		
+
 		// Сохраняем реальное количество объектов из API для проверки
 		companyDetail.RealTotalObjects = totalFromStats
 		companyDetail.RealActiveObjects = activeFromStats
-		
+
 		// Загружаем иерархию всех аккаунтов и распределяем объекты БЕЗ ДУБЛЕЙ
 		log.Printf("🌳 Загружаем иерархию всех аккаунтов...")
 		hierarchyService := NewAccountHierarchyService(token)
@@ -210,7 +210,7 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 			log.Printf("⚠️ Не удалось загрузить иерархию аккаунтов: %v", err)
 			continue
 		}
-		
+
 		// Загружаем ВСЕ объекты и распределяем их по партнёрам без дублей
 		log.Printf("📦 Загружаем ВСЕ объекты и распределяем по партнёрам (без дублей)...")
 		partnerObjectsMap, err := hierarchyService.DistributeObjectsByPartner(token, snapshotDate)
@@ -230,7 +230,7 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 			errorCount++
 			continue
 		}
-		
+
 		// Проверяем, есть ли партнеры для обработки
 		if len(partnerObjectsMap) == 0 {
 			log.Printf("⚠️ Компания %s: нет партнеров в распределении объектов (возможно, нет объектов или все объекты удалены до даты снимка)", company.DatabaseSchema)
@@ -240,7 +240,7 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 			// НЕ увеличиваем errorCount, так как это нормальная ситуация (нет объектов)
 			continue
 		}
-		
+
 		// Выводим статистику
 		totalObjects := 0
 		totalActive := 0
@@ -248,7 +248,7 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 			totalObjects += stats.TotalObjects
 			totalActive += stats.ActiveObjects
 		}
-		log.Printf("📊 Распределено %d объектов по %d партнёрам (активных: %d)", 
+		log.Printf("📊 Распределено %d объектов по %d партнёрам (активных: %d)",
 			totalObjects, len(partnerObjectsMap), totalActive)
 
 		log.Printf("📋 Загружаем существующие договоры для маппинга (компания %d)...", company.ID)
@@ -296,7 +296,7 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 			if processedCount%10 == 0 {
 				log.Printf("📊 Прогресс: обработано %d из %d партнеров", processedCount, len(partnerObjectsMap))
 			}
-			
+
 			contractDetail := models.ContractJobDetail{
 				CompanyID:     company.ID,
 				DaysProcessed: 1,
@@ -304,14 +304,14 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 
 			// Проверяем есть ли договор для этого партнера
 			contract, hasContract := contractsByPartnerID[partnerID]
-			
+
 			// Определяем название для партнёра ID=186
 			partnerName := ""
 			if partnerID == 186 {
 				partnerName = "Объекты наших клиентов"
 				log.Printf("📄 GLOMOS (186 - %s): %d активных объектов", partnerName, objectStats.ActiveObjects)
 			}
-			
+
 			// Создаём снимок напрямую с данными из распределения
 			createErr := s.snapshotService.CreateSnapshotWithObjectCounts(
 				company.ID,
@@ -343,13 +343,13 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 				contractDetail.SuccessCount = 1
 				companyDetail.SuccessCount++
 				if hasContract {
-					log.Printf("✅ Снимок создан для партнера %d (договор %s): %d/%d объектов", 
+					log.Printf("✅ Снимок создан для партнера %d (договор %s): %d/%d объектов",
 						partnerID, contract.Number, objectStats.ActiveObjects, objectStats.TotalObjects)
 				} else if partnerID == 186 {
-					log.Printf("✅ Снимок создан для GLOMOS (186 - %s): %d/%d объектов", 
+					log.Printf("✅ Снимок создан для GLOMOS (186 - %s): %d/%d объектов",
 						partnerName, objectStats.ActiveObjects, objectStats.TotalObjects)
 				} else {
-					log.Printf("✅ Снимок создан для партнера %d (без договора): %d/%d объектов", 
+					log.Printf("✅ Снимок создан для партнера %d (без договора): %d/%d объектов",
 						partnerID, objectStats.ActiveObjects, objectStats.TotalObjects)
 				}
 			}
@@ -360,7 +360,7 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 			}
 			job.AddContractDetail(contractDetail)
 		}
-		
+
 		// Устанавливаем количество обработанных договоров/партнеров
 		companyDetail.ContractsCount = len(partnerObjectsMap)
 		// Увеличиваем totalContracts только на реально обработанных партнеров
@@ -370,7 +370,7 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 		// 1. API запрос ?accountId=партнёр УЖЕ включает всех дочерних клиентов
 		// 2. Прямые клиенты GLOMOS тоже включены в партнёрские запросы
 		// 3. Создание отдельного снимка приведёт к двойному подсчёту
-		
+
 		if hierarchyService != nil {
 			directClients := hierarchyService.GetDirectGLOMOSClients()
 			if len(directClients) > 0 {
@@ -380,11 +380,11 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 					directTotal += client.ObjectsTotal
 					directActive += client.ObjectsActive
 				}
-				log.Printf("ℹ️ Прямых клиентов GLOMOS: %d аккаунтов, %d активных объектов (УЖЕ учтены в партнёрских снимках)", 
+				log.Printf("ℹ️ Прямых клиентов GLOMOS: %d аккаунтов, %d активных объектов (УЖЕ учтены в партнёрских снимках)",
 					len(directClients), directActive)
 			}
 		}
-		
+
 		// Проверяем совпадение с общей статистикой из /stats/
 		if totalFromStats > 0 {
 			var sumTotal, sumActive int64
@@ -392,15 +392,15 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 				Where("DATE(snapshot_date AT TIME ZONE 'UTC') = ?", snapshotDate.Format("2006-01-02")).
 				Select("COALESCE(SUM(total_objects_count), 0) as sum_total, COALESCE(SUM(active_objects_count), 0) as sum_active").
 				Row().Scan(&sumTotal, &sumActive); err == nil {
-				
+
 				diffTotal := totalFromStats - int(sumTotal)
 				diffActive := activeFromStats - int(sumActive)
-				
+
 				log.Printf("📊 Итоговое сравнение:")
 				log.Printf("   - Общая статистика (/objects): %d всего, %d активных", totalFromStats, activeFromStats)
 				log.Printf("   - Сумма партнёрских снимков:   %d всего, %d активных", int(sumTotal), int(sumActive))
 				log.Printf("   - Расхождение:                 %d всего, %d активных", diffTotal, diffActive)
-				
+
 				if diffTotal == 0 && diffActive == 0 {
 					log.Printf("✅ Идеальное совпадение! Все объекты учтены.")
 				} else if diffTotal < 0 || diffActive < 0 {
@@ -435,7 +435,7 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 	// Это важно, так как некоторые снимки могли быть пропущены или созданы с другими данными
 	var totalObjectsSum, activeObjectsSum int64
 	var realTotalFromAPI, realActiveFromAPI int
-	
+
 	// Сначала пытаемся получить реальное количество из API (из CompanyJobDetail)
 	for _, companyDetail := range job.Details.Companies {
 		if companyDetail.RealTotalObjects > 0 {
@@ -445,7 +445,7 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 			break
 		}
 	}
-	
+
 	// Подсчитываем из созданных снимков
 	for _, company := range companies {
 		tenantDB := database.DB.Session(&gorm.Session{})
@@ -453,7 +453,7 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 			log.Printf("⚠️ Не удалось переключиться на схему tenant_%d для подсчета объектов: %v", company.ID, err)
 			continue
 		}
-		
+
 		var companyTotal, companyActive int64
 		if err := tenantDB.Model(&models.PartnerDailySnapshot{}).
 			Where("DATE(snapshot_date AT TIME ZONE 'UTC') = ? AND deleted_at IS NULL", snapshotDate.Format("2006-01-02")).
@@ -466,14 +466,14 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 			log.Printf("⚠️ Ошибка подсчета объектов для компании %d: %v", company.ID, err)
 		}
 	}
-	
+
 	// Используем реальное количество из API, если оно доступно и отличается от суммы снимков
 	// Это более точное значение, так как API возвращает точное количество объектов
 	if realTotalFromAPI > 0 {
 		// Если разница больше 5%, используем значение из API
 		diffPercent := float64(totalObjectsSum-int64(realTotalFromAPI)) / float64(realTotalFromAPI) * 100
 		if diffPercent > 5 || diffPercent < -5 {
-			log.Printf("⚠️ Расхождение между API (%d) и суммой снимков (%d): %.1f%%. Используем значение из API.", 
+			log.Printf("⚠️ Расхождение между API (%d) и суммой снимков (%d): %.1f%%. Используем значение из API.",
 				realTotalFromAPI, totalObjectsSum, diffPercent)
 			job.TotalObjects = realTotalFromAPI
 			job.ActiveObjects = realActiveFromAPI
@@ -487,13 +487,13 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 		job.TotalObjects = int(totalObjectsSum)
 		job.ActiveObjects = int(activeObjectsSum)
 	}
-	
+
 	job.SkippedCount = skippedCount
-	
-	log.Printf("📊 ИТОГО: %d объектов (активных: %d) - %s", 
-		job.TotalObjects, job.ActiveObjects, 
+
+	log.Printf("📊 ИТОГО: %d объектов (активных: %d) - %s",
+		job.TotalObjects, job.ActiveObjects,
 		map[bool]string{true: "из API", false: "из снимков"}[realTotalFromAPI > 0 && (job.TotalObjects == realTotalFromAPI)])
-	
+
 	// Устанавливаем scheduled_time для автоматических задач (21:00 UTC / 00:00 MSK следующего дня)
 	// Снимок за 01.12.2025 создаётся в 00:00 MSK 02.12.2025 (т.е. в 21:00 UTC 01.12.2025)
 	if job.JobType == models.SnapshotJobTypeDailyAuto {
@@ -501,12 +501,12 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 		scheduledTime := time.Date(snapshotDate.Year(), snapshotDate.Month(), snapshotDate.Day(), 21, 0, 0, 0, time.UTC)
 		job.ScheduledTime = &scheduledTime
 	}
-	
+
 	// Сохраняем финальное состояние задачи в основную БД
 	if err := mainDB.Save(job).Error; err != nil {
 		log.Printf("❌ Ошибка сохранения финального состояния задачи: %v", err)
 	} else {
-		log.Printf("✅ Финальное состояние задачи сохранено: ID=%d, статус=%s, объектов=%d/%d", 
+		log.Printf("✅ Финальное состояние задачи сохранено: ID=%d, статус=%s, объектов=%d/%d",
 			job.ID, job.Status, job.ActiveObjects, job.TotalObjects)
 	}
 
@@ -541,30 +541,38 @@ func (s *PartnerSnapshotScheduler) getPartnerToken(db *gorm.DB, adminAccountID u
 
 // getAnyActiveToken получает любой активный токен для доступа к Axenta API
 func (s *PartnerSnapshotScheduler) getAnyActiveToken(db *gorm.DB, companyID uint) (string, error) {
-	// ПРИОРИТЕТ 1: Пробуем токен из настроек снимков (для суперадмина, ID=1)
-	const superAdminCompanyID = 1
-	superAdminTenantDB := database.GetTenantDBByID(superAdminCompanyID)
-	if superAdminTenantDB != nil {
-		var snapshotSettings models.SnapshotSettings
-		if err := superAdminTenantDB.
-			Where("company_id = ? AND is_active = ?", superAdminCompanyID, true).
-			First(&snapshotSettings).Error; err == nil {
-			if snapshotSettings.AxentaToken != "" {
-				tokenPreview := snapshotSettings.AxentaToken
-				if len(tokenPreview) > 10 {
-					tokenPreview = tokenPreview[:10] + "..."
+	// ПРИОРИТЕТ 1: Пробуем токен из настроек снимков
+	// Ищем настройки во всех схемах компаний, начиная с первой (минимальный ID)
+	mainDB := database.DB
+	var companies []models.Company
+	if err := mainDB.Table("public.companies").Order("id ASC").Find(&companies).Error; err == nil && len(companies) > 0 {
+		// Пробуем найти настройки в схемах всех компаний, начиная с первой
+		for _, company := range companies {
+			tenantDB := database.GetTenantDBByID(company.ID)
+			if tenantDB != nil {
+				var snapshotSettings models.SnapshotSettings
+				// Ищем настройки с company_id = 1 (глобальные настройки) или company_id = текущей компании
+				if err := tenantDB.
+					Where("(company_id = ? OR company_id = ?) AND is_active = ?", 1, company.ID, true).
+					Order("company_id ASC"). // Приоритет настройкам с company_id = 1
+					First(&snapshotSettings).Error; err == nil {
+					if snapshotSettings.AxentaToken != "" {
+						tokenPreview := snapshotSettings.AxentaToken
+						if len(tokenPreview) > 10 {
+							tokenPreview = tokenPreview[:10] + "..."
+						}
+						log.Printf("🔑 [Компания %d] Используем токен из настроек снимков (схема: %s, company_id: %d): %s (длина: %d)",
+							companyID, company.DatabaseSchema, snapshotSettings.CompanyID, tokenPreview, len(snapshotSettings.AxentaToken))
+						return snapshotSettings.AxentaToken, nil
+					} else {
+						log.Printf("⚠️ [Компания %d] Настройки снимков найдены в схеме %s, но токен пустой", companyID, company.DatabaseSchema)
+					}
 				}
-				log.Printf("🔑 [Компания %d] Используем токен из настроек снимков: %s (длина: %d)", 
-					companyID, tokenPreview, len(snapshotSettings.AxentaToken))
-				return snapshotSettings.AxentaToken, nil
-			} else {
-				log.Printf("⚠️ [Компания %d] Настройки снимков найдены, но токен пустой", companyID)
 			}
-		} else {
-			log.Printf("⚠️ [Компания %d] Настройки снимков не найдены: %v", companyID, err)
 		}
+		log.Printf("⚠️ [Компания %d] Настройки снимков не найдены ни в одной схеме", companyID)
 	} else {
-		log.Printf("⚠️ [Компания %d] Не удалось получить tenant DB для суперадмина (ID=1)", companyID)
+		log.Printf("⚠️ [Компания %d] Не удалось получить список компаний для поиска настроек", companyID)
 	}
 
 	// ПРИОРИТЕТ 2: Пробуем системный токен из env
@@ -574,7 +582,7 @@ func (s *PartnerSnapshotScheduler) getAnyActiveToken(db *gorm.DB, companyID uint
 		if len(tokenPreview) > 10 {
 			tokenPreview = tokenPreview[:10] + "..."
 		}
-		log.Printf("🔑 [Компания %d] Используем системный токен из переменной окружения AXENTA_ADMIN_TOKEN: %s", 
+		log.Printf("🔑 [Компания %d] Используем системный токен из переменной окружения AXENTA_ADMIN_TOKEN: %s",
 			companyID, tokenPreview)
 		return systemToken, nil
 	} else {
@@ -594,7 +602,7 @@ func (s *PartnerSnapshotScheduler) getAnyActiveToken(db *gorm.DB, companyID uint
 	if len(tokenPreview) > 10 {
 		tokenPreview = tokenPreview[:10] + "..."
 	}
-	log.Printf("🔑 [Компания %d] Используем токен из user_tokens (account_id=%d, username=%s): %s", 
+	log.Printf("🔑 [Компания %d] Используем токен из user_tokens (account_id=%d, username=%s): %s",
 		companyID, token.AccountID, token.Username, tokenPreview)
 	return token.Token, nil
 }
@@ -622,9 +630,9 @@ func (s *PartnerSnapshotScheduler) RunManualSnapshotForDate(targetDate time.Time
 
 // RunManualSnapshotForPeriod создает снимки за указанный период (для ручного запуска)
 func (s *PartnerSnapshotScheduler) RunManualSnapshotForPeriod(dateFrom time.Time, dateTo time.Time) {
-	log.Printf("🧪 Запуск создания снимков вручную за период: %s - %s", 
+	log.Printf("🧪 Запуск создания снимков вручную за период: %s - %s",
 		dateFrom.Format("2006-01-02"), dateTo.Format("2006-01-02"))
-	
+
 	// Итерируемся по всем дням в периоде
 	currentDate := dateFrom
 	for !currentDate.After(dateTo) {
@@ -632,7 +640,7 @@ func (s *PartnerSnapshotScheduler) RunManualSnapshotForPeriod(dateFrom time.Time
 		// Переходим к следующему дню
 		currentDate = currentDate.AddDate(0, 0, 1)
 	}
-	
+
 	log.Printf("✅ Создание снимков за период завершено")
 }
 

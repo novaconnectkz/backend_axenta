@@ -4,6 +4,7 @@ import (
 	"backend_axenta/database"
 	"backend_axenta/models"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -13,24 +14,37 @@ import (
 // GetSnapshotSettings получает настройки снимков
 // GET /api/auth/snapshot-settings
 func GetSnapshotSettings(c *gin.Context) {
-	db := database.GetTenantDB(c)
-	if db == nil {
+	// Настройки хранятся в схеме первой компании (с минимальным ID) как суперадмина
+	// Ищем первую компанию из списка
+	mainDB := database.DB
+	var companies []models.Company
+	if err := mainDB.Table("public.companies").Order("id ASC").Limit(1).Find(&companies).Error; err != nil || len(companies) == 0 {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Database connection not available",
+			"error":  "Не найдено компаний в базе данных",
+		})
+		return
+	}
+
+	firstCompany := companies[0]
+	superAdminDB := database.GetTenantDBByID(firstCompany.ID)
+	if superAdminDB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("Database connection not available for company %d", firstCompany.ID),
 		})
 		return
 	}
 
 	var settings models.SnapshotSettings
-	// Настройки хранятся для суперадмина (ID=1)
+	// Настройки хранятся для первой компании (как суперадмина) с company_id = 1 (глобальные настройки)
 	// Используем FirstOrCreate для автоматического создания записи, если её нет
-	err := db.Where("company_id = ?", 1).FirstOrCreate(&settings, models.SnapshotSettings{
-		CompanyID:   1,
+	err := superAdminDB.Where("company_id = ?", 1).FirstOrCreate(&settings, models.SnapshotSettings{
+		CompanyID:   1, // Глобальные настройки с company_id = 1
 		AxentaToken: "",
 		IsActive:    true,
 	}).Error
-	
+
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
@@ -59,11 +73,24 @@ func GetSnapshotSettings(c *gin.Context) {
 // UpdateSnapshotSettings обновляет настройки снимков
 // POST /api/auth/snapshot-settings
 func UpdateSnapshotSettings(c *gin.Context) {
-	db := database.GetTenantDB(c)
-	if db == nil {
+	// Настройки хранятся в схеме первой компании (с минимальным ID) как суперадмина
+	// Ищем первую компанию из списка
+	mainDB := database.DB
+	var companies []models.Company
+	if err := mainDB.Table("public.companies").Order("id ASC").Limit(1).Find(&companies).Error; err != nil || len(companies) == 0 {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  "Database connection not available",
+			"error":  "Не найдено компаний в базе данных",
+		})
+		return
+	}
+
+	firstCompany := companies[0]
+	superAdminDB := database.GetTenantDBByID(firstCompany.ID)
+	if superAdminDB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("Database connection not available for company %d", firstCompany.ID),
 		})
 		return
 	}
@@ -81,21 +108,21 @@ func UpdateSnapshotSettings(c *gin.Context) {
 		return
 	}
 
-	// Проверяем, существует ли запись
+	// Проверяем, существует ли запись в схеме первой компании с company_id = 1 (глобальные настройки)
 	var settings models.SnapshotSettings
-	err := db.Where("company_id = ?", 1).First(&settings).Error
+	err := superAdminDB.Where("company_id = ?", 1).First(&settings).Error
 
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		// Создаем новую запись
+		// Создаем новую запись в схеме первой компании с company_id = 1 (глобальные настройки)
 		settings = models.SnapshotSettings{
-			CompanyID:   1,
+			CompanyID:   1, // Глобальные настройки с company_id = 1
 			AxentaToken: request.AxentaToken,
 			IsActive:    true,
 		}
 		if request.IsActive != nil {
 			settings.IsActive = *request.IsActive
 		}
-		if err := db.Create(&settings).Error; err != nil {
+		if err := superAdminDB.Create(&settings).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"status": "error",
 				"error":  "Ошибка создания настроек: " + err.Error(),
@@ -109,12 +136,12 @@ func UpdateSnapshotSettings(c *gin.Context) {
 		})
 		return
 	} else {
-		// Обновляем существующую запись
+		// Обновляем существующую запись в схеме первой компании
 		settings.AxentaToken = request.AxentaToken
 		if request.IsActive != nil {
 			settings.IsActive = *request.IsActive
 		}
-		if err := db.Save(&settings).Error; err != nil {
+		if err := superAdminDB.Save(&settings).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"status": "error",
 				"error":  "Ошибка сохранения настроек: " + err.Error(),
@@ -125,8 +152,8 @@ func UpdateSnapshotSettings(c *gin.Context) {
 
 	// Возвращаем полный токен в ответе (для подтверждения сохранения)
 	c.JSON(http.StatusOK, gin.H{
-		"status":   "success",
-		"message":  "Настройки успешно сохранены",
+		"status":  "success",
+		"message": "Настройки успешно сохранены",
 		"settings": gin.H{
 			"id":           settings.ID,
 			"company_id":   settings.CompanyID,
@@ -136,4 +163,3 @@ func UpdateSnapshotSettings(c *gin.Context) {
 		},
 	})
 }
-

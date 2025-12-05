@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -78,9 +79,12 @@ func (am *AuthMiddleware) RequireAuth() gin.HandlerFunc {
 		// Проверяем токен через Axenta API
 		user, err := am.validateToken(token)
 		if err != nil {
-			// Логируем неудачную попытку авторизации
+			// Логируем неудачную попытку авторизации с деталями
+			log.Printf("❌ Ошибка валидации токена для запроса %s %s: %v", c.Request.Method, c.Request.URL.Path, err)
 			audit.LogError(c, "auth.failed", err, gin.H{
 				"reason": "token_validation_failed",
+				"path":   c.Request.URL.Path,
+				"method": c.Request.Method,
 			})
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"status": "error",
@@ -167,8 +171,9 @@ func (am *AuthMiddleware) RequireAuth() gin.HandlerFunc {
 
 // validateToken проверяет токен через Axenta API
 func (am *AuthMiddleware) validateToken(token string) (map[string]interface{}, error) {
+	// Увеличиваем таймаут для валидации токена, так как на продакшене могут быть задержки сети
 	client := &http.Client{
-		Timeout: 10 * time.Second,
+		Timeout: 30 * time.Second, // Увеличено с 10 до 30 секунд для надежности
 	}
 
 	req, err := http.NewRequest("GET", "https://axenta.cloud/api/current_user/", nil)
@@ -181,11 +186,25 @@ func (am *AuthMiddleware) validateToken(token string) (map[string]interface{}, e
 
 	resp, err := client.Do(req)
 	if err != nil {
+		// Логируем ошибку для отладки
+		log.Printf("⚠️ Ошибка валидации токена через Axenta API (https://axenta.cloud/api/current_user/): %v", err)
+		// Проверяем, является ли это ошибкой сети/таймаута
+		errStr := err.Error()
+		if strings.Contains(errStr, "timeout") || strings.Contains(errStr, "no such host") || strings.Contains(errStr, "connection refused") || strings.Contains(errStr, "dial tcp") {
+			log.Printf("⚠️ Проблема с доступом к Axenta Cloud API. Возможно, проблема с сетью или DNS.")
+		}
 		return nil, fmt.Errorf("failed to validate token: %v", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		// Логируем ошибку для отладки
+		log.Printf("⚠️ Валидация токена вернула статус %d вместо 200 (URL: https://axenta.cloud/api/current_user/)", resp.StatusCode)
+		// Читаем тело ответа для дополнительной информации
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		if len(bodyBytes) > 0 {
+			log.Printf("⚠️ Тело ответа от Axenta API: %s", string(bodyBytes))
+		}
 		return nil, fmt.Errorf("token validation failed with status: %d", resp.StatusCode)
 	}
 
