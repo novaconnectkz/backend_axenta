@@ -37,16 +37,24 @@ func GetPartnerContractSnapshots(c *gin.Context) {
 	log.Printf("📅 Получены параметры периода: start_date=%s, end_date=%s", startDateStr, endDateStr)
 
 	// Парсим даты
+	// Поддерживаем два формата: RFC3339 (с временем) и YYYY-MM-DD (только дата)
 	var startDate, endDate time.Time
 	if startDateStr != "" {
+		// Сначала пробуем парсить как RFC3339 (с временем и часовым поясом)
 		startDate, err = time.Parse(time.RFC3339, startDateStr)
 		if err != nil {
-			log.Printf("❌ Ошибка парсинга start_date: %v", err)
-			c.JSON(http.StatusBadRequest, gin.H{
-				"status": "error",
-				"error":  "Неверный формат start_date",
-			})
-			return
+			// Если не получилось, пробуем парсить как YYYY-MM-DD (только дата)
+			startDate, err = time.Parse("2006-01-02", startDateStr)
+			if err != nil {
+				log.Printf("❌ Ошибка парсинга start_date: %v", err)
+				c.JSON(http.StatusBadRequest, gin.H{
+					"status": "error",
+					"error":  "Неверный формат start_date (ожидается RFC3339 или YYYY-MM-DD)",
+				})
+				return
+			}
+			// Если парсили как YYYY-MM-DD, устанавливаем начало дня в UTC
+			startDate = time.Date(startDate.Year(), startDate.Month(), startDate.Day(), 0, 0, 0, 0, time.UTC)
 		}
 	} else {
 		// По умолчанию - последние 30 дней
@@ -54,20 +62,28 @@ func GetPartnerContractSnapshots(c *gin.Context) {
 	}
 
 	if endDateStr != "" {
+		// Сначала пробуем парсить как RFC3339 (с временем и часовым поясом)
 		endDate, err = time.Parse(time.RFC3339, endDateStr)
 		if err != nil {
-			log.Printf("❌ Ошибка парсинга end_date: %v", err)
-			c.JSON(http.StatusBadRequest, gin.H{
-				"status": "error",
-				"error":  "Неверный формат end_date",
-			})
-			return
-		}
-		// Если endDate имеет время 00:00:00 (начало дня), добавляем время до конца дня
-		// чтобы включить все снимки за этот день
-		if endDate.Hour() == 0 && endDate.Minute() == 0 && endDate.Second() == 0 {
-			endDate = time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 23, 59, 59, 999999999, endDate.Location())
-			log.Printf("📅 endDate был началом дня, установлен конец дня: %s", endDate.Format(time.RFC3339))
+			// Если не получилось, пробуем парсить как YYYY-MM-DD (только дата)
+			endDate, err = time.Parse("2006-01-02", endDateStr)
+			if err != nil {
+				log.Printf("❌ Ошибка парсинга end_date: %v", err)
+				c.JSON(http.StatusBadRequest, gin.H{
+					"status": "error",
+					"error":  "Неверный формат end_date (ожидается RFC3339 или YYYY-MM-DD)",
+				})
+				return
+			}
+			// Если парсили как YYYY-MM-DD, устанавливаем конец дня в UTC
+			endDate = time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 23, 59, 59, 999999999, time.UTC)
+		} else {
+			// Если endDate имеет время 00:00:00 (начало дня), добавляем время до конца дня
+			// чтобы включить все снимки за этот день
+			if endDate.Hour() == 0 && endDate.Minute() == 0 && endDate.Second() == 0 {
+				endDate = time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 23, 59, 59, 999999999, endDate.Location())
+				log.Printf("📅 endDate был началом дня, установлен конец дня: %s", endDate.Format(time.RFC3339))
+			}
 		}
 	} else {
 		// По умолчанию - конец текущего дня
@@ -146,7 +162,10 @@ func GetPartnerContractSnapshots(c *gin.Context) {
 		}
 
 		// Генерируем все даты в периоде
+		// Нормализуем даты до начала дня для точного сравнения
 		currentDate := time.Date(startDate.Year(), startDate.Month(), startDate.Day(), 0, 0, 0, 0, time.UTC)
+		// endDay должен быть именно днем окончания (не следующий день)
+		// Если endDate имеет время 23:59:59, то это все еще тот же день
 		endDay := time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 0, 0, 0, 0, time.UTC)
 
 		// Получаем тарифный план договора
@@ -165,23 +184,132 @@ func GetPartnerContractSnapshots(c *gin.Context) {
 			dateKey := currentDate.Format("2006-01-02")
 
 			// Если снимка нет для этой даты ИЛИ снимок подозрительный (мало объектов),
-			// пытаемся получить данные из axenta_account_snapshots
+			// пытаемся получить данные из axenta_object_snapshots (исторические данные на конкретную дату)
 			if !existingSnapshotsByDate[dateKey] || suspiciousSnapshotsByDate[dateKey] {
-				log.Printf("🔍 Снимок для даты %s не найден или подозрительный, ищем в axenta_account_snapshots для partner_company_id=%d", dateKey, *contract.PartnerCompanyID)
+				log.Printf("🔍 Снимок для даты %s не найден или подозрительный, считаем объекты из axenta_object_snapshots для partner_company_id=%d", dateKey, *contract.PartnerCompanyID)
 
-				// Ищем снимок в axenta_account_snapshots, который был синхронизирован ДО или В этот день
-				// НЕ используем снимки после этой даты - это неправильно для исторических данных
-				var axentaSnapshot models.AxentaAccountSnapshot
+				// Подсчитываем объекты из axenta_object_snapshots на конкретную дату
+				// Используем last_synced_at для определения, какие объекты были актуальны на эту дату
 				snapshotEndOfDay := time.Date(currentDate.Year(), currentDate.Month(), currentDate.Day(), 23, 59, 59, 999999999, time.UTC)
 
-				err := db.Where("external_account_id = ? AND admin_account_id = ? AND last_synced_at <= ?",
-					int64(*contract.PartnerCompanyID), adminAccountID, snapshotEndOfDay).
-					Order("last_synced_at DESC").
-					First(&axentaSnapshot).Error
+				// Находим все дочерние аккаунты партнера из axenta_account_snapshots
+				// API Axenta при запросе с accountId=partner_company_id возвращает объекты партнера и всех дочерних аккаунтов
+				// Эти объекты сохраняются с account_external_id дочерних аккаунтов
+				// Поэтому нужно найти все аккаунты, которые являются дочерними для партнера
+				var childAccountIDs []int64
+				childAccountIDs = append(childAccountIDs, int64(*contract.PartnerCompanyID)) // Добавляем сам партнер
 
-				// Если не нашли снимок до этой даты, создаем запись с информацией об отсутствии данных
+				// Ищем дочерние аккаунты партнера
+				// Иерархия может содержать ID партнера в разных форматах: "/123/", "123", "/123"
+				// Ищем аккаунты, у которых в hierarchy есть ID партнера
+				var childAccounts []models.AxentaAccountSnapshot
+				partnerIDStr := fmt.Sprintf("%d", *contract.PartnerCompanyID)
+				if err := db.Model(&models.AxentaAccountSnapshot{}).
+					Where("admin_account_id = ?", adminAccountID).
+					Where("(hierarchy LIKE ? OR hierarchy LIKE ? OR hierarchy LIKE ? OR external_account_id = ?)",
+						fmt.Sprintf("%%/%%%s/%%", partnerIDStr), // формат: /.../123/...
+						fmt.Sprintf("%%/%%%s%%", partnerIDStr),  // формат: /.../123...
+						fmt.Sprintf("%%/%s/%%", partnerIDStr),   // формат: /123/...
+						int64(*contract.PartnerCompanyID)).      // сам партнер
+					Find(&childAccounts).Error; err == nil {
+					for _, acc := range childAccounts {
+						// Проверяем, что это действительно дочерний аккаунт или сам партнер
+						// Добавляем все найденные аккаунты
+						childAccountIDs = append(childAccountIDs, acc.ExternalAccountID)
+					}
+					log.Printf("🔍 Найдено аккаунтов для партнера %d: %d (включая сам партнер и дочерние)",
+						*contract.PartnerCompanyID, len(childAccountIDs))
+				} else {
+					log.Printf("⚠️ Не удалось найти дочерние аккаунты для партнера %d: %v (используем только партнера)",
+						*contract.PartnerCompanyID, err)
+				}
+
+				// Подсчитываем объекты партнера и его дочерних аккаунтов на эту дату
+				// Используем подзапрос для получения последнего снимка каждого объекта на эту дату
+				// Это гарантирует, что мы берем актуальные данные на дату снимка
+				var totalObjectsCount int64
+				var activeObjectsCount int64
+
+				// Сначала проверяем, есть ли вообще объекты для этих аккаунтов
+				var testCount int64
+				db.Model(&models.AxentaObjectSnapshot{}).
+					Where("account_external_id IN ?", childAccountIDs).
+					Count(&testCount)
+				log.Printf("🔍 Всего объектов в БД для аккаунтов %v: %d", childAccountIDs, testCount)
+
+				// Подсчитываем всего объектов партнера и его дочерних аккаунтов на эту дату
+				// ВАЖНО: Ищем объекты, которые СУЩЕСТВОВАЛИ на дату снимка (по axenta_created_at и axenta_deleted_at),
+				// независимо от того, когда они были синхронизированы (last_synced_at).
+				// Это нужно, потому что объекты могут быть синхронизированы позже (например, 05.12 или 06.12),
+				// но существовали на историческую дату (например, 01.12).
+				// Используем подзапрос для получения последнего снимка каждого объекта (на любую дату),
+				// но проверяем, что объект существовал на дату снимка.
+				err := db.Raw(`
+					SELECT COUNT(DISTINCT aos1.external_object_id)
+					FROM axenta_object_snapshots aos1
+					WHERE aos1.account_external_id IN ?
+						AND (aos1.axenta_created_at IS NULL OR aos1.axenta_created_at <= ?)
+						AND (aos1.axenta_deleted_at IS NULL OR aos1.axenta_deleted_at > ?)
+						AND aos1.last_synced_at = (
+							SELECT MAX(aos2.last_synced_at)
+							FROM axenta_object_snapshots aos2
+							WHERE aos2.external_object_id = aos1.external_object_id
+						)
+				`, childAccountIDs, snapshotEndOfDay, snapshotEndOfDay).
+					Scan(&totalObjectsCount).Error
+
 				if err != nil {
-					log.Printf("⚠️ Снимок в axenta_account_snapshots для даты %s не найден (partner_company_id=%d): %v. Создаем запись об отсутствии данных.", dateKey, *contract.PartnerCompanyID, err)
+					log.Printf("⚠️ Ошибка подсчета объектов из axenta_object_snapshots для даты %s (partner_company_id=%d): %v",
+						dateKey, *contract.PartnerCompanyID, err)
+				} else {
+					log.Printf("✅ Найдено объектов для даты %s: %d", dateKey, totalObjectsCount)
+				}
+
+				// Подсчитываем активных объектов партнера и его дочерних аккаунтов на эту дату
+				// ВАЖНО: Используем последний снимок объекта (на любую дату), но проверяем,
+				// что объект существовал и был активен на дату снимка.
+				// Для исторических дат нужно использовать состояние объекта из последнего снимка,
+				// но проверять, что объект существовал на эту дату.
+				err = db.Raw(`
+					SELECT COUNT(DISTINCT aos1.external_object_id)
+					FROM axenta_object_snapshots aos1
+					WHERE aos1.account_external_id IN ?
+						AND aos1.is_active = true
+						AND (aos1.axenta_created_at IS NULL OR aos1.axenta_created_at <= ?)
+						AND (aos1.axenta_deleted_at IS NULL OR aos1.axenta_deleted_at > ?)
+						AND aos1.last_synced_at = (
+							SELECT MAX(aos2.last_synced_at)
+							FROM axenta_object_snapshots aos2
+							WHERE aos2.external_object_id = aos1.external_object_id
+						)
+				`, childAccountIDs, snapshotEndOfDay, snapshotEndOfDay).
+					Scan(&activeObjectsCount).Error
+
+				if err != nil {
+					log.Printf("⚠️ Ошибка подсчета активных объектов из axenta_object_snapshots для даты %s (partner_company_id=%d): %v",
+						dateKey, *contract.PartnerCompanyID, err)
+				} else {
+					log.Printf("✅ Найдено активных объектов для даты %s: %d", dateKey, activeObjectsCount)
+				}
+
+				// Если не нашли объекты в axenta_object_snapshots, проверяем, есть ли они вообще в БД
+				if totalObjectsCount == 0 && activeObjectsCount == 0 {
+					// Проверяем, есть ли объекты для этих аккаунтов вообще (без фильтра по дате)
+					var anyObjectsCount int64
+					db.Model(&models.AxentaObjectSnapshot{}).
+						Where("account_external_id IN ?", childAccountIDs).
+						Count(&anyObjectsCount)
+
+					if anyObjectsCount > 0 {
+						log.Printf("⚠️ Объекты в axenta_object_snapshots для даты %s не найдены, но есть %d объектов для этих аккаунтов в БД (возможно, они были синхронизированы в другие дни)",
+							dateKey, anyObjectsCount)
+					} else {
+						log.Printf("⚠️ Объекты в axenta_object_snapshots для даты %s не найдены (partner_company_id=%d). Объектов для этих аккаунтов в БД нет.",
+							dateKey, *contract.PartnerCompanyID)
+					}
+
+					log.Printf("⚠️ Объекты в axenta_object_snapshots для даты %s не найдены (partner_company_id=%d). Создаем запись об отсутствии данных.",
+						dateKey, *contract.PartnerCompanyID)
 
 					// Создаем запись об отсутствии данных, чтобы пользователь мог видеть, что нужно запросить снимок
 					missingDataSnapshot := models.PartnerDailySnapshot{
@@ -223,92 +351,87 @@ func GetPartnerContractSnapshots(c *gin.Context) {
 					continue
 				}
 
-				if err == nil {
+				// Если нашли объекты, создаем виртуальный снимок на основе данных из axenta_object_snapshots
+				log.Printf("✅ Найдены объекты в axenta_object_snapshots для даты %s: активных=%d, всего=%d",
+					dateKey, activeObjectsCount, totalObjectsCount)
 
-					log.Printf("✅ Найден снимок axenta_account_snapshots для даты %s: активных=%d, всего=%d (last_synced_at=%s)",
-						dateKey, axentaSnapshot.ObjectsActive, axentaSnapshot.ObjectsTotal, axentaSnapshot.LastSyncedAt.Format("2006-01-02 15:04:05"))
+				if !tariffPlan.Price.IsZero() {
+					// Рассчитываем дневную цену
+					dailyPrice := tariffPlan.Price.Div(decimal.NewFromInt(30))
 
-					// Создаем виртуальный снимок на основе данных из axenta_account_snapshots
-					if !tariffPlan.Price.IsZero() {
-						// Рассчитываем дневную цену
-						dailyPrice := tariffPlan.Price.Div(decimal.NewFromInt(30))
+					// Рассчитываем скидку
+					discountPercent := contract.GetDiscountPercent(int(activeObjectsCount))
+					discountFixed := contract.GetDiscountFixed()
 
-						// Рассчитываем скидку
-						discountPercent := contract.GetDiscountPercent(axentaSnapshot.ObjectsActive)
-						discountFixed := contract.GetDiscountFixed()
+					// Стоимость до скидки
+					costBeforeDiscount := dailyPrice.Mul(decimal.NewFromInt(activeObjectsCount))
 
-						// Стоимость до скидки
-						costBeforeDiscount := dailyPrice.Mul(decimal.NewFromInt(int64(axentaSnapshot.ObjectsActive)))
-
-						// Сумма скидки
-						var discountAmount decimal.Decimal
-						if discountFixed.GreaterThan(decimal.Zero) {
-							// Фиксированная скидка применяется к месячному тарифу
-							effectiveMonthlyPrice := tariffPlan.Price.Sub(discountFixed)
-							if effectiveMonthlyPrice.IsNegative() {
-								effectiveMonthlyPrice = decimal.Zero
-							}
-							effectiveDailyPrice := effectiveMonthlyPrice.Div(decimal.NewFromInt(30))
-							dailyPrice = effectiveDailyPrice
-							discountAmount = discountFixed.Div(decimal.NewFromInt(30)).Mul(decimal.NewFromInt(int64(axentaSnapshot.ObjectsActive)))
-						} else if discountPercent.GreaterThan(decimal.Zero) {
-							discountMultiplier := discountPercent.Div(decimal.NewFromInt(100))
-							discountAmount = costBeforeDiscount.Mul(discountMultiplier)
+					// Сумма скидки
+					var discountAmount decimal.Decimal
+					if discountFixed.GreaterThan(decimal.Zero) {
+						// Фиксированная скидка применяется к месячному тарифу
+						effectiveMonthlyPrice := tariffPlan.Price.Sub(discountFixed)
+						if effectiveMonthlyPrice.IsNegative() {
+							effectiveMonthlyPrice = decimal.Zero
 						}
-
-						// Итоговая стоимость
-						dailyCost := costBeforeDiscount.Sub(discountAmount)
-
-						// Определяем тип скидки
-						discountType := "none"
-						if discountFixed.GreaterThan(decimal.Zero) {
-							discountType = "manual"
-						} else if discountPercent.GreaterThan(decimal.Zero) {
-							discountType = "auto"
-						}
-
-						// Создаем виртуальный снимок
-						virtualSnapshot := models.PartnerDailySnapshot{
-							AdminAccountID:     adminAccountID,
-							CompanyID:          adminAccountID,
-							ContractID:         contract.ID,
-							SnapshotDate:       currentDate,
-							PartnerCompanyID:   *contract.PartnerCompanyID,
-							TariffPlanID:       tariffPlan.ID,
-							MonthlyPrice:       tariffPlan.Price,
-							DailyPrice:         dailyPrice.Round(6),
-							TotalObjectsCount:  axentaSnapshot.ObjectsTotal,
-							ActiveObjectsCount: axentaSnapshot.ObjectsActive,
-							DiscountType:       discountType,
-							DiscountPercent:    discountPercent,
-							DiscountFixed:      discountFixed,
-							CostBeforeDiscount: costBeforeDiscount.Round(4),
-							DiscountAmount:     discountAmount.Round(4),
-							DailyCost:          dailyCost.Round(4),
-							Status:             "completed",
-							Notes:              fmt.Sprintf("Создан из axenta_account_snapshots (last_synced_at: %s)", axentaSnapshot.LastSyncedAt.Format("2006-01-02 15:04:05")),
-						}
-
-						// Если это подозрительный снимок, удаляем его из массива перед добавлением виртуального
-						if suspiciousSnapshotsByDate[dateKey] {
-							// Удаляем подозрительный снимок из массива
-							for i := len(snapshots) - 1; i >= 0; i-- {
-								if snapshots[i].SnapshotDate.Format("2006-01-02") == dateKey {
-									log.Printf("🗑️ Удаляем подозрительный снимок для даты %s (было %d объектов)", dateKey, snapshots[i].ActiveObjectsCount)
-									snapshots = append(snapshots[:i], snapshots[i+1:]...)
-									break
-								}
-							}
-						}
-
-						snapshots = append(snapshots, virtualSnapshot)
-						log.Printf("✅ Создан виртуальный снимок для даты %s: активных=%d, стоимость=%.2f₽",
-							dateKey, axentaSnapshot.ObjectsActive, dailyCost.InexactFloat64())
-					} else {
-						log.Printf("⚠️ Не удалось создать виртуальный снимок: тарифный план не найден или цена = 0")
+						effectiveDailyPrice := effectiveMonthlyPrice.Div(decimal.NewFromInt(30))
+						dailyPrice = effectiveDailyPrice
+						discountAmount = discountFixed.Div(decimal.NewFromInt(30)).Mul(decimal.NewFromInt(activeObjectsCount))
+					} else if discountPercent.GreaterThan(decimal.Zero) {
+						discountMultiplier := discountPercent.Div(decimal.NewFromInt(100))
+						discountAmount = costBeforeDiscount.Mul(discountMultiplier)
 					}
+
+					// Итоговая стоимость
+					dailyCost := costBeforeDiscount.Sub(discountAmount)
+
+					// Определяем тип скидки
+					discountType := "none"
+					if discountFixed.GreaterThan(decimal.Zero) {
+						discountType = "manual"
+					} else if discountPercent.GreaterThan(decimal.Zero) {
+						discountType = "auto"
+					}
+
+					// Создаем виртуальный снимок
+					virtualSnapshot := models.PartnerDailySnapshot{
+						AdminAccountID:     adminAccountID,
+						CompanyID:          adminAccountID,
+						ContractID:         contract.ID,
+						SnapshotDate:       currentDate,
+						PartnerCompanyID:   *contract.PartnerCompanyID,
+						TariffPlanID:       tariffPlan.ID,
+						MonthlyPrice:       tariffPlan.Price,
+						DailyPrice:         dailyPrice.Round(6),
+						TotalObjectsCount:  int(totalObjectsCount),
+						ActiveObjectsCount: int(activeObjectsCount),
+						DiscountType:       discountType,
+						DiscountPercent:    discountPercent,
+						DiscountFixed:      discountFixed,
+						CostBeforeDiscount: costBeforeDiscount.Round(4),
+						DiscountAmount:     discountAmount.Round(4),
+						DailyCost:          dailyCost.Round(4),
+						Status:             "completed",
+						Notes:              fmt.Sprintf("Создан из axenta_object_snapshots на дату %s", dateKey),
+					}
+
+					// Если это подозрительный снимок, удаляем его из массива перед добавлением виртуального
+					if suspiciousSnapshotsByDate[dateKey] {
+						// Удаляем подозрительный снимок из массива
+						for i := len(snapshots) - 1; i >= 0; i-- {
+							if snapshots[i].SnapshotDate.Format("2006-01-02") == dateKey {
+								log.Printf("🗑️ Удаляем подозрительный снимок для даты %s (было %d объектов)", dateKey, snapshots[i].ActiveObjectsCount)
+								snapshots = append(snapshots[:i], snapshots[i+1:]...)
+								break
+							}
+						}
+					}
+
+					snapshots = append(snapshots, virtualSnapshot)
+					log.Printf("✅ Создан виртуальный снимок для даты %s из axenta_object_snapshots: активных=%d, всего=%d, стоимость=%.2f₽",
+						dateKey, activeObjectsCount, totalObjectsCount, dailyCost.InexactFloat64())
 				} else {
-					log.Printf("⚠️ Не удалось создать виртуальный снимок для даты %s: данные найдены, но ошибка при создании", dateKey)
+					log.Printf("⚠️ Не удалось создать виртуальный снимок: тарифный план не найден или цена = 0")
 				}
 			}
 
@@ -327,6 +450,24 @@ func GetPartnerContractSnapshots(c *gin.Context) {
 
 		log.Printf("✅ После заполнения пропусков: найдено снимков: %d", len(snapshots))
 	}
+
+	// Финальная фильтрация снимков по выбранному периоду
+	// Нормализуем даты для точного сравнения
+	startDay := time.Date(startDate.Year(), startDate.Month(), startDate.Day(), 0, 0, 0, 0, time.UTC)
+	endDay := time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 0, 0, 0, 0, time.UTC)
+
+	filteredSnapshots := make([]models.PartnerDailySnapshot, 0)
+	for _, snapshot := range snapshots {
+		snapshotDay := time.Date(snapshot.SnapshotDate.Year(), snapshot.SnapshotDate.Month(), snapshot.SnapshotDate.Day(), 0, 0, 0, 0, time.UTC)
+		// Включаем снимок только если его дата находится в выбранном диапазоне (включительно)
+		// snapshotDay >= startDay && snapshotDay <= endDay
+		if !snapshotDay.Before(startDay) && !snapshotDay.After(endDay) {
+			filteredSnapshots = append(filteredSnapshots, snapshot)
+		}
+	}
+
+	log.Printf("✅ После фильтрации по периоду: найдено снимков: %d (было %d)", len(filteredSnapshots), len(snapshots))
+	snapshots = filteredSnapshots
 
 	// Рассчитываем сводную информацию
 	summary := calculateSnapshotsSummary(snapshots, startDate, endDate)
@@ -391,7 +532,17 @@ func calculateSnapshotsSummary(snapshots []models.PartnerDailySnapshot, startDat
 
 	// Рассчитываем эффективную месячную цену с учетом скидки
 	// Это цена, которую партнер реально платит за месяц (30 дней)
-	effectiveMonthlyPrice := effectiveDailyPrice.Mul(decimal.NewFromInt(30))
+	// Если скидок нет, используем базовую цену для точности
+	effectiveMonthlyPrice := decimal.Zero
+	if discountType == "none" && totalDiscountAmount.IsZero() {
+		// Нет скидок - используем базовую месячную цену
+		effectiveMonthlyPrice = baseMonthlyPrice
+		// Пересчитываем effectiveDailyPrice из базовой цены для точности
+		effectiveDailyPrice = baseMonthlyPrice.Div(decimal.NewFromInt(30))
+	} else {
+		// Есть скидки - рассчитываем эффективную цену
+		effectiveMonthlyPrice = effectiveDailyPrice.Mul(decimal.NewFromInt(30))
+	}
 
 	// Расчет цены за объект за период (pricePerObjectForPeriod) С УЧЕТОМ СКИДКИ
 	// Формула: total_cost / avg_objects (используем точное decimal значение)
@@ -428,17 +579,17 @@ func calculateSnapshotsSummary(snapshots []models.PartnerDailySnapshot, startDat
 
 	result := map[string]interface{}{
 		"total_days":                  totalDays,
-		"total_cost":                  totalCost.InexactFloat64(),
-		"avg_objects":                 avgObjectsDecimal.InexactFloat64(),     // Точное среднее с decimal
-		"daily_price":                 effectiveDailyPrice.InexactFloat64(),   // Реальная дневная цена С УЧЕТОМ скидки
-		"monthly_price":               effectiveMonthlyPrice.InexactFloat64(), // Реальная месячная цена С УЧЕТОМ скидки
+		"total_cost":                  totalCost.Round(2).InexactFloat64(),             // Округляем до 2 знаков
+		"avg_objects":                 avgObjectsDecimal.Round(2).InexactFloat64(),     // Округляем до 2 знаков
+		"daily_price":                 effectiveDailyPrice.Round(6).InexactFloat64(),   // Округляем до 6 знаков
+		"monthly_price":               effectiveMonthlyPrice.Round(2).InexactFloat64(), // Округляем до 2 знаков (рубли)
 		"total_objects":               totalObjects,
-		"price_per_object_for_period": pricePerObjectForPeriod.InexactFloat64(), // Реальная цена С УЧЕТОМ скидки
-		"base_monthly_price":          baseMonthlyPrice.InexactFloat64(),        // Базовая цена БЕЗ скидки (для справки)
-		"base_daily_price":            baseDailyPrice.InexactFloat64(),          // Базовая дневная цена БЕЗ скидки (для справки)
-		"total_discount":              totalDiscountAmount.InexactFloat64(),     // Общая сумма скидки за период
-		"discount_type":               discountType,                             // Тип скидки
-		"avg_daily_discount":          avgDailyDiscount.InexactFloat64(),        // Средняя дневная скидка
+		"price_per_object_for_period": pricePerObjectForPeriod.Round(4).InexactFloat64(), // Округляем до 4 знаков
+		"base_monthly_price":          baseMonthlyPrice.Round(2).InexactFloat64(),        // Округляем до 2 знаков
+		"base_daily_price":            baseDailyPrice.Round(6).InexactFloat64(),          // Округляем до 6 знаков
+		"total_discount":              totalDiscountAmount.Round(2).InexactFloat64(),     // Округляем до 2 знаков
+		"discount_type":               discountType,                                      // Тип скидки
+		"avg_daily_discount":          avgDailyDiscount.Round(2).InexactFloat64(),        // Округляем до 2 знаков
 	}
 
 	log.Printf("📦 Возвращаем summary: %+v", result)

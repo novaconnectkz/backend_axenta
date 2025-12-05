@@ -231,8 +231,12 @@ func (s *PartnerSnapshotService) CreateSnapshotForPartnerAccountWithoutContract(
 
 // CreateSnapshotForContractWithTokenAndDB создает снимок для конкретного договора с указанным токеном и базой данных
 func (s *PartnerSnapshotService) CreateSnapshotForContractWithTokenAndDB(contract *models.Contract, snapshotDate time.Time, token string, db *gorm.DB) error {
-	log.Printf("📸 Создание снимка для договора ID=%d, number=%s на дату %s",
-		contract.ID, contract.Number, snapshotDate.Format("2006-01-02"))
+	tokenPreview := token
+	if len(token) > 10 {
+		tokenPreview = token[:10] + "..."
+	}
+	log.Printf("📸 Создание снимка для договора ID=%d, number=%s на дату %s (токен: %s)",
+		contract.ID, contract.Number, snapshotDate.Format("2006-01-02"), tokenPreview)
 
 	// Проверяем, не создан ли уже снимок на эту дату (включая мягко удаленные)
 	var existingSnapshot models.PartnerDailySnapshot
@@ -247,10 +251,12 @@ func (s *PartnerSnapshotService) CreateSnapshotForContractWithTokenAndDB(contrac
 
 		// Исторические снимки НЕ обновляются (данные за прошлые дни зафиксированы)
 		// Обновляем только сегодняшний снимок (данные за сегодня могут меняться)
+		// НО если пользователь явно запросил создание снимков через кнопку "Создать снимки",
+		// то обновляем даже исторические снимки (принудительное обновление)
 		if !isToday {
-			log.Printf("✅ Снимок для договора %d на дату %s уже существует (исторический), пропускаем обновление",
+			log.Printf("ℹ️ Снимок для договора %d на дату %s уже существует (исторический), но выполняем принудительное обновление",
 				contract.ID, snapshotDate.Format("2006-01-02"))
-			return nil
+			// Продолжаем выполнение для обновления исторического снимка
 		}
 
 		log.Printf("ℹ️ Снимок для договора %d на дату %s уже существует (сегодняшний), обновляем...",
@@ -266,10 +272,13 @@ func (s *PartnerSnapshotService) CreateSnapshotForContractWithTokenAndDB(contrac
 		}
 
 		// Получаем объекты партнера из Axenta Cloud API на дату снимка
+		log.Printf("🌐 Запрос к Axenta Cloud API для партнера %d на дату %s", *contract.PartnerCompanyID, snapshotDate.Format("2006-01-02"))
 		objectsCount, activeObjectsCount, objects, err := s.getPartnerObjectsWithCountForDate(*contract.PartnerCompanyID, token, snapshotDate)
 		if err != nil {
-			return fmt.Errorf("ошибка получения объектов партнера: %w", err)
+			log.Printf("❌ Ошибка запроса к Axenta Cloud API: %v", err)
+			return fmt.Errorf("ошибка получения объектов партнера из Axenta Cloud API: %w", err)
 		}
+		log.Printf("✅ Получено из Axenta Cloud API: всего объектов=%d, активных=%d", objectsCount, activeObjectsCount)
 
 		// Сохраняем объекты в БД
 		if err := s.savePartnerObjectsToDB(contract.AdminAccountID, objects, snapshotDate, db); err != nil {
@@ -352,10 +361,13 @@ func (s *PartnerSnapshotService) CreateSnapshotForContractWithTokenAndDB(contrac
 	}
 
 	// Получаем объекты партнера из Axenta Cloud API на дату снимка
+	log.Printf("🌐 Запрос к Axenta Cloud API для партнера %d на дату %s (создание нового снимка)", *contract.PartnerCompanyID, snapshotDate.Format("2006-01-02"))
 	objectsCount, activeObjectsCount, objects, err := s.getPartnerObjectsWithCountForDate(*contract.PartnerCompanyID, token, snapshotDate)
 	if err != nil {
-		return fmt.Errorf("ошибка получения объектов партнера: %w", err)
+		log.Printf("❌ Ошибка запроса к Axenta Cloud API: %v", err)
+		return fmt.Errorf("ошибка получения объектов партнера из Axenta Cloud API: %w", err)
 	}
+	log.Printf("✅ Получено из Axenta Cloud API: всего объектов=%d, активных=%d", objectsCount, activeObjectsCount)
 
 	// Сохраняем объекты в БД
 	if err := s.savePartnerObjectsToDB(contract.AdminAccountID, objects, snapshotDate, db); err != nil {
@@ -387,6 +399,59 @@ func (s *PartnerSnapshotService) CreateSnapshotForContractWithTokenAndDB(contrac
 	// DailyPrice, CostBeforeDiscount, DiscountAmount и DailyCost будут рассчитаны в BeforeCreate
 
 	if err := db.Create(&snapshot).Error; err != nil {
+		// Проверяем, является ли ошибка нарушением уникального ограничения (снимок уже существует)
+		if isDuplicateKeyError(err) {
+			log.Printf("⚠️ Снимок для договора %d на дату %s уже существует, пытаемся обновить",
+				contract.ID, snapshotDate.Format("2006-01-02"))
+			// Пытаемся найти и обновить существующий снимок
+			var existingSnapshot models.PartnerDailySnapshot
+			if err := db.Unscoped().
+				Where("contract_id = ? AND snapshot_date = ?", contract.ID, snapshotDate).
+				First(&existingSnapshot).Error; err == nil {
+				// Обновляем существующий снимок
+				existingSnapshot.TotalObjectsCount = objectsCount
+				existingSnapshot.ActiveObjectsCount = activeObjectsCount
+				existingSnapshot.MonthlyPrice = monthlyPrice
+				existingSnapshot.DiscountType = contract.DiscountType
+				existingSnapshot.DiscountPercent = discountPercent
+				existingSnapshot.DiscountFixed = discountFixed
+				existingSnapshot.Status = "completed"
+				existingSnapshot.DeletedAt = gorm.DeletedAt{}
+
+				// Пересчитываем стоимость (аналогично коду выше для обновления)
+				if discountFixed.GreaterThan(decimal.Zero) {
+					effectiveMonthlyPrice := monthlyPrice.Sub(discountFixed)
+					if effectiveMonthlyPrice.IsNegative() {
+						effectiveMonthlyPrice = decimal.Zero
+					}
+					effectiveDailyPrice := effectiveMonthlyPrice.Div(decimal.NewFromInt(30)).Round(4)
+					existingSnapshot.DailyPrice = effectiveDailyPrice
+					baseDailyPrice := monthlyPrice.Div(decimal.NewFromInt(30)).Round(4)
+					existingSnapshot.CostBeforeDiscount = baseDailyPrice.Mul(decimal.NewFromInt(int64(activeObjectsCount))).Round(2)
+					existingSnapshot.DiscountAmount = discountFixed.Div(decimal.NewFromInt(30)).Mul(decimal.NewFromInt(int64(activeObjectsCount))).Round(2)
+					existingSnapshot.DailyCost = effectiveDailyPrice.Mul(decimal.NewFromInt(int64(activeObjectsCount))).Round(2)
+				} else {
+					baseDailyPrice := monthlyPrice.Div(decimal.NewFromInt(30)).Round(4)
+					existingSnapshot.DailyPrice = baseDailyPrice
+					costBeforeDiscount := baseDailyPrice.Mul(decimal.NewFromInt(int64(activeObjectsCount))).Round(2)
+					existingSnapshot.CostBeforeDiscount = costBeforeDiscount
+					if discountPercent.GreaterThan(decimal.Zero) {
+						discountMultiplier := discountPercent.Div(decimal.NewFromInt(100))
+						existingSnapshot.DiscountAmount = costBeforeDiscount.Mul(discountMultiplier).Round(2)
+					} else {
+						existingSnapshot.DiscountAmount = decimal.Zero
+					}
+					existingSnapshot.DailyCost = costBeforeDiscount.Sub(existingSnapshot.DiscountAmount).Round(2)
+				}
+
+				if err := db.Unscoped().Save(&existingSnapshot).Error; err != nil {
+					return fmt.Errorf("ошибка обновления существующего снимка: %w", err)
+				}
+				log.Printf("✅ Существующий снимок обновлен: договор=%s, дата=%s, объектов=%d (активных=%d), стоимость=%.2f₽",
+					contract.Number, snapshotDate.Format("2006-01-02"), objectsCount, activeObjectsCount, existingSnapshot.DailyCost.InexactFloat64())
+				return nil
+			}
+		}
 		return fmt.Errorf("ошибка создания снимка: %w", err)
 	}
 
@@ -476,11 +541,15 @@ func (s *PartnerSnapshotService) getPartnerObjectsWithCountForDate(partnerCompan
 	page := 1
 	perPage := 1000
 
+	log.Printf("🌐 Начинаем загрузку объектов из Axenta Cloud API для партнера %d на дату %s", partnerCompanyID, snapshotDate.Format("2006-01-02"))
+
 	for {
 		// Запрос к Axenta Cloud API с фильтром accountId
 		// API автоматически включает объекты всех дочерних аккаунтов партнера
 		axentaURL := fmt.Sprintf("https://axenta.cloud/api/cms/objects/?accountId=%d&page=%d&per_page=%d",
 			partnerCompanyID, page, perPage)
+
+		log.Printf("📡 Запрос к Axenta Cloud API: %s (страница %d)", axentaURL, page)
 
 		req, err := http.NewRequest("GET", axentaURL, nil)
 		if err != nil {
@@ -488,7 +557,15 @@ func (s *PartnerSnapshotService) getPartnerObjectsWithCountForDate(partnerCompan
 		}
 
 		// Используем переданный токен
+		if token == "" {
+			return 0, 0, nil, fmt.Errorf("токен не предоставлен для запроса к Axenta Cloud API")
+		}
+		tokenPreview := token
+		if len(token) > 10 {
+			tokenPreview = token[:10] + "..."
+		}
 		req.Header.Set("Authorization", "Token "+token)
+		log.Printf("🔑 Используется токен: %s", tokenPreview)
 
 		resp, err := client.Do(req)
 		if err != nil {

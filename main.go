@@ -136,7 +136,7 @@ func main() {
 		if err := partnerSnapshotScheduler.Start(); err != nil {
 			log.Printf("⚠️ Partner Snapshot Scheduler failed to start: %v", err)
 		} else {
-			log.Println("✅ Partner Snapshot Scheduler started (daily at 21:20 UTC / 00:20 MSK)")
+			log.Println("✅ Partner Snapshot Scheduler started (daily at 22:00 UTC / 01:00 MSK)")
 		}
 	} else {
 		log.Println("⚠️ Partner Snapshot Scheduler отключен (ENABLE_SNAPSHOT_SCHEDULER != true)")

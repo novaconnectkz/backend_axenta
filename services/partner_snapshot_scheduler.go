@@ -45,8 +45,8 @@ func NewPartnerSnapshotScheduler() *PartnerSnapshotScheduler {
 
 // Start запускает планировщик
 func (s *PartnerSnapshotScheduler) Start() error {
-	// Запускаем создание снимков каждый день в 21:20 UTC (00:20 MSK следующего дня)
-	_, err := s.cron.AddFunc("20 21 * * *", func() {
+	// Запускаем создание снимков каждый день в 22:00 UTC (01:00 MSK следующего дня)
+	_, err := s.cron.AddFunc("0 22 * * *", func() {
 		// Обработка паник, чтобы планировщик не останавливался при ошибках
 		defer func() {
 			if r := recover(); r != nil {
@@ -56,7 +56,7 @@ func (s *PartnerSnapshotScheduler) Start() error {
 			}
 		}()
 
-		log.Println("🕐 Запуск автоматического создания ежедневных снимков (UTC 21:20 / MSK 00:20)")
+		log.Println("🕐 Запуск автоматического создания ежедневных снимков (UTC 22:00 / MSK 01:00)")
 		s.createDailySnapshots()
 	})
 
@@ -67,7 +67,7 @@ func (s *PartnerSnapshotScheduler) Start() error {
 	s.cron.Start()
 	s.isRunning = true
 
-	log.Println("✅ Планировщик ежедневных снимков запущен (каждый день в 21:20 UTC / 00:20 MSK)")
+	log.Println("✅ Планировщик ежедневных снимков запущен (каждый день в 22:00 UTC / 01:00 MSK)")
 
 	return nil
 }
@@ -543,11 +543,11 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 		job.TotalObjects, job.ActiveObjects,
 		map[bool]string{true: "из API", false: "из снимков"}[realTotalFromAPI > 0 && (job.TotalObjects == realTotalFromAPI)])
 
-	// Устанавливаем scheduled_time для автоматических задач (21:00 UTC / 00:00 MSK следующего дня)
-	// Снимок за 01.12.2025 создаётся в 00:00 MSK 02.12.2025 (т.е. в 21:00 UTC 01.12.2025)
+	// Устанавливаем scheduled_time для автоматических задач (22:00 UTC / 01:00 MSK следующего дня)
+	// Снимок за 01.12.2025 создаётся в 01:00 MSK 02.12.2025 (т.е. в 22:00 UTC 01.12.2025)
 	if job.JobType == models.SnapshotJobTypeDailyAuto {
-		// scheduled_time = дата снимка + 1 день в 00:00 MSK = дата снимка в 21:00 UTC
-		scheduledTime := time.Date(snapshotDate.Year(), snapshotDate.Month(), snapshotDate.Day(), 21, 0, 0, 0, time.UTC)
+		// scheduled_time = дата снимка + 1 день в 01:00 MSK = дата снимка в 22:00 UTC
+		scheduledTime := time.Date(snapshotDate.Year(), snapshotDate.Month(), snapshotDate.Day(), 22, 0, 0, 0, time.UTC)
 		job.ScheduledTime = &scheduledTime
 	}
 
