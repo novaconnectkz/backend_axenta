@@ -87,10 +87,18 @@ func ConnectDatabase() error {
 	slowLogger := NewSlowQueryLogger(1000 * time.Millisecond) // Логируем запросы > 1 секунды
 	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
 		Logger: slowLogger,
+		NowFunc: func() time.Time {
+			return time.Now().UTC() // Всегда используем UTC для времени
+		},
 	})
 
 	if err != nil {
 		return fmt.Errorf("не удалось подключиться к базе данных: %w", err)
+	}
+
+	// Устанавливаем timezone для всех сессий PostgreSQL на UTC
+	if err := DB.Exec("SET timezone = 'UTC'").Error; err != nil {
+		log.Printf("⚠️ Ошибка установки timezone на UTC: %v", err)
 	}
 
 	// Настраиваем пул соединений
@@ -167,10 +175,18 @@ func ConnectDatabaseWithoutMigrations() error {
 	slowLogger := NewSlowQueryLogger(1000 * time.Millisecond) // Логируем запросы > 1 секунды
 	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
 		Logger: slowLogger,
+		NowFunc: func() time.Time {
+			return time.Now().UTC() // Всегда используем UTC для времени
+		},
 	})
 
 	if err != nil {
 		return fmt.Errorf("не удалось подключиться к базе данных: %w", err)
+	}
+
+	// Устанавливаем timezone для всех сессий PostgreSQL на UTC
+	if err := DB.Exec("SET timezone = 'UTC'").Error; err != nil {
+		log.Printf("⚠️ Ошибка установки timezone на UTC: %v", err)
 	}
 
 	// Настраиваем пул соединений
@@ -352,9 +368,17 @@ func ConnectToTenant(databaseSchema string) (*gorm.DB, error) {
 	// Создаем подключение к БД
 	tenantDB, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
+		NowFunc: func() time.Time {
+			return time.Now().UTC() // Всегда используем UTC для времени
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to tenant database schema '%s': %v", databaseSchema, err)
+	}
+
+	// Устанавливаем timezone для всех сессий PostgreSQL на UTC
+	if err := tenantDB.Exec("SET timezone = 'UTC'").Error; err != nil {
+		log.Printf("⚠️ Ошибка установки timezone на UTC для tenant %s: %v", databaseSchema, err)
 	}
 
 	sqlDB, err := tenantDB.DB()
