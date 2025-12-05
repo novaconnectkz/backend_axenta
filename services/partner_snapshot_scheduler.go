@@ -26,8 +26,17 @@ type PartnerSnapshotScheduler struct {
 
 // NewPartnerSnapshotScheduler создает новый планировщик снимков
 func NewPartnerSnapshotScheduler() *PartnerSnapshotScheduler {
+	// Создаем cron с обработкой ошибок и паник
+	// Используем встроенную обработку паник в cron v3 через WithChain
+	c := cron.New(
+		cron.WithLocation(time.UTC),
+		cron.WithChain(
+			cron.Recover(cron.DefaultLogger), // Встроенная обработка паник в cron
+		),
+	)
+
 	return &PartnerSnapshotScheduler{
-		cron:              cron.New(cron.WithLocation(time.UTC)),
+		cron:              c,
 		snapshotService:   NewPartnerSnapshotService(),
 		axentaSyncService: NewAxentaSyncService(database.DB),
 		db:                database.DB,
@@ -38,6 +47,15 @@ func NewPartnerSnapshotScheduler() *PartnerSnapshotScheduler {
 func (s *PartnerSnapshotScheduler) Start() error {
 	// Запускаем создание снимков каждый день в 21:20 UTC (00:20 MSK следующего дня)
 	_, err := s.cron.AddFunc("20 21 * * *", func() {
+		// Обработка паник, чтобы планировщик не останавливался при ошибках
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("❌ ПАНИКА в планировщике снимков: %v", r)
+				log.Printf("❌ Стек паники: %+v", r)
+				// Планировщик продолжит работу после паники
+			}
+		}()
+
 		log.Println("🕐 Запуск автоматического создания ежедневных снимков (UTC 21:20 / MSK 00:20)")
 		s.createDailySnapshots()
 	})
@@ -65,6 +83,15 @@ func (s *PartnerSnapshotScheduler) Stop() {
 
 // createDailySnapshots создает снимки для всех активных партнерских договоров и синхронизирует все аккаунты из Axenta Cloud
 func (s *PartnerSnapshotScheduler) createDailySnapshots() {
+	// Обработка паник, чтобы планировщик не останавливался при ошибках
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("❌ ПАНИКА в createDailySnapshots: %v", r)
+			log.Printf("❌ Стек паники: %+v", r)
+			// Планировщик продолжит работу после паники
+		}
+	}()
+
 	// Получаем вчерашнюю дату (снимок создается в 00:00 UTC за предыдущий день)
 	yesterday := time.Now().UTC().AddDate(0, 0, -1)
 	snapshotDate := time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 0, 0, 0, 0, time.UTC)
@@ -73,6 +100,15 @@ func (s *PartnerSnapshotScheduler) createDailySnapshots() {
 
 // createDailySnapshotsForDate создает снимки за указанную дату
 func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time.Time) {
+	// Обработка паник, чтобы планировщик не останавливался при ошибках
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("❌ ПАНИКА в createDailySnapshotsForDate: %v", r)
+			log.Printf("❌ Стек паники: %+v", r)
+			// Планировщик продолжит работу после паники
+		}
+	}()
+
 	startTime := time.Now()
 	log.Printf("📸 Начало создания ежедневных снимков за дату: %s", snapshotDate.Format("2006-01-02"))
 
