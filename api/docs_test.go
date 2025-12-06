@@ -31,7 +31,7 @@ func TestGetSwaggerUI_Success(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Header().Get("Content-Type"), "text/html")
-	assert.Contains(t, string(w.Body.Bytes()), "swagger-ui")
+	assert.Contains(t, w.Body.String(), "swagger-ui")
 }
 
 // TestGetSwaggerUI_WithSpec тестирует GetSwaggerUI с параметром spec
@@ -45,7 +45,7 @@ func TestGetSwaggerUI_WithSpec(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, string(w.Body.Bytes()), "openapi.yaml")
+	assert.Contains(t, w.Body.String(), "openapi.yaml")
 }
 
 // TestGetOpenAPISpec_NotFound тестирует GetOpenAPISpec когда файл не найден

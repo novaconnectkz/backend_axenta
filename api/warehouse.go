@@ -201,7 +201,7 @@ func (api *WarehouseAPI) DeleteEquipmentCategory(c *gin.Context) {
 	var deletedBy uint
 	var deletedByName string
 	var companyIDUint uint
-	
+
 	if userIDExists {
 		deletedBy = userID.(uint)
 		var user models.User
@@ -213,18 +213,18 @@ func (api *WarehouseAPI) DeleteEquipmentCategory(c *gin.Context) {
 			}
 		}
 	}
-	
+
 	if companyIDExists {
 		companyIDUint = companyID.(uint)
 	}
-	
+
 	// Формируем название и описание для корзины
 	entityName := category.Name
 	entityDescription := fmt.Sprintf("Категория оборудования: %s", category.Name)
 	if category.Description != "" {
 		entityDescription += fmt.Sprintf(", %s", category.Description)
 	}
-	
+
 	// Записываем в корзину
 	if err := RecordDeletion(
 		api.DB,
@@ -496,5 +496,265 @@ func (api *WarehouseAPI) TransferEquipment(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Оборудование успешно перемещено",
 		"data":    operation,
+	})
+}
+
+// GetWarehouseOperation возвращает складскую операцию по ID
+func (api *WarehouseAPI) GetWarehouseOperation(c *gin.Context) {
+	id := c.Param("id")
+	var operation models.WarehouseOperation
+
+	if err := api.DB.Preload("Equipment").Preload("User").Preload("Installation").First(&operation, id).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Операция не найдена"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при поиске операции"})
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data":   operation,
+	})
+}
+
+// UpdateWarehouseOperation обновляет складскую операцию
+func (api *WarehouseAPI) UpdateWarehouseOperation(c *gin.Context) {
+	id := c.Param("id")
+	var operation models.WarehouseOperation
+
+	if err := api.DB.First(&operation, id).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Операция не найдена"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при поиске операции"})
+		}
+		return
+	}
+
+	var updateData models.WarehouseOperation
+	if err := c.ShouldBindJSON(&updateData); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректные данные: " + err.Error()})
+		return
+	}
+
+	if err := api.DB.Model(&operation).Updates(updateData).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при обновлении операции"})
+		return
+	}
+
+	// Загружаем связанные данные для ответа
+	api.DB.Preload("Equipment").Preload("User").Preload("Installation").First(&operation, operation.ID)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Операция успешно обновлена",
+		"data":    operation,
+	})
+}
+
+// DeleteWarehouseOperation удаляет складскую операцию
+func (api *WarehouseAPI) DeleteWarehouseOperation(c *gin.Context) {
+	id := c.Param("id")
+	var operation models.WarehouseOperation
+
+	if err := api.DB.First(&operation, id).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Операция не найдена"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при поиске операции"})
+		}
+		return
+	}
+
+	if err := api.DB.Delete(&operation).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при удалении операции"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Операция успешно удалена"})
+}
+
+// GetOperationHistory возвращает историю изменений складской операции
+func (api *WarehouseAPI) GetOperationHistory(c *gin.Context) {
+	id := c.Param("id")
+	var operation models.WarehouseOperation
+
+	if err := api.DB.First(&operation, id).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Операция не найдена"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при поиске операции"})
+		}
+		return
+	}
+
+	// Получаем все операции, связанные с тем же оборудованием, отсортированные по дате
+	var relatedOperations []models.WarehouseOperation
+	api.DB.Where("equipment_id = ?", operation.EquipmentID).
+		Order("created_at DESC").
+		Preload("Equipment").
+		Preload("User").
+		Preload("Installation").
+		Find(&relatedOperations)
+
+	// Формируем историю
+	history := []map[string]interface{}{
+		{
+			"type":        "created",
+			"description": "Операция создана",
+			"operation":   operation,
+			"created_at":  operation.CreatedAt,
+		},
+	}
+
+	// Добавляем связанные операции как историю
+	for _, relatedOp := range relatedOperations {
+		if relatedOp.ID != operation.ID {
+			history = append(history, map[string]interface{}{
+				"type":        "related_operation",
+				"description": fmt.Sprintf("Связанная операция: %s", relatedOp.GetTypeDisplayName()),
+				"operation":   relatedOp,
+				"created_at":  relatedOp.CreatedAt,
+			})
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":    "success",
+		"data":      history,
+		"operation": operation,
+	})
+}
+
+// GetStockAlert возвращает уведомление о складских проблемах по ID
+func (api *WarehouseAPI) GetStockAlert(c *gin.Context) {
+	id := c.Param("id")
+	var alert models.StockAlert
+
+	if err := api.DB.Preload("Equipment").Preload("EquipmentCategory").Preload("AssignedUser").First(&alert, id).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Уведомление не найдено"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при поиске уведомления"})
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data":   alert,
+	})
+}
+
+// UpdateStockAlert обновляет уведомление о складских проблемах
+func (api *WarehouseAPI) UpdateStockAlert(c *gin.Context) {
+	id := c.Param("id")
+	var alert models.StockAlert
+
+	if err := api.DB.First(&alert, id).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Уведомление не найдено"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при поиске уведомления"})
+		}
+		return
+	}
+
+	var updateData models.StockAlert
+	if err := c.ShouldBindJSON(&updateData); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректные данные: " + err.Error()})
+		return
+	}
+
+	if err := api.DB.Model(&alert).Updates(updateData).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при обновлении уведомления"})
+		return
+	}
+
+	// Загружаем связанные данные для ответа
+	api.DB.Preload("Equipment").Preload("EquipmentCategory").Preload("AssignedUser").First(&alert, alert.ID)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Уведомление успешно обновлено",
+		"data":    alert,
+	})
+}
+
+// DeleteStockAlert удаляет уведомление о складских проблемах
+func (api *WarehouseAPI) DeleteStockAlert(c *gin.Context) {
+	id := c.Param("id")
+	var alert models.StockAlert
+
+	if err := api.DB.First(&alert, id).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Уведомление не найдено"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при поиске уведомления"})
+		}
+		return
+	}
+
+	if err := api.DB.Delete(&alert).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при удалении уведомления"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Уведомление успешно удалено"})
+}
+
+// GetTransferHistory возвращает историю перемещений оборудования
+func (api *WarehouseAPI) GetTransferHistory(c *gin.Context) {
+	var transfers []models.WarehouseOperation
+	query := api.DB.Where("type = ?", "transfer").
+		Preload("Equipment").
+		Preload("User").
+		Preload("Installation")
+
+	// Фильтры
+	if equipmentID := c.Query("equipment_id"); equipmentID != "" {
+		query = query.Where("equipment_id = ?", equipmentID)
+	}
+	if fromLocation := c.Query("from_location"); fromLocation != "" {
+		query = query.Where("from_location = ?", fromLocation)
+	}
+	if toLocation := c.Query("to_location"); toLocation != "" {
+		query = query.Where("to_location = ?", toLocation)
+	}
+
+	// Фильтр по дате
+	if dateFrom := c.Query("date_from"); dateFrom != "" {
+		query = query.Where("created_at >= ?", dateFrom)
+	}
+	if dateTo := c.Query("date_to"); dateTo != "" {
+		query = query.Where("created_at <= ?", dateTo)
+	}
+
+	// Сортировка
+	sortBy := c.DefaultQuery("sort_by", "created_at")
+	sortOrder := c.DefaultQuery("sort_order", "desc")
+	query = query.Order(sortBy + " " + sortOrder)
+
+	// Пагинация
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	offset := (page - 1) * limit
+
+	var total int64
+	api.DB.Model(&models.WarehouseOperation{}).Where("type = ?", "transfer").Count(&total)
+
+	if err := query.Limit(limit).Offset(offset).Find(&transfers).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при получении истории перемещений"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data": transfers,
+		"pagination": gin.H{
+			"page":  page,
+			"limit": limit,
+			"total": total,
+			"pages": (total + int64(limit) - 1) / int64(limit),
+		},
 	})
 }
