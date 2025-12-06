@@ -28,11 +28,6 @@ import (
 var (
 	globalPartnerObjectsCache = make(map[uint]*partnerObjectsCacheEntry)
 	partnerObjectsCacheMutex  sync.RWMutex
-	partnerObjectsCacheTTL    = 60 * time.Second // Кэш на 60 секунд
-
-	// Защита от одновременной загрузки (single-flight)
-	partnerObjectsLoading      = make(map[uint]bool)
-	partnerObjectsLoadingMutex sync.Mutex
 )
 
 type partnerObjectsCacheEntry struct {
@@ -196,168 +191,6 @@ func getPartnerObjectsCountFromSnapshot(partnerCompanyID uint, adminAccountID ui
 		partnerCompanyID, snapshot.ObjectsTotal, snapshot.ObjectsActive)
 
 	return snapshot.ObjectsActive
-}
-
-// getPartnerObjectsFromCache получает объекты из кэша или загружает их
-func getPartnerObjectsFromCache(partnerCompanyID uint, userToken string) ([]models.Object, error) {
-	// Проверяем кэш
-	partnerObjectsCacheMutex.RLock()
-	cached, exists := globalPartnerObjectsCache[partnerCompanyID]
-	partnerObjectsCacheMutex.RUnlock()
-
-	// Если кэш валиден, возвращаем данные из кэша
-	if exists && time.Since(cached.timestamp) < partnerObjectsCacheTTL {
-		log.Printf("📦 Используем кэшированные данные для партнера ID=%d (возраст кэша: %.1f сек)",
-			partnerCompanyID, time.Since(cached.timestamp).Seconds())
-		return cached.objects, nil
-	}
-
-	// Single-flight pattern: проверяем идет ли уже загрузка
-	partnerObjectsLoadingMutex.Lock()
-	if partnerObjectsLoading[partnerCompanyID] {
-		// Другой запрос уже загружает данные, ждем
-		partnerObjectsLoadingMutex.Unlock()
-		log.Printf("⏳ Ожидаем завершения загрузки для партнера ID=%d...", partnerCompanyID)
-
-		// Ждем максимум 30 секунд с проверками каждые 100мс
-		for i := 0; i < 300; i++ {
-			time.Sleep(100 * time.Millisecond)
-
-			partnerObjectsCacheMutex.RLock()
-			cached, exists := globalPartnerObjectsCache[partnerCompanyID]
-			partnerObjectsCacheMutex.RUnlock()
-
-			if exists && time.Since(cached.timestamp) < partnerObjectsCacheTTL {
-				log.Printf("✅ Дождались загрузки для партнера ID=%d, используем свежий кэш", partnerCompanyID)
-				return cached.objects, nil
-			}
-		}
-
-		return nil, fmt.Errorf("таймаут ожидания загрузки объектов для партнера ID=%d", partnerCompanyID)
-	}
-
-	// Отмечаем что мы начинаем загрузку
-	partnerObjectsLoading[partnerCompanyID] = true
-	partnerObjectsLoadingMutex.Unlock()
-
-	// После загрузки снимаем флаг
-	defer func() {
-		partnerObjectsLoadingMutex.Lock()
-		delete(partnerObjectsLoading, partnerCompanyID)
-		partnerObjectsLoadingMutex.Unlock()
-	}()
-
-	log.Printf("🌐 Загружаем свежие данные для партнера ID=%d из Axenta Cloud", partnerCompanyID)
-
-	// Загружаем данные из Axenta Cloud
-	client := &http.Client{Timeout: 30 * time.Second}
-	var allObjects []struct {
-		ID       uint   `json:"id"`
-		Name     string `json:"name"`
-		IsActive bool   `json:"isActive"`
-	}
-
-	page := 1
-	perPage := 1000
-
-	for {
-		// Запрос к Axenta Cloud API с пагинацией (получаем ВСЕ объекты, фильтруем на клиенте)
-		axentaCloudURL := fmt.Sprintf("https://axenta.cloud/api/cms/objects/?accountId=%d&page=%d&per_page=%d",
-			partnerCompanyID, page, perPage)
-
-		req, err := http.NewRequest("GET", axentaCloudURL, nil)
-		if err != nil {
-			return nil, fmt.Errorf("ошибка создания запроса: %w", err)
-		}
-		req.Header.Set("Authorization", "Token "+userToken)
-
-		resp, err := client.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("ошибка запроса к Axenta Cloud: %w", err)
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			resp.Body.Close()
-			return nil, fmt.Errorf("Axenta Cloud вернул статус %d", resp.StatusCode)
-		}
-
-		var axentaResponse struct {
-			Results []struct {
-				ID       uint   `json:"id"`
-				Name     string `json:"name"`
-				IsActive bool   `json:"isActive"`
-			} `json:"results"`
-			Count int     `json:"count"`
-			Next  *string `json:"next"`
-		}
-
-		if err := json.NewDecoder(resp.Body).Decode(&axentaResponse); err != nil {
-			resp.Body.Close()
-			return nil, fmt.Errorf("ошибка декодирования ответа: %w", err)
-		}
-		resp.Body.Close()
-
-		// Добавляем объекты с текущей страницы
-		allObjects = append(allObjects, axentaResponse.Results...)
-
-		log.Printf("📄 Партнер ID=%d, Страница %d: получено %d объектов, всего загружено %d, Axenta Cloud Count=%d",
-			partnerCompanyID, page, len(axentaResponse.Results), len(allObjects), axentaResponse.Count)
-
-		// Если получили меньше объектов, чем per_page, или нет следующей страницы - это последняя страница
-		if len(axentaResponse.Results) < perPage || axentaResponse.Next == nil {
-			break
-		}
-
-		page++
-	}
-
-	// Фильтруем только активные объекты (дополнительная проверка на клиенте)
-	var objects []models.Object
-	var activeObjectIDs []uint
-	var inactiveObjects []struct {
-		ID       uint
-		Name     string
-		IsActive bool
-	}
-
-	for _, obj := range allObjects {
-		if obj.IsActive {
-			objects = append(objects, models.Object{
-				ID:        obj.ID,
-				CompanyID: partnerCompanyID,
-				Name:      obj.Name,
-			})
-			if len(activeObjectIDs) < 10 {
-				activeObjectIDs = append(activeObjectIDs, obj.ID)
-			}
-		} else {
-			if len(inactiveObjects) < 10 {
-				inactiveObjects = append(inactiveObjects, struct {
-					ID       uint
-					Name     string
-					IsActive bool
-				}{ID: obj.ID, Name: obj.Name, IsActive: obj.IsActive})
-			}
-		}
-	}
-
-	inactiveCount := len(allObjects) - len(objects)
-	log.Printf("✅ Загружено %d активных объектов из %d всего для партнерской компании ID=%d (неактивных: %d)",
-		len(objects), len(allObjects), partnerCompanyID, inactiveCount)
-	log.Printf("📋 Первые 10 активных объектов (ID): %v", activeObjectIDs)
-	if len(inactiveObjects) > 0 {
-		log.Printf("⚠️ Первые неактивные объекты: %+v", inactiveObjects)
-	}
-
-	// Сохраняем в кэш
-	partnerObjectsCacheMutex.Lock()
-	globalPartnerObjectsCache[partnerCompanyID] = &partnerObjectsCacheEntry{
-		objects:   objects,
-		timestamp: time.Now(),
-	}
-	partnerObjectsCacheMutex.Unlock()
-
-	return objects, nil
 }
 
 // FixContractStatuses исправляет статусы договоров без активных подписок
@@ -1599,7 +1432,6 @@ func CreateContract(c *gin.Context) {
 	}
 
 	request := CreateContractRequest{
-		Contract:  contract,
 		AccountID: rawRequest.AccountID,
 		ObjectIDs: rawRequest.ObjectIDs,
 	}
@@ -1791,19 +1623,11 @@ func CreateContract(c *gin.Context) {
 					if contractStartDate == nil || contractEndDate == nil {
 						// Если у нового договора нет start_date или end_date, считаем что пересечения нет
 						hasOverlap = false
-					} else if contractEndDate != nil && existing.EndDate != nil {
+					} else if existing.EndDate != nil {
 						hasOverlap = !contractStartDate.After(*existing.EndDate) && !existing.StartDate.After(*contractEndDate)
-					} else if contractEndDate != nil && existing.EndDate == nil {
+					} else {
 						// Если у существующей привязки нет end_date, считаем что пересечения нет
 						hasOverlap = false
-					} else if contractEndDate == nil {
-						// Если у нового договора нет end_date, проверяем только пересечение с началом существующей привязки
-						if existing.EndDate != nil {
-							hasOverlap = !contractStartDate.After(*existing.EndDate)
-						} else {
-							// Если у обоих нет end_date, считаем что пересечения нет
-							hasOverlap = false
-						}
 					}
 
 					if hasOverlap {
@@ -2133,13 +1957,8 @@ contractCreated:
 						// Периоды пересекаются, если start1 <= end2 && start2 <= end1
 						// Если у нового договора нет start_date или end_date, пропускаем проверку пересечений (период будет установлен через подписку)
 						var hasOverlap bool
-						if contractStartDate == nil || contractEndDate == nil {
-							// Если у нового договора нет start_date или end_date, считаем что пересечения нет
-							hasOverlap = false
-						} else if contractEndDate != nil && existing.EndDate != nil {
-							hasOverlap = !contractStartDate.After(*existing.EndDate) && !existing.StartDate.After(*contractEndDate)
-						} else if contractEndDate != nil && existing.EndDate == nil {
-							// Если у существующей привязки нет end_date, считаем что пересечения нет
+						if contractStartDate == nil {
+							// Если у нового договора нет start_date, считаем что пересечения нет
 							hasOverlap = false
 						} else if contractEndDate == nil {
 							// Если у нового договора нет end_date, проверяем только пересечение с началом существующей привязки
@@ -2149,6 +1968,12 @@ contractCreated:
 								// Если у обоих нет end_date, считаем что пересечения нет
 								hasOverlap = false
 							}
+						} else if existing.EndDate != nil {
+							// Оба договора имеют и start_date и end_date - проверяем полное пересечение
+							hasOverlap = !contractStartDate.After(*existing.EndDate) && !existing.StartDate.After(*contractEndDate)
+						} else {
+							// Если у существующей привязки нет end_date, считаем что пересечения нет
+							hasOverlap = false
 						}
 
 						if hasOverlap {
@@ -5125,7 +4950,7 @@ func AttachObjectsToContract(c *gin.Context) {
 						if authHeader != "" {
 							// Пробуем получить объект из Axenta Cloud по ID
 							// ID в Axenta Cloud - это число, но может быть передано как uniqueId или id
-							axentaURL := fmt.Sprintf("https://axenta.cloud/api/cms/objects/?page=1&per_page=100")
+							axentaURL := "https://axenta.cloud/api/cms/objects/?page=1&per_page=100"
 							req, _ := http.NewRequest("GET", axentaURL, nil)
 							req.Header.Set("Authorization", authHeader)
 
@@ -5534,19 +5359,12 @@ func AttachObjectsToContract(c *gin.Context) {
 				if contractStartDate == nil || contractEndDate == nil {
 					// Если у нового договора нет start_date или end_date, считаем что пересечения нет
 					hasOverlap = false
-				} else if contractEndDate != nil && existing.EndDate != nil {
+				} else if existing.EndDate != nil {
+					// Оба договора имеют end_date, проверяем пересечение периодов
 					hasOverlap = !contractStartDate.After(*existing.EndDate) && !existing.StartDate.After(*contractEndDate)
-				} else if contractEndDate != nil && existing.EndDate == nil {
+				} else {
 					// Если у существующей привязки нет end_date, считаем что пересечения нет
 					hasOverlap = false
-				} else if contractEndDate == nil {
-					// Если у нового договора нет end_date, проверяем только пересечение с началом существующей привязки
-					if existing.EndDate != nil {
-						hasOverlap = !contractStartDate.After(*existing.EndDate)
-					} else {
-						// Если у обоих нет end_date, считаем что пересечения нет
-						hasOverlap = false
-					}
 				}
 
 				if hasOverlap {

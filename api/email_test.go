@@ -31,7 +31,7 @@ func setupEmailTestDB(t *testing.T) *gorm.DB {
 }
 
 // setupEmailTestRouter создает тестовый роутер с middleware для установки контекста
-func setupEmailTestRouter(t *testing.T, db *gorm.DB, companyID uint) *gin.Engine {
+func setupEmailTestRouter(_ *testing.T, _ *gorm.DB, companyID uint) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 

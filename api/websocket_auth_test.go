@@ -16,6 +16,7 @@ import (
 
 // setupWebSocketAuthAPITestService создает JWT сервис для тестов
 func setupWebSocketAuthAPITestService(t *testing.T) *services.JWTService {
+	t.Helper()
 	// Сохраняем оригинальное значение
 	originalSecret := os.Getenv("JWT_SECRET")
 	defer os.Setenv("JWT_SECRET", originalSecret)

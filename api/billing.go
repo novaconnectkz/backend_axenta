@@ -480,7 +480,7 @@ func DeleteBillingPlan(c *gin.Context) {
 	userID, userIDExists := c.Get("user_id")
 	var deletedBy uint
 	var deletedByName string
-	
+
 	if userIDExists {
 		deletedBy = userID.(uint)
 		var user models.User
@@ -492,14 +492,14 @@ func DeleteBillingPlan(c *gin.Context) {
 			}
 		}
 	}
-	
+
 	// Формируем название и описание для корзины
 	entityName := plan.Name
-	entityDescription := fmt.Sprintf("Цена: %.2f %s за %s", plan.Price, plan.Currency, plan.BillingPeriod)
+	entityDescription := fmt.Sprintf("Цена: %s %s за %s", plan.Price.StringFixed(2), plan.Currency, plan.BillingPeriod)
 	if plan.Description != "" {
 		entityDescription += fmt.Sprintf(", %s", plan.Description)
 	}
-	
+
 	// Записываем в корзину
 	if err := RecordDeletion(
 		database.DB,
@@ -588,10 +588,10 @@ func GetSubscriptions(c *gin.Context) {
 		for i := range subscriptions {
 			if subscriptions[i].ContractID != nil {
 				var contract models.Contract
-			if err := tenantDB.Where("id = ? AND admin_account_id = ?", *subscriptions[i].ContractID, adminAccountID).
-				First(&contract).Error; err == nil {
-				subscriptions[i].Contract = &contract
-			}
+				if err := tenantDB.Where("id = ? AND admin_account_id = ?", *subscriptions[i].ContractID, adminAccountID).
+					First(&contract).Error; err == nil {
+					subscriptions[i].Contract = &contract
+				}
 			}
 		}
 	}
@@ -752,7 +752,7 @@ func recalculateContractTotalAmount(tenantDB, publicDB *gorm.DB, contractID uint
 	// Загружаем все активные подписки для договора
 	var subscriptions []models.Subscription
 	if err := publicDB.
-		Where("contract_id = ? AND admin_account_id = ? AND deleted_at IS NULL AND status NOT IN (?, ?)", 
+		Where("contract_id = ? AND admin_account_id = ? AND deleted_at IS NULL AND status NOT IN (?, ?)",
 			contractID, adminAccountID, "cancelled", "expired").
 		Find(&subscriptions).Error; err != nil {
 		return fmt.Errorf("ошибка загрузки подписок: %w", err)
@@ -823,10 +823,10 @@ func recalculateContractTotalAmount(tenantDB, publicDB *gorm.DB, contractID uint
 			subscriptionAmount = pricePerMonth.
 				Mul(decimal.NewFromInt(int64(months))).
 				Mul(decimal.NewFromInt(int64(objectsCount)))
-			
+
 			log.Printf("  - Подписка #%d (%s, yearly): %d объектов × (%s / 12) × %d мес = %s",
 				subscription.ID, billingPlan.Name, objectsCount, billingPlan.Price.String(), months, subscriptionAmount.String())
-		
+
 		case "weekly":
 			// Недельный тариф: (цена × количество недель) × количество объектов
 			weeks := (months * 30) / 7
@@ -836,10 +836,10 @@ func recalculateContractTotalAmount(tenantDB, publicDB *gorm.DB, contractID uint
 			subscriptionAmount = billingPlan.Price.
 				Mul(decimal.NewFromInt(int64(weeks))).
 				Mul(decimal.NewFromInt(int64(objectsCount)))
-			
+
 			log.Printf("  - Подписка #%d (%s, weekly): %d объектов × %s × %d недель = %s",
 				subscription.ID, billingPlan.Name, objectsCount, billingPlan.Price.String(), weeks, subscriptionAmount.String())
-		
+
 		case "daily":
 			// Дневной тариф: (цена × количество дней) × количество объектов
 			days := months * 30
@@ -849,10 +849,10 @@ func recalculateContractTotalAmount(tenantDB, publicDB *gorm.DB, contractID uint
 			subscriptionAmount = billingPlan.Price.
 				Mul(decimal.NewFromInt(int64(days))).
 				Mul(decimal.NewFromInt(int64(objectsCount)))
-			
+
 			log.Printf("  - Подписка #%d (%s, daily): %d объектов × %s × %d дней = %s",
 				subscription.ID, billingPlan.Name, objectsCount, billingPlan.Price.String(), days, subscriptionAmount.String())
-		
+
 		case "hourly":
 			// Часовой тариф: (цена × количество часов) × количество объектов
 			hours := months * 30 * 24
@@ -862,14 +862,14 @@ func recalculateContractTotalAmount(tenantDB, publicDB *gorm.DB, contractID uint
 			subscriptionAmount = billingPlan.Price.
 				Mul(decimal.NewFromInt(int64(hours))).
 				Mul(decimal.NewFromInt(int64(objectsCount)))
-			
+
 			log.Printf("  - Подписка #%d (%s, hourly): %d объектов × %s × %d часов = %s",
 				subscription.ID, billingPlan.Name, objectsCount, billingPlan.Price.String(), hours, subscriptionAmount.String())
-		
+
 		default: // monthly и другие
 			// Месячный тариф с пролонгацией: цена × количество объектов
 			subscriptionAmount = billingPlan.Price.Mul(decimal.NewFromInt(int64(objectsCount)))
-			
+
 			log.Printf("  - Подписка #%d (%s, monthly): %d объектов × %s = %s (ежемесячно)",
 				subscription.ID, billingPlan.Name, objectsCount, billingPlan.Price.String(), subscriptionAmount.String())
 		}
@@ -916,7 +916,7 @@ func recalculateDraftInvoicesForContract(publicDB, tenantDB *gorm.DB, contractID
 	// Пересчитываем каждый черновик счета
 	for i := range draftInvoices {
 		invoice := &draftInvoices[i]
-		
+
 		// Вычисляем период в месяцах между датами счета
 		periodStart := invoice.BillingPeriodStart
 		periodEnd := invoice.BillingPeriodEnd
@@ -1366,13 +1366,13 @@ func CreateSubscription(c *gin.Context) {
 								existingSameContract.StartDate = objStartDate
 								existingSameContract.EndDate = objEndDate
 								existingSameContract.Status = "active"
-								
+
 								if err := tenantDB.Save(&existingSameContract).Error; err != nil {
 									log.Printf("⚠️ Ошибка обновления связи для объекта %d: %v", objectID, err)
 									objectErrors = append(objectErrors, fmt.Sprintf("Ошибка обновления объекта %d: %v", objectID, err))
 								} else {
 									attachedCount++
-									log.Printf("✅ Обновлена связь: договор %d <-> объект %d (subscription_id=%d, account_id %d)", 
+									log.Printf("✅ Обновлена связь: договор %d <-> объект %d (subscription_id=%d, account_id %d)",
 										contract.ID, objectID, subscription.ID, targetAccountID)
 								}
 								continue
@@ -1395,7 +1395,7 @@ func CreateSubscription(c *gin.Context) {
 								objectErrors = append(objectErrors, fmt.Sprintf("Ошибка привязки объекта %d: %v", objectID, err))
 							} else {
 								attachedCount++
-								log.Printf("✅ Создана связь: договор %d <-> объект %d (subscription_id=%d, account_id %d, схема %s)", 
+								log.Printf("✅ Создана связь: договор %d <-> объект %d (subscription_id=%d, account_id %d, схема %s)",
 									contract.ID, objectID, subscription.ID, targetAccountID, company.DatabaseSchema)
 							}
 						}
@@ -1410,17 +1410,17 @@ func CreateSubscription(c *gin.Context) {
 							log.Printf("✅ Привязано %d объектов к договору %d через подписку", attachedCount, contract.ID)
 						}
 
-					// Пересчитываем сумму договора на основе ВСЕХ подписок
-					if attachedCount > 0 {
-						if err := recalculateContractTotalAmount(tenantDB, publicDB, contract.ID, adminAccountID); err != nil {
-							log.Printf("⚠️ Ошибка пересчета total_amount договора %d: %v", contract.ID, err)
+						// Пересчитываем сумму договора на основе ВСЕХ подписок
+						if attachedCount > 0 {
+							if err := recalculateContractTotalAmount(tenantDB, publicDB, contract.ID, adminAccountID); err != nil {
+								log.Printf("⚠️ Ошибка пересчета total_amount договора %d: %v", contract.ID, err)
+							}
+
+							// Пересчитываем черновики счетов по этому договору
+							if err := recalculateDraftInvoicesForContract(publicDB, tenantDB, contract.ID, adminAccountID); err != nil {
+								log.Printf("⚠️ Ошибка пересчета черновиков счетов для договора %d: %v", contract.ID, err)
+							}
 						}
-						
-						// Пересчитываем черновики счетов по этому договору
-						if err := recalculateDraftInvoicesForContract(publicDB, tenantDB, contract.ID, adminAccountID); err != nil {
-							log.Printf("⚠️ Ошибка пересчета черновиков счетов для договора %d: %v", contract.ID, err)
-						}
-					}
 					}
 				} else {
 					log.Printf("ℹ️ Объекты не указаны в подписке, пропускаем привязку")
@@ -1494,9 +1494,9 @@ func UpdateSubscription(c *gin.Context) {
 	}
 
 	// Если статус изменился на cancelled или expired, деактивируем объекты
-	if updateData.Status != "" && updateData.Status != oldStatus && 
+	if updateData.Status != "" && updateData.Status != oldStatus &&
 		(updateData.Status == "cancelled" || updateData.Status == "expired") {
-		
+
 		tenantDB := middleware.GetTenantDB(c)
 		if tenantDB != nil && subscription.ContractID != nil {
 			result := tenantDB.Model(&models.ContractObject{}).
@@ -1505,11 +1505,11 @@ func UpdateSubscription(c *gin.Context) {
 					"subscription_id": nil,
 					"status":          "inactive",
 				})
-			
+
 			if result.Error != nil {
 				log.Printf("⚠️ Ошибка деактивации объектов подписки %d: %v", subscription.ID, result.Error)
 			} else if result.RowsAffected > 0 {
-				log.Printf("✅ Деактивировано %d объектов подписки %d (статус изменен на %s, status=inactive)", 
+				log.Printf("✅ Деактивировано %d объектов подписки %d (статус изменен на %s, status=inactive)",
 					result.RowsAffected, subscription.ID, updateData.Status)
 			}
 		}
@@ -1522,7 +1522,7 @@ func UpdateSubscription(c *gin.Context) {
 			if err := recalculateContractTotalAmount(tenantDB, database.DB, *subscription.ContractID, adminAccountID); err != nil {
 				log.Printf("⚠️ Ошибка пересчета total_amount договора %d после обновления подписки: %v", *subscription.ContractID, err)
 			}
-			
+
 			// Пересчитываем черновики счетов по этому договору
 			if err := recalculateDraftInvoicesForContract(database.DB, tenantDB, *subscription.ContractID, adminAccountID); err != nil {
 				log.Printf("⚠️ Ошибка пересчета черновиков счетов для договора %d: %v", *subscription.ContractID, err)
@@ -1571,7 +1571,7 @@ func DeleteSubscription(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// Проверяем, не удалена ли уже подписка
 	if deletedSubscription.DeletedAt.Valid {
 		log.Printf("⚠️ Попытка удалить уже удаленную подписку %d", subscriptionID)
@@ -1608,7 +1608,7 @@ func DeleteSubscription(c *gin.Context) {
 				"subscription_id": nil,
 				"status":          "inactive",
 			})
-		
+
 		if result.Error != nil {
 			log.Printf("⚠️ Ошибка деактивации объектов подписки %d: %v", subscriptionID, result.Error)
 		} else if result.RowsAffected > 0 {
@@ -1622,7 +1622,7 @@ func DeleteSubscription(c *gin.Context) {
 		userID, userIDExists := c.Get("user_id")
 		var deletedBy uint
 		var deletedByName string
-		
+
 		if userIDExists {
 			deletedBy = userID.(uint)
 			var user models.User
@@ -1634,14 +1634,14 @@ func DeleteSubscription(c *gin.Context) {
 				}
 			}
 		}
-		
+
 		// Формируем название и описание для корзины
 		entityName := fmt.Sprintf("Подписка #%d", subscriptionID)
 		entityDescription := fmt.Sprintf("Подписка на тарифный план (ID: %d)", subscription.BillingPlanID)
 		if subscription.ContractID != nil {
 			entityDescription += fmt.Sprintf(", договор ID: %d", *subscription.ContractID)
 		}
-		
+
 		// Записываем в корзину
 		if err := RecordDeletion(
 			tenantDB,
@@ -1673,7 +1673,7 @@ func DeleteSubscription(c *gin.Context) {
 		if err := recalculateContractTotalAmount(tenantDB, database.DB, *contractID, adminAccountID); err != nil {
 			log.Printf("⚠️ Ошибка пересчета total_amount договора %d после удаления подписки: %v", *contractID, err)
 		}
-		
+
 		// Пересчитываем черновики счетов по этому договору
 		if err := recalculateDraftInvoicesForContract(database.DB, tenantDB, *contractID, adminAccountID); err != nil {
 			log.Printf("⚠️ Ошибка пересчета черновиков счетов для договора %d: %v", *contractID, err)
@@ -1740,7 +1740,7 @@ func GetContractBillingBreakdown(c *gin.Context) {
 	// Загружаем все активные подписки для договора
 	var subscriptions []models.Subscription
 	if err := database.DB.
-		Where("contract_id = ? AND admin_account_id = ? AND deleted_at IS NULL", 
+		Where("contract_id = ? AND admin_account_id = ? AND deleted_at IS NULL",
 			uint(contractID), adminAccountID).
 		Find(&subscriptions).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -1776,7 +1776,7 @@ func GetContractBillingBreakdown(c *gin.Context) {
 	subscriptionsData := make([]SubscriptionWithObjects, 0)
 	for _, sub := range subscriptions {
 		var objects []models.ContractObject
-		tenantDB.Where("contract_id = ? AND subscription_id = ? AND status = ?", 
+		tenantDB.Where("contract_id = ? AND subscription_id = ? AND status = ?",
 			uint(contractID), sub.ID, "active").Find(&objects)
 
 		plan, exists := billingPlans[sub.BillingPlanID]
@@ -1801,25 +1801,25 @@ func GetContractBillingBreakdown(c *gin.Context) {
 		Amount         decimal.Decimal `json:"amount"`
 		Description    string          `json:"description"`
 	}
-	
+
 	// ВРЕМЕННО: Информация о фактических счетах за месяц
 	type TempInvoiceInfo struct {
-		Count            int             `json:"count"`
-		ActualInvoiced   decimal.Decimal `json:"actual_invoiced"`
-		ActualPaid       decimal.Decimal `json:"actual_paid"`
+		Count             int             `json:"count"`
+		ActualInvoiced    decimal.Decimal `json:"actual_invoiced"`
+		ActualPaid        decimal.Decimal `json:"actual_paid"`
 		ActualOutstanding decimal.Decimal `json:"actual_outstanding"`
-		Invoices         []gin.H         `json:"invoices"`
-		CalculationDiff  decimal.Decimal `json:"calculation_diff"` // Разница между расчетной и фактической суммой
+		Invoices          []gin.H         `json:"invoices"`
+		CalculationDiff   decimal.Decimal `json:"calculation_diff"` // Разница между расчетной и фактической суммой
 	}
 
 	type MonthlyCharge struct {
-		Month          string                 `json:"month"`           // YYYY-MM
-		MonthName      string                 `json:"month_name"`      // "Ноябрь 2025"
-		IsCompleted    bool                   `json:"is_completed"`    // Прошедший месяц
-		Subscriptions  []SubscriptionCharge   `json:"subscriptions"`
-		TotalAmount    decimal.Decimal        `json:"total_amount"`
+		Month         string               `json:"month"`        // YYYY-MM
+		MonthName     string               `json:"month_name"`   // "Ноябрь 2025"
+		IsCompleted   bool                 `json:"is_completed"` // Прошедший месяц
+		Subscriptions []SubscriptionCharge `json:"subscriptions"`
+		TotalAmount   decimal.Decimal      `json:"total_amount"`
 		// ВРЕМЕННО: Информация о фактических списаниях
-		TempInvoices   *TempInvoiceInfo       `json:"_temp_invoices,omitempty"`
+		TempInvoices *TempInvoiceInfo `json:"_temp_invoices,omitempty"`
 	}
 
 	monthlyCharges := make([]MonthlyCharge, 0)
@@ -1831,7 +1831,7 @@ func GetContractBillingBreakdown(c *gin.Context) {
 
 	for month := startMonth; !month.After(endMonth); month = month.AddDate(0, 1, 0) {
 		isCompleted := month.Before(time.Date(currentDate.Year(), currentDate.Month(), 1, 0, 0, 0, 0, currentDate.Location()))
-		
+
 		monthlyCharge := MonthlyCharge{
 			Month:         month.Format("2006-01"),
 			MonthName:     getMonthName(month),
@@ -1844,7 +1844,7 @@ func GetContractBillingBreakdown(c *gin.Context) {
 		for _, subData := range subscriptionsData {
 			// Проверяем, была ли подписка активна в этом месяце
 			subStartMonth := time.Date(subData.Subscription.CreatedAt.Year(), subData.Subscription.CreatedAt.Month(), 1, 0, 0, 0, 0, subData.Subscription.CreatedAt.Location())
-			
+
 			// Определяем конец действия подписки
 			var subEndMonth time.Time
 			if subData.Subscription.Status == "cancelled" || subData.Subscription.Status == "expired" {
@@ -1872,35 +1872,35 @@ func GetContractBillingBreakdown(c *gin.Context) {
 				// Годовой тариф: делим на 12 месяцев
 				pricePerObject = subData.BillingPlan.Price.Div(decimal.NewFromInt(12))
 				amount = pricePerObject.Mul(decimal.NewFromInt(int64(objectsCount)))
-				description = fmt.Sprintf("%d объект(ов) × %s ₽/год ÷ 12 мес", 
+				description = fmt.Sprintf("%d объект(ов) × %s ₽/год ÷ 12 мес",
 					objectsCount, subData.BillingPlan.Price.String())
-			
+
 			case "weekly":
 				// Недельный тариф: конвертируем в месячную стоимость
 				pricePerObject = subData.BillingPlan.Price.Mul(decimal.NewFromInt(4)) // ~4 недели в месяце
 				amount = pricePerObject.Mul(decimal.NewFromInt(int64(objectsCount)))
-				description = fmt.Sprintf("%d объект(ов) × %s ₽/нед × 4", 
+				description = fmt.Sprintf("%d объект(ов) × %s ₽/нед × 4",
 					objectsCount, subData.BillingPlan.Price.String())
-			
+
 			case "daily":
 				// Дневной тариф: конвертируем в месячную стоимость
 				pricePerObject = subData.BillingPlan.Price.Mul(decimal.NewFromInt(30)) // 30 дней в месяце
 				amount = pricePerObject.Mul(decimal.NewFromInt(int64(objectsCount)))
-				description = fmt.Sprintf("%d объект(ов) × %s ₽/день × 30", 
+				description = fmt.Sprintf("%d объект(ов) × %s ₽/день × 30",
 					objectsCount, subData.BillingPlan.Price.String())
-			
+
 			case "hourly":
 				// Часовой тариф: конвертируем в месячную стоимость
 				pricePerObject = subData.BillingPlan.Price.Mul(decimal.NewFromInt(720)) // 30 дней × 24 часа
 				amount = pricePerObject.Mul(decimal.NewFromInt(int64(objectsCount)))
-				description = fmt.Sprintf("%d объект(ов) × %s ₽/час × 720", 
+				description = fmt.Sprintf("%d объект(ов) × %s ₽/час × 720",
 					objectsCount, subData.BillingPlan.Price.String())
-			
+
 			default: // monthly
 				// Месячный тариф
 				pricePerObject = subData.BillingPlan.Price
 				amount = subData.BillingPlan.Price.Mul(decimal.NewFromInt(int64(objectsCount)))
-				description = fmt.Sprintf("%d объект(ов) × %s ₽/мес", 
+				description = fmt.Sprintf("%d объект(ов) × %s ₽/мес",
 					objectsCount, subData.BillingPlan.Price.String())
 			}
 
@@ -1928,12 +1928,12 @@ func GetContractBillingBreakdown(c *gin.Context) {
 
 	var invoices []models.Invoice
 	invoiceMapByMonth := make(map[string][]models.Invoice) // месяц -> счета
-	
+
 	if err := publicDB.
 		Where("contract_id = ? AND admin_account_id = ?", uint(contractID), adminAccountID).
 		Order("invoice_date DESC").
 		Find(&invoices).Error; err == nil {
-		
+
 		// Группируем счета по месяцам
 		for _, invoice := range invoices {
 			monthKey := invoice.BillingPeriodStart.Format("2006-01")
@@ -1947,13 +1947,13 @@ func GetContractBillingBreakdown(c *gin.Context) {
 	for i := range monthlyCharges {
 		monthKey := monthlyCharges[i].Month
 		monthInvoices := invoiceMapByMonth[monthKey]
-		
+
 		// Подсчитываем статистику по счетам за месяц
 		actualInvoiced := decimal.Zero
 		actualPaid := decimal.Zero
 		actualOutstanding := decimal.Zero
 		invoiceCount := len(monthInvoices)
-		
+
 		for _, inv := range monthInvoices {
 			actualInvoiced = actualInvoiced.Add(inv.TotalAmount)
 			actualPaid = actualPaid.Add(inv.PaidAmount)
@@ -1962,24 +1962,24 @@ func GetContractBillingBreakdown(c *gin.Context) {
 				actualOutstanding = actualOutstanding.Add(outstanding)
 			}
 		}
-		
+
 		// Добавляем информацию о счетах
 		invoiceInfo := make([]gin.H, 0, len(monthInvoices))
 		for _, inv := range monthInvoices {
 			invoiceInfo = append(invoiceInfo, gin.H{
-				"id":              inv.ID,
-				"number":          inv.Number,
-				"invoice_date":    inv.InvoiceDate,
-				"due_date":        inv.DueDate,
-				"total_amount":    inv.TotalAmount,
-				"paid_amount":     inv.PaidAmount,
-				"outstanding":     inv.TotalAmount.Sub(inv.PaidAmount),
-				"status":          inv.Status,
+				"id":                   inv.ID,
+				"number":               inv.Number,
+				"invoice_date":         inv.InvoiceDate,
+				"due_date":             inv.DueDate,
+				"total_amount":         inv.TotalAmount,
+				"paid_amount":          inv.PaidAmount,
+				"outstanding":          inv.TotalAmount.Sub(inv.PaidAmount),
+				"status":               inv.Status,
 				"billing_period_start": inv.BillingPeriodStart,
 				"billing_period_end":   inv.BillingPeriodEnd,
 			})
 		}
-		
+
 		// ВРЕМЕННО: Добавляем информацию о фактических списаниях
 		if invoiceCount > 0 {
 			monthlyCharges[i].TempInvoices = &TempInvoiceInfo{
@@ -1997,7 +1997,7 @@ func GetContractBillingBreakdown(c *gin.Context) {
 	totalPaid := decimal.Zero
 	totalFuture := decimal.Zero
 	totalAmount := decimal.Zero
-	
+
 	// ВРЕМЕННО: Итоговая статистика по фактическим счетам
 	totalActualInvoiced := decimal.Zero
 	totalActualPaid := decimal.Zero
@@ -2010,7 +2010,7 @@ func GetContractBillingBreakdown(c *gin.Context) {
 		} else {
 			totalFuture = totalFuture.Add(charge.TotalAmount)
 		}
-		
+
 		// ВРЕМЕННО: Собираем статистику по фактическим счетам
 		if charge.TempInvoices != nil {
 			totalActualInvoiced = totalActualInvoiced.Add(charge.TempInvoices.ActualInvoiced)
@@ -2023,18 +2023,18 @@ func GetContractBillingBreakdown(c *gin.Context) {
 		"status": "success",
 		"data": gin.H{
 			"contract": gin.H{
-				"id":          contract.ID,
-				"number":      contract.Number,
-				"start_date":  contract.StartDate,
-				"end_date":    contract.EndDate,
+				"id":           contract.ID,
+				"number":       contract.Number,
+				"start_date":   contract.StartDate,
+				"end_date":     contract.EndDate,
 				"total_amount": contract.TotalAmount,
 			},
 			"monthly_charges": monthlyCharges,
 			"summary": gin.H{
-				"total_amount":  totalAmount,
-				"total_paid":    totalPaid,
-				"total_future":  totalFuture,
-				"months_count":  len(monthlyCharges),
+				"total_amount": totalAmount,
+				"total_paid":   totalPaid,
+				"total_future": totalFuture,
+				"months_count": len(monthlyCharges),
 			},
 			// ВРЕМЕННО: Добавляем информацию о фактических списаниях
 			"_temp_actual_billing": gin.H{
@@ -2178,7 +2178,7 @@ func GenerateInvoice(c *gin.Context) {
 		return
 	}
 
-	log.Printf("📅 Получены даты: period_start=%s, period_end=%s", 
+	log.Printf("📅 Получены даты: period_start=%s, period_end=%s",
 		requestData.PeriodStart, requestData.PeriodEnd)
 	if requestData.CustomAmount != nil {
 		log.Printf("💰 Ручная сумма получена: %.2f", *requestData.CustomAmount)
@@ -2455,7 +2455,7 @@ func GetInvoice(c *gin.Context) {
 // SendInvoice отправляет счет клиенту (POST /api/invoices/:id/send согласно roadmap)
 func SendInvoice(c *gin.Context) {
 	log.Printf("🔔 SendInvoice вызвана! Path: %s, Method: %s", c.Request.URL.Path, c.Request.Method)
-	
+
 	adminAccountID, err := middleware.GetAdminAccountID(c)
 	if err != nil {
 		log.Printf("❌ SendInvoice: ошибка получения adminAccountID: %v", err)
@@ -2465,7 +2465,7 @@ func SendInvoice(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	log.Printf("✅ SendInvoice: adminAccountID = %d", adminAccountID)
 
 	id := c.Param("id")
@@ -2504,7 +2504,7 @@ func SendInvoice(c *gin.Context) {
 
 	// Получаем счет из схемы public
 	log.Printf("🔍 Ищем счет ID=%d для adminAccountID=%d", invoiceID, adminAccountID)
-	
+
 	var invoice models.Invoice
 	// Используем прямой запрос к таблице public.invoices
 	if err := database.DB.Table("public.invoices").
@@ -2517,7 +2517,7 @@ func SendInvoice(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// Загружаем связанные данные отдельно из схемы public
 	if invoice.ContractID != nil && *invoice.ContractID > 0 {
 		database.DB.Table("public.contracts").Where("id = ?", *invoice.ContractID).First(&invoice.Contract)
@@ -2525,7 +2525,7 @@ func SendInvoice(c *gin.Context) {
 	if invoice.TariffPlanID > 0 {
 		database.DB.Table("public.billing_plans").Where("id = ?", invoice.TariffPlanID).First(&invoice.TariffPlan)
 	}
-	
+
 	log.Printf("✅ Счет найден: ID=%d, Сумма=%s, Статус=%s", invoice.ID, invoice.TotalAmount, invoice.Status)
 
 	// Проверяем, можно ли отправить счет
@@ -2977,7 +2977,7 @@ func DeleteInvoice(c *gin.Context) {
 	var deletedBy uint
 	var deletedByName string
 	var companyIDUint uint
-	
+
 	if userIDExists {
 		deletedBy = userID.(uint)
 		var user models.User
@@ -2989,18 +2989,18 @@ func DeleteInvoice(c *gin.Context) {
 			}
 		}
 	}
-	
+
 	if companyIDExists {
 		companyIDUint = companyID.(uint)
 	}
-	
+
 	// Формируем название и описание для корзины
 	entityName := fmt.Sprintf("Счет #%s", invoice.Number)
-	entityDescription := fmt.Sprintf("Сумма: %.2f %s, Статус: %s", invoice.TotalAmount, invoice.Currency, invoice.Status)
+	entityDescription := fmt.Sprintf("Сумма: %s %s, Статус: %s", invoice.TotalAmount.StringFixed(2), invoice.Currency, invoice.Status)
 	if invoice.Description != "" {
 		entityDescription += fmt.Sprintf(", %s", invoice.Description)
 	}
-	
+
 	// Записываем в корзину
 	if err := RecordDeletion(
 		database.DB,
@@ -3230,40 +3230,40 @@ func GetBillingSettings(c *gin.Context) {
 			}
 			settings = companySettings
 		} else if errors.Is(err, gorm.ErrRecordNotFound) {
-		// Нет настроек даже на уровне компании — создаем с дефолтными значениями
-		// Получаем валюту из настроек компании
-		var company models.Company
-		companyCurrency := "RUB" // По умолчанию
-		if err := db.Where("id = ?", companyID).First(&company).Error; err == nil {
-			companyCurrency = company.Currency
-			fmt.Printf("GetBillingSettings: используем валюту компании: %s\n", companyCurrency)
-		}
+			// Нет настроек даже на уровне компании — создаем с дефолтными значениями
+			// Получаем валюту из настроек компании
+			var company models.Company
+			companyCurrency := "RUB" // По умолчанию
+			if err := db.Where("id = ?", companyID).First(&company).Error; err == nil {
+				companyCurrency = company.Currency
+				fmt.Printf("GetBillingSettings: используем валюту компании: %s\n", companyCurrency)
+			}
 
-		settings = models.BillingSettings{
-			AdminAccountID:             adminAccountID,
-			CompanyID:                  companyID,
-			AutoGenerateInvoices:       true,
-			InvoiceGenerationDay:       1,
-			InvoicePaymentTermDays:     14,
-			DefaultTaxRate:             decimal.NewFromFloat(20),
-			TaxIncluded:                false,
-			VATRatePreset:              "russia",
-			VATRateCustom:              decimal.NewFromFloat(20),
-			NotifyBeforeInvoice:        3,
-			NotifyBeforeDue:            3,
-			NotifyOverdue:              1,
-			InvoiceNumberPrefix:        "INV",
-			InvoiceNumberFormat:        "%s-%04d",
-			Currency:                   companyCurrency,
-			AllowPartialPayments:       true,
-			RequirePaymentConfirm:      false,
-			EnableInactiveDiscounts:    true,
-			InactiveDiscountRatio:      decimal.NewFromFloat(0.5),
-			ContractNumberingMethod:    "manual",
-			ContractDefaultNumeratorID: nil,
-			Bitrix24DealNumberField:    "",
-			AutopilotEnabled:           true, // Автопилот включен по умолчанию
-		}
+			settings = models.BillingSettings{
+				AdminAccountID:             adminAccountID,
+				CompanyID:                  companyID,
+				AutoGenerateInvoices:       true,
+				InvoiceGenerationDay:       1,
+				InvoicePaymentTermDays:     14,
+				DefaultTaxRate:             decimal.NewFromFloat(20),
+				TaxIncluded:                false,
+				VATRatePreset:              "russia",
+				VATRateCustom:              decimal.NewFromFloat(20),
+				NotifyBeforeInvoice:        3,
+				NotifyBeforeDue:            3,
+				NotifyOverdue:              1,
+				InvoiceNumberPrefix:        "INV",
+				InvoiceNumberFormat:        "%s-%04d",
+				Currency:                   companyCurrency,
+				AllowPartialPayments:       true,
+				RequirePaymentConfirm:      false,
+				EnableInactiveDiscounts:    true,
+				InactiveDiscountRatio:      decimal.NewFromFloat(0.5),
+				ContractNumberingMethod:    "manual",
+				ContractDefaultNumeratorID: nil,
+				Bitrix24DealNumberField:    "",
+				AutopilotEnabled:           true, // Автопилот включен по умолчанию
+			}
 
 			fmt.Printf("GetBillingSettings: настройки не найдены, создаем по умолчанию для admin_account_id=%d, company_id=%d\n", adminAccountID, companyID)
 			if err := db.Create(&settings).Error; err != nil {
@@ -3392,7 +3392,7 @@ func UpdateBillingSettings(c *gin.Context) {
 	var settings models.BillingSettings
 	// Пытаемся найти настройки для данной пары admin/company
 	err = db.Where("company_id = ? AND admin_account_id = ?", uint(companyID), adminAccountID).First(&settings).Error
-	
+
 	if err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusInternalServerError, gin.H{
@@ -3416,40 +3416,40 @@ func UpdateBillingSettings(c *gin.Context) {
 			}
 			settings = companySettings
 		} else if errors.Is(err, gorm.ErrRecordNotFound) {
-		// Нет настроек вообще - создаем дефолтные
-		// Получаем валюту из настроек компании
-		var company models.Company
-		companyCurrency := "RUB" // По умолчанию
-		if err := db.Where("id = ?", uint(companyID)).First(&company).Error; err == nil {
-			companyCurrency = company.Currency
-			fmt.Printf("UpdateBillingSettings: используем валюту компании: %s\n", companyCurrency)
-		}
+			// Нет настроек вообще - создаем дефолтные
+			// Получаем валюту из настроек компании
+			var company models.Company
+			companyCurrency := "RUB" // По умолчанию
+			if err := db.Where("id = ?", uint(companyID)).First(&company).Error; err == nil {
+				companyCurrency = company.Currency
+				fmt.Printf("UpdateBillingSettings: используем валюту компании: %s\n", companyCurrency)
+			}
 
-		settings = models.BillingSettings{
-			AdminAccountID:             adminAccountID,
-			CompanyID:                  uint(companyID),
-			AutoGenerateInvoices:       true,
-			InvoiceGenerationDay:       1,
-			InvoicePaymentTermDays:     14,
-			DefaultTaxRate:             decimal.NewFromFloat(20),
-			TaxIncluded:                false,
-			VATRatePreset:              "russia",
-			VATRateCustom:              decimal.NewFromFloat(20),
-			NotifyBeforeInvoice:        3,
-			NotifyBeforeDue:            3,
-			NotifyOverdue:              1,
-			InvoiceNumberPrefix:        "INV",
-			InvoiceNumberFormat:        "%s-%04d",
-			Currency:                   companyCurrency,
-			AllowPartialPayments:       true,
-			RequirePaymentConfirm:      false,
-			EnableInactiveDiscounts:    true,
-			InactiveDiscountRatio:      decimal.NewFromFloat(0.5),
-			ContractNumberingMethod:    "manual",
-			ContractDefaultNumeratorID: nil,
-			Bitrix24DealNumberField:    "",
-			AutopilotEnabled:           true, // Автопилот включен по умолчанию
-		}
+			settings = models.BillingSettings{
+				AdminAccountID:             adminAccountID,
+				CompanyID:                  uint(companyID),
+				AutoGenerateInvoices:       true,
+				InvoiceGenerationDay:       1,
+				InvoicePaymentTermDays:     14,
+				DefaultTaxRate:             decimal.NewFromFloat(20),
+				TaxIncluded:                false,
+				VATRatePreset:              "russia",
+				VATRateCustom:              decimal.NewFromFloat(20),
+				NotifyBeforeInvoice:        3,
+				NotifyBeforeDue:            3,
+				NotifyOverdue:              1,
+				InvoiceNumberPrefix:        "INV",
+				InvoiceNumberFormat:        "%s-%04d",
+				Currency:                   companyCurrency,
+				AllowPartialPayments:       true,
+				RequirePaymentConfirm:      false,
+				EnableInactiveDiscounts:    true,
+				InactiveDiscountRatio:      decimal.NewFromFloat(0.5),
+				ContractNumberingMethod:    "manual",
+				ContractDefaultNumeratorID: nil,
+				Bitrix24DealNumberField:    "",
+				AutopilotEnabled:           true, // Автопилот включен по умолчанию
+			}
 
 			if err := db.Create(&settings).Error; err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{

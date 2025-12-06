@@ -37,7 +37,7 @@ func setupLocalAuthTestDB(t *testing.T) *gorm.DB {
 }
 
 // setupLocalAuthTestRouter создает тестовый роутер с LocalAuthAPI
-func setupLocalAuthTestRouter(t *testing.T, db *gorm.DB) (*gin.Engine, *LocalAuthAPI) {
+func setupLocalAuthTestRouter(_ *testing.T, db *gorm.DB) (*gin.Engine, *LocalAuthAPI) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 

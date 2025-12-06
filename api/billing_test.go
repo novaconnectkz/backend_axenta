@@ -39,7 +39,7 @@ func setupBillingTestDB(t *testing.T) *gorm.DB {
 }
 
 // setupBillingTestRouter создает тестовый роутер с middleware для установки admin_account_id
-func setupBillingTestRouter(t *testing.T, adminAccountID uint) *gin.Engine {
+func setupBillingTestRouter(_ *testing.T, adminAccountID uint) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 

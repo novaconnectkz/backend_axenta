@@ -183,18 +183,18 @@ func GetAllMigrations() []MigrationInfo {
 			Description: "Последовательности нумерации счетов по странам",
 			IsGlobal:    true,
 		},
-	{
-		TableName:   "partner_daily_snapshots",
-		Model:       &models.PartnerDailySnapshot{},
-		Description: "Ежедневные снимки объектов партнеров для тарификации",
-		IsGlobal:    false, // Тенантная таблица - каждая компания имеет свои снимки
-	},
-	{
-		TableName:   "snapshot_settings",
-		Model:       &models.SnapshotSettings{},
-		Description: "Настройки автоматического создания снимков (токен для Axenta API)",
-		IsGlobal:    false, // Тенантная таблица - хранится в схеме суперадмина (ID=1)
-	},
+		{
+			TableName:   "partner_daily_snapshots",
+			Model:       &models.PartnerDailySnapshot{},
+			Description: "Ежедневные снимки объектов партнеров для тарификации",
+			IsGlobal:    false, // Тенантная таблица - каждая компания имеет свои снимки
+		},
+		{
+			TableName:   "snapshot_settings",
+			Model:       &models.SnapshotSettings{},
+			Description: "Настройки автоматического создания снимков (токен для Axenta API)",
+			IsGlobal:    false, // Тенантная таблица - хранится в схеме суперадмина (ID=1)
+		},
 
 		// Тенантные таблицы (в схемах компаний)
 		{
@@ -1051,7 +1051,7 @@ func ensureBillingSchemaIntegrity() error {
 	}
 
 	if len(issues) > 0 {
-		return fmt.Errorf(strings.Join(issues, "; "))
+		return fmt.Errorf("%s", strings.Join(issues, "; "))
 	}
 
 	return nil

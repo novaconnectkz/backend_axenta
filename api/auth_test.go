@@ -43,37 +43,6 @@ func setupAuthTestRouter() *gin.Engine {
 	return gin.New()
 }
 
-// createMockAxentaLoginServer создает mock сервер для Axenta Cloud API (логин)
-func createMockAxentaLoginServer(t *testing.T, loginResponse map[string]interface{}) *httptest.Server {
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/auth/login/" && r.Method == "POST" {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(loginResponse)
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
-}
-
-// createMockAxentaUserServer создает mock сервер для Axenta Cloud API (пользователь)
-func createMockAxentaUserServer(t *testing.T, userResponse map[string]interface{}) *httptest.Server {
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/current_user/" && r.Method == "GET" {
-			authHeader := r.Header.Get("Authorization")
-			if authHeader == "" || !assert.Contains(t, authHeader, "Token") {
-				w.WriteHeader(http.StatusUnauthorized)
-				json.NewEncoder(w).Encode(map[string]string{"detail": "Authentication credentials were not provided."})
-				return
-			}
-
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(userResponse)
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
-}
-
 // TestLogin_ValidationError тестирует Login с ошибкой валидации
 func TestLogin_ValidationError(t *testing.T) {
 	router := setupAuthTestRouter()

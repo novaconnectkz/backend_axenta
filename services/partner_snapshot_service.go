@@ -345,9 +345,9 @@ func (s *PartnerSnapshotService) CreateSnapshotForContractWithTokenAndDB(contrac
 			return fmt.Errorf("ошибка обновления снимка: %w", err)
 		}
 
-		log.Printf("✅ Снимок обновлен: договор=%s, дата=%s, объектов=%d (активных=%d), стоимость=%.2f₽ (до скидки: %.2f₽)",
+		log.Printf("✅ Снимок обновлен: договор=%s, дата=%s, объектов=%d (активных=%d), стоимость=%s₽ (до скидки: %s₽)",
 			contract.Number, snapshotDate.Format("2006-01-02"), objectsCount, activeObjectsCount,
-			existingSnapshot.DailyCost, existingSnapshot.CostBeforeDiscount)
+			existingSnapshot.DailyCost.StringFixed(2), existingSnapshot.CostBeforeDiscount.StringFixed(2))
 
 		return nil
 	}
@@ -455,9 +455,9 @@ func (s *PartnerSnapshotService) CreateSnapshotForContractWithTokenAndDB(contrac
 		return fmt.Errorf("ошибка создания снимка: %w", err)
 	}
 
-	log.Printf("✅ Снимок создан: договор=%s, дата=%s, объектов=%d (активных=%d), скидка=%.2f%%, стоимость=%.2f₽ (было %.2f₽)",
+	log.Printf("✅ Снимок создан: договор=%s, дата=%s, объектов=%d (активных=%d), скидка=%s%%, стоимость=%s₽ (было %s₽)",
 		contract.Number, snapshotDate.Format("2006-01-02"), objectsCount, activeObjectsCount,
-		discountPercent, snapshot.DailyCost, snapshot.CostBeforeDiscount)
+		discountPercent.StringFixed(2), snapshot.DailyCost.StringFixed(2), snapshot.CostBeforeDiscount.StringFixed(2))
 
 	return nil
 }
@@ -727,8 +727,8 @@ func (s *PartnerSnapshotService) CreateVirtualOthersSnapshot(
 			return fmt.Errorf("ошибка обновления снимка 'Прочие': %w", err)
 		}
 
-		log.Printf("♻️ Обновлен снимок 'Прочие': всего=%d, активных=%d, стоимость=%.2f₽",
-			totalObjects, activeObjects, costBeforeDiscount)
+		log.Printf("♻️ Обновлен снимок 'Прочие': всего=%d, активных=%d, стоимость=%s₽",
+			totalObjects, activeObjects, costBeforeDiscount.StringFixed(2))
 		return nil
 	}
 
@@ -761,8 +761,8 @@ func (s *PartnerSnapshotService) CreateVirtualOthersSnapshot(
 		return fmt.Errorf("ошибка создания снимка 'Прочие': %w", err)
 	}
 
-	log.Printf("✨ Создан снимок 'Прочие': всего=%d, активных=%d, стоимость=%.2f₽",
-		totalObjects, activeObjects, costBeforeDiscount)
+	log.Printf("✨ Создан снимок 'Прочие': всего=%d, активных=%d, стоимость=%s₽",
+		totalObjects, activeObjects, costBeforeDiscount.StringFixed(2))
 
 	return nil
 }

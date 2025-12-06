@@ -34,7 +34,7 @@ func setupAuditAPITestDB(t *testing.T) *gorm.DB {
 }
 
 // setupAuditAPITestRouter создает тестовый роутер
-func setupAuditAPITestRouter(t *testing.T, db *gorm.DB) *gin.Engine {
+func setupAuditAPITestRouter(_ *testing.T, db *gorm.DB) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 

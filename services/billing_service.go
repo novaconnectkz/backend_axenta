@@ -163,7 +163,7 @@ func (bs *BillingService) CalculateBillingForContractWithTenantDB(contractID uin
 		if company.DefaultTaxRate.GreaterThan(decimal.Zero) {
 			settings.DefaultTaxRate = company.DefaultTaxRate
 			settings.TaxIncluded = company.TaxIncluded
-			log.Printf("✅ [CalculateBilling] Используем настройки НДС из компании: rate=%.2f%%, included=%v", company.DefaultTaxRate, company.TaxIncluded)
+			log.Printf("✅ [CalculateBilling] Используем настройки НДС из компании: rate=%s%%, included=%v", company.DefaultTaxRate.StringFixed(2), company.TaxIncluded)
 		}
 	}
 
@@ -264,11 +264,11 @@ func (bs *BillingService) CalculateBillingForContractWithTenantDB(contractID uin
 	discountedAmount, discountApplications, err := discountService.ApplyDiscounts(
 		ctx,
 		subtotal,
-		nil,                // objectID - можно добавить по объектам отдельно
+		nil,                   // objectID - можно добавить по объектам отдельно
 		contract.TariffPlanID, // tariffID
-		nil,                // subscriptionID
-		nil,                // appendixID
-		&contractID,        // contractID
+		nil,                   // subscriptionID
+		nil,                   // appendixID
+		&contractID,           // contractID
 		periodStart,
 	)
 
@@ -364,7 +364,7 @@ func (bs *BillingService) CalculateBillingForContractWithTenantDB(contractID uin
 // - Формула для каждого дня: (тариф/30) * количество_активных_объектов
 // - Автопилот не применяется
 func (bs *BillingService) CalculateBillingForPartnerContract(contract *models.Contract, periodStart, periodEnd time.Time, tenantDB *gorm.DB) (*BillingCalculationResult, error) {
-	log.Printf("🔧 Расчет биллинга для партнерского договора %d за период %s - %s", 
+	log.Printf("🔧 Расчет биллинга для партнерского договора %d за период %s - %s",
 		contract.ID, periodStart.Format("2006-01-02"), periodEnd.Format("2006-01-02"))
 
 	// Проверяем, что указан partner_company_id
@@ -420,7 +420,7 @@ func (bs *BillingService) CalculateBillingForPartnerContract(contract *models.Co
 		if company.DefaultTaxRate.GreaterThan(decimal.Zero) {
 			settings.DefaultTaxRate = company.DefaultTaxRate
 			settings.TaxIncluded = company.TaxIncluded
-			log.Printf("✅ Используем настройки НДС из компании: rate=%.2f%%, included=%v", company.DefaultTaxRate, company.TaxIncluded)
+			log.Printf("✅ Используем настройки НДС из компании: rate=%s%%, included=%v", company.DefaultTaxRate.StringFixed(2), company.TaxIncluded)
 		}
 	}
 
@@ -473,9 +473,9 @@ func (bs *BillingService) CalculateBillingForPartnerContract(contract *models.Co
 		avgObjectsCount = totalObjectsDays / daysCount
 	}
 
-	log.Printf("💰 Расчет для партнерского договора: снимков=%d, средне объектов=%d, общая стоимость=%.2f₽",
-		daysCount, avgObjectsCount, totalCost)
-	
+	log.Printf("💰 Расчет для партнерского договора: снимков=%d, средне объектов=%d, общая стоимость=%s₽",
+		daysCount, avgObjectsCount, totalCost.StringFixed(2))
+
 	// Создаем результат расчета на основе снимков
 	result := &BillingCalculationResult{
 		CompanyID:          contract.CompanyID,
@@ -494,7 +494,7 @@ func (bs *BillingService) CalculateBillingForPartnerContract(contract *models.Co
 	// Добавляем позицию в счет
 	if totalCost.GreaterThan(decimal.Zero) {
 		result.Items = append(result.Items, InvoiceItemData{
-			Name:        fmt.Sprintf("Тарификация объектов партнера"),
+			Name:        "Тарификация объектов партнера",
 			Description: fmt.Sprintf("Среднее количество объектов: %d, период: %s - %s (%d дн.)", avgObjectsCount, periodStart.Format("02.01.2006"), periodEnd.Format("02.01.2006"), daysCount),
 			ItemType:    "partner_objects",
 			Quantity:    decimal.NewFromInt(int64(avgObjectsCount)),
@@ -583,26 +583,26 @@ func (bs *BillingService) GenerateInvoiceForContractWithTenantDB(contractID uint
 	if err != nil {
 		return nil, fmt.Errorf("ошибка расчета биллинга: %w", err)
 	}
-	
+
 	// Если задана ручная сумма для hourly/daily/weekly тарифов, переопределяем расчетную сумму
 	if customAmount != nil && *customAmount > 0 {
 		customAmountDecimal := decimal.NewFromFloat(*customAmount)
-		log.Printf("💰 Используется ручная сумма: %.2f (вместо расчетной %.2f)", 
-			*customAmount, calculation.TotalAmount)
-		
+		log.Printf("💰 Используется ручная сумма: %.2f (вместо расчетной %s)",
+			*customAmount, calculation.TotalAmount.StringFixed(2))
+
 		// Сохраняем оригинальную структуру расчета, но меняем суммы
 		calculation.BaseAmount = customAmountDecimal
 		calculation.ObjectsAmount = decimal.Zero
 		calculation.DiscountAmount = decimal.Zero
 		calculation.SubtotalAmount = customAmountDecimal
-		
+
 		// Пересчитываем налоги, если нужно
 		var settings models.BillingSettings
 		publicDB := bs.db.Session(&gorm.Session{})
 		if err := publicDB.Exec("SET search_path TO public").Error; err == nil {
 			if err := publicDB.Where("company_id = ? AND admin_account_id = ?", calculation.CompanyID, bs.adminAccountID).
 				First(&settings).Error; err == nil {
-				
+
 				if settings.TaxIncluded && settings.DefaultTaxRate.GreaterThan(decimal.Zero) {
 					// НДС включен в цену
 					taxRateDivisor := decimal.NewFromInt(100).Add(settings.DefaultTaxRate)
@@ -619,13 +619,13 @@ func (bs *BillingService) GenerateInvoiceForContractWithTenantDB(contractID uint
 				}
 			}
 		}
-		
+
 		// Заменяем позиции счета на одну позицию с ручной суммой
 		calculation.Items = []InvoiceItemData{
 			{
-				Name:        "Услуги мониторинга (ручная сумма)",
-				Description: fmt.Sprintf("Оплата услуг за период с %s по %s", 
-					calculation.BillingPeriodStart.Format("02.01.2006"), 
+				Name: "Услуги мониторинга (ручная сумма)",
+				Description: fmt.Sprintf("Оплата услуг за период с %s по %s",
+					calculation.BillingPeriodStart.Format("02.01.2006"),
 					calculation.BillingPeriodEnd.Format("02.01.2006")),
 				ItemType:    "subscription",
 				Quantity:    decimal.NewFromInt(1),
@@ -635,7 +635,7 @@ func (bs *BillingService) GenerateInvoiceForContractWithTenantDB(contractID uint
 				PeriodEnd:   &calculation.BillingPeriodEnd,
 			},
 		}
-		log.Printf("✅ Создана позиция счета с ручной суммой: %.2f", calculation.SubtotalAmount)
+		log.Printf("✅ Создана позиция счета с ручной суммой: %s", calculation.SubtotalAmount.StringFixed(2))
 	}
 
 	// Получаем настройки биллинга из public схемы
@@ -658,7 +658,7 @@ func (bs *BillingService) GenerateInvoiceForContractWithTenantDB(contractID uint
 		if company.DefaultTaxRate.GreaterThan(decimal.Zero) {
 			settings.DefaultTaxRate = company.DefaultTaxRate
 			settings.TaxIncluded = company.TaxIncluded
-			log.Printf("✅ Используем настройки НДС из компании: rate=%.2f%%, included=%v", company.DefaultTaxRate, company.TaxIncluded)
+			log.Printf("✅ Используем настройки НДС из компании: rate=%s%%, included=%v", company.DefaultTaxRate.StringFixed(2), company.TaxIncluded)
 		}
 	}
 
@@ -666,12 +666,12 @@ func (bs *BillingService) GenerateInvoiceForContractWithTenantDB(contractID uint
 	var numerator models.InvoiceNumerator
 	// Ищем нумератор по умолчанию для этой компании
 	if err := publicDB.
-		Where("admin_account_id = ? AND company_id = ? AND is_active = ? AND is_default = ?", 
+		Where("admin_account_id = ? AND company_id = ? AND is_active = ? AND is_default = ?",
 			bs.adminAccountID, calculation.CompanyID, true, true).
 		First(&numerator).Error; err != nil {
 		// Если нет нумератора по умолчанию, ищем любой активный
 		if err := publicDB.
-			Where("admin_account_id = ? AND company_id = ? AND is_active = ?", 
+			Where("admin_account_id = ? AND company_id = ? AND is_active = ?",
 				bs.adminAccountID, calculation.CompanyID, true).
 			Order("id ASC").
 			First(&numerator).Error; err != nil {
@@ -681,7 +681,7 @@ func (bs *BillingService) GenerateInvoiceForContractWithTenantDB(contractID uint
 			random := rand.Intn(9999)
 			sequenceNumber := int(timestamp%100000)*10000 + random
 			invoiceNumber := settings.GetInvoiceNumber(sequenceNumber)
-			
+
 			// Проверяем уникальность
 			var existingInvoice models.Invoice
 			for i := 0; i < 10; i++ {
@@ -692,7 +692,7 @@ func (bs *BillingService) GenerateInvoiceForContractWithTenantDB(contractID uint
 				sequenceNumber = int(timestamp%100000)*10000 + random + i
 				invoiceNumber = settings.GetInvoiceNumber(sequenceNumber)
 			}
-			
+
 			invoice := &models.Invoice{
 				Number:             invoiceNumber,
 				Title:              fmt.Sprintf("Счет за услуги мониторинга за период %s - %s", periodStart.Format("02.01.2006"), periodEnd.Format("02.01.2006")),
@@ -744,7 +744,7 @@ func (bs *BillingService) GenerateInvoiceForContractWithTenantDB(contractID uint
 
 	// Генерируем номер счета по шаблону нумератора
 	log.Printf("✅ Используем нумератор: id=%d, name=%s, template=%s", numerator.ID, numerator.Name, numerator.Template)
-	
+
 	// Увеличиваем счетчик нумератора
 	numerator.CounterValue++
 	if err := publicDB.Save(&numerator).Error; err != nil {
@@ -1122,7 +1122,7 @@ func isUniqueConstraintError(err error) bool {
 // generateInvoiceNumberFromTemplate генерирует номер счета по шаблону нумератора
 func (bs *BillingService) generateInvoiceNumberFromTemplate(template, prefix string, counter int) string {
 	now := time.Now()
-	
+
 	// Замены для шаблона
 	replacements := map[string]string{
 		"{PREFIX}":     prefix,
@@ -1133,11 +1133,11 @@ func (bs *BillingService) generateInvoiceNumberFromTemplate(template, prefix str
 		"{SEQ}":        fmt.Sprintf("%04d", counter),
 		"{COUNTER}":    fmt.Sprintf("%04d", counter),
 	}
-	
+
 	result := template
 	for placeholder, value := range replacements {
 		result = strings.ReplaceAll(result, placeholder, value)
 	}
-	
+
 	return result
 }

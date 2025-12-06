@@ -36,7 +36,7 @@ func setupAxentaIntegrationTestDB(t *testing.T) *gorm.DB {
 }
 
 // setupAxentaIntegrationTestRouter создает тестовый роутер с middleware для установки company_id
-func setupAxentaIntegrationTestRouter(t *testing.T, db *gorm.DB, companyID uint) (*gin.Engine, *AxentaIntegrationAPI) {
+func setupAxentaIntegrationTestRouter(_ *testing.T, db *gorm.DB, companyID uint) (*gin.Engine, *AxentaIntegrationAPI) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 

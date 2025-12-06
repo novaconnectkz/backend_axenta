@@ -720,7 +720,7 @@ func (s *PartnerSnapshotScheduler) syncAllPartnerAccounts(tenantDB *gorm.DB, com
 		Find(&tokens).Error; err != nil {
 		errMsg := fmt.Sprintf("ошибка получения токенов из БД для компании %d: %v", companyID, err)
 		log.Printf("⚠️ %s", errMsg)
-		return fmt.Errorf(errMsg)
+		return fmt.Errorf("%s", errMsg)
 	}
 
 	if len(tokens) > 0 {
@@ -733,7 +733,7 @@ func (s *PartnerSnapshotScheduler) syncAllPartnerAccounts(tenantDB *gorm.DB, com
 		if err := s.syncWithSystemToken(tempSyncService, token.Token, companyID); err != nil {
 			errMsg := fmt.Sprintf("ошибка синхронизации через токен из БД (компания %d): %v", companyID, err)
 			log.Printf("⚠️ %s", errMsg)
-			return fmt.Errorf(errMsg)
+			return fmt.Errorf("%s", errMsg)
 		} else {
 			log.Printf("✅ Синхронизация через токен из БД завершена успешно (компания %d)", companyID)
 			return nil
@@ -746,7 +746,7 @@ func (s *PartnerSnapshotScheduler) syncAllPartnerAccounts(tenantDB *gorm.DB, com
 	log.Printf("💡 Для загрузки ВСЕХ объектов:")
 	log.Printf("   1. Установите AXENTA_ADMIN_TOKEN в переменные окружения")
 	log.Printf("   2. Или убедитесь, что есть действующий токен в настройках Axenta Cloud API")
-	return fmt.Errorf(errMsg)
+	return fmt.Errorf("%s", errMsg)
 }
 
 // syncWithSystemToken синхронизирует ВСЕ аккаунты и объекты используя системный токен

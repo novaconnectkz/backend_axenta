@@ -38,7 +38,7 @@ func setupPartnerSnapshotsTestDB(t *testing.T) *gorm.DB {
 }
 
 // setupPartnerSnapshotsTestRouter создает тестовый роутер с middleware
-func setupPartnerSnapshotsTestRouter(t *testing.T, db *gorm.DB, adminAccountID uint, companyID uint) *gin.Engine {
+func setupPartnerSnapshotsTestRouter(_ *testing.T, db *gorm.DB, adminAccountID uint, companyID uint) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 

@@ -31,14 +31,14 @@ type DashboardStats struct {
 
 // ActivityItem структура для элемента активности
 type ActivityItem struct {
-	ID          string    `json:"id"`
-	Type        string    `json:"type"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	Timestamp   time.Time `json:"timestamp"`
-	UserID      string    `json:"userId,omitempty"` // Опциональное поле для совместимости с фронтендом
-	UserName    string    `json:"userName"`         // Изменено с user_name на userName для совместимости
-	ObjectName  string    `json:"object_name,omitempty"`
+	ID          string                 `json:"id"`
+	Type        string                 `json:"type"`
+	Title       string                 `json:"title"`
+	Description string                 `json:"description"`
+	Timestamp   time.Time              `json:"timestamp"`
+	UserID      string                 `json:"userId,omitempty"` // Опциональное поле для совместимости с фронтендом
+	UserName    string                 `json:"userName"`         // Изменено с user_name на userName для совместимости
+	ObjectName  string                 `json:"object_name,omitempty"`
 	Metadata    map[string]interface{} `json:"metadata,omitempty"` // Для дополнительных данных
 }
 
@@ -97,7 +97,7 @@ func GetDashboardActivity(c *gin.Context) {
 		c.JSON(500, gin.H{"status": "error", "error": "Ошибка подключения к базе данных компании"})
 		return
 	}
-	
+
 	log.Printf("✅ GetDashboardActivity: tenantDB получен успешно")
 
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
@@ -140,11 +140,11 @@ func GetDashboardActivity(c *gin.Context) {
 				activityType = "object_created"
 				title = "Создан новый объект"
 			}
-			
+
 			activities = append(activities, ActivityItem{
-				ID:          fmt.Sprintf("obj_%d", obj.ID),
-				Type:        activityType,
-				Title:       title,
+				ID:    fmt.Sprintf("obj_%d", obj.ID),
+				Type:  activityType,
+				Title: title,
 				Description: fmt.Sprintf("Объект '%s' %s", obj.Name, map[string]string{
 					"object_created": "добавлен в систему",
 					"object_updated": "был обновлен",
@@ -199,7 +199,7 @@ func GetDashboardActivity(c *gin.Context) {
 		publicDB.Model(&models.Invoice{}).
 			Where("admin_account_id = ? AND deleted_at IS NULL", adminAccountID).
 			Order("created_at DESC"). // Сортируем по дате создания (новые первыми)
-			Limit(limit * 2). // Берем в 2 раза больше, чтобы точно не потерять важные события
+			Limit(limit * 2).         // Берем в 2 раза больше, чтобы точно не потерять важные события
 			Find(&invoices)
 
 		for _, invoice := range invoices {
@@ -207,10 +207,10 @@ func GetDashboardActivity(c *gin.Context) {
 			title := "Создан счет"
 			// Используем номер счета вместо ID
 			description := fmt.Sprintf("Выставлен счет %s на сумму %.2f руб.", invoice.Number, invoice.TotalAmount.InexactFloat64())
-			
+
 			// Для новых счетов всегда используем created_at
 			timestamp := invoice.CreatedAt
-			
+
 			// Если счет был оплачен, показываем как платеж с датой оплаты
 			if invoice.Status == "paid" {
 				activityType = "payment_received"
@@ -236,9 +236,9 @@ func GetDashboardActivity(c *gin.Context) {
 				UserID:      "billing_system",
 				UserName:    "Биллинг система",
 				Metadata: map[string]interface{}{
-					"invoiceId":   invoice.ID,
+					"invoiceId":     invoice.ID,
 					"invoiceNumber": invoice.Number,
-					"amount":      invoice.TotalAmount.InexactFloat64(),
+					"amount":        invoice.TotalAmount.InexactFloat64(),
 				},
 			})
 		}
@@ -262,9 +262,9 @@ func GetDashboardActivity(c *gin.Context) {
 			}
 
 			activities = append(activities, ActivityItem{
-				ID:          fmt.Sprintf("contract_%d", contract.ID),
-				Type:        activityType,
-				Title:       title,
+				ID:    fmt.Sprintf("contract_%d", contract.ID),
+				Type:  activityType,
+				Title: title,
 				Description: fmt.Sprintf("Договор %s '%s' %s", contract.Number, contract.ClientName, map[string]string{
 					"contract_created": "создан",
 					"contract_updated": "обновлен",
@@ -273,9 +273,9 @@ func GetDashboardActivity(c *gin.Context) {
 				UserID:    "system",
 				UserName:  "Система",
 				Metadata: map[string]interface{}{
-					"contractId":   contract.ID,
+					"contractId":     contract.ID,
 					"contractNumber": contract.Number,
-					"clientName":   contract.ClientName,
+					"clientName":     contract.ClientName,
 				},
 			})
 		}
@@ -294,7 +294,7 @@ func GetDashboardActivity(c *gin.Context) {
 		for _, inst := range installations {
 			activityType := "installation_scheduled"
 			title := "Запланирован монтаж"
-			description := fmt.Sprintf("Монтаж на объекте")
+			description := "Монтаж на объекте"
 
 			if inst.Object != nil {
 				description = fmt.Sprintf("Монтаж оборудования на объекте '%s'", inst.Object.Name)
@@ -339,9 +339,9 @@ func GetDashboardActivity(c *gin.Context) {
 				UserName:    "Система",
 				Metadata: map[string]interface{}{
 					"installationId": inst.ID,
-					"objectId":      inst.ObjectID,
-					"objectName":    inst.Object.Name,
-					"status":        inst.Status,
+					"objectId":       inst.ObjectID,
+					"objectName":     inst.Object.Name,
+					"status":         inst.Status,
 				},
 			})
 		}
@@ -534,10 +534,10 @@ func GetDashboardNotificationsSimple(c *gin.Context) {
 
 // BillingDashboardResponse структура ответа для /api/dashboard?company_id= согласно roadmap
 type BillingDashboardResponse struct {
-	RevenueTotal      decimal.Decimal `json:"revenue_total"`      // Общий доход
-	SubscriptionsActive int64         `json:"subscriptions_active"` // Активные подписки
-	Payable           decimal.Decimal `json:"payable"`            // К оплате
-	Overdue           decimal.Decimal `json:"overdue"`            // Просрочено
+	RevenueTotal        decimal.Decimal `json:"revenue_total"`        // Общий доход
+	SubscriptionsActive int64           `json:"subscriptions_active"` // Активные подписки
+	Payable             decimal.Decimal `json:"payable"`              // К оплате
+	Overdue             decimal.Decimal `json:"overdue"`              // Просрочено
 }
 
 // GetBillingDashboard получает статистику биллинга для dashboard согласно roadmap
@@ -553,9 +553,9 @@ func GetBillingDashboard(c *gin.Context) {
 		}
 
 		c.JSON(200, gin.H{
-			"status":       "success",
-			"data":         demoResponse,
-			"demo_notice":  "Это демо-данные. Добавьте ?demo=0 для получения реальных данных.",
+			"status":      "success",
+			"data":        demoResponse,
+			"demo_notice": "Это демо-данные. Добавьте ?demo=0 для получения реальных данных.",
 		})
 		return
 	}
@@ -597,7 +597,7 @@ func GetBillingDashboard(c *gin.Context) {
 	database.DB.Model(&models.Invoice{}).
 		Where("company_id = ? AND status = ? AND deleted_at IS NULL", companyID, "paid").
 		Find(&paidInvoices)
-	
+
 	for _, invoice := range paidInvoices {
 		response.RevenueTotal = response.RevenueTotal.Add(invoice.TotalAmount)
 	}
@@ -605,10 +605,10 @@ func GetBillingDashboard(c *gin.Context) {
 	// Подсчитываем к оплате (неоплаченные счета, не просроченные)
 	var payableInvoices []models.Invoice
 	database.DB.Model(&models.Invoice{}).
-		Where("company_id = ? AND status IN (?, ?) AND deleted_at IS NULL AND due_date >= ?", 
+		Where("company_id = ? AND status IN (?, ?) AND deleted_at IS NULL AND due_date >= ?",
 			companyID, "sent", "draft", time.Now()).
 		Find(&payableInvoices)
-	
+
 	for _, invoice := range payableInvoices {
 		response.Payable = response.Payable.Add(invoice.GetRemainingAmount())
 	}
@@ -616,10 +616,10 @@ func GetBillingDashboard(c *gin.Context) {
 	// Подсчитываем просроченные
 	var overdueInvoices []models.Invoice
 	database.DB.Model(&models.Invoice{}).
-		Where("company_id = ? AND status != ? AND status != ? AND deleted_at IS NULL AND due_date < ?", 
+		Where("company_id = ? AND status != ? AND status != ? AND deleted_at IS NULL AND due_date < ?",
 			companyID, "paid", "cancelled", time.Now()).
 		Find(&overdueInvoices)
-	
+
 	for _, invoice := range overdueInvoices {
 		if invoice.IsOverdue() {
 			response.Overdue = response.Overdue.Add(invoice.GetRemainingAmount())

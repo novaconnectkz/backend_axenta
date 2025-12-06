@@ -21,12 +21,12 @@ import (
 
 // TrashStats представляет статистику корзины
 type TrashStats struct {
-	TotalItems        int            `json:"total_items"`
-	ItemsByType       map[string]int `json:"items_by_type"`
-	RestoredCount     int            `json:"restored_count"`
-	CanBeRestored     int            `json:"can_be_restored"`
-	OldestDeletedAt   *time.Time     `json:"oldest_deleted_at"`
-	RecentDeletedAt   *time.Time     `json:"recent_deleted_at"`
+	TotalItems      int            `json:"total_items"`
+	ItemsByType     map[string]int `json:"items_by_type"`
+	RestoredCount   int            `json:"restored_count"`
+	CanBeRestored   int            `json:"can_be_restored"`
+	OldestDeletedAt *time.Time     `json:"oldest_deleted_at"`
+	RecentDeletedAt *time.Time     `json:"recent_deleted_at"`
 }
 
 // getUserIDFromContext извлекает user_id из контекста
@@ -372,51 +372,12 @@ func RestoreItem(c *gin.Context) {
 		return
 	}
 
-	// Пытаемся получить user_id - сначала из контекста напрямую, затем из объекта user
-	var userID uint
-	
-	// Попытка 1: из контекста напрямую
-	if id, exists := c.Get("user_id"); exists {
-		switch v := id.(type) {
-		case uint:
-			userID = v
-		case int:
-			userID = uint(v)
-		case int64:
-			userID = uint(v)
-		case float64:
-			userID = uint(v)
-		case string:
-			if parsed, err := strconv.ParseUint(v, 10, 32); err == nil {
-				userID = uint(parsed)
-			}
-		}
-	}
-	
-	// Попытка 2: из объекта user
-	if userID == 0 {
-		user := middleware.GetCurrentUser(c)
-		if user != nil {
-			if id, ok := user["id"]; ok {
-				switch v := id.(type) {
-				case float64:
-					userID = uint(v)
-				case int:
-					userID = uint(v)
-				case int64:
-					userID = uint(v)
-				case string:
-					if parsed, err := strconv.ParseUint(v, 10, 32); err == nil {
-						userID = uint(parsed)
-					}
-				}
-			}
-		}
-	}
-	
-	if userID == 0 {
-		log.Printf("⚠️ RestoreItem: user_id не найден, продолжаем без user_id")
+	// Получаем user_id из контекста
+	userID, err := getUserIDFromContext(c)
+	if err != nil {
+		log.Printf("⚠️ RestoreItem: user_id не найден, продолжаем без user_id: %v", err)
 		// Продолжаем без user_id - поле RestoredBy будет nil
+		userID = 0
 	}
 
 	// Находим запись об удалении
@@ -557,7 +518,7 @@ func RestoreItem(c *gin.Context) {
 func PermanentlyDeleteItem(c *gin.Context) {
 	fmt.Printf("🔍 PermanentlyDeleteItem: начало обработки запроса, путь: %s\n", c.Request.URL.Path)
 	log.Printf("🔍 PermanentlyDeleteItem: начало обработки запроса, путь: %s", c.Request.URL.Path)
-	
+
 	db := database.GetTenantDB(c)
 	if db == nil {
 		log.Printf("❌ PermanentlyDeleteItem: подключение к БД недоступно")
@@ -589,69 +550,13 @@ func PermanentlyDeleteItem(c *gin.Context) {
 	}
 	log.Printf("🔍 PermanentlyDeleteItem: company_id получен: %d", companyID)
 
-	// Пытаемся получить user_id - сначала из контекста напрямую, затем из объекта user
-	var userID uint
-	
-	// Попытка 1: из контекста напрямую
-	if id, exists := c.Get("user_id"); exists {
-		fmt.Printf("🔍 PermanentlyDeleteItem: user_id найден в контексте, тип: %T, значение: %v\n", id, id)
-		switch v := id.(type) {
-		case uint:
-			userID = v
-		case int:
-			userID = uint(v)
-		case int64:
-			userID = uint(v)
-		case float64:
-			userID = uint(v)
-		case string:
-			if parsed, err := strconv.ParseUint(v, 10, 32); err == nil {
-				userID = uint(parsed)
-			}
-		}
-	}
-	
-	// Попытка 2: из объекта user
-	if userID == 0 {
-		user := middleware.GetCurrentUser(c)
-		if user != nil {
-			fmt.Printf("🔍 PermanentlyDeleteItem: объект user найден, ключи: %v\n", getMapKeys(user))
-			if id, ok := user["id"]; ok {
-				fmt.Printf("🔍 PermanentlyDeleteItem: найден id в user, тип: %T, значение: %v\n", id, id)
-				switch v := id.(type) {
-				case float64:
-					userID = uint(v)
-					fmt.Printf("✅ PermanentlyDeleteItem: user_id извлечен из user как float64: %d\n", userID)
-				case int:
-					userID = uint(v)
-					fmt.Printf("✅ PermanentlyDeleteItem: user_id извлечен из user как int: %d\n", userID)
-				case int64:
-					userID = uint(v)
-					fmt.Printf("✅ PermanentlyDeleteItem: user_id извлечен из user как int64: %d\n", userID)
-				case string:
-					if parsed, err := strconv.ParseUint(v, 10, 32); err == nil {
-						userID = uint(parsed)
-						fmt.Printf("✅ PermanentlyDeleteItem: user_id извлечен из user как string: %d\n", userID)
-					} else {
-						fmt.Printf("❌ PermanentlyDeleteItem: не удалось распарсить id из строки: %s\n", v)
-					}
-				default:
-					fmt.Printf("❌ PermanentlyDeleteItem: неизвестный тип id: %T, значение: %v\n", v, v)
-				}
-			} else {
-				fmt.Printf("❌ PermanentlyDeleteItem: поле 'id' не найдено в объекте user\n")
-			}
-		} else {
-			fmt.Printf("❌ PermanentlyDeleteItem: объект user не найден в контексте\n")
-		}
-	}
-	
-	if userID == 0 {
-		fmt.Printf("⚠️ PermanentlyDeleteItem: user_id не найден после всех попыток, продолжаем без user_id\n")
-		log.Printf("⚠️ PermanentlyDeleteItem: user_id не найден после всех попыток, продолжаем без user_id")
+	// Получаем user_id из контекста
+	userID, err := getUserIDFromContext(c)
+	if err != nil {
+		log.Printf("⚠️ PermanentlyDeleteItem: user_id не найден, продолжаем без user_id: %v", err)
 		// Продолжаем без user_id - поле PermanentlyDeletedBy будет nil
+		userID = 0
 	} else {
-		fmt.Printf("✅ PermanentlyDeleteItem: user_id успешно получен: %d\n", userID)
 		log.Printf("✅ PermanentlyDeleteItem: user_id получен: %d", userID)
 	}
 
@@ -890,9 +795,9 @@ func sanitizeString(s string) string {
 }
 
 func RecordDeletion(db *gorm.DB, entityType string, entityID uint, entityData interface{}, deletedBy uint, deletedByName string, companyID uint, entityName, entityDescription string) error {
-	log.Printf("🗑️ RecordDeletion вызвана: type=%s, entityID=%d, companyID=%d, deletedBy=%d", 
+	log.Printf("🗑️ RecordDeletion вызвана: type=%s, entityID=%d, companyID=%d, deletedBy=%d",
 		entityType, entityID, companyID, deletedBy)
-	
+
 	// Сериализуем данные в JSON
 	jsonData, err := json.Marshal(entityData)
 	if err != nil {
@@ -902,7 +807,7 @@ func RecordDeletion(db *gorm.DB, entityType string, entityID uint, entityData in
 
 	// Очищаем JSON от невалидных символов
 	jsonString := sanitizeString(string(jsonData))
-	
+
 	// Если очистка не помогла, сохраняем в base64
 	if !utf8.ValidString(jsonString) || strings.Contains(jsonString, "\x00") {
 		log.Printf("⚠️ Использую base64 для данных с невалидными символами")
@@ -933,7 +838,7 @@ func RecordDeletion(db *gorm.DB, entityType string, entityID uint, entityData in
 	}
 
 	log.Printf("🗑️ Создание записи в deleted_items: Name=%s, Type=%s, DataLen=%d", entityName, entityType, len(jsonString))
-	
+
 	if err := db.Create(&deletedItem).Error; err != nil {
 		log.Printf("❌ Ошибка создания записи в deleted_items: %v", err)
 		previewLen := 100
@@ -943,8 +848,7 @@ func RecordDeletion(db *gorm.DB, entityType string, entityID uint, entityData in
 		log.Printf("❌ Проблемные данные (первые %d символов): %s", previewLen, jsonString[:previewLen])
 		return err
 	}
-	
+
 	log.Printf("✅ Запись в deleted_items создана успешно, ID=%d", deletedItem.ID)
 	return nil
 }
-
