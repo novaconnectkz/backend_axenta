@@ -41,11 +41,12 @@ func setupWarehouseAdditionalTestAPI(t *testing.T) (*gorm.DB, *gin.Engine) {
 		api.GET("/warehouse/operations/:id", warehouseAPI.GetWarehouseOperation)
 		api.PUT("/warehouse/operations/:id", warehouseAPI.UpdateWarehouseOperation)
 		api.DELETE("/warehouse/operations/:id", warehouseAPI.DeleteWarehouseOperation)
-		api.GET("/warehouse/operations/:id/history", warehouseAPI.GetOperationHistory)
+		api.PUT("/warehouse/alerts/:id/acknowledge", warehouseAPI.AcknowledgeStockAlert)
+		api.PUT("/warehouse/alerts/:id/resolve", warehouseAPI.ResolveStockAlert)
 		api.GET("/warehouse/alerts/:id", warehouseAPI.GetStockAlert)
 		api.PUT("/warehouse/alerts/:id", warehouseAPI.UpdateStockAlert)
 		api.DELETE("/warehouse/alerts/:id", warehouseAPI.DeleteStockAlert)
-		api.GET("/warehouse/transfer", warehouseAPI.GetTransferHistory)
+		api.POST("/warehouse/transfer", warehouseAPI.TransferEquipment)
 	}
 
 	return db, router
@@ -275,4 +276,158 @@ func TestDeleteStockAlert(t *testing.T) {
 	router.ServeHTTP(w, req)
 	// Может быть OK, NoContent или NotFound
 	assert.True(t, w.Code == http.StatusOK || w.Code == http.StatusNoContent || w.Code == http.StatusNotFound)
+}
+
+// TestAcknowledgeStockAlert тестирует AcknowledgeStockAlert
+func TestAcknowledgeStockAlert(t *testing.T) {
+	db, router := setupWarehouseAdditionalTestAPI(t)
+
+	category := models.EquipmentCategory{
+		Name:          "GPS Trackers",
+		Code:          "GPS",
+		MinStockLevel: 5,
+	}
+	db.Create(&category)
+
+	alert := models.StockAlert{
+		Type:                "low_stock",
+		Title:               "Уведомление для подтверждения",
+		Description:         "Описание",
+		Severity:            "high",
+		EquipmentCategoryID: &category.ID,
+		Status:              "active",
+	}
+	db.Create(&alert)
+
+	req, _ := http.NewRequest("PUT", "/api/warehouse/alerts/999/acknowledge", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+
+	req, _ = http.NewRequest("PUT", "/api/warehouse/alerts/1/acknowledge", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var response map[string]interface{}
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(t, err)
+	assert.Contains(t, response["message"], "прочитанное")
+}
+
+// TestResolveStockAlert тестирует ResolveStockAlert
+func TestResolveStockAlert(t *testing.T) {
+	db, router := setupWarehouseAdditionalTestAPI(t)
+
+	category := models.EquipmentCategory{
+		Name:          "GPS Trackers",
+		Code:          "GPS",
+		MinStockLevel: 5,
+	}
+	db.Create(&category)
+
+	alert := models.StockAlert{
+		Type:                "low_stock",
+		Title:               "Уведомление для разрешения",
+		Description:         "Описание",
+		Severity:            "high",
+		EquipmentCategoryID: &category.ID,
+		Status:              "active",
+	}
+	db.Create(&alert)
+
+	req, _ := http.NewRequest("PUT", "/api/warehouse/alerts/999/resolve", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+
+	req, _ = http.NewRequest("PUT", "/api/warehouse/alerts/1/resolve", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var response map[string]interface{}
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(t, err)
+	assert.Contains(t, response["message"], "разрешено")
+}
+
+// TestTransferEquipment тестирует TransferEquipment
+func TestTransferEquipment(t *testing.T) {
+	db, router := setupWarehouseAdditionalTestAPI(t)
+
+	equipment := models.Equipment{
+		Type:              "GPS-tracker",
+		Model:             "GT06N",
+		Brand:             "Concox",
+		SerialNumber:      "GT06N001",
+		Status:            "in_stock",
+		WarehouseLocation: "A1-01",
+	}
+	db.Create(&equipment)
+
+	user := models.User{
+		Username:  "warehouse_user",
+		Email:     "warehouse@example.com",
+		FirstName: "Иван",
+		LastName:  "Складской",
+		IsActive:  true,
+	}
+	db.Create(&user)
+
+	transferData := map[string]interface{}{
+		"equipment_id":  equipment.ID,
+		"from_location": "A1-01",
+		"to_location":   "B2-05",
+		"notes":         "Перемещение на новое место",
+		"user_id":       user.ID,
+	}
+	jsonData, _ := json.Marshal(transferData)
+
+	req, _ := http.NewRequest("POST", "/api/warehouse/transfer", bytes.NewBuffer(jsonData))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var response map[string]interface{}
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(t, err)
+	assert.Contains(t, response["message"], "перемещено")
+}
+
+// TestTransferEquipment_NotFound тестирует TransferEquipment когда оборудование не найдено
+func TestTransferEquipment_NotFound(t *testing.T) {
+	_, router := setupWarehouseAdditionalTestAPI(t)
+
+	transferData := map[string]interface{}{
+		"equipment_id": 99999,
+		"to_location":  "B2-05",
+		"user_id":      1,
+	}
+	jsonData, _ := json.Marshal(transferData)
+
+	req, _ := http.NewRequest("POST", "/api/warehouse/transfer", bytes.NewBuffer(jsonData))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// TestTransferEquipment_InvalidData тестирует TransferEquipment с неверными данными
+func TestTransferEquipment_InvalidData(t *testing.T) {
+	_, router := setupWarehouseAdditionalTestAPI(t)
+
+	transferData := map[string]interface{}{
+		"equipment_id": 1,
+		// Отсутствует to_location
+		"user_id": 1,
+	}
+	jsonData, _ := json.Marshal(transferData)
+
+	req, _ := http.NewRequest("POST", "/api/warehouse/transfer", bytes.NewBuffer(jsonData))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
