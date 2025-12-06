@@ -347,11 +347,12 @@ func TestAxentaIntegrationAPI_GetIntegrationErrors_WithErrors(t *testing.T) {
 
 	// Создаем ошибку интеграции
 	integrationError := models.IntegrationError{
-		IntegrationID: integration.ID,
-		CompanyID:     456,
-		ErrorType:     "connection_error",
-		ErrorMessage:  "Connection timeout",
-		IsResolved:    false,
+		TenantID:     456,
+		Service:      models.IntegrationServiceAxetnaCloud,
+		Operation:    models.IntegrationOperationSync,
+		ErrorCode:    "connection_error",
+		ErrorMessage: "Connection timeout",
+		Status:       models.IntegrationErrorStatusPending,
 	}
 	db.Create(&integrationError)
 
