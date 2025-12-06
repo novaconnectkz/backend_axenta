@@ -153,18 +153,36 @@ func (j *JWTService) ValidateAccessToken(tokenString string) (*JWTClaims, error)
 	return nil, fmt.Errorf("invalid token")
 }
 
-// RefreshAccessToken обновляет access токен используя refresh токен
-func (j *JWTService) RefreshAccessToken(refreshTokenString string) (string, error) {
-	// Находим refresh токен в БД
+// ValidateRefreshToken валидирует refresh токен и возвращает его модель
+func (j *JWTService) ValidateRefreshToken(tokenString string) (*models.RefreshToken, error) {
 	var refreshToken models.RefreshToken
 	publicDB := j.getPublicDB()
-	if err := publicDB.Preload("User").Where("token = ? AND is_revoked = false", refreshTokenString).First(&refreshToken).Error; err != nil {
-		return "", fmt.Errorf("refresh token not found: %w", err)
+	if err := publicDB.Where("token = ?", tokenString).First(&refreshToken).Error; err != nil {
+		return nil, fmt.Errorf("refresh token not found: %w", err)
 	}
 
 	// Проверяем валидность
 	if !refreshToken.IsValid() {
-		return "", fmt.Errorf("refresh token expired or revoked")
+		return nil, fmt.Errorf("refresh token expired or revoked")
+	}
+
+	return &refreshToken, nil
+}
+
+// RefreshAccessToken обновляет access токен используя refresh токен
+func (j *JWTService) RefreshAccessToken(refreshTokenString string) (string, error) {
+	// Валидируем refresh токен
+	refreshToken, err := j.ValidateRefreshToken(refreshTokenString)
+	if err != nil {
+		return "", err
+	}
+
+	// Загружаем пользователя, если он еще не загружен
+	if refreshToken.User == nil {
+		publicDB := j.getPublicDB()
+		if err := publicDB.Preload("User").First(refreshToken, refreshToken.ID).Error; err != nil {
+			return "", fmt.Errorf("failed to load user: %w", err)
+		}
 	}
 
 	// Генерируем новый access токен
