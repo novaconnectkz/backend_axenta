@@ -184,6 +184,12 @@ func GetAllMigrations() []MigrationInfo {
 			IsGlobal:    true,
 		},
 		{
+			TableName:   "billing_daily_snapshots",
+			Model:       &models.BillingDailySnapshot{},
+			Description: "Агрегированные ежедневные снимки количества объектов для биллинга",
+			IsGlobal:    true, // Глобальная таблица в схеме public
+		},
+		{
 			TableName:   "partner_daily_snapshots",
 			Model:       &models.PartnerDailySnapshot{},
 			Description: "Ежедневные снимки объектов партнеров для тарификации",
@@ -925,7 +931,7 @@ func CreateMissingGlobalTables() error {
 			var tableExists bool
 			if err := DB.Raw("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = 'contract_numerators')").Scan(&tableExists).Error; err == nil && tableExists {
 				log.Printf("🔧 Подготовка таблицы contract_numerators перед миграцией...")
-				
+
 				// Проверяем, существует ли колонка admin_account_id
 				var columnExists bool
 				if err := DB.Raw("SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'contract_numerators' AND column_name = 'admin_account_id')").Scan(&columnExists).Error; err == nil {
@@ -940,19 +946,19 @@ func CreateMissingGlobalTables() error {
 					} else {
 						// Колонка не существует - добавляем её как nullable сначала, затем обновляем NULL, затем устанавливаем NOT NULL
 						log.Printf("🔧 Колонка admin_account_id не существует, добавляем её...")
-						
+
 						// Шаг 1: Добавляем колонку как nullable
 						if err := DB.Exec("ALTER TABLE contract_numerators ADD COLUMN IF NOT EXISTS admin_account_id BIGINT").Error; err != nil {
 							log.Printf("⚠️ Не удалось добавить колонку admin_account_id: %v", err)
 						} else {
 							log.Printf("✅ Колонка admin_account_id добавлена (nullable)")
-							
+
 							// Шаг 2: Обновляем NULL значения
 							if err := DB.Exec("UPDATE contract_numerators SET admin_account_id = 1 WHERE admin_account_id IS NULL").Error; err != nil {
 								log.Printf("⚠️ Не удалось обновить NULL значения: %v", err)
 							} else {
 								log.Printf("✅ NULL значения обновлены")
-								
+
 								// Шаг 3: Устанавливаем NOT NULL (AutoMigrate сделает это автоматически)
 								log.Printf("✅ Колонка готова для установки NOT NULL через AutoMigrate")
 							}
@@ -998,7 +1004,7 @@ func CreateMissingGlobalTables() error {
 							}
 							log.Printf("✅ Колонка %s добавлена (nullable)", columnName)
 						}
-						
+
 						// Теперь обновляем NULL значения
 						updateSQL := fmt.Sprintf("UPDATE %s SET %s = 1 WHERE %s IS NULL", tableName, columnName, columnName)
 						if updateErr := DB.Exec(updateSQL).Error; updateErr != nil {
