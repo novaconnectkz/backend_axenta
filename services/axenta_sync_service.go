@@ -109,6 +109,7 @@ func (s *AxentaSyncService) SyncAllAdmins() {
 	}
 
 	// Для каждой компании синхронизируем данные в её tenant схему используя найденный токен
+	successCount := 0
 	for _, company := range companies {
 		// Получаем tenant DB для компании
 		tenantDB := database.GetTenantDBByID(company.ID)
@@ -125,7 +126,14 @@ func (s *AxentaSyncService) SyncAllAdmins() {
 			log.Printf("AxentaSync: ошибка синхронизации для компании %d: %v", company.ID, err)
 		} else {
 			log.Printf("AxentaSync: успешно синхронизировано для компании %d", company.ID)
+			successCount++
 		}
+	}
+
+	// После успешной синхронизации хотя бы одной компании запускаем автоматический расчет биллинга
+	if successCount > 0 {
+		log.Printf("AxentaSync: синхронизация завершена для %d компаний, запускаем автоматический расчет биллинга...", successCount)
+		AutoCalculateBillingForAllPartners()
 	}
 }
 
@@ -140,7 +148,13 @@ func (s *AxentaSyncService) SyncAdmin(adminAccountID uint) error {
 		return fmt.Errorf("активный токен отсутствует")
 	}
 
-	return s.syncAdminWithToken(adminAccountID, token)
+	err = s.syncAdminWithToken(adminAccountID, token)
+	if err == nil {
+		// После успешной синхронизации проверяем, нужно ли запустить автоматический расчет биллинга
+		// Функция сама проверит, есть ли уже снимки, и запустится только если их нет
+		AutoCalculateBillingForAllPartners()
+	}
+	return err
 }
 
 func (s *AxentaSyncService) syncAdminWithToken(adminAccountID uint, token string) error {

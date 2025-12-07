@@ -819,8 +819,9 @@ func GeneratePartnerSnapshotsForPeriod(c *gin.Context) {
 
 	// Парсим тело запроса
 	var requestBody struct {
-		StartDate string `json:"start_date"` // Формат: YYYY-MM-DD
-		EndDate   string `json:"end_date"`   // Формат: YYYY-MM-DD
+		StartDate  string `json:"start_date"`  // Формат: YYYY-MM-DD
+		EndDate    string `json:"end_date"`    // Формат: YYYY-MM-DD
+		DataSource string `json:"data_source"` // Опционально: "db" (из БД) или "api" (из Axenta API), по умолчанию "api"
 	}
 
 	if err := c.ShouldBindJSON(&requestBody); err != nil {
@@ -897,6 +898,15 @@ func GeneratePartnerSnapshotsForPeriod(c *gin.Context) {
 	// Создаем сервис снимков
 	snapshotService := services.NewPartnerSnapshotService()
 
+	// Определяем источник данных (по умолчанию "api" для получения актуальных данных)
+	dataSource := requestBody.DataSource
+	if dataSource == "" {
+		dataSource = "api" // По умолчанию используем API
+	}
+	if dataSource != "db" && dataSource != "api" {
+		dataSource = "api" // Если неверное значение, используем API
+	}
+
 	// Создаем снимки для каждого дня в периоде
 	successCount := 0
 	errorCount := 0
@@ -906,8 +916,8 @@ func GeneratePartnerSnapshotsForPeriod(c *gin.Context) {
 		// Устанавливаем время на начало дня в UTC
 		snapshotDate := time.Date(currentDate.Year(), currentDate.Month(), currentDate.Day(), 0, 0, 0, 0, time.UTC)
 
-		// Создаем снимок для этой даты
-		if err := snapshotService.CreateSnapshotForContractWithTokenAndDB(&contract, snapshotDate, userToken, db); err != nil {
+		// Создаем снимок для этой даты с указанным источником данных
+		if err := snapshotService.CreateSnapshotForContractWithTokenAndDBAndSource(&contract, snapshotDate, userToken, db, dataSource); err != nil {
 			log.Printf("❌ Ошибка создания снимка для договора %d на дату %s: %v",
 				contract.ID, snapshotDate.Format("2006-01-02"), err)
 			errorCount++
@@ -932,6 +942,138 @@ func GeneratePartnerSnapshotsForPeriod(c *gin.Context) {
 		"success_count": successCount,
 		"error_count":   errorCount,
 		"period_days":   periodDays,
+	})
+}
+
+// GenerateAllPartnerSnapshotsForPeriod создает снимки для ВСЕХ партнерских договоров за период
+// POST /api/auth/contracts/partner-snapshots/generate-all
+func GenerateAllPartnerSnapshotsForPeriod(c *gin.Context) {
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	// Токен пользователя
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  "Отсутствует токен авторизации",
+		})
+		return
+	}
+	var userToken string
+	if len(authHeader) > 6 && authHeader[:6] == "Token " {
+		userToken = authHeader[6:]
+	} else {
+		userToken = authHeader
+	}
+
+	// Тело запроса
+	var requestBody struct {
+		StartDate string `json:"start_date"` // YYYY-MM-DD
+		EndDate   string `json:"end_date"`   // YYYY-MM-DD
+	}
+	if err := c.ShouldBindJSON(&requestBody); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Неверный формат запроса",
+		})
+		return
+	}
+
+	startDate, err := time.Parse("2006-01-02", requestBody.StartDate)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Неверный формат start_date (ожидается YYYY-MM-DD)",
+		})
+		return
+	}
+	endDate, err := time.Parse("2006-01-02", requestBody.EndDate)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Неверный формат end_date (ожидается YYYY-MM-DD)",
+		})
+		return
+	}
+	if startDate.After(endDate) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Дата начала не может быть позже даты окончания",
+		})
+		return
+	}
+
+	// Получаем tenant DB
+	tenantDBVal, exists := c.Get("tenant_db")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Tenant DB не найдена",
+		})
+		return
+	}
+	tenantDB := tenantDBVal.(*gorm.DB)
+
+	// Ищем все активные партнерские договоры с указанным партнером
+	var contracts []models.Contract
+	if err := tenantDB.
+		Where("partner_company_id IS NOT NULL").
+		Where("is_active = ?", true).
+		Find(&contracts).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("Ошибка получения договоров: %v", err),
+		})
+		return
+	}
+
+	if len(contracts) == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"status":              "success",
+			"message":             "Партнерские договоры не найдены",
+			"processed_contracts": 0,
+		})
+		return
+	}
+
+	snapshotService := services.NewPartnerSnapshotService()
+	successCount := 0
+	errorCount := 0
+
+	for _, contract := range contracts {
+		// Проверяем принадлежность администратору (мультитенантный guard)
+		if contract.AdminAccountID != adminAccountID {
+			continue
+		}
+
+		// Убеждаемся, что есть привязка партнера
+		if contract.PartnerCompanyID == nil {
+			continue
+		}
+
+		for date := startDate; !date.After(endDate); date = date.AddDate(0, 0, 1) {
+			if err := snapshotService.CreateSnapshotForContractWithTokenAndDB(&contract, date, userToken, tenantDB); err != nil {
+				log.Printf("❌ Ошибка создания снимка для договора %d на %s: %v", contract.ID, date.Format("2006-01-02"), err)
+				errorCount++
+			} else {
+				successCount++
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":              "success",
+		"message":             "Снимки за период созданы для всех партнерских договоров",
+		"success_count":       successCount,
+		"error_count":         errorCount,
+		"processed_contracts": len(contracts),
 	})
 }
 

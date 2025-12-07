@@ -841,7 +841,9 @@ func main() {
 	apiGroup.GET("/contracts/:contract_id/partner-snapshots", api.GetPartnerContractSnapshots)
 	apiGroup.POST("/contracts/partner-snapshots/create", api.CreatePartnerSnapshots)
 	apiGroup.POST("/contracts/:contract_id/partner-snapshots/generate", api.GeneratePartnerSnapshotsForPeriod)
+	apiGroup.POST("/contracts/partner-snapshots/generate-all", api.GenerateAllPartnerSnapshotsForPeriod)
 	log.Println("✅ Зарегистрирован POST /api/auth/contracts/:contract_id/partner-snapshots/generate -> GeneratePartnerSnapshotsForPeriod")
+	log.Println("✅ Зарегистрирован POST /api/auth/contracts/partner-snapshots/generate-all -> GenerateAllPartnerSnapshotsForPeriod")
 
 	// Расчет стоимости договора (специфичный маршрут - ПЕРЕД общими)
 	apiGroup.GET("/contracts/:contract_id/calculate", api.CalculateContractCost)
@@ -873,6 +875,9 @@ func main() {
 	apiGroup.GET("/snapshot-settings", api.GetSnapshotSettings)
 	apiGroup.POST("/snapshot-settings", api.UpdateSnapshotSettings)
 	log.Println("✅ Зарегистрированы роуты для настроек снимков (snapshot-settings)")
+	apiGroup.POST("/billing-snapshots/rebuild", api.RebuildBillingSnapshotsHandler)
+	apiGroup.POST("/billing-snapshots/run-daily", api.RunDailyBillingSnapshotHandler)
+	log.Println("✅ Зарегистрированы роуты для billing daily snapshots")
 
 	// Новые endpoints для накопительного подхода к загрузке снимков
 	apiGroup.POST("/snapshots/load-all-current", api.LoadAllCurrentObjects)

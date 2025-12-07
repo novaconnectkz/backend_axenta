@@ -16,12 +16,13 @@ import (
 
 // PartnerSnapshotScheduler управляет автоматическим созданием ежедневных снимков
 type PartnerSnapshotScheduler struct {
-	cron              *cron.Cron
-	snapshotService   *PartnerSnapshotService
-	axentaSyncService *AxentaSyncService
-	db                *gorm.DB
-	lastSnapshotTime  time.Time
-	isRunning         bool
+	cron                   *cron.Cron
+	snapshotService        *PartnerSnapshotService
+	billingSnapshotService *BillingSnapshotService
+	axentaSyncService      *AxentaSyncService
+	db                     *gorm.DB
+	lastSnapshotTime       time.Time
+	isRunning              bool
 }
 
 // NewPartnerSnapshotScheduler создает новый планировщик снимков
@@ -36,10 +37,11 @@ func NewPartnerSnapshotScheduler() *PartnerSnapshotScheduler {
 	)
 
 	return &PartnerSnapshotScheduler{
-		cron:              c,
-		snapshotService:   NewPartnerSnapshotService(),
-		axentaSyncService: NewAxentaSyncService(database.DB),
-		db:                database.DB,
+		cron:                   c,
+		snapshotService:        NewPartnerSnapshotService(),
+		billingSnapshotService: NewBillingSnapshotService(),
+		axentaSyncService:      NewAxentaSyncService(database.DB),
+		db:                     database.DB,
 	}
 }
 
@@ -82,6 +84,7 @@ func (s *PartnerSnapshotScheduler) Stop() {
 }
 
 // createDailySnapshots создает снимки для всех активных партнерских договоров и синхронизирует все аккаунты из Axenta Cloud
+// Автоматически обрабатывает недостающие даты (catch-up): находит последнюю дату снимка и создает снимки за все пропущенные дни
 func (s *PartnerSnapshotScheduler) createDailySnapshots() {
 	// Обработка паник, чтобы планировщик не останавливался при ошибках
 	defer func() {
@@ -94,8 +97,82 @@ func (s *PartnerSnapshotScheduler) createDailySnapshots() {
 
 	// Получаем вчерашнюю дату (снимок создается в 00:00 UTC за предыдущий день)
 	yesterday := time.Now().UTC().AddDate(0, 0, -1)
-	snapshotDate := time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 0, 0, 0, 0, time.UTC)
-	s.createDailySnapshotsForDate(snapshotDate)
+	targetDate := time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 0, 0, 0, 0, time.UTC)
+
+	// Находим последнюю дату, для которой есть снимки (минимальную среди всех компаний)
+	mainDB := database.DB.Session(&gorm.Session{})
+	if err := mainDB.Exec("SET search_path TO public").Error; err != nil {
+		log.Printf("⚠️ Ошибка переключения схемы: %v", err)
+		// Продолжаем с созданием снимка только за вчерашний день
+		s.createDailySnapshotsForDate(targetDate)
+	} else {
+		var companies []models.Company
+		if err := mainDB.Table("public.companies").Where("is_active = ?", true).Find(&companies).Error; err != nil {
+			log.Printf("⚠️ Ошибка получения компаний: %v", err)
+			// Продолжаем с созданием снимка только за вчерашний день
+			s.createDailySnapshotsForDate(targetDate)
+		} else {
+			// Ищем последнюю дату снимка среди всех компаний
+			var lastSnapshotDate *time.Time
+			for _, company := range companies {
+				tenantDB := database.GetTenantDBByID(company.ID)
+				if tenantDB == nil {
+					continue
+				}
+
+				var lastSnapshot models.PartnerDailySnapshot
+				if err := tenantDB.Order("snapshot_date DESC").First(&lastSnapshot).Error; err == nil {
+					if lastSnapshotDate == nil || lastSnapshot.SnapshotDate.After(*lastSnapshotDate) {
+						lastSnapshotDate = &lastSnapshot.SnapshotDate
+					}
+				}
+			}
+
+			// Определяем начальную дату для обработки
+			var startDate time.Time
+			if lastSnapshotDate != nil {
+				// Начинаем со следующего дня после последнего снимка
+				startDate = lastSnapshotDate.AddDate(0, 0, 1)
+				log.Printf("📅 Найдена последняя дата снимка: %s, начинаем обработку с %s до %s",
+					lastSnapshotDate.Format("2006-01-02"), startDate.Format("2006-01-02"), targetDate.Format("2006-01-02"))
+			} else {
+				// Если снимков нет, начинаем с начала периода (2024-03-14)
+				startDate = time.Date(2024, 3, 14, 0, 0, 0, 0, time.UTC)
+				log.Printf("📅 Снимков не найдено, начинаем обработку с %s до %s",
+					startDate.Format("2006-01-02"), targetDate.Format("2006-01-02"))
+			}
+
+			// Создаем снимки за все недостающие дни
+			processedDates := 0
+			for date := startDate; !date.After(targetDate); date = date.AddDate(0, 0, 1) {
+				log.Printf("📸 Обработка даты: %s", date.Format("2006-01-02"))
+				s.createDailySnapshotsForDate(date)
+				processedDates++
+			}
+
+			if processedDates > 1 {
+				log.Printf("✅ Обработано %d недостающих дней (от %s до %s)", processedDates, startDate.Format("2006-01-02"), targetDate.Format("2006-01-02"))
+			}
+		}
+	}
+
+	// После партнерских снимков обновляем агрегированные billing snapshots (без запросов к Axenta)
+	// RunDailySnapshot уже обрабатывает недостающие даты автоматически
+	if s.billingSnapshotService != nil {
+		if result, err := s.billingSnapshotService.RunDailySnapshot(); err != nil {
+			log.Printf("⚠️ Billing daily snapshots: ошибка обновления: %v", err)
+		} else if len(result.ProcessedDates) > 0 {
+			log.Printf("✅ Billing daily snapshots: создано %d записей, итоговое количество объектов=%d", len(result.ProcessedDates), result.FinalTotal)
+		} else {
+			log.Printf("ℹ️ Billing daily snapshots: новые даты отсутствуют")
+		}
+	}
+
+	// Проверяем, нужно ли запустить автоматический расчет биллинга за весь период
+	// Это нужно, если данные были синхронизированы, но снимки партнеров еще не были созданы
+	// Функция AutoCalculateBillingForAllPartners сама проверит наличие снимков и запустится только если их нет
+	log.Printf("🤖 Проверка необходимости автоматического расчета биллинга после создания суточных снимков...")
+	AutoCalculateBillingForAllPartners()
 }
 
 // createDailySnapshotsForDate создает снимки за указанную дату
@@ -247,24 +324,31 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 			continue
 		}
 
-		// Загружаем ВСЕ объекты и распределяем их по партнёрам без дублей
-		log.Printf("📦 Загружаем ВСЕ объекты и распределяем по партнёрам (без дублей)...")
-		partnerObjectsMap, err := hierarchyService.DistributeObjectsByPartner(token, snapshotDate)
+		// Пытаемся использовать данные из БД вместо API запросов
+		log.Printf("📦 Распределяем объекты по партнёрам из БД (без API запросов)...")
+		partnerObjectsMap, err := s.distributeObjectsByPartnerFromDB(tenantDB, snapshotDate, allPartnerAccounts)
 		if err != nil {
-			errMsg := fmt.Sprintf("Не удалось загрузить и распределить объекты для компании %d: %v", company.ID, err)
-			log.Printf("⚠️ %s", errMsg)
-			job.AddError(models.JobError{
-				CompanyID:   company.ID,
-				Message:     errMsg,
-				ErrorType:   "api_error",
-				Recoverable: true,
-			})
-			companyDetail.ContractsCount = 0
-			companyDetail.ErrorCount = 1
-			companyDetail.ProcessingTimeS = int(time.Since(companyStartTime).Seconds())
-			job.AddCompanyDetail(companyDetail)
-			errorCount++
-			continue
+			// Fallback: если не удалось использовать БД, используем API
+			log.Printf("⚠️ Не удалось использовать данные из БД: %v, используем API...", err)
+			partnerObjectsMap, err = hierarchyService.DistributeObjectsByPartner(token, snapshotDate)
+			if err != nil {
+				errMsg := fmt.Sprintf("Не удалось загрузить и распределить объекты для компании %d: %v", company.ID, err)
+				log.Printf("❌ %s", errMsg)
+				job.AddError(models.JobError{
+					CompanyID:   company.ID,
+					Message:     errMsg,
+					ErrorType:   "api_error",
+					Recoverable: true,
+				})
+				companyDetail.ContractsCount = 0
+				companyDetail.ErrorCount = 1
+				companyDetail.ProcessingTimeS = int(time.Since(companyStartTime).Seconds())
+				job.AddCompanyDetail(companyDetail)
+				errorCount++
+				continue
+			}
+		} else {
+			log.Printf("✅ Успешно использованы данные из БД (без API запросов)")
 		}
 
 		// Проверяем, есть ли партнеры для обработки
@@ -565,6 +649,132 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 		len(companies), totalContracts, successCount, errorCount, skippedCount)
 
 	s.lastSnapshotTime = time.Now()
+}
+
+// distributeObjectsByPartnerFromDB распределяет объекты по партнёрам используя данные из БД (без API запросов)
+func (s *PartnerSnapshotScheduler) distributeObjectsByPartnerFromDB(
+	tenantDB *gorm.DB,
+	snapshotDate time.Time,
+	allPartnerAccounts []models.AxentaAccountSnapshot,
+) (map[int64]*PartnerObjectStats, error) {
+	partnerStats := make(map[int64]*PartnerObjectStats)
+	snapshotStart := time.Date(snapshotDate.Year(), snapshotDate.Month(), snapshotDate.Day(), 0, 0, 0, 0, time.UTC)
+	snapshotEnd := snapshotStart.AddDate(0, 0, 1)
+
+	log.Printf("📊 Подсчет объектов из БД для %d партнеров на дату %s...", len(allPartnerAccounts), snapshotDate.Format("2006-01-02"))
+
+	// Для каждого партнера считаем объекты из БД
+	for _, partnerAccount := range allPartnerAccounts {
+		partnerID := int64(partnerAccount.ExternalAccountID)
+
+		// Получаем все дочерние аккаунты партнера
+		// Ищем аккаунты, где партнер является родителем или в иерархии
+		var childAccounts []models.AxentaAccountSnapshot
+		partnerAccountName := partnerAccount.AccountName
+
+		// Ищем дочерние аккаунты: где parent_account_name = имя партнера
+		// Или где в hierarchy содержится путь через партнера (более точный поиск)
+		hierarchyPattern := "% > " + partnerAccountName + " > %"
+		if err := tenantDB.
+			Where("(parent_account_name = ? OR hierarchy LIKE ? OR hierarchy = ?) AND is_active = ?",
+				partnerAccountName, hierarchyPattern, partnerAccountName, true).
+			Find(&childAccounts).Error; err != nil {
+			log.Printf("⚠️ Ошибка поиска дочерних аккаунтов для партнера %d: %v", partnerID, err)
+			continue
+		}
+
+		// Собираем все account_external_id для поиска объектов (рекурсивно включая всех потомков)
+		accountIDsMap := make(map[int64]bool)
+		accountIDsMap[partnerID] = true // Сам партнер
+
+		// Добавляем прямые дочерние аккаунты
+		for _, acc := range childAccounts {
+			accountIDsMap[acc.ExternalAccountID] = true
+		}
+
+		// Рекурсивно ищем всех потомков дочерних аккаунтов
+		processedAccounts := make(map[int64]bool)
+		toProcess := make([]int64, 0)
+		for _, acc := range childAccounts {
+			toProcess = append(toProcess, acc.ExternalAccountID)
+		}
+
+		for len(toProcess) > 0 {
+			currentID := toProcess[0]
+			toProcess = toProcess[1:]
+
+			if processedAccounts[currentID] {
+				continue
+			}
+			processedAccounts[currentID] = true
+
+			// Ищем дочерние аккаунты текущего аккаунта
+			var currentAccount models.AxentaAccountSnapshot
+			if err := tenantDB.Where("external_account_id = ?", currentID).First(&currentAccount).Error; err == nil {
+				var nestedChildren []models.AxentaAccountSnapshot
+				nestedPattern := "% > " + currentAccount.AccountName + " > %"
+				if err := tenantDB.
+					Where("(parent_account_name = ? OR hierarchy LIKE ?) AND is_active = ?",
+						currentAccount.AccountName, nestedPattern, true).
+					Find(&nestedChildren).Error; err == nil {
+					for _, nested := range nestedChildren {
+						if !accountIDsMap[nested.ExternalAccountID] {
+							accountIDsMap[nested.ExternalAccountID] = true
+							toProcess = append(toProcess, nested.ExternalAccountID)
+						}
+					}
+				}
+			}
+		}
+
+		// Преобразуем map в slice для SQL запроса
+		accountIDs := make([]int64, 0, len(accountIDsMap))
+		for id := range accountIDsMap {
+			accountIDs = append(accountIDs, id)
+		}
+
+		if len(accountIDs) == 0 {
+			continue
+		}
+
+		// Считаем объекты из axenta_object_snapshots, которые:
+		// 1. Принадлежат аккаунтам партнера
+		// 2. Были активны на дату снимка (созданы до конца дня и не удалены до конца дня)
+		var totalCount, activeCount int64
+
+		// Общее количество объектов
+		if err := tenantDB.Model(&models.AxentaObjectSnapshot{}).
+			Where("account_external_id IN ?", accountIDs).
+			Where("(axenta_created_at IS NOT NULL AND axenta_created_at < ?) OR (axenta_created_at IS NULL AND created_at < ?)", snapshotEnd, snapshotEnd).
+			Where("(axenta_deleted_at IS NULL OR axenta_deleted_at >= ?)", snapshotEnd).
+			Count(&totalCount).Error; err != nil {
+			log.Printf("⚠️ Ошибка подсчета объектов для партнера %d: %v", partnerID, err)
+			continue
+		}
+
+		// Активные объекты
+		if err := tenantDB.Model(&models.AxentaObjectSnapshot{}).
+			Where("account_external_id IN ?", accountIDs).
+			Where("is_active = ?", true).
+			Where("(axenta_created_at IS NOT NULL AND axenta_created_at < ?) OR (axenta_created_at IS NULL AND created_at < ?)", snapshotEnd, snapshotEnd).
+			Where("(axenta_deleted_at IS NULL OR axenta_deleted_at >= ?)", snapshotEnd).
+			Count(&activeCount).Error; err != nil {
+			log.Printf("⚠️ Ошибка подсчета активных объектов для партнера %d: %v", partnerID, err)
+			continue
+		}
+
+		// Сохраняем статистику только если есть объекты
+		if totalCount > 0 || activeCount > 0 {
+			partnerStats[partnerID] = &PartnerObjectStats{
+				PartnerID:     partnerID,
+				TotalObjects:  int(totalCount),
+				ActiveObjects: int(activeCount),
+			}
+		}
+	}
+
+	log.Printf("✅ Подсчитано объектов из БД для %d партнеров", len(partnerStats))
+	return partnerStats, nil
 }
 
 // getHostname получает hostname сервера

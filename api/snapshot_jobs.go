@@ -286,6 +286,153 @@ func GetSnapshotJobs(c *gin.Context) {
 	})
 }
 
+// triggerPartnerSnapshotsForAllContracts создает партнёрские снимки за период для всех активных партнёрских договоров тенанта
+func triggerPartnerSnapshotsForAllContracts(c *gin.Context, body TriggerManualSnapshotRequest) error {
+	// Получаем tenant DB из контекста
+	tenantDBVal, exists := c.Get("tenant_db")
+	if !exists {
+		return fmt.Errorf("tenant DB не найдена (проверьте X-Tenant-ID)")
+	}
+	tenantDB := tenantDBVal.(*gorm.DB)
+
+	// Токен Axenta
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		return fmt.Errorf("отсутствует токен авторизации")
+	}
+	userToken := authHeader
+	if len(authHeader) > 6 && authHeader[:6] == "Token " {
+		userToken = authHeader[6:]
+	}
+
+	// Даты
+	dateFromStr := body.DateFrom
+	dateToStr := body.DateTo
+	if body.Date != "" {
+		dateFromStr = body.Date
+		dateToStr = body.Date
+	}
+
+	dateFrom, err := time.Parse("2006-01-02", dateFromStr)
+	if err != nil {
+		return fmt.Errorf("неверный формат date_from/date (YYYY-MM-DD)")
+	}
+	dateTo, err := time.Parse("2006-01-02", dateToStr)
+	if err != nil {
+		return fmt.Errorf("неверный формат date_to (YYYY-MM-DD)")
+	}
+	if dateFrom.After(dateTo) {
+		return fmt.Errorf("date_from не может быть позже date_to")
+	}
+
+	// Подготовка записи в snapshot_jobs
+	publicDB := database.DB.Session(&gorm.Session{})
+	if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
+		return fmt.Errorf("ошибка переключения схемы: %w", err)
+	}
+
+	job := &models.SnapshotJob{
+		JobType:     models.SnapshotJobTypeManual,
+		StartedAt:   time.Now(),
+		DateFrom:    dateFrom,
+		DateTo:      dateTo,
+		Status:      models.SnapshotJobStatusRunning,
+		TriggeredBy: "user",
+	}
+	if err := publicDB.Create(job).Error; err != nil {
+		return fmt.Errorf("ошибка создания записи snapshot_job: %w", err)
+	}
+
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				job.AddError(models.JobError{
+					Message: fmt.Sprintf("panic: %v", r),
+					Date:    dateFrom.Format("2006-01-02"),
+				})
+				job.FinishJob(models.SnapshotJobStatusFailed, "panic в процессе генерации")
+				_ = publicDB.Save(job).Error
+			}
+		}()
+
+		// Получаем все активные партнёрские договоры
+		var contracts []models.Contract
+		if err := tenantDB.
+			Where("partner_company_id IS NOT NULL").
+			Where("is_active = ?", true).
+			Find(&contracts).Error; err != nil {
+			job.AddError(models.JobError{
+				Message: fmt.Sprintf("ошибка получения договоров: %v", err),
+			})
+			job.FinishJob(models.SnapshotJobStatusFailed, "не удалось получить договоры")
+			_ = publicDB.Save(job).Error
+			return
+		}
+
+		if len(contracts) == 0 {
+			job.SuccessCount = 0
+			job.ErrorCount = 0
+			job.TotalContracts = 0
+			job.TotalDaysProcessed = 0
+			job.FinishJob(models.SnapshotJobStatusCompleted, "")
+			_ = publicDB.Save(job).Error
+			return
+		}
+
+		snapshotService := services.NewPartnerSnapshotService()
+		success := 0
+		errorsCount := 0
+		totalDays := 0
+
+		// Определяем источник данных (по умолчанию "db" для быстрой работы)
+		dataSource := body.DataSource
+		if dataSource == "" {
+			dataSource = "db" // По умолчанию используем БД
+		}
+		if dataSource != "db" && dataSource != "api" {
+			dataSource = "db" // Если неверное значение, используем БД
+		}
+
+		for _, contract := range contracts {
+			// На всякий случай пропускаем без партнёра
+			if contract.PartnerCompanyID == nil {
+				continue
+			}
+			for d := dateFrom; !d.After(dateTo); d = d.AddDate(0, 0, 1) {
+				totalDays++
+				if err := snapshotService.CreateSnapshotForContractWithTokenAndDBAndSource(&contract, d, userToken, tenantDB, dataSource); err != nil {
+					errorsCount++
+					job.AddError(models.JobError{
+						ContractID: contract.ID,
+						Date:       d.Format("2006-01-02"),
+						Message:    err.Error(),
+					})
+				} else {
+					success++
+				}
+			}
+		}
+
+		job.TotalContracts = len(contracts)
+		job.TotalDaysProcessed = totalDays
+		job.SuccessCount = success
+		job.ErrorCount = errorsCount
+
+		status := models.SnapshotJobStatusCompleted
+		errMsg := ""
+		if errorsCount > 0 {
+			status = models.SnapshotJobStatusPartial
+			errMsg = "Часть снимков не создана"
+		}
+		job.FinishJob(status, errMsg)
+		if err := publicDB.Save(job).Error; err != nil {
+			log.Printf("⚠️ Ошибка сохранения snapshot_job: %v", err)
+		}
+	}()
+
+	return nil
+}
+
 // GetSnapshotJob возвращает детальную информацию о конкретной задаче
 // GET /api/auth/snapshot-jobs/:id
 func GetSnapshotJob(c *gin.Context) {
@@ -770,9 +917,11 @@ func DeleteOldSnapshotJobs(c *gin.Context) {
 
 // TriggerManualSnapshotRequest представляет запрос на ручное создание снимков
 type TriggerManualSnapshotRequest struct {
-	Date     string `json:"date"`      // Опционально: одна дата в формате YYYY-MM-DD
-	DateFrom string `json:"date_from"` // Опционально: начало периода в формате YYYY-MM-DD
-	DateTo   string `json:"date_to"`   // Опционально: конец периода в формате YYYY-MM-DD
+	Date       string `json:"date"`        // Опционально: одна дата в формате YYYY-MM-DD
+	DateFrom   string `json:"date_from"`   // Опционально: начало периода в формате YYYY-MM-DD
+	DateTo     string `json:"date_to"`     // Опционально: конец периода в формате YYYY-MM-DD
+	Mode       string `json:"mode"`        // Опционально: partner_all — создать партнёрские снимки по всем договорам за период
+	DataSource string `json:"data_source"` // Опционально: "db" (из БД) или "api" (из Axenta API), по умолчанию "db"
 }
 
 // TriggerManualSnapshot запускает создание снимков вручную (для тестирования)
@@ -794,6 +943,23 @@ func TriggerManualSnapshot(c *gin.Context) {
 		if err := c.ShouldBindJSON(&requestBody); err == nil {
 			hasBody = true
 		}
+	}
+
+	// Режим partner_all: генерируем партнёрские снимки для всех договоров за период
+	if (hasBody && requestBody.Mode == "partner_all") || (!hasBody && c.Query("mode") == "partner_all") {
+		if err := triggerPartnerSnapshotsForAllContracts(c, requestBody); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  "error",
+				"message": err.Error(),
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"status":  "success",
+			"message": "Запрос на создание партнёрских снимков принят. Проверяйте историю.",
+		})
+		return
 	}
 
 	// Определяем режим работы
