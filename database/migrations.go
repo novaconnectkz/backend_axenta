@@ -605,6 +605,22 @@ func RunMigration(db *gorm.DB, migration MigrationInfo) MigrationResult {
 		// Продолжаем с AutoMigrate
 	}
 
+	// Специальная обработка для таблиц, которые могут содержать NULL значения в NOT NULL колонках
+	if exists && migration.TableName == "contract_numerators" {
+		log.Printf("🔧 Проверка и исправление NULL значений в таблице %s...", migration.TableName)
+		// Обновляем все NULL значения в admin_account_id на дефолтное значение 1
+		// Это безопасно, так как admin_account_id должен быть установлен для всех записей
+		if err := db.Exec("UPDATE contract_numerators SET admin_account_id = 1 WHERE admin_account_id IS NULL").Error; err != nil {
+			log.Printf("⚠️ Не удалось обновить NULL значения в admin_account_id: %v", err)
+		} else {
+			var updatedCount int64
+			db.Raw("SELECT COUNT(*) FROM contract_numerators WHERE admin_account_id IS NULL").Scan(&updatedCount)
+			if updatedCount == 0 {
+				log.Printf("✅ NULL значения в admin_account_id обновлены")
+			}
+		}
+	}
+
 	// Выполняем AutoMigrate (создаст таблицу или обновит структуру)
 	if migration.Model != nil {
 		err = db.AutoMigrate(migration.Model)
@@ -615,9 +631,65 @@ func RunMigration(db *gorm.DB, migration MigrationInfo) MigrationResult {
 		return result
 	}
 	if err != nil {
-		result.Error = fmt.Errorf("ошибка миграции: %v", err)
-		result.Action = "error"
-		log.Printf("❌ Ошибка миграции %s: %v", migration.TableName, err)
+		// Игнорируем ошибки о несуществующих ограничениях (constraint does not exist)
+		// Это может происходить, когда GORM пытается удалить старое ограничение,
+		// но оно уже было удалено или имеет другое имя
+		if strings.Contains(err.Error(), "does not exist") && strings.Contains(err.Error(), "constraint") {
+			log.Printf("⚠️ Предупреждение при миграции %s (ограничение не существует, игнорируем): %v", migration.TableName, err)
+			// Продолжаем выполнение, так как это не критическая ошибка
+			if exists {
+				result.Action = "updated"
+				result.Changes = append(result.Changes, "Структура таблицы проверена/обновлена (некоторые ограничения могли быть пропущены)")
+				log.Printf("✅ Таблица %s обновлена (с предупреждениями)", migration.TableName)
+			} else {
+				result.Action = "created"
+				result.Changes = append(result.Changes, "Таблица создана")
+				log.Printf("✅ Таблица %s создана", migration.TableName)
+			}
+		} else if strings.Contains(err.Error(), "contains null values") || strings.Contains(err.Error(), "column") && strings.Contains(err.Error(), "null") {
+			// Ошибка о NULL значениях в NOT NULL колонке
+			log.Printf("⚠️ Обнаружены NULL значения в NOT NULL колонке таблицы %s: %v", migration.TableName, err)
+			log.Printf("🔧 Попытка исправить NULL значения...")
+
+			// Пытаемся определить имя колонки из ошибки
+			// Формат ошибки: "column "admin_account_id" of relation "contract_numerators" contains null values"
+			var columnName string
+			if strings.Contains(err.Error(), "admin_account_id") {
+				columnName = "admin_account_id"
+			} else if strings.Contains(err.Error(), "company_id") {
+				columnName = "company_id"
+			}
+
+			if columnName != "" {
+				// Обновляем NULL значения на дефолтное значение
+				updateSQL := fmt.Sprintf("UPDATE %s SET %s = 1 WHERE %s IS NULL", migration.TableName, columnName, columnName)
+				if updateErr := db.Exec(updateSQL).Error; updateErr != nil {
+					log.Printf("❌ Не удалось обновить NULL значения: %v", updateErr)
+					result.Error = fmt.Errorf("ошибка миграции (NULL значения): %v", err)
+					result.Action = "error"
+				} else {
+					log.Printf("✅ NULL значения обновлены, повторная попытка миграции...")
+					// Повторяем попытку миграции
+					if retryErr := db.AutoMigrate(migration.Model); retryErr != nil {
+						result.Error = fmt.Errorf("ошибка миграции после исправления NULL: %v", retryErr)
+						result.Action = "error"
+						log.Printf("❌ Ошибка миграции %s после исправления NULL: %v", migration.TableName, retryErr)
+					} else {
+						result.Action = "updated"
+						result.Changes = append(result.Changes, fmt.Sprintf("NULL значения в %s исправлены, таблица обновлена", columnName))
+						log.Printf("✅ Таблица %s успешно обновлена после исправления NULL значений", migration.TableName)
+					}
+				}
+			} else {
+				result.Error = fmt.Errorf("ошибка миграции (NULL значения): %v", err)
+				result.Action = "error"
+				log.Printf("❌ Ошибка миграции %s (не удалось определить колонку): %v", migration.TableName, err)
+			}
+		} else {
+			result.Error = fmt.Errorf("ошибка миграции: %v", err)
+			result.Action = "error"
+			log.Printf("❌ Ошибка миграции %s: %v", migration.TableName, err)
+		}
 	} else {
 		if exists {
 			result.Action = "updated"
@@ -846,11 +918,107 @@ func CreateMissingGlobalTables() error {
 
 	for _, model := range globalModels {
 		log.Printf("🔄 Создание таблицы для модели %T...", model)
+
+		// Специальная обработка для ContractNumerator - исправляем NULL значения перед миграцией
+		if _, ok := model.(*models.ContractNumerator); ok {
+			// Проверяем, существует ли таблица
+			var tableExists bool
+			if err := DB.Raw("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = 'contract_numerators')").Scan(&tableExists).Error; err == nil && tableExists {
+				log.Printf("🔧 Подготовка таблицы contract_numerators перед миграцией...")
+				
+				// Проверяем, существует ли колонка admin_account_id
+				var columnExists bool
+				if err := DB.Raw("SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'contract_numerators' AND column_name = 'admin_account_id')").Scan(&columnExists).Error; err == nil {
+					if columnExists {
+						// Колонка существует - обновляем NULL значения
+						log.Printf("🔧 Обновление NULL значений в admin_account_id...")
+						if err := DB.Exec("UPDATE contract_numerators SET admin_account_id = 1 WHERE admin_account_id IS NULL").Error; err != nil {
+							log.Printf("⚠️ Не удалось обновить NULL значения в admin_account_id: %v", err)
+						} else {
+							log.Printf("✅ NULL значения в admin_account_id обновлены")
+						}
+					} else {
+						// Колонка не существует - добавляем её как nullable сначала, затем обновляем NULL, затем устанавливаем NOT NULL
+						log.Printf("🔧 Колонка admin_account_id не существует, добавляем её...")
+						
+						// Шаг 1: Добавляем колонку как nullable
+						if err := DB.Exec("ALTER TABLE contract_numerators ADD COLUMN IF NOT EXISTS admin_account_id BIGINT").Error; err != nil {
+							log.Printf("⚠️ Не удалось добавить колонку admin_account_id: %v", err)
+						} else {
+							log.Printf("✅ Колонка admin_account_id добавлена (nullable)")
+							
+							// Шаг 2: Обновляем NULL значения
+							if err := DB.Exec("UPDATE contract_numerators SET admin_account_id = 1 WHERE admin_account_id IS NULL").Error; err != nil {
+								log.Printf("⚠️ Не удалось обновить NULL значения: %v", err)
+							} else {
+								log.Printf("✅ NULL значения обновлены")
+								
+								// Шаг 3: Устанавливаем NOT NULL (AutoMigrate сделает это автоматически)
+								log.Printf("✅ Колонка готова для установки NOT NULL через AutoMigrate")
+							}
+						}
+					}
+				}
+			}
+		}
+
 		// Используем обычный AutoMigrate - если foreign key constraints не могут быть созданы,
 		// таблица все равно будет создана, но без constraints
 		if err := DB.AutoMigrate(model); err != nil {
-			// Игнорируем ошибки связанные с foreign keys - таблица все равно может быть создана
-			if !strings.Contains(err.Error(), "foreign") && !strings.Contains(err.Error(), "constraint") {
+			// Обрабатываем ошибки о NULL значениях в NOT NULL колонках
+			if strings.Contains(err.Error(), "contains null values") || (strings.Contains(err.Error(), "column") && strings.Contains(err.Error(), "null")) {
+				log.Printf("⚠️ Обнаружены NULL значения в NOT NULL колонке для %T: %v", model, err)
+				log.Printf("🔧 Попытка исправить NULL значения...")
+
+				// Определяем имя таблицы и колонки
+				var tableName string
+				var columnName string
+				if strings.Contains(err.Error(), "contract_numerators") {
+					tableName = "contract_numerators"
+					if strings.Contains(err.Error(), "admin_account_id") {
+						columnName = "admin_account_id"
+					} else if strings.Contains(err.Error(), "company_id") {
+						columnName = "company_id"
+					}
+				}
+
+				if tableName != "" && columnName != "" {
+					// Проверяем, существует ли колонка
+					var columnExists bool
+					checkColumnSQL := fmt.Sprintf("SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = '%s' AND column_name = '%s')", tableName, columnName)
+					if checkErr := DB.Raw(checkColumnSQL).Scan(&columnExists).Error; checkErr == nil {
+						if !columnExists {
+							// Колонка не существует - добавляем её как nullable сначала
+							log.Printf("🔧 Колонка %s не существует, добавляем её...", columnName)
+							addColumnSQL := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s BIGINT", tableName, columnName)
+							if addErr := DB.Exec(addColumnSQL).Error; addErr != nil {
+								log.Printf("❌ Не удалось добавить колонку %s: %v", columnName, addErr)
+								log.Printf("❌ Ошибка создания таблицы для %T: %v", model, err)
+								continue
+							}
+							log.Printf("✅ Колонка %s добавлена (nullable)", columnName)
+						}
+						
+						// Теперь обновляем NULL значения
+						updateSQL := fmt.Sprintf("UPDATE %s SET %s = 1 WHERE %s IS NULL", tableName, columnName, columnName)
+						if updateErr := DB.Exec(updateSQL).Error; updateErr != nil {
+							log.Printf("❌ Не удалось обновить NULL значения: %v", updateErr)
+							log.Printf("❌ Ошибка создания таблицы для %T: %v", model, err)
+						} else {
+							log.Printf("✅ NULL значения обновлены, повторная попытка миграции...")
+							// Повторяем попытку миграции
+							if retryErr := DB.AutoMigrate(model); retryErr != nil {
+								log.Printf("❌ Ошибка создания таблицы для %T после исправления NULL: %v", model, retryErr)
+							} else {
+								log.Printf("✅ Таблица для %T создана/обновлена после исправления NULL значений", model)
+								continue
+							}
+						}
+					}
+				} else {
+					log.Printf("❌ Ошибка создания таблицы для %T (не удалось определить колонку): %v", model, err)
+				}
+			} else if !strings.Contains(err.Error(), "foreign") && !strings.Contains(err.Error(), "constraint") {
 				log.Printf("❌ Ошибка создания таблицы для %T: %v", model, err)
 				// Продолжаем создавать другие таблицы даже при ошибке
 			} else {

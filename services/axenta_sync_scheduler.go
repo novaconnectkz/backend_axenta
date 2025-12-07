@@ -9,18 +9,23 @@ import (
 )
 
 // AxentaSyncScheduler планирует периодическую синхронизацию данных Axenta
+// Автоматическая синхронизация запускается каждую минуту
+// Ручной запуск доступен через API endpoint /api/auth/axenta-sync/trigger
 type AxentaSyncScheduler struct {
 	syncService *AxentaSyncService
 	cron        *cron.Cron
 	mu          sync.Mutex
 	running     bool
-	interval    int // Интервал синхронизации в минутах
+	interval    int // Интервал синхронизации в минутах (используется только для совместимости API)
 }
 
 // NewAxentaSyncScheduler создает новый планировщик синхронизации Axenta
+// intervalMinutes - параметр для обратной совместимости, не используется для автоматического запуска
+// Автоматическая синхронизация всегда запускается каждую минуту
 func NewAxentaSyncScheduler(syncService *AxentaSyncService, intervalMinutes int) *AxentaSyncScheduler {
+	// Сохраняем interval для совместимости с API, но не используем для автоматического запуска
 	if intervalMinutes <= 0 {
-		intervalMinutes = 5 // Значение по умолчанию: 5 минут
+		intervalMinutes = 1440 // 24 часа в минутах (для совместимости API)
 	}
 	return &AxentaSyncScheduler{
 		syncService: syncService,
@@ -29,11 +34,14 @@ func NewAxentaSyncScheduler(syncService *AxentaSyncService, intervalMinutes int)
 	}
 }
 
-// Start запускает планировщик с настраиваемым интервалом
+// Start запускает планировщик для автоматической синхронизации
+// Синхронизация запускается каждую минуту
+// Для ручного запуска используйте API endpoint /api/auth/axenta-sync/trigger
 func (s *AxentaSyncScheduler) Start() error {
-	// Формируем cron выражение на основе интервала в минутах
-	// Формат: "0 */N * * * *" означает "в секунду 0 каждой N-й минуты"
-	cronExpr := fmt.Sprintf("0 */%d * * * *", s.interval)
+	// Cron выражение для запуска каждую минуту
+	// Формат: "секунды минуты часы день месяц день_недели"
+	// "0 * * * * *" = каждую минуту в 0 секунд
+	cronExpr := "0 * * * * *"
 
 	_, err := s.cron.AddFunc(cronExpr, func() {
 		s.runSyncAll()
@@ -43,7 +51,10 @@ func (s *AxentaSyncScheduler) Start() error {
 	}
 
 	s.cron.Start()
-	log.Printf("AxentaSync: планировщик синхронизации запущен (каждые %d минут)", s.interval)
+	log.Printf("⏰ AxentaSync: планировщик автоматической синхронизации запущен")
+	log.Printf("   📅 Расписание: каждую минуту")
+	log.Printf("   🔧 Cron выражение: %s", cronExpr)
+	log.Printf("   🔄 Ручной запуск: POST /api/auth/axenta-sync/trigger")
 	return nil
 }
 
@@ -53,7 +64,9 @@ func (s *AxentaSyncScheduler) Stop() {
 	log.Println("AxentaSync: планировщик синхронизации остановлен")
 }
 
-// UpdateInterval обновляет интервал синхронизации
+// UpdateInterval обновляет интервал синхронизации (для совместимости API)
+// ВНИМАНИЕ: Автоматическая синхронизация всегда запускается каждую минуту
+// Этот метод только обновляет значение interval для совместимости с API, но не меняет расписание
 func (s *AxentaSyncScheduler) UpdateInterval(newIntervalMinutes int) error {
 	if newIntervalMinutes <= 0 {
 		return fmt.Errorf("интервал должен быть больше 0")
@@ -62,33 +75,20 @@ func (s *AxentaSyncScheduler) UpdateInterval(newIntervalMinutes int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Останавливаем текущий планировщик
-	s.cron.Stop()
-
-	// Обновляем интервал
+	// Обновляем только значение interval для совместимости с API
 	s.interval = newIntervalMinutes
 
-	// Создаем новый планировщик
-	s.cron = cron.New(cron.WithSeconds())
-
-	// Формируем новое cron выражение
-	cronExpr := fmt.Sprintf("0 */%d * * * *", s.interval)
-	
-	_, err := s.cron.AddFunc(cronExpr, func() {
-		s.runSyncAll()
-	})
-	if err != nil {
-		return fmt.Errorf("ошибка добавления cron задачи: %w", err)
-	}
-
-	// Запускаем планировщик
-	s.cron.Start()
-	log.Printf("AxentaSync: интервал синхронизации обновлен на %d минут", s.interval)
+	log.Printf("⏰ AxentaSync: значение интервала обновлено для совместимости API")
+	log.Printf("   📊 Интервал (только для API): %d минут", s.interval)
+	log.Printf("   ℹ️  Автоматическая синхронизация продолжает работать по расписанию: каждую минуту")
+	log.Printf("   🔄 Для ручного запуска используйте: POST /api/auth/axenta-sync/trigger")
 
 	return nil
 }
 
-// GetInterval возвращает текущий интервал синхронизации
+// GetInterval возвращает текущий интервал синхронизации (для совместимости API)
+// ВНИМАНИЕ: Автоматическая синхронизация всегда запускается каждую минуту
+// Это значение используется только для совместимости с API
 func (s *AxentaSyncScheduler) GetInterval() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()

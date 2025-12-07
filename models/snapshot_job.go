@@ -22,9 +22,10 @@ const (
 type SnapshotJobType string
 
 const (
-	SnapshotJobTypeDailyAuto SnapshotJobType = "daily_auto" // Автоматическое ежедневное создание
-	SnapshotJobTypeManual    SnapshotJobType = "manual"     // Ручное создание через UI
-	SnapshotJobTypeScheduled SnapshotJobType = "scheduled"  // По расписанию
+	SnapshotJobTypeDailyAuto    SnapshotJobType = "daily_auto"    // Автоматическое ежедневное создание
+	SnapshotJobTypeManual       SnapshotJobType = "manual"        // Ручное создание через UI
+	SnapshotJobTypeScheduled    SnapshotJobType = "scheduled"     // По расписанию
+	SnapshotJobTypeBillingStart SnapshotJobType = "billing_start" // Инициализация стартовой даты биллинга
 )
 
 // SnapshotJobDetails - детальная информация о выполнении задачи
@@ -36,14 +37,14 @@ type SnapshotJobDetails struct {
 
 // CompanyJobDetail - информация о обработке компании
 type CompanyJobDetail struct {
-	CompanyID          uint   `json:"company_id"`
-	CompanyName        string `json:"company_name"`
-	ContractsCount     int    `json:"contracts_count"`
-	SuccessCount       int    `json:"success_count"`
-	ErrorCount         int    `json:"error_count"`
-	ProcessingTimeS    int    `json:"processing_time_s,omitempty"`
-	RealTotalObjects   int    `json:"real_total_objects,omitempty"`   // Реальное количество из API
-	RealActiveObjects  int    `json:"real_active_objects,omitempty"`  // Реальное количество активных из API
+	CompanyID         uint   `json:"company_id"`
+	CompanyName       string `json:"company_name"`
+	ContractsCount    int    `json:"contracts_count"`
+	SuccessCount      int    `json:"success_count"`
+	ErrorCount        int    `json:"error_count"`
+	ProcessingTimeS   int    `json:"processing_time_s,omitempty"`
+	RealTotalObjects  int    `json:"real_total_objects,omitempty"`  // Реальное количество из API
+	RealActiveObjects int    `json:"real_active_objects,omitempty"` // Реальное количество активных из API
 }
 
 // ContractJobDetail - информация о обработке договора
@@ -71,8 +72,8 @@ type JobError struct {
 
 // ServerInfo - информация о сервере
 type ServerInfo struct {
-	Hostname string `json:"hostname,omitempty"`
-	Version  string `json:"version,omitempty"`
+	Hostname  string `json:"hostname,omitempty"`
+	Version   string `json:"version,omitempty"`
 	GoVersion string `json:"go_version,omitempty"`
 }
 
@@ -83,10 +84,10 @@ type SnapshotJob struct {
 	UpdatedAt time.Time `json:"updated_at"`
 
 	// Информация о запуске
-	JobType    SnapshotJobType   `gorm:"type:varchar(50);not null;default:'daily_auto'" json:"job_type"`
-	StartedAt  time.Time         `gorm:"not null" json:"started_at"`
-	FinishedAt *time.Time        `json:"finished_at,omitempty"`
-	DurationSeconds *int          `json:"duration_seconds,omitempty"`
+	JobType         SnapshotJobType `gorm:"type:varchar(50);not null;default:'daily_auto'" json:"job_type"`
+	StartedAt       time.Time       `gorm:"not null" json:"started_at"`
+	FinishedAt      *time.Time      `json:"finished_at,omitempty"`
+	DurationSeconds *int            `json:"duration_seconds,omitempty"`
 
 	// Статус
 	Status SnapshotJobStatus `gorm:"type:varchar(20);not null;default:'running'" json:"status"`
@@ -102,11 +103,11 @@ type SnapshotJob struct {
 	SuccessCount       int `gorm:"default:0" json:"success_count"`
 	ErrorCount         int `gorm:"default:0" json:"error_count"`
 	SkippedCount       int `gorm:"default:0" json:"skipped_count"`
-	
+
 	// Статистика объектов
 	TotalObjects  int `gorm:"default:0" json:"total_objects"`
 	ActiveObjects int `gorm:"default:0" json:"active_objects"`
-	
+
 	// Время запуска по расписанию (для отображения в UI)
 	ScheduledTime *time.Time `json:"scheduled_time,omitempty"`
 
@@ -182,11 +183,11 @@ func (j *SnapshotJob) FinishJob(status SnapshotJobStatus, errorMessage string) {
 	now := time.Now()
 	j.FinishedAt = &now
 	j.Status = status
-	
+
 	if errorMessage != "" {
 		j.ErrorMessage = errorMessage
 	}
-	
+
 	// Вычисляем длительность
 	duration := int(now.Sub(j.StartedAt).Seconds())
 	j.DurationSeconds = &duration
@@ -210,4 +211,3 @@ func (j *SnapshotJob) AddError(err JobError) {
 	j.Details.Errors = append(j.Details.Errors, err)
 	j.ErrorCount++
 }
-

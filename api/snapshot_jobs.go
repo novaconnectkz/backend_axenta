@@ -14,6 +14,94 @@ import (
 	"gorm.io/gorm"
 )
 
+// getLatestObjectCreatedAt находит дату создания последнего объекта во всех компаниях
+func getLatestObjectCreatedAt(publicDB *gorm.DB) (*time.Time, error) {
+	var latestDate time.Time
+	var found bool
+
+	// Получаем все активные компании
+	var companies []models.Company
+	if err := publicDB.Find(&companies).Error; err != nil {
+		return nil, fmt.Errorf("ошибка получения компаний: %w", err)
+	}
+
+	// Ищем последний объект во всех компаниях
+	for _, company := range companies {
+		tenantDB := database.GetTenantDBByID(company.ID)
+		if tenantDB == nil {
+			continue
+		}
+
+		var object models.AxentaObjectSnapshot
+		if err := tenantDB.Model(&models.AxentaObjectSnapshot{}).
+			Where("axenta_created_at IS NOT NULL").
+			Order("axenta_created_at DESC").
+			First(&object).Error; err == nil && object.AxentaCreatedAt != nil {
+			if !found || object.AxentaCreatedAt.After(latestDate) {
+				latestDate = *object.AxentaCreatedAt
+				found = true
+			}
+		}
+	}
+
+	if !found {
+		return nil, nil
+	}
+
+	return &latestDate, nil
+}
+
+// getOrSetInitialBillingStartDate получает или устанавливает начальную дату биллинга
+// Возвращает сохраненную дату, если она есть, иначе находит последний объект, сохраняет и возвращает
+func getOrSetInitialBillingStartDate(publicDB *gorm.DB, tenantDB *gorm.DB) (*time.Time, error) {
+	// Получаем настройки с company_id = 1 (глобальные настройки)
+	var settings models.SnapshotSettings
+	if err := tenantDB.Where("company_id = ?", 1).First(&settings).Error; err != nil {
+		// Если настройки не найдены, создаем новые
+		settings = models.SnapshotSettings{
+			CompanyID: 1, // Глобальные настройки
+			IsActive:  true,
+		}
+	}
+
+	// Фиксированная дата старта биллинга: 2024-03-14 13:12:04 (UTC) — объект ID=8580
+	fixedBillingStartDate := time.Date(2024, 3, 14, 13, 12, 4, 0, time.UTC)
+
+	// Если начальная дата уже сохранена - проверяем, что она равна фиксированной дате
+	if settings.InitialBillingStartDate != nil && !settings.InitialBillingStartDate.IsZero() {
+		// Если сохраненная дата не равна фиксированной - перезаписываем
+		if !settings.InitialBillingStartDate.Equal(fixedBillingStartDate) {
+			log.Printf("📅 Сохраненная дата (%s) не соответствует фиксированной дате старта биллинга, обновляем на %s (UTC)",
+				settings.InitialBillingStartDate.Format("2006-01-02 15:04:05"),
+				fixedBillingStartDate.Format("2006-01-02 15:04:05"))
+			settings.InitialBillingStartDate = &fixedBillingStartDate
+			if err := tenantDB.Save(&settings).Error; err != nil {
+				return nil, fmt.Errorf("ошибка обновления начальной даты биллинга: %w", err)
+			}
+		} else {
+			log.Printf("📅 Используем сохраненную начальную дату биллинга: %s (UTC)",
+				settings.InitialBillingStartDate.Format("2006-01-02 15:04:05"))
+		}
+		return settings.InitialBillingStartDate, nil
+	}
+
+	// Начальная дата не сохранена - устанавливаем фиксированную дату старта биллинга: 2024-03-14 13:12:04 (UTC) — объект ID=8580
+	// Эта дата устанавливается один раз при первом запросе и больше не меняется
+	log.Printf("📅 Начальная дата биллинга не найдена, устанавливаем фиксированную дату старта биллинга: %s (UTC) — объект ID=8580",
+		fixedBillingStartDate.Format("2006-01-02 15:04:05"))
+	settings.InitialBillingStartDate = &fixedBillingStartDate
+
+	// Сохраняем настройки
+	if err := tenantDB.Save(&settings).Error; err != nil {
+		return nil, fmt.Errorf("ошибка сохранения начальной даты биллинга: %w", err)
+	}
+
+	log.Printf("✅ Начальная дата биллинга сохранена: %s (UTC)",
+		settings.InitialBillingStartDate.Format("2006-01-02 15:04:05"))
+
+	return settings.InitialBillingStartDate, nil
+}
+
 // GetSnapshotJobs возвращает список задач создания снимков
 // GET /api/auth/snapshot-jobs?limit=50&offset=0&status=completed
 func GetSnapshotJobs(c *gin.Context) {
@@ -74,8 +162,124 @@ func GetSnapshotJobs(c *gin.Context) {
 		return
 	}
 
+	// Формируем ответ с дополнительным полем "billing_date" (Дата Биллинга)
+	// Для типа "billing_start": используем начальную дату (устанавливается один раз при первом запросе и сохраняется в БД)
+	// Для остальных типов: используем дату последнего созданного объекта (динамически)
+
+	// Получаем первую активную компанию для работы с настройками
+	var firstCompany models.Company
+	if err := publicDB.Table("public.companies").Where("is_active = ?", true).Order("id ASC").First(&firstCompany).Error; err != nil {
+		log.Printf("⚠️ Не найдено активных компаний для получения настроек")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Не найдено активных компаний"})
+		return
+	}
+
+	tenantDB := database.GetTenantDBByID(firstCompany.ID)
+	if tenantDB == nil {
+		log.Printf("⚠️ Не удалось получить tenant DB для компании %d", firstCompany.ID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка получения tenant DB"})
+		return
+	}
+
+	// Получаем или устанавливаем начальную дату биллинга (для billing_start)
+	// При первом запросе: находит последний объект и сохраняет дату в БД
+	// При последующих запросах: использует сохраненную дату из БД
+	initialBillingStartDate, err := getOrSetInitialBillingStartDate(publicDB, tenantDB)
+	if err != nil {
+		log.Printf("⚠️ Ошибка получения начальной даты биллинга: %v", err)
+		// Используем дату по умолчанию
+		defaultDate := time.Date(2024, 3, 14, 13, 12, 4, 0, time.UTC)
+		initialBillingStartDate = &defaultDate
+	}
+
+	// Получаем дату последнего созданного объекта (для остальных типов)
+	latestObjectDate, err := getLatestObjectCreatedAt(publicDB)
+	if err != nil {
+		log.Printf("⚠️ Ошибка получения даты последнего объекта: %v", err)
+	}
+
+	type JobResponse struct {
+		ID                 uint        `json:"id"`
+		CreatedAt          time.Time   `json:"created_at"`
+		UpdatedAt          time.Time   `json:"updated_at"`
+		JobType            string      `json:"job_type"`
+		StartedAt          time.Time   `json:"started_at"`
+		FinishedAt         *time.Time  `json:"finished_at,omitempty"`
+		DurationSeconds    *int        `json:"duration_seconds,omitempty"`
+		Status             string      `json:"status"`
+		DateFrom           time.Time   `json:"date_from"`
+		DateTo             time.Time   `json:"date_to"`
+		TotalCompanies     int         `json:"total_companies"`
+		TotalContracts     int         `json:"total_contracts"`
+		TotalDaysProcessed int         `json:"total_days_processed"`
+		SuccessCount       int         `json:"success_count"`
+		ErrorCount         int         `json:"error_count"`
+		SkippedCount       int         `json:"skipped_count"`
+		TotalObjects       int         `json:"total_objects"`
+		ActiveObjects      int         `json:"active_objects"`
+		ScheduledTime      *time.Time  `json:"scheduled_time,omitempty"`
+		ErrorMessage       string      `json:"error_message,omitempty"`
+		Details            interface{} `json:"details,omitempty"`
+		TriggeredBy        string      `json:"triggered_by,omitempty"`
+		ServerInfo         interface{} `json:"server_info,omitempty"`
+		BillingDate        *time.Time  `json:"billing_date"` // Дата Биллинга (всегда присутствует)
+	}
+
+	jobResponses := make([]JobResponse, len(jobs))
+	for i, job := range jobs {
+		jobResponses[i] = JobResponse{
+			ID:                 job.ID,
+			CreatedAt:          job.CreatedAt,
+			UpdatedAt:          job.UpdatedAt,
+			JobType:            string(job.JobType),
+			StartedAt:          job.StartedAt,
+			FinishedAt:         job.FinishedAt,
+			DurationSeconds:    job.DurationSeconds,
+			Status:             string(job.Status),
+			DateFrom:           job.DateFrom,
+			DateTo:             job.DateTo,
+			TotalCompanies:     job.TotalCompanies,
+			TotalContracts:     job.TotalContracts,
+			TotalDaysProcessed: job.TotalDaysProcessed,
+			SuccessCount:       job.SuccessCount,
+			ErrorCount:         job.ErrorCount,
+			SkippedCount:       job.SkippedCount,
+			TotalObjects:       job.TotalObjects,
+			ActiveObjects:      job.ActiveObjects,
+			ScheduledTime:      job.ScheduledTime,
+			ErrorMessage:       job.ErrorMessage,
+			Details:            job.Details,
+			TriggeredBy:        job.TriggeredBy,
+			ServerInfo:         job.ServerInfo,
+		}
+
+		// Для типа "billing_start" используем начальную дату (сохраненную в БД один раз)
+		if job.JobType == models.SnapshotJobTypeBillingStart {
+			if initialBillingStartDate != nil {
+				billingDateCopy := *initialBillingStartDate
+				jobResponses[i].BillingDate = &billingDateCopy
+				log.Printf("   ✅ Job ID=%d (billing_start): billing_date установлена на начальную дату %s (UTC)",
+					job.ID, initialBillingStartDate.Format("2006-01-02 15:04:05"))
+			} else {
+				// Fallback: используем date_from
+				dateFromCopy := job.DateFrom
+				jobResponses[i].BillingDate = &dateFromCopy
+			}
+		} else {
+			// Для остальных типов используем дату последнего созданного объекта
+			if latestObjectDate != nil {
+				latestDateCopy := *latestObjectDate
+				jobResponses[i].BillingDate = &latestDateCopy
+			} else {
+				// Fallback: используем date_from
+				dateFromCopy := job.DateFrom
+				jobResponses[i].BillingDate = &dateFromCopy
+			}
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"jobs":   jobs,
+		"jobs":   jobResponses,
 		"total":  total,
 		"limit":  limit,
 		"offset": offset,
@@ -100,7 +304,119 @@ func GetSnapshotJob(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, job)
+	// Формируем ответ с полем "billing_date" (Дата Биллинга)
+	// Для типа "billing_start": используем начальную дату (устанавливается один раз при первом запросе и сохраняется в БД)
+	// Для остальных типов: используем дату последнего созданного объекта (динамически)
+
+	// Получаем первую активную компанию для работы с настройками
+	var firstCompany models.Company
+	if err := publicDB.Table("public.companies").Where("is_active = ?", true).Order("id ASC").First(&firstCompany).Error; err != nil {
+		log.Printf("⚠️ Не найдено активных компаний для получения настроек")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Не найдено активных компаний"})
+		return
+	}
+
+	tenantDB := database.GetTenantDBByID(firstCompany.ID)
+	if tenantDB == nil {
+		log.Printf("⚠️ Не удалось получить tenant DB для компании %d", firstCompany.ID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка получения tenant DB"})
+		return
+	}
+
+	// Получаем или устанавливаем начальную дату биллинга (для billing_start)
+	// При первом запросе: находит последний объект и сохраняет дату в БД
+	// При последующих запросах: использует сохраненную дату из БД
+	initialBillingStartDate, err := getOrSetInitialBillingStartDate(publicDB, tenantDB)
+	if err != nil {
+		log.Printf("⚠️ Ошибка получения начальной даты биллинга: %v", err)
+		defaultDate := time.Date(2024, 3, 14, 13, 12, 4, 0, time.UTC)
+		initialBillingStartDate = &defaultDate
+	}
+
+	// Получаем дату последнего созданного объекта (для остальных типов)
+	latestObjectDate, err := getLatestObjectCreatedAt(publicDB)
+	if err != nil {
+		log.Printf("⚠️ Ошибка получения даты последнего объекта: %v", err)
+	}
+
+	type JobResponse struct {
+		ID                 uint        `json:"id"`
+		CreatedAt          time.Time   `json:"created_at"`
+		UpdatedAt          time.Time   `json:"updated_at"`
+		JobType            string      `json:"job_type"`
+		StartedAt          time.Time   `json:"started_at"`
+		FinishedAt         *time.Time  `json:"finished_at,omitempty"`
+		DurationSeconds    *int        `json:"duration_seconds,omitempty"`
+		Status             string      `json:"status"`
+		DateFrom           time.Time   `json:"date_from"`
+		DateTo             time.Time   `json:"date_to"`
+		TotalCompanies     int         `json:"total_companies"`
+		TotalContracts     int         `json:"total_contracts"`
+		TotalDaysProcessed int         `json:"total_days_processed"`
+		SuccessCount       int         `json:"success_count"`
+		ErrorCount         int         `json:"error_count"`
+		SkippedCount       int         `json:"skipped_count"`
+		TotalObjects       int         `json:"total_objects"`
+		ActiveObjects      int         `json:"active_objects"`
+		ScheduledTime      *time.Time  `json:"scheduled_time,omitempty"`
+		ErrorMessage       string      `json:"error_message,omitempty"`
+		Details            interface{} `json:"details,omitempty"`
+		TriggeredBy        string      `json:"triggered_by,omitempty"`
+		ServerInfo         interface{} `json:"server_info,omitempty"`
+		BillingDate        *time.Time  `json:"billing_date"` // Дата Биллинга (всегда присутствует)
+	}
+
+	response := JobResponse{
+		ID:                 job.ID,
+		CreatedAt:          job.CreatedAt,
+		UpdatedAt:          job.UpdatedAt,
+		JobType:            string(job.JobType),
+		StartedAt:          job.StartedAt,
+		FinishedAt:         job.FinishedAt,
+		DurationSeconds:    job.DurationSeconds,
+		Status:             string(job.Status),
+		DateFrom:           job.DateFrom,
+		DateTo:             job.DateTo,
+		TotalCompanies:     job.TotalCompanies,
+		TotalContracts:     job.TotalContracts,
+		TotalDaysProcessed: job.TotalDaysProcessed,
+		SuccessCount:       job.SuccessCount,
+		ErrorCount:         job.ErrorCount,
+		SkippedCount:       job.SkippedCount,
+		TotalObjects:       job.TotalObjects,
+		ActiveObjects:      job.ActiveObjects,
+		ScheduledTime:      job.ScheduledTime,
+		ErrorMessage:       job.ErrorMessage,
+		Details:            job.Details,
+		TriggeredBy:        job.TriggeredBy,
+		ServerInfo:         job.ServerInfo,
+	}
+
+	// Для типа "billing_start" используем начальную дату (сохраненную в БД один раз)
+	if job.JobType == models.SnapshotJobTypeBillingStart {
+		if initialBillingStartDate != nil {
+			billingDateCopy := *initialBillingStartDate
+			response.BillingDate = &billingDateCopy
+			log.Printf("   ✅ GetSnapshotJob: Job ID=%d (billing_start): billing_date установлена на начальную дату %s (UTC)",
+				job.ID, initialBillingStartDate.Format("2006-01-02 15:04:05"))
+		} else {
+			// Fallback: используем date_from
+			dateFromCopy := job.DateFrom
+			response.BillingDate = &dateFromCopy
+		}
+	} else {
+		// Для остальных типов используем дату последнего созданного объекта
+		if latestObjectDate != nil {
+			latestDateCopy := *latestObjectDate
+			response.BillingDate = &latestDateCopy
+		} else {
+			// Fallback: используем date_from
+			dateFromCopy := job.DateFrom
+			response.BillingDate = &dateFromCopy
+		}
+	}
+
+	c.JSON(http.StatusOK, response)
 }
 
 // GetSnapshotJobStats возвращает статистику по задачам
@@ -175,7 +491,119 @@ func GetLatestSnapshotJob(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, job)
+	// Формируем ответ с полем "billing_date" (Дата Биллинга)
+	// Для типа "billing_start": используем начальную дату (устанавливается один раз при первом запросе и сохраняется в БД)
+	// Для остальных типов: используем дату последнего созданного объекта (динамически)
+
+	// Получаем первую активную компанию для работы с настройками
+	var firstCompany models.Company
+	if err := publicDB.Table("public.companies").Where("is_active = ?", true).Order("id ASC").First(&firstCompany).Error; err != nil {
+		log.Printf("⚠️ Не найдено активных компаний для получения настроек")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Не найдено активных компаний"})
+		return
+	}
+
+	tenantDB := database.GetTenantDBByID(firstCompany.ID)
+	if tenantDB == nil {
+		log.Printf("⚠️ Не удалось получить tenant DB для компании %d", firstCompany.ID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка получения tenant DB"})
+		return
+	}
+
+	// Получаем или устанавливаем начальную дату биллинга (для billing_start)
+	// При первом запросе: находит последний объект и сохраняет дату в БД
+	// При последующих запросах: использует сохраненную дату из БД
+	initialBillingStartDate, err := getOrSetInitialBillingStartDate(publicDB, tenantDB)
+	if err != nil {
+		log.Printf("⚠️ Ошибка получения начальной даты биллинга: %v", err)
+		defaultDate := time.Date(2024, 3, 14, 13, 12, 4, 0, time.UTC)
+		initialBillingStartDate = &defaultDate
+	}
+
+	// Получаем дату последнего созданного объекта (для остальных типов)
+	latestObjectDate, err := getLatestObjectCreatedAt(publicDB)
+	if err != nil {
+		log.Printf("⚠️ Ошибка получения даты последнего объекта: %v", err)
+	}
+
+	type JobResponse struct {
+		ID                 uint        `json:"id"`
+		CreatedAt          time.Time   `json:"created_at"`
+		UpdatedAt          time.Time   `json:"updated_at"`
+		JobType            string      `json:"job_type"`
+		StartedAt          time.Time   `json:"started_at"`
+		FinishedAt         *time.Time  `json:"finished_at,omitempty"`
+		DurationSeconds    *int        `json:"duration_seconds,omitempty"`
+		Status             string      `json:"status"`
+		DateFrom           time.Time   `json:"date_from"`
+		DateTo             time.Time   `json:"date_to"`
+		TotalCompanies     int         `json:"total_companies"`
+		TotalContracts     int         `json:"total_contracts"`
+		TotalDaysProcessed int         `json:"total_days_processed"`
+		SuccessCount       int         `json:"success_count"`
+		ErrorCount         int         `json:"error_count"`
+		SkippedCount       int         `json:"skipped_count"`
+		TotalObjects       int         `json:"total_objects"`
+		ActiveObjects      int         `json:"active_objects"`
+		ScheduledTime      *time.Time  `json:"scheduled_time,omitempty"`
+		ErrorMessage       string      `json:"error_message,omitempty"`
+		Details            interface{} `json:"details,omitempty"`
+		TriggeredBy        string      `json:"triggered_by,omitempty"`
+		ServerInfo         interface{} `json:"server_info,omitempty"`
+		BillingDate        *time.Time  `json:"billing_date"` // Дата Биллинга (всегда присутствует)
+	}
+
+	response := JobResponse{
+		ID:                 job.ID,
+		CreatedAt:          job.CreatedAt,
+		UpdatedAt:          job.UpdatedAt,
+		JobType:            string(job.JobType),
+		StartedAt:          job.StartedAt,
+		FinishedAt:         job.FinishedAt,
+		DurationSeconds:    job.DurationSeconds,
+		Status:             string(job.Status),
+		DateFrom:           job.DateFrom,
+		DateTo:             job.DateTo,
+		TotalCompanies:     job.TotalCompanies,
+		TotalContracts:     job.TotalContracts,
+		TotalDaysProcessed: job.TotalDaysProcessed,
+		SuccessCount:       job.SuccessCount,
+		ErrorCount:         job.ErrorCount,
+		SkippedCount:       job.SkippedCount,
+		TotalObjects:       job.TotalObjects,
+		ActiveObjects:      job.ActiveObjects,
+		ScheduledTime:      job.ScheduledTime,
+		ErrorMessage:       job.ErrorMessage,
+		Details:            job.Details,
+		TriggeredBy:        job.TriggeredBy,
+		ServerInfo:         job.ServerInfo,
+	}
+
+	// Для типа "billing_start" используем начальную дату (сохраненную в БД один раз)
+	if job.JobType == models.SnapshotJobTypeBillingStart {
+		if initialBillingStartDate != nil {
+			billingDateCopy := *initialBillingStartDate
+			response.BillingDate = &billingDateCopy
+			log.Printf("   ✅ GetLatestSnapshotJob: Job ID=%d (billing_start): billing_date установлена на начальную дату %s (UTC)",
+				job.ID, initialBillingStartDate.Format("2006-01-02 15:04:05"))
+		} else {
+			// Fallback: используем date_from
+			dateFromCopy := job.DateFrom
+			response.BillingDate = &dateFromCopy
+		}
+	} else {
+		// Для остальных типов используем дату последнего созданного объекта
+		if latestObjectDate != nil {
+			latestDateCopy := *latestObjectDate
+			response.BillingDate = &latestDateCopy
+		} else {
+			// Fallback: используем date_from
+			dateFromCopy := job.DateFrom
+			response.BillingDate = &dateFromCopy
+		}
+	}
+
+	c.JSON(http.StatusOK, response)
 }
 
 // ClearAllSnapshotHistory удаляет ВСЮ историю снимков (задачи и снимки партнеров)

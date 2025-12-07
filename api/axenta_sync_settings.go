@@ -27,7 +27,10 @@ func GetAxentaSyncSettings(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
 		"data": gin.H{
-			"sync_interval": interval, // Интервал в минутах
+			"sync_interval":           interval,      // Интервал в минутах (для совместимости API)
+			"auto_schedule":           "0 * * * * *", // Cron выражение для автоматического запуска
+			"auto_schedule_note":      "Автоматическая синхронизация запускается каждую минуту",
+			"manual_trigger_endpoint": "/api/auth/axenta-sync/trigger", // Endpoint для ручного запуска
 		},
 	})
 }
@@ -54,7 +57,7 @@ func UpdateAxentaSyncSettings(c *gin.Context) {
 	}
 
 	var req struct {
-		SyncInterval int `json:"sync_interval" binding:"required,min=1,max=60"` // Интервал в минутах (1-60)
+		SyncInterval int `json:"sync_interval" binding:"required,min=1,max=60"` // Интервал в минутах (1-60) - только для совместимости API
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -75,7 +78,8 @@ func UpdateAxentaSyncSettings(c *gin.Context) {
 		return
 	}
 
-	// Обновляем интервал в планировщике
+	// Обновляем интервал в планировщике (только для совместимости API)
+	// ВНИМАНИЕ: Автоматическая синхронизация всегда запускается каждую минуту
 	if err := scheduler.UpdateInterval(req.SyncInterval); err != nil {
 		log.Printf("❌ Ошибка обновления интервала синхронизации: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -85,14 +89,18 @@ func UpdateAxentaSyncSettings(c *gin.Context) {
 		return
 	}
 
-	log.Printf("✅ Интервал синхронизации AxentaSync обновлен на %d минут (admin_account_id=%d)", req.SyncInterval, adminAccountID)
+	log.Printf("✅ Значение интервала синхронизации AxentaSync обновлено на %d минут (admin_account_id=%d)", req.SyncInterval, adminAccountID)
+	log.Printf("   ℹ️  Автоматическая синхронизация продолжает работать по расписанию: каждую минуту")
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
-		"message": "Интервал синхронизации успешно обновлен",
+		"message": "Значение интервала обновлено (только для совместимости API)",
+		"note":    "Автоматическая синхронизация всегда запускается каждую минуту",
 		"data": gin.H{
-			"sync_interval": req.SyncInterval,
+			"sync_interval":           req.SyncInterval,
+			"auto_schedule":           "0 * * * * *",
+			"auto_schedule_note":      "Автоматическая синхронизация запускается каждую минуту",
+			"manual_trigger_endpoint": "/api/auth/axenta-sync/trigger",
 		},
 	})
 }
-

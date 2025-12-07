@@ -108,13 +108,19 @@ func main() {
 
 	// Инициализируем сервис синхронизации Axenta
 	axentaSyncService := services.NewAxentaSyncService(database.DB)
+	log.Printf("🔧 AxentaSync: инициализация планировщика автоматической синхронизации")
+	log.Printf("   ⚠️  Автоматическая синхронизация ОТКЛЮЧЕНА")
+	log.Printf("   🔄 Ручной запуск: POST /api/auth/axenta-sync/trigger")
 	axentaSyncScheduler := services.NewAxentaSyncScheduler(axentaSyncService, cfg.Axenta.SyncInterval)
-	if err := axentaSyncScheduler.Start(); err != nil {
-		log.Printf("⚠️ Axenta Sync Scheduler failed to start: %v", err)
-	} else {
-		services.SetAxentaSyncScheduler(axentaSyncScheduler)
-		defer axentaSyncScheduler.Stop()
-	}
+	// Автоматическая синхронизация отключена - планировщик не запускается
+	// if err := axentaSyncScheduler.Start(); err != nil {
+	// 	log.Printf("⚠️ Axenta Sync Scheduler failed to start: %v", err)
+	// } else {
+	// 	services.SetAxentaSyncScheduler(axentaSyncScheduler)
+	// 	defer axentaSyncScheduler.Stop()
+	// }
+	// Регистрируем планировщик для возможности ручного запуска через API
+	services.SetAxentaSyncScheduler(axentaSyncScheduler)
 
 	// Инициализируем планировщик ежедневных снимков партнерских договоров
 	// Проверяем, включен ли планировщик через переменную окружения
@@ -136,7 +142,7 @@ func main() {
 		if err := partnerSnapshotScheduler.Start(); err != nil {
 			log.Printf("⚠️ Partner Snapshot Scheduler failed to start: %v", err)
 		} else {
-			log.Println("✅ Partner Snapshot Scheduler started (daily at 22:00 UTC / 01:00 MSK)")
+			log.Println("✅ Partner Snapshot Scheduler started (daily at 00:30 UTC / 03:30 MSK)")
 		}
 	} else {
 		log.Println("⚠️ Partner Snapshot Scheduler отключен (ENABLE_SNAPSHOT_SCHEDULER != true)")
@@ -867,6 +873,15 @@ func main() {
 	apiGroup.GET("/snapshot-settings", api.GetSnapshotSettings)
 	apiGroup.POST("/snapshot-settings", api.UpdateSnapshotSettings)
 	log.Println("✅ Зарегистрированы роуты для настроек снимков (snapshot-settings)")
+
+	// Новые endpoints для накопительного подхода к загрузке снимков
+	apiGroup.POST("/snapshots/load-all-current", api.LoadAllCurrentObjects)
+	apiGroup.GET("/snapshots/load-progress", api.GetLoadProgress)
+	apiGroup.GET("/snapshots/billing-start-date", api.GetBillingStartDate)
+	apiGroup.GET("/snapshots/check-billing-start-in-history", api.CheckBillingStartDateInHistory)
+	apiGroup.POST("/snapshots/daily-accumulation", api.ProcessDailyAccumulation)
+	apiGroup.GET("/snapshots/objects-count", api.GetObjectsCountForDate)
+	log.Println("✅ Зарегистрированы роуты для накопительной загрузки снимков")
 
 	// Эндпоинт для ручного запуска синхронизации Axenta
 	apiGroup.POST("/axenta-sync/trigger", api.TriggerAxentaSync)

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"backend_axenta/database"
@@ -15,6 +16,49 @@ import (
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
+
+// LoadProgressStatus хранит статус загрузки объектов
+type LoadProgressStatus struct {
+	IsLoading    bool       `json:"is_loading"`
+	Progress     float64    `json:"progress"`     // Процент выполнения (0-100)
+	Loaded       int        `json:"loaded"`       // Количество загруженных объектов
+	Total        int        `json:"total"`        // Общее количество объектов
+	CurrentPage  int        `json:"current_page"` // Текущая страница
+	TotalPages   int        `json:"total_pages"`  // Всего страниц
+	Status       string     `json:"status"`       // Статус: "loading", "saving", "completed", "error"
+	ErrorMessage string     `json:"error_message,omitempty"`
+	StartTime    *time.Time `json:"start_time,omitempty"`
+	LastUpdate   time.Time  `json:"last_update"`
+}
+
+var (
+	loadProgressMutex sync.RWMutex
+	loadProgress      *LoadProgressStatus
+)
+
+// updateLoadProgress обновляет статус загрузки
+func updateLoadProgress(status LoadProgressStatus) {
+	loadProgressMutex.Lock()
+	defer loadProgressMutex.Unlock()
+	status.LastUpdate = time.Now()
+	loadProgress = &status
+}
+
+// getLoadProgress возвращает текущий статус загрузки
+func getLoadProgress() *LoadProgressStatus {
+	loadProgressMutex.RLock()
+	defer loadProgressMutex.RUnlock()
+	if loadProgress == nil {
+		return &LoadProgressStatus{
+			IsLoading: false,
+			Progress:  0,
+			Status:    "idle",
+		}
+	}
+	// Создаем копию для безопасного возврата
+	status := *loadProgress
+	return &status
+}
 
 // GetPartnerContractSnapshots получает ежедневные снимки для партнерского договора
 func GetPartnerContractSnapshots(c *gin.Context) {
@@ -888,5 +932,551 @@ func GeneratePartnerSnapshotsForPeriod(c *gin.Context) {
 		"success_count": successCount,
 		"error_count":   errorCount,
 		"period_days":   periodDays,
+	})
+}
+
+// LoadAllCurrentObjects выполняет разовую загрузку всех текущих объектов из Axenta
+// POST /api/auth/snapshots/load-all-current
+func LoadAllCurrentObjects(c *gin.Context) {
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	log.Printf("🔄 Запрос разовой загрузки всех текущих объектов (admin_account_id=%d)", adminAccountID)
+
+	// Получаем токен из настроек снимков
+	var firstCompany models.Company
+	if err := database.DB.Table("public.companies").Where("is_active = ?", true).Order("id ASC").First(&firstCompany).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Не найдено активных компаний",
+		})
+		return
+	}
+
+	tenantDB := database.GetTenantDBByID(firstCompany.ID)
+	if tenantDB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("Не удалось получить tenant DB для компании %d", firstCompany.ID),
+		})
+		return
+	}
+
+	var snapshotSettings models.SnapshotSettings
+	if err := tenantDB.Where("company_id = ? AND is_active = ?", 1, true).First(&snapshotSettings).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Токен Axenta не настроен. Пожалуйста, настройте токен в настройках снимков.",
+		})
+		return
+	}
+
+	if snapshotSettings.AxentaToken == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Токен Axenta не установлен. Пожалуйста, установите токен в настройках снимков.",
+		})
+		return
+	}
+
+	// Инициализируем статус загрузки
+	startTime := time.Now()
+	updateLoadProgress(LoadProgressStatus{
+		IsLoading: true,
+		Progress:  0,
+		Loaded:    0,
+		Total:     0,
+		Status:    "loading",
+		StartTime: &startTime,
+	})
+
+	// Запускаем загрузку в фоне
+	go func() {
+		defer func() {
+			// После завершения загрузки обновляем статус
+			updateLoadProgress(LoadProgressStatus{
+				IsLoading: false,
+				Progress:  100,
+				Status:    "completed",
+			})
+		}()
+
+		accumulationService := services.NewSnapshotAccumulationService()
+		// Сохраняем startTime для использования в callback
+		startTimePtr := &startTime
+
+		// Создаем callback для обновления прогресса
+		progressCallback := func(loaded int, total int, currentPage int, totalPages int, status string) {
+			var progress float64
+			if total > 0 {
+				progress = float64(loaded) / float64(total) * 100
+			}
+			updateLoadProgress(LoadProgressStatus{
+				IsLoading:   true,
+				Progress:    progress,
+				Loaded:      loaded,
+				Total:       total,
+				CurrentPage: currentPage,
+				TotalPages:  totalPages,
+				Status:      status,
+				StartTime:   startTimePtr,
+			})
+		}
+
+		// Передаем callback для обновления прогресса
+		if err := accumulationService.LoadAllCurrentObjectsWithProgress(snapshotSettings.AxentaToken, progressCallback); err != nil {
+			log.Printf("❌ Ошибка загрузки всех текущих объектов: %v", err)
+			updateLoadProgress(LoadProgressStatus{
+				IsLoading:    false,
+				Status:       "error",
+				ErrorMessage: err.Error(),
+			})
+			return
+		}
+
+		// После успешной загрузки объектов создаем/обновляем запись в snapshot_jobs
+		log.Printf("📊 Подсчитываем объекты и создаем запись в snapshot_jobs...")
+
+		// Получаем первую компанию
+		var firstCompany models.Company
+		if err := database.DB.Table("public.companies").Where("is_active = ?", true).Order("id ASC").First(&firstCompany).Error; err != nil {
+			log.Printf("⚠️ Не найдено активных компаний для создания записи snapshot_job")
+			return
+		}
+
+		tenantDB := database.GetTenantDBByID(firstCompany.ID)
+		if tenantDB == nil {
+			log.Printf("⚠️ Не удалось получить tenant DB для компании %d", firstCompany.ID)
+			return
+		}
+
+		// Используем текущую дату для снимка
+		snapshotDate := time.Now().UTC()
+		snapshotDate = time.Date(snapshotDate.Year(), snapshotDate.Month(), snapshotDate.Day(), 0, 0, 0, 0, time.UTC)
+
+		// Подсчитываем объекты на текущую дату
+		totalObjects, activeObjects, err := accumulationService.CalculateObjectsCountForDate(snapshotDate, tenantDB)
+		if err != nil {
+			log.Printf("⚠️ Ошибка подсчета объектов: %v", err)
+		} else {
+			log.Printf("📊 Найдено объектов: всего=%d, активных=%d", totalObjects, activeObjects)
+
+			// Создаем или обновляем запись в snapshot_jobs
+			publicDB := database.DB.Session(&gorm.Session{})
+			if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
+				log.Printf("⚠️ Ошибка переключения на схему public: %v", err)
+				return
+			}
+
+			dateStr := snapshotDate.Format("2006-01-02")
+
+			// 1. Создаем/обновляем запись типа billing_start с фиксированной датой 2024-03-14 13:12:04
+			billingStartDate := time.Date(2024, 3, 14, 13, 12, 4, 0, time.UTC)
+			billingStartDateStr := billingStartDate.Format("2006-01-02")
+
+			// Ищем самый ранний объект для billing_start
+			var earliestObject *models.AxentaObjectSnapshot
+			var earliestObj models.AxentaObjectSnapshot
+			dayEnd := time.Date(billingStartDate.Year(), billingStartDate.Month(), billingStartDate.Day(), 23, 59, 59, 999999999, time.UTC)
+			query := tenantDB.
+				Where("axenta_created_at IS NOT NULL").
+				Where("(axenta_created_at IS NULL OR axenta_created_at <= ?) AND (axenta_deleted_at IS NULL OR axenta_deleted_at > ?)",
+					dayEnd, dayEnd).
+				Order("axenta_created_at ASC").
+				Limit(1)
+
+			if err := query.First(&earliestObj).Error; err == nil {
+				earliestObject = &earliestObj
+			}
+
+			// Подсчитываем объекты на дату billing_start
+			billingStartTotalObjects, billingStartActiveObjects, _ := accumulationService.CalculateObjectsCountForDate(billingStartDate, tenantDB)
+
+			// Создаем/обновляем запись billing_start
+			var billingStartJob models.SnapshotJob
+			if err := publicDB.
+				Where("job_type = ? AND date_from::date = ?::date", models.SnapshotJobTypeBillingStart, billingStartDateStr).
+				First(&billingStartJob).Error; err == nil {
+				// Обновляем существующую запись
+				log.Printf("📝 Обновляем запись billing_start (ID: %d)...", billingStartJob.ID)
+				billingStartJob.TotalObjects = billingStartTotalObjects
+				billingStartJob.ActiveObjects = billingStartActiveObjects
+				billingStartJob.FinishJob(models.SnapshotJobStatusCompleted, "")
+				if err := publicDB.Save(&billingStartJob).Error; err != nil {
+					log.Printf("❌ Ошибка обновления записи billing_start: %v", err)
+				} else {
+					log.Printf("✅ Запись billing_start обновлена (ID: %d)", billingStartJob.ID)
+				}
+			} else {
+				// Создаем новую запись billing_start
+				log.Printf("➕ Создаем новую запись billing_start...")
+				if err := accumulationService.SaveBillingStartDateToHistory(tenantDB, billingStartDate, billingStartTotalObjects, billingStartActiveObjects, earliestObject); err != nil {
+					log.Printf("❌ Ошибка создания записи billing_start: %v", err)
+				} else {
+					log.Printf("✅ Запись billing_start создана")
+				}
+			}
+
+			// 2. Создаем/обновляем запись типа daily_auto для текущей даты
+			var existingJob models.SnapshotJob
+			if err := publicDB.
+				Where("job_type = ? AND date_from::date = ?::date", models.SnapshotJobTypeDailyAuto, dateStr).
+				First(&existingJob).Error; err == nil {
+				// Обновляем существующую запись
+				log.Printf("📝 Обновляем запись daily_auto (ID: %d)...", existingJob.ID)
+				existingJob.TotalObjects = totalObjects
+				existingJob.ActiveObjects = activeObjects
+				existingJob.FinishJob(models.SnapshotJobStatusCompleted, "")
+				if err := publicDB.Save(&existingJob).Error; err != nil {
+					log.Printf("❌ Ошибка обновления записи daily_auto: %v", err)
+				} else {
+					log.Printf("✅ Запись daily_auto обновлена (ID: %d)", existingJob.ID)
+				}
+			} else {
+				// Создаем новую запись
+				log.Printf("➕ Создаем новую запись daily_auto...")
+				now := time.Now()
+				job := models.SnapshotJob{
+					JobType:            models.SnapshotJobTypeDailyAuto,
+					StartedAt:          now,
+					DateFrom:           snapshotDate,
+					DateTo:             snapshotDate,
+					Status:             models.SnapshotJobStatusCompleted,
+					TotalObjects:       totalObjects,
+					ActiveObjects:      activeObjects,
+					SuccessCount:       1,
+					TotalDaysProcessed: 1,
+					TriggeredBy:        "manual",
+				}
+				job.FinishJob(models.SnapshotJobStatusCompleted, "")
+
+				if err := publicDB.Create(&job).Error; err != nil {
+					log.Printf("❌ Ошибка создания записи daily_auto: %v", err)
+				} else {
+					log.Printf("✅ Запись daily_auto создана (ID: %d)", job.ID)
+				}
+			}
+		}
+	}()
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Загрузка всех текущих объектов запущена в фоновом режиме",
+	})
+}
+
+// GetLoadProgress возвращает текущий статус загрузки объектов
+// GET /api/auth/snapshots/load-progress
+func GetLoadProgress(c *gin.Context) {
+	progress := getLoadProgress()
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data":   progress,
+	})
+}
+
+// GetBillingStartDate возвращает стартовую дату биллинга
+// GET /api/auth/snapshots/billing-start-date
+func GetBillingStartDate(c *gin.Context) {
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	log.Printf("📅 Запрос стартовой даты биллинга (admin_account_id=%d)", adminAccountID)
+
+	// Получаем tenant DB
+	var firstCompany models.Company
+	if err := database.DB.Table("public.companies").Where("is_active = ?", true).Order("id ASC").First(&firstCompany).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Не найдено активных компаний",
+		})
+		return
+	}
+
+	tenantDB := database.GetTenantDBByID(firstCompany.ID)
+	if tenantDB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("Не удалось получить tenant DB для компании %d", firstCompany.ID),
+		})
+		return
+	}
+
+	accumulationService := services.NewSnapshotAccumulationService()
+	startDate, earliestObject, err := accumulationService.GetBillingStartDate(tenantDB)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	// Проверяем, создана ли запись в истории
+	publicDB := database.DB.Session(&gorm.Session{})
+	if err := publicDB.Exec("SET search_path TO public").Error; err == nil {
+		var historyJob models.SnapshotJob
+		if err := publicDB.
+			Where("job_type = ? AND date_from::date = ?::date", models.SnapshotJobTypeBillingStart, startDate.Format("2006-01-02")).
+			First(&historyJob).Error; err == nil {
+			log.Printf("✅ Запись в истории найдена: ID=%d, дата=%s", historyJob.ID, historyJob.DateFrom.Format("2006-01-02"))
+		} else {
+			log.Printf("⚠️ Запись в истории не найдена после создания (это нормально, если была ошибка)")
+		}
+	}
+
+	response := gin.H{
+		"status":         "success",
+		"start_date":     startDate.Format("2006-01-02"),
+		"start_date_iso": startDate.Format(time.RFC3339),
+	}
+
+	// Добавляем информацию о найденном объекте, если он есть
+	if earliestObject != nil {
+		response["earliest_object"] = gin.H{
+			"id":              earliestObject.ExternalObjectID,
+			"name":            earliestObject.ObjectName,
+			"created_at":      earliestObject.AxentaCreatedAt,
+			"created_at_date": earliestObject.AxentaCreatedAt.Format("2006-01-02"),
+		}
+	}
+
+	// Добавляем информацию о записи в истории
+	response["message"] = fmt.Sprintf("Стартовая дата биллинга определена: %s. Запись должна быть создана в истории снимков.", startDate.Format("2006-01-02"))
+	response["check_history"] = "Используйте GET /api/auth/snapshots/check-billing-start-in-history для проверки"
+
+	c.JSON(http.StatusOK, response)
+}
+
+// ProcessDailyAccumulation обрабатывает ежедневное накопление объектов
+// POST /api/auth/snapshots/daily-accumulation
+func ProcessDailyAccumulation(c *gin.Context) {
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	log.Printf("🔄 Запрос ежедневного накопления объектов (admin_account_id=%d)", adminAccountID)
+
+	// Получаем токен из настроек снимков
+	var firstCompany models.Company
+	if err := database.DB.Table("public.companies").Where("is_active = ?", true).Order("id ASC").First(&firstCompany).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Не найдено активных компаний",
+		})
+		return
+	}
+
+	tenantDB := database.GetTenantDBByID(firstCompany.ID)
+	if tenantDB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("Не удалось получить tenant DB для компании %d", firstCompany.ID),
+		})
+		return
+	}
+
+	var snapshotSettings models.SnapshotSettings
+	if err := tenantDB.Where("company_id = ? AND is_active = ?", 1, true).First(&snapshotSettings).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Токен Axenta не настроен",
+		})
+		return
+	}
+
+	if snapshotSettings.AxentaToken == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "Токен Axenta не установлен",
+		})
+		return
+	}
+
+	// Запускаем обработку в фоне
+	go func() {
+		accumulationService := services.NewSnapshotAccumulationService()
+		if err := accumulationService.ProcessDailyAccumulation(snapshotSettings.AxentaToken, tenantDB); err != nil {
+			log.Printf("❌ Ошибка ежедневного накопления: %v", err)
+		}
+	}()
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Ежедневное накопление запущено в фоновом режиме",
+	})
+}
+
+// GetObjectsCountForDate возвращает количество объектов на указанную дату
+// GET /api/auth/snapshots/objects-count?date=2025-01-01
+func GetObjectsCountForDate(c *gin.Context) {
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	dateStr := c.Query("date")
+	if dateStr == "" {
+		dateStr = time.Now().UTC().Format("2006-01-02")
+	}
+
+	date, err := time.Parse("2006-01-02", dateStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("Неверный формат даты: %s (ожидается YYYY-MM-DD)", dateStr),
+		})
+		return
+	}
+
+	log.Printf("📊 Запрос количества объектов на дату %s (admin_account_id=%d)", dateStr, adminAccountID)
+
+	// Получаем tenant DB
+	var firstCompany models.Company
+	if err := database.DB.Table("public.companies").Where("is_active = ?", true).Order("id ASC").First(&firstCompany).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Не найдено активных компаний",
+		})
+		return
+	}
+
+	tenantDB := database.GetTenantDBByID(firstCompany.ID)
+	if tenantDB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("Не удалось получить tenant DB для компании %d", firstCompany.ID),
+		})
+		return
+	}
+
+	accumulationService := services.NewSnapshotAccumulationService()
+	total, active, err := accumulationService.CalculateObjectsCountForDate(date, tenantDB)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":           "success",
+		"date":             dateStr,
+		"total_objects":    total,
+		"active_objects":   active,
+		"inactive_objects": total - active,
+	})
+}
+
+// CheckBillingStartDateInHistory проверяет, есть ли запись о стартовой дате биллинга в истории
+// GET /api/auth/snapshots/check-billing-start-in-history
+func CheckBillingStartDateInHistory(c *gin.Context) {
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	log.Printf("🔍 Проверка записи о стартовой дате биллинга в истории (admin_account_id=%d)", adminAccountID)
+
+	// Таблица snapshot_jobs находится в схеме public
+	publicDB := database.DB.Session(&gorm.Session{})
+	if err := publicDB.Exec("SET search_path TO public").Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка переключения на схему public",
+		})
+		return
+	}
+
+	// Проверяем, что таблица существует
+	if !publicDB.Migrator().HasTable(&models.SnapshotJob{}) {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Таблица snapshot_jobs не существует в схеме public",
+		})
+		return
+	}
+
+	// Ищем записи типа billing_start
+	var jobs []models.SnapshotJob
+	query := publicDB.
+		Where("job_type = ?", models.SnapshotJobTypeBillingStart).
+		Order("started_at DESC")
+
+	log.Printf("🔍 Поиск записей billing_start в таблице snapshot_jobs...")
+	if err := query.Find(&jobs).Error; err != nil {
+		log.Printf("❌ Ошибка поиска записей: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("Ошибка поиска записей: %v", err),
+		})
+		return
+	}
+
+	log.Printf("📊 Найдено записей billing_start: %d", len(jobs))
+
+	if len(jobs) == 0 {
+		log.Printf("⚠️ Записи billing_start не найдены в таблице snapshot_jobs")
+		// Проверяем, есть ли вообще записи в таблице
+		var totalJobs int64
+		if err := publicDB.Model(&models.SnapshotJob{}).Count(&totalJobs).Error; err == nil {
+			log.Printf("   Всего записей в таблице snapshot_jobs: %d", totalJobs)
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"status":     "not_found",
+			"message":    "Записи о стартовой дате биллинга не найдены в истории",
+			"hint":       "Вызовите GET /api/auth/snapshots/billing-start-date для создания записи",
+			"total_jobs": totalJobs,
+		})
+		return
+	}
+
+	// Форматируем найденные записи
+	var formattedJobs []gin.H
+	for _, job := range jobs {
+		formattedJobs = append(formattedJobs, gin.H{
+			"id":             job.ID,
+			"job_type":       job.JobType,
+			"date_from":      job.DateFrom.Format("2006-01-02"),
+			"date_to":        job.DateTo.Format("2006-01-02"),
+			"status":         job.Status,
+			"total_objects":  job.TotalObjects,
+			"active_objects": job.ActiveObjects,
+			"started_at":     job.StartedAt.Format("2006-01-02 15:04:05"),
+			"finished_at":    job.FinishedAt.Format("2006-01-02 15:04:05"),
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "found",
+		"count":   len(jobs),
+		"jobs":    formattedJobs,
+		"message": fmt.Sprintf("Найдено %d записей о стартовой дате биллинга", len(jobs)),
 	})
 }

@@ -21,10 +21,12 @@ type SnapshotSettings struct {
 
 	// Дополнительные настройки
 	IsActive bool `json:"is_active" gorm:"default:true"`
+
+	// Начальная дата биллинга (заполняется один раз при первом запросе billing_start)
+	InitialBillingStartDate *time.Time `json:"initial_billing_start_date,omitempty" gorm:"type:timestamp"`
 }
 
 // TableName задает имя таблицы для модели SnapshotSettings
 func (SnapshotSettings) TableName() string {
 	return "snapshot_settings"
 }
-
