@@ -192,11 +192,8 @@ func GetSnapshotJobs(c *gin.Context) {
 		initialBillingStartDate = &defaultDate
 	}
 
-	// Получаем дату последнего созданного объекта (для остальных типов)
-	latestObjectDate, err := getLatestObjectCreatedAt(publicDB)
-	if err != nil {
-		log.Printf("⚠️ Ошибка получения даты последнего объекта: %v", err)
-	}
+	// Получаем дату последнего созданного объекта (больше не используется для billing_date, оставлено для совместимости)
+	_, _ = getLatestObjectCreatedAt(publicDB)
 
 	type JobResponse struct {
 		ID                 uint        `json:"id"`
@@ -266,15 +263,10 @@ func GetSnapshotJobs(c *gin.Context) {
 				jobResponses[i].BillingDate = &dateFromCopy
 			}
 		} else {
-			// Для остальных типов используем дату последнего созданного объекта
-			if latestObjectDate != nil {
-				latestDateCopy := *latestObjectDate
-				jobResponses[i].BillingDate = &latestDateCopy
-			} else {
-				// Fallback: используем date_from
-				dateFromCopy := job.DateFrom
-				jobResponses[i].BillingDate = &dateFromCopy
-			}
+			// Для остальных типов используем date_from (дату снимка, выбранную пользователем или установленную системой)
+			// Это правильная дата биллинга, так как она соответствует дате, за которую создан снимок
+			dateFromCopy := job.DateFrom
+			jobResponses[i].BillingDate = &dateFromCopy
 		}
 	}
 
@@ -480,11 +472,8 @@ func GetSnapshotJob(c *gin.Context) {
 		initialBillingStartDate = &defaultDate
 	}
 
-	// Получаем дату последнего созданного объекта (для остальных типов)
-	latestObjectDate, err := getLatestObjectCreatedAt(publicDB)
-	if err != nil {
-		log.Printf("⚠️ Ошибка получения даты последнего объекта: %v", err)
-	}
+	// Получаем дату последнего созданного объекта (больше не используется для billing_date, оставлено для совместимости)
+	_, _ = getLatestObjectCreatedAt(publicDB)
 
 	type JobResponse struct {
 		ID                 uint        `json:"id"`
@@ -552,15 +541,10 @@ func GetSnapshotJob(c *gin.Context) {
 			response.BillingDate = &dateFromCopy
 		}
 	} else {
-		// Для остальных типов используем дату последнего созданного объекта
-		if latestObjectDate != nil {
-			latestDateCopy := *latestObjectDate
-			response.BillingDate = &latestDateCopy
-		} else {
-			// Fallback: используем date_from
-			dateFromCopy := job.DateFrom
-			response.BillingDate = &dateFromCopy
-		}
+		// Для остальных типов используем date_from (дату снимка, выбранную пользователем или установленную системой)
+		// Это правильная дата биллинга, так как она соответствует дате, за которую создан снимок
+		dateFromCopy := job.DateFrom
+		response.BillingDate = &dateFromCopy
 	}
 
 	c.JSON(http.StatusOK, response)
@@ -667,11 +651,8 @@ func GetLatestSnapshotJob(c *gin.Context) {
 		initialBillingStartDate = &defaultDate
 	}
 
-	// Получаем дату последнего созданного объекта (для остальных типов)
-	latestObjectDate, err := getLatestObjectCreatedAt(publicDB)
-	if err != nil {
-		log.Printf("⚠️ Ошибка получения даты последнего объекта: %v", err)
-	}
+	// Получаем дату последнего созданного объекта (больше не используется для billing_date, оставлено для совместимости)
+	_, _ = getLatestObjectCreatedAt(publicDB)
 
 	type JobResponse struct {
 		ID                 uint        `json:"id"`
@@ -739,15 +720,10 @@ func GetLatestSnapshotJob(c *gin.Context) {
 			response.BillingDate = &dateFromCopy
 		}
 	} else {
-		// Для остальных типов используем дату последнего созданного объекта
-		if latestObjectDate != nil {
-			latestDateCopy := *latestObjectDate
-			response.BillingDate = &latestDateCopy
-		} else {
-			// Fallback: используем date_from
-			dateFromCopy := job.DateFrom
-			response.BillingDate = &dateFromCopy
-		}
+		// Для остальных типов используем date_from (дату снимка, выбранную пользователем или установленную системой)
+		// Это правильная дата биллинга, так как она соответствует дате, за которую создан снимок
+		dateFromCopy := job.DateFrom
+		response.BillingDate = &dateFromCopy
 	}
 
 	c.JSON(http.StatusOK, response)
