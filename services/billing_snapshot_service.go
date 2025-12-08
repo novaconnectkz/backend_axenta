@@ -148,28 +148,39 @@ func (s *BillingSnapshotService) RebuildBillingSnapshots(startDate, endDate time
 // RunDailySnapshot создает недостающие ежедневные снимки до текущей даты
 func (s *BillingSnapshotService) RunDailySnapshot() (*BillingDailyRunResult, error) {
 	var lastSnapshot models.BillingDailySnapshot
-	if err := s.publicDB.Order("snapshot_date DESC").First(&lastSnapshot).Error; err != nil {
+	err := s.publicDB.Order("snapshot_date DESC").First(&lastSnapshot).Error
+
+	var startDate time.Time
+	var currentTotal int
+
+	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("нет данных billing_daily_snapshots: выполните пересчет истории")
+			// Если нет данных, начинаем с начальной даты биллинга
+			log.Printf("ℹ️ Billing snapshots: нет данных, начинаем с начальной даты биллинга (2024-03-14)")
+			startDate = time.Date(2024, 3, 14, 0, 0, 0, 0, time.UTC)
+			currentTotal = 0
+		} else {
+			return nil, fmt.Errorf("не удалось получить последний снимок: %w", err)
 		}
-		return nil, fmt.Errorf("не удалось получить последний снимок: %w", err)
+	} else {
+		// Есть данные, продолжаем с следующей даты после последнего снимка
+		startDate = normalizeDateUTC(lastSnapshot.SnapshotDate.AddDate(0, 0, 1))
+		currentTotal = lastSnapshot.TotalObjectsCumulative
 	}
 
-	nextDate := normalizeDateUTC(lastSnapshot.SnapshotDate.AddDate(0, 0, 1))
 	today := normalizeDateUTC(s.nowFn().UTC())
 
 	// Если все актуально — просто возвращаем результат
-	if nextDate.After(today) {
+	if startDate.After(today) {
 		return &BillingDailyRunResult{
 			ProcessedDates: []time.Time{},
-			FinalTotal:     lastSnapshot.TotalObjectsCumulative,
+			FinalTotal:     currentTotal,
 		}, nil
 	}
 
-	currentTotal := lastSnapshot.TotalObjectsCumulative
 	processedDates := make([]time.Time, 0)
 
-	for date := nextDate; !date.After(today); date = date.AddDate(0, 0, 1) {
+	for date := startDate; !date.After(today); date = date.AddDate(0, 0, 1) {
 		createdToday, err := s.countCreatedFn(date)
 		if err != nil {
 			return nil, fmt.Errorf("не удалось подсчитать объекты за %s: %w", date.Format("2006-01-02"), err)

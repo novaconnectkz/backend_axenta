@@ -168,11 +168,9 @@ func (s *PartnerSnapshotScheduler) createDailySnapshots() {
 		}
 	}
 
-	// Проверяем, нужно ли запустить автоматический расчет биллинга за весь период
-	// Это нужно, если данные были синхронизированы, но снимки партнеров еще не были созданы
-	// Функция AutoCalculateBillingForAllPartners сама проверит наличие снимков и запустится только если их нет
-	log.Printf("🤖 Проверка необходимости автоматического расчета биллинга после создания суточных снимков...")
-	AutoCalculateBillingForAllPartners()
+	// Автоматический расчет биллинга за весь период запускается только при первой синхронизации данных
+	// Для ежедневных снимков billing snapshots уже создаются через RunDailySnapshot() выше
+	// AutoCalculateBillingForAllPartners вызывается только из AxentaSyncService после синхронизации
 }
 
 // createDailySnapshotsForDate создает снимки за указанную дату
