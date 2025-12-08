@@ -138,14 +138,23 @@ func main() {
 	}
 
 	if enableSnapshotScheduler == "true" || enableSnapshotScheduler == "1" {
+		// Планировщик партнерских снимков (00:30 UTC / 03:30 MSK)
 		partnerSnapshotScheduler := services.NewPartnerSnapshotScheduler()
 		if err := partnerSnapshotScheduler.Start(); err != nil {
 			log.Printf("⚠️ Partner Snapshot Scheduler failed to start: %v", err)
 		} else {
 			log.Println("✅ Partner Snapshot Scheduler started (daily at 00:30 UTC / 03:30 MSK)")
 		}
+
+		// Планировщик billing snapshots (01:00 UTC / 04:00 MSK)
+		billingSnapshotScheduler := services.NewBillingSnapshotScheduler()
+		if err := billingSnapshotScheduler.Start(); err != nil {
+			log.Printf("⚠️ Billing Snapshot Scheduler failed to start: %v", err)
+		} else {
+			log.Println("✅ Billing Snapshot Scheduler started (daily at 01:00 UTC / 04:00 MSK)")
+		}
 	} else {
-		log.Println("⚠️ Partner Snapshot Scheduler отключен (ENABLE_SNAPSHOT_SCHEDULER != true)")
+		log.Println("⚠️ Планировщики снимков отключены (ENABLE_SNAPSHOT_SCHEDULER != true)")
 	}
 
 	// Инициализируем систему уведомлений - временно отключено

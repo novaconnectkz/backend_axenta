@@ -47,7 +47,7 @@ func NewPartnerSnapshotScheduler() *PartnerSnapshotScheduler {
 
 // Start запускает планировщик
 func (s *PartnerSnapshotScheduler) Start() error {
-	// Запускаем создание снимков каждый день в 00:30 UTC (03:30 MSK)
+	// Запускаем создание партнерских снимков каждый день в 00:30 UTC (03:30 MSK)
 	_, err := s.cron.AddFunc("30 0 * * *", func() {
 		// Обработка паник, чтобы планировщик не останавливался при ошибках
 		defer func() {
@@ -58,7 +58,7 @@ func (s *PartnerSnapshotScheduler) Start() error {
 			}
 		}()
 
-		log.Println("🕐 Запуск автоматического создания ежедневных снимков (UTC 00:30 / MSK 03:30)")
+		log.Println("🕐 Запуск автоматического создания партнерских снимков (UTC 00:30 / MSK 03:30)")
 		s.createDailySnapshots()
 	})
 
@@ -69,7 +69,7 @@ func (s *PartnerSnapshotScheduler) Start() error {
 	s.cron.Start()
 	s.isRunning = true
 
-	log.Println("✅ Планировщик ежедневных снимков запущен (каждый день в 00:30 UTC / 03:30 MSK)")
+	log.Println("✅ Планировщик партнерских снимков запущен (каждый день в 00:30 UTC / 03:30 MSK)")
 
 	return nil
 }
@@ -156,21 +156,8 @@ func (s *PartnerSnapshotScheduler) createDailySnapshots() {
 		}
 	}
 
-	// После партнерских снимков обновляем агрегированные billing snapshots (без запросов к Axenta)
-	// RunDailySnapshot уже обрабатывает недостающие даты автоматически
-	if s.billingSnapshotService != nil {
-		if result, err := s.billingSnapshotService.RunDailySnapshot(); err != nil {
-			log.Printf("⚠️ Billing daily snapshots: ошибка обновления: %v", err)
-		} else if len(result.ProcessedDates) > 0 {
-			log.Printf("✅ Billing daily snapshots: создано %d записей, итоговое количество объектов=%d", len(result.ProcessedDates), result.FinalTotal)
-		} else {
-			log.Printf("ℹ️ Billing daily snapshots: новые даты отсутствуют")
-		}
-	}
-
-	// Автоматический расчет биллинга за весь период запускается только при первой синхронизации данных
-	// Для ежедневных снимков billing snapshots уже создаются через RunDailySnapshot() выше
-	// AutoCalculateBillingForAllPartners вызывается только из AxentaSyncService после синхронизации
+	// Billing snapshots создаются отдельным планировщиком в 01:00 UTC
+	// Это позволяет разделить задачи и выполнять их независимо
 }
 
 // createDailySnapshotsForDate создает снимки за указанную дату
