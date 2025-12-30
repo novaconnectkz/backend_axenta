@@ -403,10 +403,11 @@ func GetContracts(c *gin.Context) {
 		}
 	}
 	if l := c.Query("limit"); l != "" {
-		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 100 {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 10000 {
 			limit = parsed
 		}
 	}
+	log.Printf("📊 GetContracts: запрошенный лимит: %d (из параметра: %s)", limit, c.Query("limit"))
 	offset := (page - 1) * limit
 
 	// Получаем общее количество (без Preload)

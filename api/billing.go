@@ -2300,6 +2300,9 @@ func GetInvoices(c *gin.Context) {
 		limit = 50
 	}
 
+	// Логируем полученный лимит для отладки
+	fmt.Printf("GetInvoices: запрошенный лимит: %d (из параметра: %s)\n", limit, limitStr)
+
 	offset, err := strconv.Atoi(offsetStr)
 	if err != nil || offset < 0 {
 		offset = 0
