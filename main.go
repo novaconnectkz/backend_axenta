@@ -907,6 +907,11 @@ func main() {
 	r.POST("/api/test/axenta-sync/trigger/", api.TriggerAxentaSync)
 	log.Println("⚠️ Зарегистрирован ТЕСТОВЫЙ endpoint /api/test/axenta-sync/trigger (без авторизации)")
 
+	// Тестовый endpoint для Wialon (без авторизации, для отладки)
+	wialonTestGroup := r.Group("/api/test")
+	wialonTestAPI := api.NewWialonIntegrationAPI(database.DB)
+	wialonTestAPI.RegisterTestRoutes(wialonTestGroup)
+
 	log.Println("✅ Все роуты для договоров зарегистрированы")
 	// apiGroup.POST("/contracts/:contract_id/appendices", api.CreateContractAppendix)
 	// apiGroup.PUT("/contract-appendices/:id", api.UpdateContractAppendix)
@@ -1181,6 +1186,10 @@ func main() {
 	// Интеграция с NovaConnect
 	novaconnectAPI := api.NewNovaConnectIntegrationAPI(database.DB)
 	novaconnectAPI.RegisterRoutes(integrationsGroup)
+
+	// Интеграция с Wialon
+	wialonAPI := api.NewWialonIntegrationAPI(database.DB)
+	wialonAPI.RegisterRoutes(integrationsGroup)
 
 	// Интеграция с Telegram
 	telegramAPI := api.NewTelegramIntegrationAPI()
