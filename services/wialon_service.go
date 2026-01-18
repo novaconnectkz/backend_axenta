@@ -1965,3 +1965,58 @@ func (s *WialonService) GetMonitoringURL(host string, sid string) string {
 	// Формируем URL с SID для авторизации
 	return fmt.Sprintf("%s/?sid=%s&lang=ru", hostingURL, sid)
 }
+
+// GetTotalUnitsCount получает общее количество объектов без лимита
+// Использует totalItemsCount из ответа API вместо загрузки всех объектов
+func (s *WialonService) GetTotalUnitsCount(host string, token string) (int, error) {
+	// Авторизуемся
+	loginResp, err := s.LoginWithHost(host, token)
+	if err != nil {
+		return 0, err
+	}
+	defer s.LogoutWithHost(host, loginResp.Eid)
+
+	apiURL := fmt.Sprintf("%s/wialon/ajax.html", host)
+
+	// Минимальные флаги для быстрого запроса
+	searchParams := map[string]interface{}{
+		"spec": map[string]interface{}{
+			"itemsType":     "avl_unit",
+			"propName":      "sys_name",
+			"propValueMask": "*",
+			"sortType":      "sys_name",
+		},
+		"force": 1,
+		"flags": 0x00000001, // Только базовые свойства
+		"from":  0,
+		"to":    1, // Запрашиваем минимум данных - нам нужен только totalItemsCount
+	}
+
+	paramsJSON, _ := json.Marshal(searchParams)
+
+	params := url.Values{}
+	params.Set("svc", "core/search_items")
+	params.Set("sid", loginResp.Eid)
+	params.Set("params", string(paramsJSON))
+
+	resp, err := s.httpClient.Post(apiURL+"?"+params.Encode(), "application/x-www-form-urlencoded", nil)
+	if err != nil {
+		return 0, fmt.Errorf("ошибка запроса объектов: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, fmt.Errorf("ошибка чтения ответа: %w", err)
+	}
+
+	var searchResult struct {
+		TotalItemsCount int `json:"totalItemsCount"`
+	}
+	if err := json.Unmarshal(body, &searchResult); err != nil {
+		return 0, fmt.Errorf("ошибка парсинга ответа: %w", err)
+	}
+
+	log.Printf("📊 Wialon GetTotalUnitsCount: totalItemsCount = %d", searchResult.TotalItemsCount)
+	return searchResult.TotalItemsCount, nil
+}

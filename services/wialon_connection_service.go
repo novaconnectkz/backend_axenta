@@ -223,10 +223,10 @@ func (s *WialonConnectionService) TestConnection(connection *models.WialonConnec
 			updates["local_version"] = result.LocalVersion
 		}
 
-		// Пробуем получить количество объектов (используем token напрямую)
-		units, err := wialonService.SearchUnitsWithHost(connection.Host, connection.Token)
+		// Пробуем получить количество объектов - используем оптимизированный метод без лимита
+		unitsCount, err := wialonService.GetTotalUnitsCount(connection.Host, connection.Token)
 		if err == nil {
-			updates["units_count"] = len(units)
+			updates["units_count"] = unitsCount
 		}
 
 		s.UpdatePartial(connection.ID, updates)
