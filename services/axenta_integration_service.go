@@ -175,7 +175,7 @@ func (s *AxentaIntegrationService) SyncObjects(ctx context.Context, companyID ui
 }
 
 // getAuthToken получает токен авторизации от Axenta Cloud
-func (s *AxentaIntegrationService) getAuthToken(ctx context.Context, credentials *AxentaCredentials) (string, error) {
+func (s *AxentaIntegrationService) getAuthToken(_ context.Context, credentials *AxentaCredentials) (string, error) {
 	client := &http.Client{
 		Timeout: time.Duration(credentials.Timeout) * time.Second,
 	}

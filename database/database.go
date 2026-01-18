@@ -319,6 +319,7 @@ func SetupTestDatabase() error {
 		&models.Permission{},
 		&models.Integration{},
 		&models.IntegrationError{},
+		&models.WialonConnection{},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to migrate test database: %v", err)

@@ -1191,6 +1191,10 @@ func main() {
 	wialonAPI := api.NewWialonIntegrationAPI(database.DB)
 	wialonAPI.RegisterRoutes(integrationsGroup)
 
+	// Подключения Wialon (мульти-хост)
+	wialonConnectionsAPI := api.NewWialonConnectionAPI(database.DB)
+	wialonConnectionsAPI.RegisterRoutes(integrationsGroup)
+
 	// Интеграция с Telegram
 	telegramAPI := api.NewTelegramIntegrationAPI()
 	telegramAPI.RegisterRoutes(integrationsGroup)

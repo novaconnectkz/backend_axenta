@@ -31,7 +31,7 @@ func setupAuditServiceTestDB(t *testing.T) *gorm.DB {
 }
 
 // setupAuditService создает audit service для тестов
-func setupAuditService(t *testing.T, db *gorm.DB) *AuditService {
+func setupAuditService(_ *testing.T, db *gorm.DB) *AuditService {
 	logger := log.New(os.Stdout, "[TEST] ", log.LstdFlags)
 	return NewAuditService(db, logger)
 }

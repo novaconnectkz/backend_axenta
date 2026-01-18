@@ -87,6 +87,12 @@ func GetAllMigrations() []MigrationInfo {
 			IsGlobal:    true,
 		},
 		{
+			TableName:   "wialon_connections",
+			Model:       &models.WialonConnection{},
+			Description: "Подключения к Wialon (Hosting и Local)",
+			IsGlobal:    true,
+		},
+		{
 			TableName:   "local_users",
 			Model:       &models.LocalUser{},
 			Description: "Локальные пользователи для альтернативной авторизации",

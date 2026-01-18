@@ -32,7 +32,7 @@ func setupMaxIntegrationServiceTestDB(t *testing.T) *gorm.DB {
 }
 
 // setupMaxIntegrationService создает MAX integration service для тестов
-func setupMaxIntegrationService(t *testing.T, db *gorm.DB) *MaxIntegrationService {
+func setupMaxIntegrationService(_ *testing.T, db *gorm.DB) *MaxIntegrationService {
 	logger := log.New(os.Stdout, "[TEST] ", log.LstdFlags)
 	return NewMaxIntegrationService(db, logger)
 }

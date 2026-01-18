@@ -32,7 +32,7 @@ func setupTelegramIntegrationServiceTestDB(t *testing.T) *gorm.DB {
 }
 
 // setupTelegramIntegrationService создает Telegram integration service для тестов
-func setupTelegramIntegrationService(t *testing.T, db *gorm.DB) *TelegramIntegrationService {
+func setupTelegramIntegrationService(_ *testing.T, db *gorm.DB) *TelegramIntegrationService {
 	logger := log.New(os.Stdout, "[TEST] ", log.LstdFlags)
 	return NewTelegramIntegrationService(db, logger)
 }

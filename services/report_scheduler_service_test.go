@@ -31,7 +31,7 @@ func setupReportSchedulerServiceTestDB(t *testing.T) *gorm.DB {
 }
 
 // setupReportSchedulerService создает report scheduler service для тестов
-func setupReportSchedulerService(t *testing.T, db *gorm.DB) *ReportSchedulerService {
+func setupReportSchedulerService(_ *testing.T, db *gorm.DB) *ReportSchedulerService {
 	reportService := NewReportService(db)
 	// NotificationService может быть nil для тестов
 	service := NewReportSchedulerService(db, reportService, nil)

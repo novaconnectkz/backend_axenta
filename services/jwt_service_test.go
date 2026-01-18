@@ -32,7 +32,7 @@ func setupJWTServiceTestDB(t *testing.T) *gorm.DB {
 }
 
 // setupJWTService создает JWT сервис для тестов
-func setupJWTService(t *testing.T, db *gorm.DB) *JWTService {
+func setupJWTService(_ *testing.T, db *gorm.DB) *JWTService {
 	// Сохраняем оригинальное значение
 	originalSecret := os.Getenv("JWT_SECRET")
 	defer os.Setenv("JWT_SECRET", originalSecret)
