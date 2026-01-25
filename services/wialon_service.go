@@ -1794,6 +1794,162 @@ func (s *WialonService) EnableAccountWithHost(host string, token string, account
 	return nil
 }
 
+// FindUserByBillingAccountID ищет пользователя по BillingAccountID (bact) или создателю ресурса (crt)
+// Если пользователь с bact не найден, ищем ресурс по ID и получаем его создателя
+func (s *WialonService) FindUserByBillingAccountID(host string, token string, billingAccountID int64) (string, error) {
+	// Убираем trailing slash
+	host = strings.TrimSuffix(host, "/")
+	apiURL := fmt.Sprintf("%s/wialon/ajax.html", host)
+
+	// Авторизуемся с токеном
+	loginResp, err := s.LoginWithHost(host, token)
+	if err != nil {
+		return "", fmt.Errorf("ошибка авторизации: %w", err)
+	}
+	sid := loginResp.Eid
+	defer func() {
+		// Выходим из сессии
+		logoutParams := url.Values{}
+		logoutParams.Set("svc", "core/logout")
+		logoutParams.Set("sid", sid)
+		logoutParams.Set("params", "{}")
+		s.httpClient.Post(apiURL+"?"+logoutParams.Encode(), "application/x-www-form-urlencoded", nil)
+	}()
+
+	log.Printf("🔍 Поиск пользователя с bact=%d", billingAccountID)
+
+	// Шаг 1: Ищем пользователя по bact
+	userFlags := 0x00000001 | 0x00000100 // базовая + биллинг информация
+	userSearchParams := fmt.Sprintf(`{
+		"spec": {
+			"itemsType": "user",
+			"propName": "sys_name",
+			"propValueMask": "*",
+			"sortType": "sys_name"
+		},
+		"force": 1,
+		"flags": %d,
+		"from": 0,
+		"to": 0
+	}`, userFlags)
+
+	params := url.Values{}
+	params.Set("svc", "core/search_items")
+	params.Set("sid", sid)
+	params.Set("params", userSearchParams)
+
+	resp, err := s.httpClient.Post(apiURL+"?"+params.Encode(), "application/x-www-form-urlencoded", nil)
+	if err != nil {
+		return "", fmt.Errorf("ошибка запроса пользователей: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("ошибка чтения ответа: %w", err)
+	}
+
+	var searchResp WialonSearchResponse
+	if err := json.Unmarshal(body, &searchResp); err != nil {
+		return "", fmt.Errorf("ошибка парсинга ответа: %w", err)
+	}
+
+	log.Printf("🔍 Поиск по bact=%d среди %d пользователей", billingAccountID, len(searchResp.Items))
+
+	// Создаём карту пользователей по ID для быстрого поиска
+	usersByID := make(map[int64]string)
+	for _, item := range searchResp.Items {
+		if id, ok := item["id"].(float64); ok {
+			if nm, ok := item["nm"].(string); ok {
+				usersByID[int64(id)] = nm
+			}
+		}
+		// Проверяем поле bact
+		if bact, ok := item["bact"].(float64); ok {
+			if int64(bact) == billingAccountID {
+				if nm, ok := item["nm"].(string); ok {
+					log.Printf("✅ Найден пользователь '%s' с bact=%d", nm, billingAccountID)
+					return nm, nil
+				}
+			}
+		}
+	}
+
+	// Шаг 2: Если пользователь не найден по bact, ищем ресурс и его создателя
+	log.Printf("🔍 Пользователь с bact=%d не найден, ищем ресурс и его создателя", billingAccountID)
+
+	// Используем core/search_item для поиска ресурса по ID
+	// Это более надёжный способ получить элемент по ID
+	resourceParams := fmt.Sprintf(`{
+		"id": %d,
+		"flags": 1
+	}`, billingAccountID)
+
+	params2 := url.Values{}
+	params2.Set("svc", "core/search_item")
+	params2.Set("sid", sid)
+	params2.Set("params", resourceParams)
+
+	resp2, err := s.httpClient.Post(apiURL+"?"+params2.Encode(), "application/x-www-form-urlencoded", nil)
+	if err != nil {
+		return "", fmt.Errorf("ресурс не найден: %w", err)
+	}
+	defer resp2.Body.Close()
+
+	body2, err := io.ReadAll(resp2.Body)
+	if err != nil {
+		return "", fmt.Errorf("ошибка чтения ответа ресурса: %w", err)
+	}
+
+	log.Printf("🔍 Ответ core/search_item: %s", string(body2)[:min(200, len(body2))])
+
+	// Парсим ответ — это единичный объект, не массив
+	var resourceData struct {
+		Item map[string]interface{} `json:"item"`
+	}
+	if err := json.Unmarshal(body2, &resourceData); err != nil {
+		// Попробуем парсить как прямой объект
+		var directItem map[string]interface{}
+		if err2 := json.Unmarshal(body2, &directItem); err2 != nil {
+			return "", fmt.Errorf("ошибка парсинга ответа ресурса: %w", err)
+		}
+		resourceData.Item = directItem
+	}
+
+	if resourceData.Item == nil || len(resourceData.Item) == 0 {
+		return "", fmt.Errorf("элемент с id=%d не найден", billingAccountID)
+	}
+
+	// Проверяем тип найденного элемента (cls: 1=user, 3=resource)
+	if cls, ok := resourceData.Item["cls"].(float64); ok {
+		log.Printf("🔍 Найден элемент cls=%d (1=user, 3=resource)", int(cls))
+		
+		// Если это пользователь (cls=1), используем его имя напрямую
+		if int(cls) == 1 {
+			if nm, ok := resourceData.Item["nm"].(string); ok {
+				log.Printf("✅ Найден пользователь '%s' по ID=%d", nm, billingAccountID)
+				return nm, nil
+			}
+		}
+	}
+
+	// Если это ресурс — получаем создателя ресурса (поле crt)
+	creatorID, ok := resourceData.Item["crt"].(float64)
+	if !ok {
+		return "", fmt.Errorf("создатель ресурса не указан")
+	}
+
+	log.Printf("🔍 Ресурс найден, создатель ID=%d", int64(creatorID))
+
+	// Ищем имя создателя в нашей карте пользователей
+	if creatorName, ok := usersByID[int64(creatorID)]; ok {
+		log.Printf("✅ Найден создатель ресурса: '%s'", creatorName)
+		return creatorName, nil
+	}
+
+	return "", fmt.Errorf("создатель ресурса (id=%d) не найден среди пользователей", int64(creatorID))
+}
+
 // DuplicateSessionWithHost создает сессию для входа под конкретным пользователем
 // Использует token/update для создания временного токена пользователя, затем token/login
 func (s *WialonService) DuplicateSessionWithHost(host string, token string, userName string) (string, error) {
@@ -1823,6 +1979,7 @@ func (s *WialonService) DuplicateSessionWithHost(host string, token string, user
 	duplicateParams := map[string]interface{}{
 		"operateAs":              userName,
 		"continueCurrentSession": true,
+		"appName":                "Axenta CRM", // Обязательный параметр для core/duplicate
 	}
 	duplicateParamsJSON, _ := json.Marshal(duplicateParams)
 

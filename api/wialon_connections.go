@@ -517,10 +517,16 @@ func (api *WialonConnectionAPI) GetAllAccounts(c *gin.Context) {
 				hierarchy = sourceLabel + " > " + acc.Name
 			}
 
+			// Определяем тип компании на основе прав дилера
+			accountType := "client"
+			if acc.DealerRights {
+				accountType = "partner"
+			}
+
 			allAccounts = append(allAccounts, WialonAccountInfo{
 				ID:            int(acc.ID),
 				Name:          acc.Name,
-				Type:          acc.Type,
+				Type:          accountType, // "partner" если DealerRights, иначе "client"
 				IsActive:      acc.IsActive,
 				DealerRights:  acc.DealerRights, // Передаём права дилера
 				ObjectsTotal:  acc.ObjectsTotal,
@@ -627,7 +633,8 @@ func (api *WialonConnectionAPI) ToggleAccountStatus(c *gin.Context) {
 func (api *WialonConnectionAPI) LoginToMonitoring(c *gin.Context) {
 	var req struct {
 		ConnectionID int64  `json:"connection_id" binding:"required"`
-		UserName     string `json:"user_name"` // Имя пользователя для входа (опционально)
+		UserName     string `json:"user_name"`   // Имя пользователя для входа (опционально, используется если указано)
+		AccountID    int64  `json:"account_id"`  // ID ресурса (учётной записи) для поиска пользователя по bact
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -638,7 +645,7 @@ func (api *WialonConnectionAPI) LoginToMonitoring(c *gin.Context) {
 		return
 	}
 
-	log.Printf("🔐 Запрос входа в мониторинг Wialon: connection_id=%d, user_name=%s", req.ConnectionID, req.UserName)
+	log.Printf("🔐 Запрос входа в мониторинг Wialon: connection_id=%d, user_name=%s, account_id=%d", req.ConnectionID, req.UserName, req.AccountID)
 
 	// Получаем подключение с токеном
 	connection, err := api.service.GetByIDWithToken(uint(req.ConnectionID))
@@ -656,8 +663,24 @@ func (api *WialonConnectionAPI) LoginToMonitoring(c *gin.Context) {
 	// Создаем WialonService для работы с API
 	wialonService := services.NewWialonService()
 
+	// Определяем имя пользователя для входа
+	userName := req.UserName
+	
+	// Если имя не указано, но указан account_id — ищем пользователя по bact
+	if userName == "" && req.AccountID > 0 {
+		log.Printf("🔍 Поиск пользователя с bact=%d", req.AccountID)
+		foundUser, err := wialonService.FindUserByBillingAccountID(host, connection.Token, req.AccountID)
+		if err != nil {
+			log.Printf("⚠️ Не удалось найти пользователя по bact=%d: %v", req.AccountID, err)
+			// Продолжаем без operateAs — войдём как основной пользователь
+		} else if foundUser != "" {
+			userName = foundUser
+			log.Printf("✅ Найден пользователь: %s", userName)
+		}
+	}
+
 	// Выполняем авторизацию и получаем SID (для основного пользователя или с operateAs)
-	sid, err := wialonService.DuplicateSessionWithHost(host, connection.Token, req.UserName)
+	sid, err := wialonService.DuplicateSessionWithHost(host, connection.Token, userName)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
@@ -681,7 +704,8 @@ func (api *WialonConnectionAPI) LoginToMonitoring(c *gin.Context) {
 func (api *WialonConnectionAPI) LoginToCms(c *gin.Context) {
 	var req struct {
 		ConnectionID int64  `json:"connection_id" binding:"required"`
-		UserName     string `json:"user_name"` // Имя пользователя для входа (опционально)
+		UserName     string `json:"user_name"`   // Имя пользователя для входа (опционально, используется если указано)
+		AccountID    int64  `json:"account_id"`  // ID ресурса (учётной записи) для поиска пользователя
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -692,7 +716,7 @@ func (api *WialonConnectionAPI) LoginToCms(c *gin.Context) {
 		return
 	}
 
-	log.Printf("🔐 Запрос входа в CMS Wialon: connection_id=%d, user_name=%s", req.ConnectionID, req.UserName)
+	log.Printf("🔐 Запрос входа в CMS Wialon: connection_id=%d, user_name=%s, account_id=%d", req.ConnectionID, req.UserName, req.AccountID)
 
 	// Получаем подключение с токеном
 	connection, err := api.service.GetByIDWithToken(uint(req.ConnectionID))
@@ -710,8 +734,24 @@ func (api *WialonConnectionAPI) LoginToCms(c *gin.Context) {
 	// Создаем WialonService для работы с API
 	wialonService := services.NewWialonService()
 
+	// Определяем имя пользователя для входа
+	userName := req.UserName
+	
+	// Если имя не указано, но указан account_id — ищем пользователя по ID
+	if userName == "" && req.AccountID > 0 {
+		log.Printf("🔍 Поиск пользователя с account_id=%d", req.AccountID)
+		foundUser, err := wialonService.FindUserByBillingAccountID(host, connection.Token, req.AccountID)
+		if err != nil {
+			log.Printf("⚠️ Не удалось найти пользователя по account_id=%d: %v", req.AccountID, err)
+			// Продолжаем без operateAs — войдём как основной пользователь
+		} else if foundUser != "" {
+			userName = foundUser
+			log.Printf("✅ Найден пользователь: %s", userName)
+		}
+	}
+
 	// Выполняем авторизацию и получаем SID
-	sid, err := wialonService.DuplicateSessionWithHost(host, connection.Token, req.UserName)
+	sid, err := wialonService.DuplicateSessionWithHost(host, connection.Token, userName)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
