@@ -771,17 +771,7 @@ func (s *PartnerSnapshotScheduler) getHostname() string {
 	return hostname
 }
 
-// getPartnerToken получает токен партнера для доступа к Axenta API
-func (s *PartnerSnapshotScheduler) getPartnerToken(db *gorm.DB, adminAccountID uint) (string, error) {
-	var token models.UserToken
-	if err := db.
-		Where("account_id = ?", adminAccountID).
-		Order("created_at DESC").
-		First(&token).Error; err != nil {
-		return "", err
-	}
-	return token.Token, nil
-}
+
 
 // getAnyActiveToken получает любой активный токен для доступа к Axenta API
 func (s *PartnerSnapshotScheduler) getAnyActiveToken(db *gorm.DB, companyID uint) (string, error) {
@@ -888,75 +878,6 @@ func (s *PartnerSnapshotScheduler) RunManualSnapshotForPeriod(dateFrom time.Time
 	log.Printf("✅ Создание снимков за период завершено")
 }
 
-// syncAllPartnerAccounts синхронизирует все партнерские аккаунты из Axenta Cloud для данного тенанта
-func (s *PartnerSnapshotScheduler) syncAllPartnerAccounts(tenantDB *gorm.DB, companyID uint) error {
-	// ПРИОРИТЕТ 1: Используем системный токен из переменной окружения
-	systemToken := os.Getenv("AXENTA_ADMIN_TOKEN")
-	if systemToken != "" {
-		log.Printf("🔑 Используем системный токен AXENTA_ADMIN_TOKEN для загрузки ВСЕХ аккаунтов (компания %d)", companyID)
 
-		tempSyncService := NewAxentaSyncService(tenantDB)
 
-		if err := s.syncWithSystemToken(tempSyncService, systemToken, companyID); err != nil {
-			log.Printf("⚠️ Ошибка синхронизации через системный токен из env (компания %d): %v", companyID, err)
-			// Не возвращаемся, попробуем токены из БД
-		} else {
-			log.Printf("✅ Синхронизация через системный токен завершена успешно (компания %d)", companyID)
-			return nil
-		}
-	}
 
-	// ПРИОРИТЕТ 2: Используем любой действующий токен из БД для загрузки ВСЕХ аккаунтов
-	var tokens []models.UserToken
-	if err := tenantDB.
-		Where("is_active = ? AND expires_at > ?", true, time.Now()).
-		Order("expires_at DESC").
-		Limit(1).
-		Find(&tokens).Error; err != nil {
-		errMsg := fmt.Sprintf("ошибка получения токенов из БД для компании %d: %v", companyID, err)
-		log.Printf("⚠️ %s", errMsg)
-		return fmt.Errorf("%s", errMsg)
-	}
-
-	if len(tokens) > 0 {
-		token := tokens[0]
-		log.Printf("🔑 Используем токен пользователя (AccountID=%d) для загрузки ВСЕХ аккаунтов (компания %d)", token.AccountID, companyID)
-
-		tempSyncService := NewAxentaSyncService(tenantDB)
-
-		// Используем этот токен для загрузки ВСЕХ данных
-		if err := s.syncWithSystemToken(tempSyncService, token.Token, companyID); err != nil {
-			errMsg := fmt.Sprintf("ошибка синхронизации через токен из БД (компания %d): %v", companyID, err)
-			log.Printf("⚠️ %s", errMsg)
-			return fmt.Errorf("%s", errMsg)
-		} else {
-			log.Printf("✅ Синхронизация через токен из БД завершена успешно (компания %d)", companyID)
-			return nil
-		}
-	}
-
-	// Если не нашли токенов, возвращаем ошибку
-	errMsg := fmt.Sprintf("не найдено действующих токенов для синхронизации в компании %d", companyID)
-	log.Printf("⚠️ %s", errMsg)
-	log.Printf("💡 Для загрузки ВСЕХ объектов:")
-	log.Printf("   1. Установите AXENTA_ADMIN_TOKEN в переменные окружения")
-	log.Printf("   2. Или убедитесь, что есть действующий токен в настройках Axenta Cloud API")
-	return fmt.Errorf("%s", errMsg)
-}
-
-// syncWithSystemToken синхронизирует ВСЕ аккаунты и объекты используя системный токен
-func (s *PartnerSnapshotScheduler) syncWithSystemToken(syncService *AxentaSyncService, token string, companyID uint) error {
-	log.Printf("🌐 Загрузка ВСЕХ аккаунтов из Axenta Cloud через системный токен...")
-
-	// Используем admin_account_id = 0 для системной синхронизации (все аккаунты)
-	// Это специальный ID для обозначения системного уровня доступа
-	systemAdminID := uint(0)
-
-	// Выполняем синхронизацию через существующий метод, передавая токен напрямую
-	if err := syncService.syncAdminWithToken(systemAdminID, token); err != nil {
-		return fmt.Errorf("ошибка синхронизации: %w", err)
-	}
-
-	log.Printf("✅ Загружены ВСЕ аккаунты и объекты из Axenta Cloud для компании %d", companyID)
-	return nil
-}

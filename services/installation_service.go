@@ -3,6 +3,7 @@ package services
 import (
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"gorm.io/gorm"
@@ -280,7 +281,9 @@ func (s *InstallationService) SendReminders() error {
 				now := time.Now()
 				installation.ReminderSent = true
 				installation.ReminderSentAt = &now
-				s.DB.Save(&installation)
+				if err := s.DB.Save(&installation).Error; err != nil {
+					log.Printf("Ошибка при обновлении статуса напоминания: %v", err)
+				}
 			}
 		}
 	}
@@ -376,13 +379,21 @@ func (s *InstallationService) sendInstallationNotifications(installation *models
 
 	switch action {
 	case "created":
-		s.NotificationService.SendInstallationCreated(installation)
+		if err := s.NotificationService.SendInstallationCreated(installation); err != nil {
+			log.Printf("Ошибка отправки уведомления о создании: %v", err)
+		}
 	case "updated":
-		s.NotificationService.SendInstallationUpdated(installation)
+		if err := s.NotificationService.SendInstallationUpdated(installation); err != nil {
+			log.Printf("Ошибка отправки уведомления об обновлении: %v", err)
+		}
 	case "completed":
-		s.NotificationService.SendInstallationCompleted(installation)
+		if err := s.NotificationService.SendInstallationCompleted(installation); err != nil {
+			log.Printf("Ошибка отправки уведомления о завершении: %v", err)
+		}
 	case "cancelled":
-		s.NotificationService.SendInstallationCancelled(installation)
+		if err := s.NotificationService.SendInstallationCancelled(installation); err != nil {
+			log.Printf("Ошибка отправки уведомления об отмене: %v", err)
+		}
 	}
 }
 
@@ -391,5 +402,7 @@ func (s *InstallationService) sendRescheduleNotifications(installation *models.I
 		return
 	}
 
-	s.NotificationService.SendInstallationRescheduled(installation, oldScheduledAt)
+	if err := s.NotificationService.SendInstallationRescheduled(installation, oldScheduledAt); err != nil {
+		log.Printf("Ошибка отправки уведомления о переносе: %v", err)
+	}
 }

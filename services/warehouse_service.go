@@ -88,7 +88,11 @@ func (ws *WarehouseService) createLowStockAlert(category models.EquipmentCategor
 
 	// Отправляем уведомление
 	if ws.NotificationService != nil {
-		go ws.NotificationService.SendStockAlert(alert)
+		go func() {
+			if err := ws.NotificationService.SendStockAlert(alert); err != nil {
+				log.Printf("Ошибка отправки уведомления о низком остатке: %v", err)
+			}
+		}()
 	}
 
 	return nil
@@ -159,7 +163,11 @@ func (ws *WarehouseService) createWarrantyExpiredAlert(equipment models.Equipmen
 
 	// Отправляем уведомление
 	if ws.NotificationService != nil {
-		go ws.NotificationService.SendWarrantyAlert(alert)
+		go func() {
+			if err := ws.NotificationService.SendWarrantyAlert(alert); err != nil {
+				log.Printf("Ошибка отправки уведомления о гарантии: %v", err)
+			}
+		}()
 	}
 
 	return nil
@@ -217,7 +225,11 @@ func (ws *WarehouseService) createMaintenanceDueAlert(equipment models.Equipment
 
 	// Отправляем уведомление
 	if ws.NotificationService != nil {
-		go ws.NotificationService.SendMaintenanceAlert(alert)
+		go func() {
+			if err := ws.NotificationService.SendMaintenanceAlert(alert); err != nil {
+				log.Printf("Ошибка отправки уведомления об обслуживании: %v", err)
+			}
+		}()
 	}
 
 	return nil

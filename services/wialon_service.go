@@ -448,7 +448,11 @@ func (s *WialonService) GetAccountsWithObjects(token string, dataCenter string) 
 	if err != nil {
 		return nil, err
 	}
-	defer s.Logout(loginResp.Eid, dataCenter)
+	defer func() {
+		if err := s.Logout(loginResp.Eid, dataCenter); err != nil {
+			log.Printf("Ошибка при выходе из Wialon (defer): %v", err)
+		}
+	}()
 
 	// Получаем пользователей
 	accounts, err := s.SearchUsers(loginResp.Eid, dataCenter)
@@ -484,7 +488,11 @@ func (s *WialonService) GetAccountsQuickFromHost(host string, token string) ([]W
 	if err != nil {
 		return nil, err
 	}
-	defer s.LogoutWithHost(host, loginResp.Eid)
+	defer func() {
+		if err := s.LogoutWithHost(host, loginResp.Eid); err != nil {
+			log.Printf("Ошибка при выходе из Wialon (host, defer): %v", err)
+		}
+	}()
 
 	// Получаем пользователей
 	accounts, err := s.SearchUsersWithHost(host, loginResp.Eid)
@@ -573,7 +581,11 @@ func (s *WialonService) GetAccountsWithObjectsFromHost(host string, token string
 	if err != nil {
 		return nil, err
 	}
-	defer s.LogoutWithHost(host, loginResp.Eid)
+	defer func() {
+		if err := s.LogoutWithHost(host, loginResp.Eid); err != nil {
+			log.Printf("Ошибка при выходе из Wialon (host, defer): %v", err)
+		}
+	}()
 
 	// Получаем пользователей
 	accounts, err := s.SearchUsersWithHost(host, loginResp.Eid)

@@ -265,76 +265,7 @@ func (s *AxentaSyncService) syncAdminWithTokenAndDBAndProgress(adminAccountID ui
 	return nil
 }
 
-type partnerToken struct {
-	AccountID uint
-	Token     string
-	UpdatedAt time.Time
-}
 
-// loadActivePartnerTokens - устаревший метод, оставлен для обратной совместимости
-// Фильтрует только партнеров
-func (s *AxentaSyncService) loadActivePartnerTokens() (map[uint]partnerToken, error) {
-	var tokens []models.UserToken
-	if err := s.db.Preload("User").
-		Where("is_active = ? AND expires_at > ?", true, time.Now()).
-		Find(&tokens).Error; err != nil {
-		return nil, err
-	}
-
-	result := make(map[uint]partnerToken)
-	for _, token := range tokens {
-		if token.AccountID == 0 {
-			continue
-		}
-
-		if token.User != nil && !token.User.IsPartner() {
-			continue
-		}
-
-		if existing, ok := result[token.AccountID]; ok {
-			if token.UpdatedAt.After(existing.UpdatedAt) {
-				result[token.AccountID] = partnerToken{AccountID: token.AccountID, Token: token.Token, UpdatedAt: token.UpdatedAt}
-			}
-			continue
-		}
-
-		result[token.AccountID] = partnerToken{AccountID: token.AccountID, Token: token.Token, UpdatedAt: token.UpdatedAt}
-	}
-
-	return result, nil
-}
-
-// loadAllActiveTokens загружает токены для ВСЕХ компаний (не только партнеров)
-// Согласно требованиям: запрос происходит от имени пользователя CRM, синхронизация для всех компаний
-func (s *AxentaSyncService) loadAllActiveTokens() (map[uint]partnerToken, error) {
-	var tokens []models.UserToken
-	if err := s.db.Preload("User").
-		Where("is_active = ? AND expires_at > ?", true, time.Now()).
-		Find(&tokens).Error; err != nil {
-		return nil, err
-	}
-
-	result := make(map[uint]partnerToken)
-	for _, token := range tokens {
-		if token.AccountID == 0 {
-			continue
-		}
-
-		// Берем токены для всех пользователей CRM, не только партнеров
-		// API Axenta Cloud автоматически вернет только те объекты, которые доступны по иерархии для данного токена
-		if existing, ok := result[token.AccountID]; ok {
-			// Если уже есть токен для этого account_id, берем более свежий
-			if token.UpdatedAt.After(existing.UpdatedAt) {
-				result[token.AccountID] = partnerToken{AccountID: token.AccountID, Token: token.Token, UpdatedAt: token.UpdatedAt}
-			}
-			continue
-		}
-
-		result[token.AccountID] = partnerToken{AccountID: token.AccountID, Token: token.Token, UpdatedAt: token.UpdatedAt}
-	}
-
-	return result, nil
-}
 
 func (s *AxentaSyncService) getActiveTokenForAdmin(adminAccountID uint) (string, error) {
 	var token models.UserToken
@@ -479,36 +410,9 @@ type axentaObject struct {
 	DeletedAt       string   `json:"deletedAt"`
 }
 
-// fetchObjects получает объекты для конкретного аккаунта (используется для обратной совместимости)
-func (s *AxentaSyncService) fetchObjects(token string, accountID int) ([]axentaObject, error) {
-	result := make([]axentaObject, 0)
-	params := url.Values{}
-	params.Set("per_page", "200")
-	params.Set("accountId", fmt.Sprintf("%d", accountID))
-	nextURL := axentaAPIBase + "/api/cms/objects/?" + params.Encode()
 
-	for nextURL != "" {
-		var response axentaObjectsResponse
-		if err := s.getJSON(nextURL, token, &response); err != nil {
-			return nil, err
-		}
 
-		result = append(result, response.Results...)
-		if response.Next == nil || *response.Next == "" {
-			break
-		}
 
-		nextURL = s.resolveURL(*response.Next)
-	}
-
-	return result, nil
-}
-
-// fetchAllObjects получает ВСЕ объекты по иерархии (без фильтра по accountId)
-// Это соответствует требованиям: запрашиваются все доступные объекты по иерархии вниз до бесконечности
-func (s *AxentaSyncService) fetchAllObjects(token string) ([]axentaObject, error) {
-	return s.fetchAllObjectsWithProgress(token, nil)
-}
 
 // fetchAllObjectsWithProgress получает ВСЕ объекты с отслеживанием прогресса
 func (s *AxentaSyncService) fetchAllObjectsWithProgress(token string, progressCallback ProgressCallback) ([]axentaObject, error) {
@@ -668,9 +572,7 @@ func (s *AxentaSyncService) resolveURL(raw string) string {
 	return base.ResolveReference(u).String()
 }
 
-func (s *AxentaSyncService) storeAccounts(adminAccountID uint, accounts []axentaAccount, syncedAt time.Time) error {
-	return s.storeAccountsWithDB(adminAccountID, accounts, syncedAt, s.db)
-}
+
 
 func (s *AxentaSyncService) storeAccountsWithDB(adminAccountID uint, accounts []axentaAccount, syncedAt time.Time, db *gorm.DB) error {
 	log.Printf("💾 Начинаем сохранение %d аккаунтов в базу данных...", len(accounts))
@@ -767,16 +669,9 @@ func (s *AxentaSyncService) storeAccountsWithDB(adminAccountID uint, accounts []
 	return nil
 }
 
-// syncAllObjects синхронизирует ВСЕ объекты по иерархии (без фильтра по accountId)
-// Это соответствует требованиям: запрашиваются все доступные объекты по иерархии вниз до бесконечности
-func (s *AxentaSyncService) syncAllObjects(adminAccountID uint, token string, syncedAt time.Time) error {
-	return s.syncAllObjectsWithDB(adminAccountID, token, syncedAt, s.db)
-}
 
-// syncAllObjectsWithDB синхронизирует ВСЕ объекты используя указанную БД
-func (s *AxentaSyncService) syncAllObjectsWithDB(adminAccountID uint, token string, syncedAt time.Time, db *gorm.DB) error {
-	return s.syncAllObjectsWithDBAndProgress(adminAccountID, token, syncedAt, db, nil)
-}
+
+
 
 // syncAllObjectsWithDBAndProgress синхронизирует ВСЕ объекты с отслеживанием прогресса
 func (s *AxentaSyncService) syncAllObjectsWithDBAndProgress(adminAccountID uint, token string, syncedAt time.Time, db *gorm.DB, progressCallback ProgressCallback) error {
@@ -964,90 +859,7 @@ func (s *AxentaSyncService) syncAllObjectsWithDBAndProgress(adminAccountID uint,
 	return nil
 }
 
-// syncObjectsForAccounts - устаревший метод, оставлен для обратной совместимости
-// Использует старый подход: запрашивает объекты для каждого аккаунта отдельно
-func (s *AxentaSyncService) syncObjectsForAccounts(adminAccountID uint, token string, accounts []axentaAccount, syncedAt time.Time) error {
-	for _, account := range accounts {
-		objects, err := s.fetchObjects(token, account.ID)
-		if err != nil {
-			log.Printf("AxentaSync: ошибка получения объектов для account=%d: %v", account.ID, err)
-			continue
-		}
 
-		for _, obj := range objects {
-			rawPayload, _ := json.Marshal(obj)
-			adminAccountIDPtr := &adminAccountID
-			snapshot := models.AxentaObjectSnapshot{
-				// AdminAccountID устанавливаем для совместимости с БД (требуется для уникального индекса)
-				AdminAccountID:    adminAccountIDPtr,
-				AccountExternalID: int64(obj.AccountID),
-				ExternalObjectID:  int64(obj.ID),
-				ObjectName:        obj.Name,
-				UniqueID:          obj.UniqueID,
-				DeviceTypeName:    obj.DeviceTypeName,
-				AccountName:       obj.AccountName,
-				Status:            obj.Status,
-				IsActive:          obj.IsActive,
-				LastSyncedAt:      syncedAt,
-				RawPayload:        string(rawPayload),
-			}
-
-			// Парсим последнее сообщение
-			if obj.LastMessageDatetime != "" {
-				if parsed := parseAxentaTime(obj.LastMessageDatetime); parsed != nil {
-					snapshot.LastCommunicationAt = parsed
-				}
-			}
-
-			// Новые поля из API (с проверкой на пустые значения)
-			if obj.CreatorName != "" {
-				snapshot.CreatorName = &obj.CreatorName
-			}
-			if obj.CreatorID != 0 {
-				snapshot.CreatorID = &obj.CreatorID
-			}
-			snapshot.CreatorIsActive = &obj.CreatorIsActive
-			snapshot.AccountIsActive = &obj.AccountIsActive
-
-			// Конвертируем массив телефонов в JSON
-			if len(obj.PhoneNumbers) > 0 {
-				phonesJSON, _ := json.Marshal(obj.PhoneNumbers)
-				phonesStr := string(phonesJSON)
-				snapshot.PhoneNumbers = &phonesStr
-			}
-
-			// Парсим дату создания в Axenta
-			if obj.CreatedAt != "" {
-				if parsed := parseAxentaTime(obj.CreatedAt); parsed != nil {
-					snapshot.AxentaCreatedAt = parsed
-				}
-			}
-
-			// Парсим дату удаления в Axenta
-			if obj.DeletedAt != "" {
-				if parsed := parseAxentaTime(obj.DeletedAt); parsed != nil {
-					snapshot.AxentaDeletedAt = parsed
-				}
-			}
-
-			// ВАЖНО: Уникальный индекс в БД только по external_object_id
-			if err := s.db.Clauses(clause.OnConflict{
-				Columns: []clause.Column{{Name: "external_object_id"}},
-				DoUpdates: clause.AssignmentColumns([]string{
-					"admin_account_id", "account_external_id", "object_name", "unique_id", "device_type_name", "account_name",
-					"status", "is_active", "last_synced_at", "raw_payload", "last_communication_at",
-					// Новые поля
-					"creator_name", "creator_id", "creator_is_active", "account_is_active",
-					"phone_numbers", "axenta_created_at", "axenta_deleted_at",
-				}),
-			}).Create(&snapshot).Error; err != nil {
-				return fmt.Errorf("ошибка сохранения объекта %d: %w", obj.ID, err)
-			}
-		}
-	}
-
-	return nil
-}
 
 func parseAxentaTime(value string) *time.Time {
 	if value == "" {

@@ -528,9 +528,7 @@ func (c *Bitrix24Client) GetContacts(ctx context.Context, credentials *Bitrix24C
 	if limit > 0 {
 		params["start"] = start
 		// Битрикс24 имеет ограничение на количество записей за один запрос
-		if limit > 50 {
-			limit = 50
-		}
+
 	}
 
 	resp, err := c.CallMethod(ctx, credentials, "crm.contact.list", params)
@@ -597,9 +595,7 @@ func (c *Bitrix24Client) GetDeals(ctx context.Context, credentials *Bitrix24Cred
 	if limit > 0 {
 		params["start"] = start
 		// Битрикс24 имеет ограничение на количество записей за один запрос
-		if limit > 50 {
-			limit = 50
-		}
+
 	}
 
 	resp, err := c.CallMethod(ctx, credentials, "crm.deal.list", params)
