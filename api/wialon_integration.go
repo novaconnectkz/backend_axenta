@@ -482,7 +482,7 @@ func (api *WialonIntegrationAPI) SyncData(c *gin.Context) {
 	}
 
 	// Закрываем сессию
-	go api.service.Logout(loginResp.Eid, config.DataCenter)
+	go func() { _ = api.service.Logout(loginResp.Eid, config.DataCenter) }()
 
 	// Обновляем статистику интеграции
 	integration.UpdateStats(true, "")
@@ -568,7 +568,7 @@ func (api *WialonIntegrationAPI) GetUnits(c *gin.Context) {
 	}
 
 	// Закрываем сессию
-	go api.service.Logout(loginResp.Eid, config.DataCenter)
+	go func() { _ = api.service.Logout(loginResp.Eid, config.DataCenter) }()
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

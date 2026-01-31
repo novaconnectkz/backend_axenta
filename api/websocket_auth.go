@@ -149,7 +149,7 @@ func (api *WebSocketAuthAPI) handleWebSocketMessages(conn *LiveDataConnection) {
 		// Обрабатываем различные типы сообщений
 		messageType, ok := message["type"].(string)
 		if !ok {
-			conn.SendMessage("error", map[string]interface{}{
+			_ = conn.SendMessage("error", map[string]interface{}{
 				"message": "Invalid message format",
 			})
 			continue
@@ -157,7 +157,7 @@ func (api *WebSocketAuthAPI) handleWebSocketMessages(conn *LiveDataConnection) {
 
 		switch messageType {
 		case "ping":
-			conn.SendMessage("pong", map[string]interface{}{
+			_ = conn.SendMessage("pong", map[string]interface{}{
 				"message": "Connection alive",
 			})
 
@@ -168,7 +168,7 @@ func (api *WebSocketAuthAPI) handleWebSocketMessages(conn *LiveDataConnection) {
 			api.handleUnsubscription(conn, message)
 
 		default:
-			conn.SendMessage("error", map[string]interface{}{
+			_ = conn.SendMessage("error", map[string]interface{}{
 				"message": "Unknown message type: " + messageType,
 			})
 		}

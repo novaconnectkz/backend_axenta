@@ -4,7 +4,6 @@ import (
 	"backend_axenta/database"
 	"backend_axenta/middleware"
 	"backend_axenta/models"
-	"backend_axenta/services"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -192,7 +191,7 @@ func CreateObject(c *gin.Context) {
 		// Увеличиваем счетчик использований шаблона
 		if err := template.IncrementUsage(tenantDB); err != nil {
 			// Логируем ошибку, но не прерываем создание объекта
-			// TODO: добавить логирование
+			log.Printf("⚠️ Ошибка увеличения счетчика использований шаблона %d: %v", *object.TemplateID, err)
 		}
 	}
 
@@ -220,15 +219,14 @@ func CreateObject(c *gin.Context) {
 		return
 	}
 
-	// Синхронизируем объект с Axetna.cloud асинхронно
-	if integrationService := services.GetIntegrationService(); integrationService != nil {
-		// Синхронизация временно отключена
-		// if tenantID, exists := c.Get("tenant_id"); exists {
-		// 	if tid, ok := tenantID.(uint); ok {
-		// 		integrationService.SyncObjectAsync(tid, "create", &object)
-		// 	}
-		// }
-	}
+	// Синхронизация объекта с Axetna.cloud временно отключена
+	// TODO: включить когда интеграция будет готова
+	// integrationService := services.GetIntegrationService()
+	// if integrationService != nil && tenantID, exists := c.Get("tenant_id"); exists {
+	// 	if tid, ok := tenantID.(uint); ok {
+	// 		integrationService.SyncObjectAsync(tid, "create", &object)
+	// 	}
+	// }
 
 	c.JSON(201, gin.H{"status": "success", "data": object})
 }

@@ -624,7 +624,7 @@ func calculateSnapshotsSummary(snapshots []models.PartnerDailySnapshot, startDat
 	// Рассчитываем эффективную месячную цену с учетом скидки
 	// Это цена, которую партнер реально платит за месяц (30 дней)
 	// Если скидок нет, используем базовую цену для точности
-	effectiveMonthlyPrice := decimal.Zero
+	var effectiveMonthlyPrice decimal.Decimal
 	if discountType == "none" && totalDiscountAmount.IsZero() {
 		// Нет скидок - используем базовую месячную цену
 		effectiveMonthlyPrice = baseMonthlyPrice

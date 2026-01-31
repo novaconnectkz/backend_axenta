@@ -424,6 +424,6 @@ func GetEmailIntegrationDocs(c *gin.Context) {
 
 	c.Header("Content-Type", "text/markdown; charset=utf-8")
 	c.Header("Content-Disposition", "inline; filename=EMAIL_INTEGRATION.md")
-	io.Copy(c.Writer, file)
+	_, _ = io.Copy(c.Writer, file) // Ошибка игнорируется, HTTP ответ уже инициирован
 }
 

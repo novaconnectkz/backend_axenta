@@ -1030,7 +1030,7 @@ func (api *WialonConnectionAPI) GetConnectionObjectsStats(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка авторизации: " + err.Error()})
 		return
 	}
-	defer wialonService.LogoutWithHost(conn.Host, loginResp.Eid)
+	defer func() { _ = wialonService.LogoutWithHost(conn.Host, loginResp.Eid) }()
 
 	// Получаем статистику объектов с учётом иерархии (рекурсивный подсчёт)
 	countPerAccount, totalObjects, err := wialonService.GetUnitsCountWithHierarchy(conn.Host, loginResp.Eid)

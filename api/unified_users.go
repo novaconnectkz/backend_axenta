@@ -19,31 +19,32 @@ import (
 
 // UnifiedUser представляет единую структуру пользователя из любого источника
 type UnifiedUser struct {
-	ID               int64   `json:"id"`
-	Username         string  `json:"username"`
-	Name             string  `json:"name"`
-	Email            string  `json:"email"`
-	Role             string  `json:"role"`
-	IsActive         bool    `json:"is_active"`
-	CreationDatetime string  `json:"creation_datetime,omitempty"`
-	Source           string  `json:"source"` // "axenta" или "wialon"
-	SourceLabel      string  `json:"source_label,omitempty"`
-	Hierarchy        string  `json:"hierarchy,omitempty"`
-	ConnectionID     *uint   `json:"connection_id,omitempty"`
-	AccountType      string  `json:"account_type,omitempty"`
-	DealerRights     bool    `json:"dealer_rights,omitempty"`
-	ObjectsTotal     int     `json:"objects_total,omitempty"`
-	ObjectsActive    int     `json:"objects_active,omitempty"`
+	ID               int64  `json:"id"`
+	Username         string `json:"username"`
+	Name             string `json:"name"`
+	Email            string `json:"email"`
+	Role             string `json:"role"`
+	IsActive         bool   `json:"is_active"`
+	CreationDatetime string `json:"creation_datetime,omitempty"`
+	CreatorName      string `json:"creator_name,omitempty"`
+	Source           string `json:"source"` // "axenta" или "wialon"
+	SourceLabel      string `json:"source_label,omitempty"`
+	Hierarchy        string `json:"hierarchy,omitempty"`
+	ConnectionID     *uint  `json:"connection_id,omitempty"`
+	AccountType      string `json:"account_type,omitempty"`
+	DealerRights     bool   `json:"dealer_rights,omitempty"`
+	ObjectsTotal     int    `json:"objects_total,omitempty"`
+	ObjectsActive    int    `json:"objects_active,omitempty"`
 }
 
 // UnifiedUsersResponse структура ответа для унифицированного API
 type UnifiedUsersResponse struct {
-	Items      []UnifiedUser        `json:"items"`
-	Total      int                  `json:"total"`
-	Page       int                  `json:"page"`
-	PerPage    int                  `json:"per_page"`
-	TotalPages int                  `json:"total_pages"`
-	Stats      UnifiedUsersStats    `json:"stats"`
+	Items      []UnifiedUser     `json:"items"`
+	Total      int               `json:"total"`
+	Page       int               `json:"page"`
+	PerPage    int               `json:"per_page"`
+	TotalPages int               `json:"total_pages"`
+	Stats      UnifiedUsersStats `json:"stats"`
 }
 
 // UnifiedUsersStats статистика пользователей
@@ -95,37 +96,39 @@ func GetUnifiedUsers(c *gin.Context) {
 	// Получаем company_id для Wialon
 	companyID, _ := c.Get("company_id")
 
-	var allUsers []UnifiedUser
+	// Инициализируем пустой слайс, чтобы избежать null в JSON ответе
+	allUsers := make([]UnifiedUser, 0)
 	var stats UnifiedUsersStats
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 
 	// Параллельная загрузка из обоих источников
-	if source == "all" || source == "axenta" {
+	// source может быть: all, axenta, wialon, wh (Wialon Hosting), wl (Wialon Local)
+	loadAxenta := source == "all" || source == "axenta"
+	loadWialon := source == "all" || source == "wialon" || source == "wh" || source == "wl"
+
+	if loadAxenta {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			axentaUsers, axentaTotal, axentaActive := fetchAxentaUsers(userToken, search, activeStr, role, ordering)
 			mu.Lock()
-			for _, u := range axentaUsers {
-				allUsers = append(allUsers, u)
-			}
+			allUsers = append(allUsers, axentaUsers...)
 			stats.AxentaTotal = axentaTotal
 			stats.AxentaActive = axentaActive
 			mu.Unlock()
 		}()
 	}
 
-	if source == "all" || source == "wialon" {
+	if loadWialon {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			if companyID != nil {
-				wialonUsers, wialonTotal, wialonActive := fetchWialonUsers(companyID.(uint), search, activeStr)
+				// Передаём тип подключения для фильтрации (wh или wl)
+				wialonUsers, wialonTotal, wialonActive := fetchWialonUsersFiltered(companyID.(uint), search, activeStr, source)
 				mu.Lock()
-				for _, u := range wialonUsers {
-					allUsers = append(allUsers, u)
-				}
+				allUsers = append(allUsers, wialonUsers...)
 				stats.WialonTotal = wialonTotal
 				stats.WialonActive = wialonActive
 				mu.Unlock()
@@ -220,17 +223,20 @@ func fetchAxentaUsers(userToken, search, active, role, ordering string) ([]Unifi
 	}
 
 	// Парсим ответ
+	// ВАЖНО: API Axenta Cloud использует camelCase для полей
 	var axentaResp struct {
 		Count   int `json:"count"`
 		Results []struct {
 			ID               int64  `json:"id"`
 			Username         string `json:"username"`
-			FirstName        string `json:"first_name"`
-			LastName         string `json:"last_name"`
+			Name             string `json:"name"`       // Полное имя пользователя
+			FirstName        string `json:"first_name"` // Fallback
+			LastName         string `json:"last_name"`  // Fallback
 			Email            string `json:"email"`
-			AccountType      string `json:"account_type"`
-			IsActive         bool   `json:"is_active"`
-			CreationDatetime string `json:"creation_datetime"`
+			AccountType      string `json:"accountType"`      // camelCase в API
+			IsActive         bool   `json:"isActive"`         // camelCase в API
+			CreationDatetime string `json:"creationDatetime"` // camelCase в API
+			CreatorName      string `json:"creatorName"`      // camelCase в API
 		} `json:"results"`
 	}
 
@@ -242,7 +248,11 @@ func fetchAxentaUsers(userToken, search, active, role, ordering string) ([]Unifi
 	totalUsers = axentaResp.Count
 
 	for _, u := range axentaResp.Results {
-		name := strings.TrimSpace(u.FirstName + " " + u.LastName)
+		// Приоритет: Name > FirstName + LastName > Username
+		name := strings.TrimSpace(u.Name)
+		if name == "" {
+			name = strings.TrimSpace(u.FirstName + " " + u.LastName)
+		}
 		if name == "" {
 			name = u.Username
 		}
@@ -257,6 +267,7 @@ func fetchAxentaUsers(userToken, search, active, role, ordering string) ([]Unifi
 			Role:             role,
 			IsActive:         u.IsActive,
 			CreationDatetime: u.CreationDatetime,
+			CreatorName:      u.CreatorName,
 			Source:           "axenta",
 			SourceLabel:      "Axenta Cloud",
 			AccountType:      u.AccountType,
@@ -271,21 +282,31 @@ func fetchAxentaUsers(userToken, search, active, role, ordering string) ([]Unifi
 	return users, totalUsers, activeUsers
 }
 
-// fetchWialonUsers загружает пользователей из Wialon
-func fetchWialonUsers(companyID uint, search, activeStr string) ([]UnifiedUser, int, int) {
-	var users []UnifiedUser
+// fetchWialonUsersFiltered загружает пользователей из Wialon с поддержкой фильтрации по типу подключения
+// sourceFilter: "all" | "wialon" - все подключения, "wh" - только Hosting, "wl" - только Local
+func fetchWialonUsersFiltered(companyID uint, search, activeStr, sourceFilter string) ([]UnifiedUser, int, int) {
+	// Инициализируем пустой слайс, чтобы избежать null в JSON ответе
+	users := make([]UnifiedUser, 0)
 	var totalUsers, activeUsers int
 
 	// Получаем все активные подключения Wialon для компании
 	var connections []models.WialonConnection
 	if err := database.DB.Where("company_id = ? AND is_active = ?", companyID, true).Find(&connections).Error; err != nil {
-		log.Printf("❌ fetchWialonUsers: ошибка получения подключений: %v", err)
+		log.Printf("❌ fetchWialonUsersFiltered: ошибка получения подключений: %v", err)
 		return users, 0, 0
 	}
 
 	wialonService := services.NewWialonService()
 
 	for _, conn := range connections {
+		// Фильтрация по типу подключения
+		if sourceFilter == "wh" && conn.ConnectionType != models.WialonConnectionTypeHosting {
+			continue
+		}
+		if sourceFilter == "wl" && conn.ConnectionType != models.WialonConnectionTypeLocal {
+			continue
+		}
+
 		// Формируем метку источника
 		sourceLabel := ""
 		if conn.ConnectionType == models.WialonConnectionTypeHosting {
@@ -335,20 +356,22 @@ func fetchWialonUsers(companyID uint, search, activeStr string) ([]UnifiedUser, 
 
 			connID := conn.ID
 			users = append(users, UnifiedUser{
-				ID:            int64(acc.ID),
-				Username:      acc.Name,
-				Name:          acc.Name,
-				Email:         "",
-				Role:          accountType,
-				IsActive:      acc.IsActive,
-				Source:        "wialon",
-				SourceLabel:   sourceLabel,
-				Hierarchy:     hierarchy,
-				ConnectionID:  &connID,
-				AccountType:   accountType,
-				DealerRights:  acc.DealerRights,
-				ObjectsTotal:  acc.ObjectsTotal,
-				ObjectsActive: acc.ObjectsActive,
+				ID:               int64(acc.ID),
+				Username:         acc.Name,
+				Name:             acc.Name,
+				Email:            "",
+				Role:             accountType,
+				IsActive:         acc.IsActive,
+				CreationDatetime: acc.CreatedAt,  // Дата создания из Wialon (ct)
+				CreatorName:      acc.ParentName, // Создатель = родительская учётная запись (crt)
+				Source:           "wialon",
+				SourceLabel:      sourceLabel,
+				Hierarchy:        hierarchy,
+				ConnectionID:     &connID,
+				AccountType:      accountType,
+				DealerRights:     acc.DealerRights,
+				ObjectsTotal:     acc.ObjectsTotal,
+				ObjectsActive:    acc.ObjectsActive,
 			})
 
 			totalUsers++
@@ -358,7 +381,7 @@ func fetchWialonUsers(companyID uint, search, activeStr string) ([]UnifiedUser, 
 		}
 	}
 
-	log.Printf("✅ fetchWialonUsers: загружено %d пользователей (активных: %d)", len(users), activeUsers)
+	log.Printf("✅ fetchWialonUsersFiltered (filter=%s): загружено %d пользователей (активных: %d)", sourceFilter, len(users), activeUsers)
 	return users, totalUsers, activeUsers
 }
 

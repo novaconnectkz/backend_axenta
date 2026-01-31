@@ -53,7 +53,7 @@ func getLatestObjectCreatedAt(publicDB *gorm.DB) (*time.Time, error) {
 
 // getOrSetInitialBillingStartDate получает или устанавливает начальную дату биллинга
 // Возвращает сохраненную дату, если она есть, иначе находит последний объект, сохраняет и возвращает
-func getOrSetInitialBillingStartDate(publicDB *gorm.DB, tenantDB *gorm.DB) (*time.Time, error) {
+func getOrSetInitialBillingStartDate(_ *gorm.DB, tenantDB *gorm.DB) (*time.Time, error) {
 	// Получаем настройки с company_id = 1 (глобальные настройки)
 	var settings models.SnapshotSettings
 	if err := tenantDB.Where("company_id = ?", 1).First(&settings).Error; err != nil {

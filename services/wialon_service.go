@@ -520,6 +520,18 @@ func (s *WialonService) GetAccountsQuickFromHost(host string, token string) ([]W
 		}
 	}
 
+	// Создаём карту ВСЕХ пользователей ДО фильтрации
+	// Это нужно для корректного заполнения ParentName - родитель может не быть биллинговым
+	allAccountsMap := make(map[int64]string) // ID -> Name
+	for _, acc := range accounts {
+		allAccountsMap[acc.ID] = acc.Name
+	}
+	// Добавляем главный аккаунт подключения (loginResp.User) в карту
+	// Это позволяет найти создателя, если ParentId указывает на главный аккаунт
+	if loginResp.User != nil && loginResp.User.ID > 0 {
+		allAccountsMap[loginResp.User.ID] = loginResp.User.Name
+	}
+
 	// Фильтруем аккаунты — оставляем только биллинговые
 	billingMap, billingErr := s.SearchAllBillingAccountsWithHost(host, loginResp.Eid)
 	if billingErr == nil && billingMap != nil {
@@ -549,6 +561,11 @@ func (s *WialonService) GetAccountsQuickFromHost(host string, token string) ([]W
 			}
 		}
 		log.Printf("⚡ Wialon QUICK: заменено %d имён на имена учетных записей", replacedCount)
+
+		// Обновляем карту имён после замены на имена ресурсов
+		for _, acc := range accounts {
+			allAccountsMap[acc.ID] = acc.Name
+		}
 	}
 
 	// НЕ загружаем объекты — устанавливаем -1 (индикатор "загружается")
@@ -557,15 +574,12 @@ func (s *WialonService) GetAccountsQuickFromHost(host string, token string) ([]W
 		accounts[i].ObjectsActive = -1
 	}
 
-	// Заполняем ParentName
-	accountMap := make(map[int64]*WialonAccount)
-	for i := range accounts {
-		accountMap[accounts[i].ID] = &accounts[i]
-	}
+	// Заполняем ParentName используя полную карту (до фильтрации)
+	// Это позволяет найти имя родителя, даже если он не биллинговый
 	for i := range accounts {
 		if accounts[i].ParentId > 0 {
-			if parent, ok := accountMap[accounts[i].ParentId]; ok {
-				accounts[i].ParentName = parent.Name
+			if parentName, ok := allAccountsMap[accounts[i].ParentId]; ok {
+				accounts[i].ParentName = parentName
 			}
 		}
 	}

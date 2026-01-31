@@ -6,6 +6,7 @@ import (
 	"backend_axenta/services"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -319,7 +320,7 @@ func (ra *ReportsAPI) GenerateReport(c *gin.Context) {
 	// Запускаем генерацию в горутине
 	go func() {
 		if err := ra.reportService.GenerateReport(params, &report); err != nil {
-			// Ошибка уже обработана в reportService
+			log.Printf("⚠️ Ошибка генерации отчёта %d: %v", report.ID, err)
 		}
 	}()
 

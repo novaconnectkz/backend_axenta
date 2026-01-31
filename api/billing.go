@@ -676,7 +676,9 @@ func GetSubscriptions(c *gin.Context) {
 
 		// Преобразуем подписку в map для добавления объектов
 		subJSON, _ := json.Marshal(sub)
-		json.Unmarshal(subJSON, &subMap)
+		if err := json.Unmarshal(subJSON, &subMap); err != nil {
+			log.Printf("⚠️ Ошибка десериализации подписки %d: %v", sub.ID, err)
+		}
 
 		// Добавляем объекты, если они есть
 		if sub.ContractID != nil && tenantDB != nil {

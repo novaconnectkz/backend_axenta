@@ -31,8 +31,8 @@ var (
 )
 
 type partnerObjectsCacheEntry struct {
-	objects   []models.Object
-	timestamp time.Time
+	_objects   []models.Object // Поле зарезервировано для будущего использования
+	_timestamp time.Time       // Поле зарезервировано для будущего использования
 }
 
 // getPartnerObjectsCountFromAccount получает количество активных объектов партнера из /api/cms/accounts/
@@ -1175,7 +1175,9 @@ func GetContract(c *gin.Context) {
 	// Формируем ответ с договором и подпиской
 	responseData := make(map[string]interface{})
 	responseDataBytes, _ := json.Marshal(contract)
-	json.Unmarshal(responseDataBytes, &responseData)
+	if err := json.Unmarshal(responseDataBytes, &responseData); err != nil {
+		log.Printf("⚠️ Ошибка десериализации договора: %v", err)
+	}
 
 	// Добавляем подписку, если она найдена
 	if subscription != nil {
@@ -4445,7 +4447,7 @@ func GenerateContractNumber(c *gin.Context) {
 		ContractID *uint `json:"contract_id"`
 	}
 
-	c.ShouldBindJSON(&req)
+	_ = c.ShouldBindJSON(&req) // Ошибка игнорируется, так как поля опциональны
 
 	// Получаем companyID из контекста, заголовка или запроса
 	companyID := middleware.GetCompanyID(c)
@@ -6072,7 +6074,7 @@ func DebugAxentaPartnerObjects(c *gin.Context) {
 		Next  *string `json:"next"`
 	}
 
-	json.Unmarshal(body, &axentaResponse)
+	_ = json.Unmarshal(body, &axentaResponse) // Ошибка игнорируется, возвращаем 0 при неудаче
 
 	activeCount := 0
 	inactiveCount := 0

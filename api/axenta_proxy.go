@@ -1720,7 +1720,7 @@ func ExportObjectsToXLSX(c *gin.Context) {
 	}()
 
 	sheetName := "Объекты"
-	f.SetSheetName("Sheet1", sheetName)
+	_ = f.SetSheetName("Sheet1", sheetName)
 
 	// Определяем заголовки
 	headers := []string{
@@ -1760,9 +1760,9 @@ func ExportObjectsToXLSX(c *gin.Context) {
 
 	for i, header := range headers {
 		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
-		f.SetCellValue(sheetName, cell, header)
+		_ = f.SetCellValue(sheetName, cell, header)
 		if styleHeader > 0 {
-			f.SetCellStyle(sheetName, cell, cell, styleHeader)
+			_ = f.SetCellStyle(sheetName, cell, cell, styleHeader)
 		}
 	}
 
@@ -1793,19 +1793,19 @@ func ExportObjectsToXLSX(c *gin.Context) {
 		}
 
 		// Записываем значения
-		f.SetCellValue(sheetName, fmt.Sprintf("A%d", row), obj.ID)
-		f.SetCellValue(sheetName, fmt.Sprintf("B%d", row), obj.Name)
-		f.SetCellValue(sheetName, fmt.Sprintf("C%d", row), obj.UniqueID)
-		f.SetCellValue(sheetName, fmt.Sprintf("D%d", row), obj.DeviceTypeName)
-		f.SetCellValue(sheetName, fmt.Sprintf("E%d", row), obj.AccountName)
-		f.SetCellValue(sheetName, fmt.Sprintf("F%d", row), obj.AccountType)
-		f.SetCellValue(sheetName, fmt.Sprintf("G%d", row), obj.CreatorName)
-		f.SetCellValue(sheetName, fmt.Sprintf("H%d", row), phones)
-		f.SetCellValue(sheetName, fmt.Sprintf("I%d", row), obj.LastMessageDatetime)
-		f.SetCellValue(sheetName, fmt.Sprintf("J%d", row), obj.CreatedAt)
-		f.SetCellValue(sheetName, fmt.Sprintf("K%d", row), obj.DeletedAt)
-		f.SetCellValue(sheetName, fmt.Sprintf("L%d", row), isActive)
-		f.SetCellValue(sheetName, fmt.Sprintf("M%d", row), accessRights)
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("A%d", row), obj.ID)
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("B%d", row), obj.Name)
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("C%d", row), obj.UniqueID)
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("D%d", row), obj.DeviceTypeName)
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("E%d", row), obj.AccountName)
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("F%d", row), obj.AccountType)
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("G%d", row), obj.CreatorName)
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("H%d", row), phones)
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("I%d", row), obj.LastMessageDatetime)
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("J%d", row), obj.CreatedAt)
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("K%d", row), obj.DeletedAt)
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("L%d", row), isActive)
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("M%d", row), accessRights)
 	}
 
 	// Устанавливаем ширину колонок
@@ -1826,7 +1826,7 @@ func ExportObjectsToXLSX(c *gin.Context) {
 	}
 
 	for col, width := range columnWidths {
-		f.SetColWidth(sheetName, col, col, width)
+		_ = f.SetColWidth(sheetName, col, col, width)
 	}
 
 	// Добавляем автофильтр
