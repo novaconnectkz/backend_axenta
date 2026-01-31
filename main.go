@@ -715,6 +715,9 @@ func main() {
 	apiGroup.GET("/users/stats/optimized", api.GetUsersStatsOptimizedFromAxentaCloud)
 	apiGroup.GET("/users/stats/optimized/", api.GetUsersStatsOptimizedFromAxentaCloud)
 
+	// Унифицированный API для пользователей (объединяет Axenta + Wialon)
+	api.RegisterUnifiedUsersRoutes(apiGroup)
+
 	// CMS endpoints для пользователей
 	apiGroup.GET("/cms/users", api.GetUsersFromAxentaCloud)
 	apiGroup.GET("/cms/users/", api.GetUsersFromAxentaCloud)
