@@ -1,130 +1,85 @@
-# Миграция для исправления NOT NULL ограничений на колонках contracts
+# Database Migrations
 
-## Проблема
+Эта директория содержит SQL миграции для базы данных Axenta CRM.
 
-При создании договора на продакшене возникает ошибка:
+## Список миграций
+
+1. **002_create_materialized_views.sql** - Создание материализованных представлений
+2. **003_add_vat_rate_fields.sql** - Добавление полей для настройки НДС
+3. **004_create_system_settings.sql** - Создание таблицы системных настроек
+4. **005_fix_subscriptions_columns.sql** - Добавление contract_id в subscriptions
+5. **006_add_sync_columns.sql** - Добавление метаданных синхронизации (public схема)
+6. **007_add_sync_columns_to_tenants.sql** - Добавление метаданных синхронизации (tenant схемы)
+7. **008_add_max_messenger_columns.sql** - Добавление полей для интеграции с MAX мессенджером
+8. **009_add_sequential_numbers.sql** - Добавление последовательных номеров для счетов и подписок
+
+## Применение миграций
+
+### Локально
+```bash
+psql -U postgres -d axenta_db -f <migration_file>.sql
 ```
-ERROR: null value in column "start_date" of relation "contracts" violates not-null constraint (SQLSTATE 23502)
+
+### На продакшене
+```bash
+# 1. Загрузить миграцию на сервер
+scp <migration_file>.sql root@194.87.143.169:/tmp/
+
+# 2. Подключиться к серверу
+ssh root@194.87.143.169
+
+# 3. Применить миграцию
+sudo -u postgres psql -d axenta_db -f /tmp/<migration_file>.sql
 ```
 
-### Причина
+## Проверка миграций
 
-Существует расхождение между моделью GORM и старой миграцией:
-
-1. **Модель GORM** (`models/contract.go`): `StartDate *time.Time` с `gorm:"default:NULL"` - **опционально**
-2. **Старая миграция** (`cmd/create_missing_tables/main.go`): `start_date DATE NOT NULL` - **обязательно**
-
-На продакшене таблица была создана старой миграцией с NOT NULL, а код пытается создать договор без start_date/end_date, что вызывает ошибку.
-
-## Решение
-
-### 1. Frontend исправления (уже применено)
-
-В `CreateContract.vue` добавлена логика установки дефолтных дат:
-- `start_date` по умолчанию = текущая дата
-- `end_date` по умолчанию = текущая дата + 1 год
-
-Это решает проблему на уровне клиента.
-
-### 2. Backend миграция (требуется применить)
-
-Чтобы привести структуру БД в соответствие с моделью GORM, необходимо изменить колонки на nullable.
-
-## Применение миграции
-
-### Способ 1: Через Go-скрипт (рекомендуется)
+Для проверки применения всех миграций на продакшене:
 
 ```bash
-cd /Users/com/backend_axenta
-go run cmd/migrate_contracts_dates/main.go
+./verify_migrations.sh
 ```
 
-Скрипт автоматически:
-- Найдет все tenant-схемы
-- Проверит существование таблицы contracts в каждой схеме
-- Проверит текущее состояние колонок
-- Применит миграцию только там, где это необходимо
-- Выведет подробный отчет
+Этот скрипт проверит наличие всех критичных колонок и таблиц.
 
-### Способ 2: Через bash-скрипт
+## История миграций
 
-```bash
-cd /Users/com/backend_axenta/migrations
-chmod +x apply_contracts_migration.sh
+Подробная история применения миграций находится в файле [MIGRATION_HISTORY.md](./MIGRATION_HISTORY.md).
 
-# Установите переменные окружения
-export DB_HOST=localhost
-export DB_PORT=5432
-export DB_NAME=axenta_crm
-export DB_USER=postgres
-export DB_PASSWORD=your_password
+## Структура tenant-схем
 
-# Запустите скрипт
-./apply_contracts_migration.sh
-```
+Система использует multi-tenancy архитектуру с отдельными схемами для каждого клиента:
+- `public` - общая схема для всех компаний
+- `tenant_186` - схема для компании ID 186 (GLOMOS)
+- `tenant_default` - схема по умолчанию
+- `tenant_*` - другие tenant-схемы
 
-### Способ 3: Вручную через SQL
+⚠️ **Важно**: При применении структурных изменений необходимо обновлять как `public`, так и все `tenant_*` схемы!
 
-```sql
--- Для каждой tenant-схемы выполните:
-SET search_path TO tenant_XXX;
-ALTER TABLE contracts ALTER COLUMN start_date DROP NOT NULL;
-ALTER TABLE contracts ALTER COLUMN end_date DROP NOT NULL;
-```
+## Автоматические миграции GORM
 
-Где `tenant_XXX` - название вашей tenant-схемы.
+GORM автоматически создает базовую структуру таблиц при первом запуске. Миграции в этой директории дополняют автоматические миграции GORM, добавляя:
+- Индексы для производительности
+- Комментарии к колонкам
+- Ограничения (constraints)
+- Специфичные для проекта колонки
 
-## Проверка результата
+## Проблемы и решения
 
-После применения миграции проверьте результат:
+### Проблема: Колонка не существует
+Если при работе приложения возникает ошибка "column does not exist":
+1. Проверьте наличие соответствующей миграции
+2. Примените миграцию локально и на продакшене
+3. Перезапустите backend-сервис
 
-```sql
--- Для конкретной схемы
-SET search_path TO tenant_XXX;
-SELECT column_name, is_nullable, data_type 
-FROM information_schema.columns 
-WHERE table_name = 'contracts' 
-AND column_name IN ('start_date', 'end_date');
-```
+### Проблема: Разница между локальной и продакшен базой
+1. Запустите `verify_migrations.sh` для проверки
+2. Примените недостающие миграции на продакшене
+3. Обновите MIGRATION_HISTORY.md
 
-Ожидаемый результат:
-```
- column_name | is_nullable | data_type 
--------------+-------------+-----------
- end_date    | YES         | date
- start_date  | YES         | date
-```
+## Контакты
 
-## Влияние на работу системы
-
-- ✅ Исправлена проблема создания договоров на продакшене
-- ✅ Структура БД приведена в соответствие с моделью GORM
-- ✅ Старые договоры не затронуты
-- ✅ Новые договоры создаются с дефолтными датами из frontend
-- ✅ Возможность создания договоров без дат (через API напрямую)
-
-## Откат миграции
-
-Если потребуется откатить миграцию:
-
-```sql
--- Для каждой tenant-схемы:
-SET search_path TO tenant_XXX;
-
--- Сначала обновите NULL значения на дефолтные
-UPDATE contracts SET start_date = CURRENT_DATE WHERE start_date IS NULL;
-UPDATE contracts SET end_date = start_date + INTERVAL '1 year' WHERE end_date IS NULL;
-
--- Затем верните NOT NULL ограничение
-ALTER TABLE contracts ALTER COLUMN start_date SET NOT NULL;
-ALTER TABLE contracts ALTER COLUMN end_date SET NOT NULL;
-```
-
-## Дата создания
-
-18 ноября 2025
-
-## Автор
-
-Backend Axenta Team
+- **Продакшен сервер**: 194.87.143.169
+- **База данных**: axenta_db
+- **PostgreSQL пользователь**: postgres
 

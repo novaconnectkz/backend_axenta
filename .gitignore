@@ -79,8 +79,10 @@ axenta_backend
 axenta_backend_linux
 test_build
 
-# Backup files
+# Backup files (но миграции — в git!)
 *.sql
+!migrations/*.sql
+!database/migrations/*.sql
 backup_*.sql
 *.tar.gz
 *.backup
