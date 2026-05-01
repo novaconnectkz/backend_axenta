@@ -22,6 +22,12 @@ func InitTelegramService() {
 	telegramIntegrationService = services.NewTelegramIntegrationService(database.DB, logger)
 }
 
+// GetTelegramService возвращает singleton сервиса интеграции (nil если не инициализирован).
+// Используется NotificationService после InitTelegramService.
+func GetTelegramService() *services.TelegramIntegrationService {
+	return telegramIntegrationService
+}
+
 // TelegramIntegrationAPI API для работы с интеграцией Telegram
 type TelegramIntegrationAPI struct {
 	db                        *gorm.DB

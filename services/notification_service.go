@@ -192,7 +192,12 @@ func (s *NotificationService) findTemplate(notifType, channel string, companyID 
 		return nil, err
 	}
 
-	return nil, fmt.Errorf("шаблон '%s' для канала '%s' не найден (ни для company_id=%d ни как default)", notifType, channel, companyID)
+	// Fallback на встроенный builtin-шаблон (без БД).
+	if builtin := findBuiltinTemplate(notifType, channel); builtin != nil {
+		return builtin, nil
+	}
+
+	return nil, fmt.Errorf("шаблон '%s' для канала '%s' не найден (ни для company_id=%d, ни global, ни builtin)", notifType, channel, companyID)
 }
 
 // renderTemplate рендерит subject и body шаблона через text/html template.
@@ -432,9 +437,10 @@ func (s *NotificationService) GetNotificationStatistics(companyID uint) (map[str
 	return result, nil
 }
 
-// CreateDefaultTemplates создаёт стандартный набор шаблонов для компании.
-// Phase 3 — добавит набор реальных шаблонов. Phase 1: пусто.
+// CreateDefaultTemplates записывает в БД набор стандартных builtin-шаблонов
+// для компании (installation_*, и т.д.). Идемпотентно — пропускает уже
+// существующие записи по Name+CompanyID.
 func (s *NotificationService) CreateDefaultTemplates(companyID uint) error {
-	return nil
+	return s.seedBuiltinTemplates(companyID)
 }
 

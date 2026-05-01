@@ -22,6 +22,12 @@ func InitMaxService() {
 	maxIntegrationService = services.NewMaxIntegrationService(database.DB, logger)
 }
 
+// GetMaxService возвращает singleton сервиса интеграции (nil если не инициализирован).
+// Используется NotificationService после InitMaxService.
+func GetMaxService() *services.MaxIntegrationService {
+	return maxIntegrationService
+}
+
 // MaxIntegrationAPI API для работы с интеграцией MAX
 type MaxIntegrationAPI struct {
 	db                   *gorm.DB

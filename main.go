@@ -156,12 +156,17 @@ func main() {
 		log.Println("⚠️ Планировщики снимков отключены (ENABLE_SNAPSHOT_SCHEDULER != true)")
 	}
 
-	// Инициализируем систему уведомлений - временно отключено
-	// cache := services.NewCacheService(database.RedisClient, log.New(log.Writer(), "CACHE: ", log.LstdFlags))
-	// notificationService := services.NewNotificationService(database.DB, cache)
-	// _ = services.NewNotificationFallbackService(database.DB, notificationService) // fallbackService для будущего использования
-	// notificationAPI := api.NewNotificationAPI(notificationService)
-	log.Println("⚠️ Notification System temporarily disabled")
+	// Инициализируем систему уведомлений (Phase 1+2: email/telegram/max каналы).
+	// Telegram и MAX-сервисы созданы выше через api.InitTelegramService/InitMaxService.
+	notifCache := services.NewCacheService(database.RedisClient, log.New(log.Writer(), "[Notif_Cache] ", log.LstdFlags))
+	notificationService := services.NewNotificationService(
+		database.DB,
+		notifCache,
+		api.GetTelegramService(),
+		api.GetMaxService(),
+	)
+	_ = notificationService // используется в InstallationService и API ниже когда будут подключены
+	log.Println("✅ Notification System initialized (email/telegram/max channels)")
 
 	// Выполняем миграции для основных таблиц (не мультитенантных)
 	// Миграции выполняются в database.ConnectDatabase() через RunAllMigrations()
