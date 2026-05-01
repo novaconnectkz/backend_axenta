@@ -212,7 +212,9 @@ func main() {
 
 	r := gin.Default()
 
-	// Отключаем автоматические редиректы для trailing slash
+	// Отключаем автоматические редиректы для trailing slash —
+	// нормализацию URL делаем на уровне http.Handler-обёртки ниже
+	// (см. вызов r.Run / http.ListenAndServe в конце main).
 	r.RedirectTrailingSlash = false
 	r.RedirectFixedPath = false
 
@@ -1270,5 +1272,26 @@ func main() {
 	// r.POST("/api/notifications/telegram/webhook/:company_id", notificationAPI.ProcessTelegramWebhook)
 
 	log.Printf("Server starting on port %s...", cfg.App.Port)
-	r.Run(":" + cfg.App.Port)
+
+	// Оборачиваем gin engine в нормализатор URL: режем trailing slash
+	// перед роутингом — чтобы новые маршруты регистрировались только
+	// как `/path` без `/path/` дубля. Старые дубли остаются как
+	// безвредные no-op (после нормализации они никогда не матчатся).
+	if err := http.ListenAndServe(":"+cfg.App.Port, &trailingSlashNormalizer{inner: r}); err != nil {
+		log.Fatalf("server: %v", err)
+	}
+}
+
+// trailingSlashNormalizer — http.Handler-обёртка которая удаляет
+// trailing slash из URL.Path перед делегированием в gin engine.
+// Корневой "/" не трогаем.
+type trailingSlashNormalizer struct {
+	inner http.Handler
+}
+
+func (h *trailingSlashNormalizer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if len(req.URL.Path) > 1 && req.URL.Path[len(req.URL.Path)-1] == '/' {
+		req.URL.Path = req.URL.Path[:len(req.URL.Path)-1]
+	}
+	h.inner.ServeHTTP(w, req)
 }
