@@ -123,6 +123,126 @@ var builtinTemplates = []defaultTemplate{
 {{.scheduled_at}} — {{.address}}
 Клиент: {{.client_contact}}`,
 	},
+
+	// === Биллинговые алерты ===
+	{
+		NotifType: "billing_alert",
+		Channel:   "email",
+		Subject:   "Биллинг: {{.alert_type}}",
+		Body: `<p><strong>Биллинговое уведомление</strong></p>
+<p>Тип: {{.alert_type}}</p>
+<p>{{.message}}</p>
+<p>Компания #{{.company_id}}</p>`,
+	},
+	{
+		NotifType: "billing_alert",
+		Channel:   "telegram",
+		Body: `💰 *Биллинг: {{.alert_type}}*
+{{.message}}`,
+	},
+	{
+		NotifType: "billing_alert",
+		Channel:   "max",
+		Body: `💰 Биллинг: {{.alert_type}}
+{{.message}}`,
+	},
+
+	// === Складские алерты (общий вид) ===
+	{
+		NotifType: "warehouse_alert",
+		Channel:   "email",
+		Subject:   "Склад: {{.alert_type}}",
+		Body: `<p><strong>Складское уведомление</strong></p>
+<p>Тип: {{.alert_type}}</p>
+<p>{{.message}}</p>`,
+	},
+	{
+		NotifType: "warehouse_alert",
+		Channel:   "telegram",
+		Body: `📦 *Склад: {{.alert_type}}*
+{{.message}}`,
+	},
+	{
+		NotifType: "warehouse_alert",
+		Channel:   "max",
+		Body: `📦 Склад: {{.alert_type}}
+{{.message}}`,
+	},
+
+	// === StockAlert (низкий остаток) ===
+	{
+		NotifType: "stock_alert",
+		Channel:   "email",
+		Subject:   "Склад #{{.alert_id}}: {{.title}}",
+		Body: `<p><strong>{{.title}}</strong> ({{.severity}})</p>
+<p>{{.description}}</p>
+{{if .equipment_model}}<p>Оборудование: {{.equipment_brand}} {{.equipment_model}} (S/N {{.equipment_serial}})</p>{{end}}
+{{if .category_name}}<p>Категория: {{.category_name}}</p>{{end}}
+<p>Дата: {{.created_at}}</p>`,
+	},
+	{
+		NotifType: "stock_alert",
+		Channel:   "telegram",
+		Body: `⚠️ *{{.title}}* [{{.severity}}]
+{{.description}}
+{{if .equipment_model}}{{.equipment_brand}} {{.equipment_model}} (S/N {{.equipment_serial}}){{end}}`,
+	},
+
+	// === Гарантия истекает ===
+	{
+		NotifType: "warranty_alert",
+		Channel:   "email",
+		Subject:   "Гарантия истекает: {{.title}}",
+		Body: `<p><strong>{{.title}}</strong> ({{.severity}})</p>
+<p>{{.description}}</p>
+{{if .equipment_model}}<p>Оборудование: {{.equipment_brand}} {{.equipment_model}} (S/N {{.equipment_serial}})</p>{{end}}`,
+	},
+	{
+		NotifType: "warranty_alert",
+		Channel:   "telegram",
+		Body: `🛡 *Гарантия: {{.title}}*
+{{.description}}`,
+	},
+
+	// === Требуется обслуживание ===
+	{
+		NotifType: "maintenance_alert",
+		Channel:   "email",
+		Subject:   "ТО оборудования: {{.title}}",
+		Body: `<p><strong>{{.title}}</strong> ({{.severity}})</p>
+<p>{{.description}}</p>
+{{if .equipment_model}}<p>Оборудование: {{.equipment_brand}} {{.equipment_model}} (S/N {{.equipment_serial}})</p>{{end}}`,
+	},
+	{
+		NotifType: "maintenance_alert",
+		Channel:   "telegram",
+		Body: `🔧 *ТО: {{.title}}*
+{{.description}}`,
+	},
+
+	// === Перемещение оборудования ===
+	{
+		NotifType: "equipment_movement",
+		Channel:   "email",
+		Subject:   "Складская операция #{{.operation_id}}: {{.type_display}}",
+		Body: `<p><strong>{{.type_display}}</strong> #{{.operation_id}}</p>
+<p>Статус: {{.status}}, количество: {{.quantity}}</p>
+{{if .from_location}}<p>Откуда: {{.from_location}}</p>{{end}}
+{{if .to_location}}<p>Куда: {{.to_location}}</p>{{end}}
+{{if .equipment_model}}<p>Оборудование: {{.equipment_brand}} {{.equipment_model}} (S/N {{.equipment_serial}})</p>{{end}}
+{{if .document_number}}<p>Документ: {{.document_number}}</p>{{end}}
+{{if .user_name}}<p>Ответственный: {{.user_name}}</p>{{end}}
+<p>Дата: {{.created_at}}</p>`,
+	},
+	{
+		NotifType: "equipment_movement",
+		Channel:   "telegram",
+		Body: `📦 *{{.type_display}}* #{{.operation_id}}
+Статус: {{.status}}, кол-во: {{.quantity}}
+{{if .equipment_model}}{{.equipment_brand}} {{.equipment_model}}{{end}}
+{{if .from_location}}Откуда: {{.from_location}}{{end}}
+{{if .to_location}}Куда: {{.to_location}}{{end}}`,
+	},
 }
 
 // findBuiltinTemplate возвращает builtin-шаблон по type+channel или nil.

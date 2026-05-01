@@ -301,6 +301,54 @@ func buildInstallationData(i *models.Installation, installer *models.Installer) 
 	return data
 }
 
+// buildStockAlertData собирает переменные шаблона из StockAlert.
+func buildStockAlertData(a models.StockAlert) map[string]interface{} {
+	data := map[string]interface{}{
+		"alert_id":    a.ID,
+		"alert_type":  a.Type,
+		"title":       a.Title,
+		"description": a.Description,
+		"severity":    a.Severity,
+		"status":      a.Status,
+		"created_at":  a.CreatedAt.Format("2006-01-02 15:04"),
+	}
+	if a.Equipment != nil {
+		data["equipment_model"] = a.Equipment.Model
+		data["equipment_brand"] = a.Equipment.Brand
+		data["equipment_serial"] = a.Equipment.SerialNumber
+	}
+	if a.EquipmentCategory != nil {
+		data["category_name"] = a.EquipmentCategory.Name
+	}
+	return data
+}
+
+// buildWarehouseOperationData собирает переменные шаблона из WarehouseOperation.
+func buildWarehouseOperationData(op models.WarehouseOperation) map[string]interface{} {
+	data := map[string]interface{}{
+		"operation_id":    op.ID,
+		"operation_type":  op.Type,
+		"type_display":    op.GetTypeDisplayName(),
+		"description":     op.Description,
+		"status":          op.Status,
+		"quantity":        op.Quantity,
+		"from_location":   op.FromLocation,
+		"to_location":     op.ToLocation,
+		"document_number": op.DocumentNumber,
+		"notes":           op.Notes,
+		"created_at":      op.CreatedAt.Format("2006-01-02 15:04"),
+	}
+	if op.Equipment != nil {
+		data["equipment_model"] = op.Equipment.Model
+		data["equipment_brand"] = op.Equipment.Brand
+		data["equipment_serial"] = op.Equipment.SerialNumber
+	}
+	if op.User != nil {
+		data["user_name"] = strings.TrimSpace(op.User.FirstName + " " + op.User.LastName)
+	}
+	return data
+}
+
 func (s *NotificationService) SendInstallationReminder(installation *models.Installation, companyID uint) error {
 	return s.sendToInstaller(installation, companyID, "installation_reminder", nil)
 }
@@ -328,38 +376,87 @@ func (s *NotificationService) SendInstallationRescheduled(installation *models.I
 }
 
 // =====================================================================
-// Прочие convenience-методы. Резолв recipient (admin компании,
-// ответственный за биллинг/склад) — Phase 3.
+// Convenience-методы для биллинговых и складских алертов.
+// Получатели — пользователи компании с подходящей ролью.
+// Каналы — все включённые в NotificationSettings и не отключённые
+// в UserNotificationPreferences. Шаблоны — builtin (см.
+// notification_default_templates.go).
 // =====================================================================
 
+// SendBillingAlert уведомляет admin/accountant компании о биллинговом событии
+// (просрочка, превышение лимита, ошибка платежа и т.п.).
 func (s *NotificationService) SendBillingAlert(companyID uint, alertType string, message string) error {
-	s.Logger.Printf("ℹ️ BillingAlert (Phase 3): company=%d type=%s msg=%q", companyID, alertType, message)
-	return nil
+	recipients, err := s.resolveRecipientsByRoles(companyID, []string{models.RoleAdmin, models.RoleAccountant})
+	if err != nil {
+		return fmt.Errorf("BillingAlert: %w", err)
+	}
+	data := map[string]interface{}{
+		"alert_type": alertType,
+		"message":    message,
+		"company_id": companyID,
+	}
+	return s.sendAlertToRecipients(companyID, recipients, alertCategoryBilling,
+		"billing_alert", data, 0, "billing")
 }
 
+// SendWarehouseAlert уведомляет admin/tech компании о складском событии общего вида.
 func (s *NotificationService) SendWarehouseAlert(companyID uint, alertType string, message string) error {
-	s.Logger.Printf("ℹ️ WarehouseAlert (Phase 3): company=%d type=%s msg=%q", companyID, alertType, message)
-	return nil
+	recipients, err := s.resolveRecipientsByRoles(companyID, []string{models.RoleAdmin, models.RoleTech})
+	if err != nil {
+		return fmt.Errorf("WarehouseAlert: %w", err)
+	}
+	data := map[string]interface{}{
+		"alert_type": alertType,
+		"message":    message,
+		"company_id": companyID,
+	}
+	return s.sendAlertToRecipients(companyID, recipients, alertCategoryWarehouse,
+		"warehouse_alert", data, 0, "warehouse")
 }
 
+// SendStockAlert уведомляет admin/tech компании о складских событиях
+// (низкий остаток, отсутствие товара).
 func (s *NotificationService) SendStockAlert(alert models.StockAlert) error {
-	s.Logger.Printf("ℹ️ StockAlert (Phase 3): id=%d", alert.ID)
-	return nil
+	recipients, err := s.resolveRecipientsByRoles(alert.CompanyID, []string{models.RoleAdmin, models.RoleTech})
+	if err != nil {
+		return fmt.Errorf("StockAlert: %w", err)
+	}
+	data := buildStockAlertData(alert)
+	return s.sendAlertToRecipients(alert.CompanyID, recipients, alertCategoryWarehouse,
+		"stock_alert", data, alert.ID, "stock_alert")
 }
 
+// SendWarrantyAlert — истечение гарантии оборудования.
 func (s *NotificationService) SendWarrantyAlert(alert models.StockAlert) error {
-	s.Logger.Printf("ℹ️ WarrantyAlert (Phase 3): id=%d", alert.ID)
-	return nil
+	recipients, err := s.resolveRecipientsByRoles(alert.CompanyID, []string{models.RoleAdmin, models.RoleTech})
+	if err != nil {
+		return fmt.Errorf("WarrantyAlert: %w", err)
+	}
+	data := buildStockAlertData(alert)
+	return s.sendAlertToRecipients(alert.CompanyID, recipients, alertCategoryWarehouse,
+		"warranty_alert", data, alert.ID, "stock_alert")
 }
 
+// SendMaintenanceAlert — необходимость ТО оборудования.
 func (s *NotificationService) SendMaintenanceAlert(alert models.StockAlert) error {
-	s.Logger.Printf("ℹ️ MaintenanceAlert (Phase 3): id=%d", alert.ID)
-	return nil
+	recipients, err := s.resolveRecipientsByRoles(alert.CompanyID, []string{models.RoleAdmin, models.RoleTech})
+	if err != nil {
+		return fmt.Errorf("MaintenanceAlert: %w", err)
+	}
+	data := buildStockAlertData(alert)
+	return s.sendAlertToRecipients(alert.CompanyID, recipients, alertCategoryWarehouse,
+		"maintenance_alert", data, alert.ID, "stock_alert")
 }
 
+// SendEquipmentMovementNotification — приёмка/выдача/перемещение оборудования.
 func (s *NotificationService) SendEquipmentMovementNotification(operation models.WarehouseOperation) error {
-	s.Logger.Printf("ℹ️ EquipmentMovement (Phase 3): operation=%d", operation.ID)
-	return nil
+	recipients, err := s.resolveRecipientsByRoles(operation.CompanyID, []string{models.RoleAdmin, models.RoleTech})
+	if err != nil {
+		return fmt.Errorf("EquipmentMovement: %w", err)
+	}
+	data := buildWarehouseOperationData(operation)
+	return s.sendAlertToRecipients(operation.CompanyID, recipients, alertCategoryWarehouse,
+		"equipment_movement", data, operation.ID, "warehouse_operation")
 }
 
 // ProcessRetryNotifications выполняет одну итерацию retry-цикла —
