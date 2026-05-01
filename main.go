@@ -1094,17 +1094,22 @@ func main() {
 		})
 	})
 
-	// Остальные маршруты installations временно отключены (в рамках основной apiGroup)
-	// Остальные маршруты installations временно отключены
-	/*
-		apiGroup.GET("/installations/:id", installationAPI.GetInstallation)
-		apiGroup.POST("/installations", installationAPI.CreateInstallation)
-		apiGroup.PUT("/installations/:id", installationAPI.UpdateInstallation)
-		apiGroup.DELETE("/installations/:id", installationAPI.DeleteInstallation)
-		apiGroup.PUT("/installations/:id/start", installationAPI.StartInstallation)
-		apiGroup.PUT("/installations/:id/complete", installationAPI.CompleteInstallation)
-		apiGroup.PUT("/installations/:id/cancel", installationAPI.CancelInstallation)
-	*/
+	// Installations API (apiGroup = /api/auth, под auth + tenant middleware).
+	// Хендлеры берут БД из контекста через api.getDB(c) (tenant_db от
+	// tenantMiddleware), с fallback на api.DB для тестов / dev.
+	installationAPI := api.NewInstallationAPI(database.DB, notificationService)
+	apiGroup.GET("/installations", installationAPI.GetInstallations)
+	apiGroup.GET("/installations/", installationAPI.GetInstallations)
+	apiGroup.GET("/installations/statistics", installationAPI.GetInstallationStatistics)
+	apiGroup.GET("/installations/statistics/", installationAPI.GetInstallationStatistics)
+	apiGroup.GET("/installations/:id", installationAPI.GetInstallation)
+	apiGroup.POST("/installations", installationAPI.CreateInstallation)
+	apiGroup.POST("/installations/", installationAPI.CreateInstallation)
+	apiGroup.PUT("/installations/:id", installationAPI.UpdateInstallation)
+	apiGroup.DELETE("/installations/:id", installationAPI.DeleteInstallation)
+	apiGroup.PUT("/installations/:id/start", installationAPI.StartInstallation)
+	apiGroup.PUT("/installations/:id/complete", installationAPI.CompleteInstallation)
+	apiGroup.PUT("/installations/:id/cancel", installationAPI.CancelInstallation)
 
 	// Монтажники - временно отключено
 	/*
