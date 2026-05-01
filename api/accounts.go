@@ -1,4 +1,4 @@
-package handlers
+package api
 
 import (
 	"bytes"
@@ -539,10 +539,3 @@ func (h *AccountsHandler) MoveAccount(c *gin.Context) {
 	})
 }
 
-// min возвращает минимальное из двух чисел
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

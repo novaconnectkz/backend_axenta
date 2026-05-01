@@ -5,7 +5,6 @@ import (
 	"backend_axenta/audit"
 	"backend_axenta/config"
 	"backend_axenta/database"
-	"backend_axenta/handlers"
 	"backend_axenta/middleware"
 	"backend_axenta/services"
 
@@ -612,7 +611,7 @@ func main() {
 	cmsGroup.GET("/test", api.TestEndpoint)
 
 	// Добавляем обработчик для перемещения учетных записей
-	accountsHandler := handlers.NewAccountsHandler()
+	accountsHandler := api.NewAccountsHandler()
 	cmsGroup.POST("/accounts/change_account", accountsHandler.MoveAccount)
 	cmsGroup.POST("/accounts/change_account/", accountsHandler.MoveAccount)
 
@@ -738,7 +737,7 @@ func main() {
 
 	// Учетные записи (прокси к Axenta API)
 	log.Println("🔧 Registering accounts proxy endpoints...")
-	accountsHandler = handlers.NewAccountsHandler()
+	accountsHandler = api.NewAccountsHandler()
 	apiGroup.GET("/accounts", accountsHandler.GetAccounts)
 	apiGroup.GET("/accounts/", accountsHandler.GetAccounts)
 	apiGroup.POST("/accounts", accountsHandler.CreateAccount)
