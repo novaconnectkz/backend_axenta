@@ -10,16 +10,43 @@ import (
 	"gorm.io/gorm"
 
 	"backend_axenta/models"
+	"backend_axenta/services"
 )
 
 // InstallationAPI представляет API для работы с монтажами
 type InstallationAPI struct {
-	DB *gorm.DB
+	DB           *gorm.DB
+	Notification *services.NotificationService
 }
 
-// NewInstallationAPI создает новый экземпляр InstallationAPI
-func NewInstallationAPI(db *gorm.DB) *InstallationAPI {
-	return &InstallationAPI{DB: db}
+// NewInstallationAPI создает новый экземпляр InstallationAPI.
+// notification может быть nil — тогда уведомления отправляться не будут.
+func NewInstallationAPI(db *gorm.DB, notification *services.NotificationService) *InstallationAPI {
+	return &InstallationAPI{DB: db, Notification: notification}
+}
+
+// installationCompanyID — извлекает company_id из контекста (положен tenant
+// middleware). Возвращает 0 если не найден.
+func installationCompanyID(c *gin.Context) uint {
+	if v, ok := c.Get("company_id"); ok {
+		if id, ok2 := v.(uint); ok2 {
+			return id
+		}
+	}
+	return 0
+}
+
+// notifyAsync отправляет уведомление в горутине — не блокирует HTTP-ответ.
+// Ошибка отправки логируется, но не возвращается клиенту.
+func (api *InstallationAPI) notifyAsync(send func() error, label string) {
+	if api.Notification == nil {
+		return
+	}
+	go func() {
+		if err := send(); err != nil {
+			log.Printf("⚠️ Notification (%s) failed: %v", label, err)
+		}
+	}()
 }
 
 // CreateInstallation создает новый монтаж
@@ -98,6 +125,13 @@ func (api *InstallationAPI) CreateInstallation(c *gin.Context) {
 	// Загружаем связанные данные
 	api.DB.Preload("Object").Preload("Installer").Preload("Location").
 		Preload("Equipment").Preload("CreatedByUser").First(&installation, installation.ID)
+
+	// Уведомление монтажнику (асинхронно)
+	companyID := installationCompanyID(c)
+	createdInstallation := installation
+	api.notifyAsync(func() error {
+		return api.Notification.SendInstallationCreated(&createdInstallation, companyID)
+	}, "installation_created")
 
 	c.JSON(http.StatusCreated, gin.H{
 		"message": "Монтаж успешно создан",
@@ -225,6 +259,8 @@ func (api *InstallationAPI) UpdateInstallation(c *gin.Context) {
 		}
 	}
 
+	oldScheduledAt := installation.ScheduledAt
+
 	if err := api.DB.Model(&installation).Updates(updateData).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при обновлении монтажа"})
 		return
@@ -233,6 +269,19 @@ func (api *InstallationAPI) UpdateInstallation(c *gin.Context) {
 	// Загружаем обновленные данные
 	api.DB.Preload("Object").Preload("Installer").Preload("Location").
 		Preload("Equipment").Preload("CreatedByUser").First(&installation, installation.ID)
+
+	// Уведомление: если поменялась дата → reschedule, иначе обычный update
+	companyID := installationCompanyID(c)
+	updatedInstallation := installation
+	if !updateData.ScheduledAt.IsZero() && !updateData.ScheduledAt.Equal(oldScheduledAt) {
+		api.notifyAsync(func() error {
+			return api.Notification.SendInstallationRescheduled(&updatedInstallation, companyID, oldScheduledAt)
+		}, "installation_rescheduled")
+	} else {
+		api.notifyAsync(func() error {
+			return api.Notification.SendInstallationUpdated(&updatedInstallation, companyID)
+		}, "installation_updated")
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Монтаж успешно обновлен",
@@ -348,6 +397,12 @@ func (api *InstallationAPI) CompleteInstallation(c *gin.Context) {
 		return
 	}
 
+	companyID := installationCompanyID(c)
+	completedInstallation := installation
+	api.notifyAsync(func() error {
+		return api.Notification.SendInstallationCompleted(&completedInstallation, companyID)
+	}, "installation_completed")
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Монтаж успешно завершен",
 		"data":    installation,
@@ -389,6 +444,12 @@ func (api *InstallationAPI) CancelInstallation(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при отмене монтажа"})
 		return
 	}
+
+	companyID := installationCompanyID(c)
+	cancelledInstallation := installation
+	api.notifyAsync(func() error {
+		return api.Notification.SendInstallationCancelled(&cancelledInstallation, companyID)
+	}, "installation_cancelled")
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Монтаж отменен",

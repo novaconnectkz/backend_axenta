@@ -556,7 +556,7 @@ func main() {
 	// Временные endpoints без мультитенантности для тестирования
 	testGroup := r.Group("/api/test")
 	{
-		installationAPI := api.NewInstallationAPI(database.DB)
+		installationAPI := api.NewInstallationAPI(database.DB, notificationService)
 		testGroup.GET("/installations", installationAPI.GetInstallations)
 		testGroup.GET("/installations/statistics", func(c *gin.Context) {
 			c.JSON(200, gin.H{

@@ -114,7 +114,7 @@ func TestCreateInstallation(t *testing.T) {
 	db := setupInstallationTestDB()
 	object, installer, _ := createInstallationTestData(db)
 
-	api := NewInstallationAPI(db)
+	api := NewInstallationAPI(db, nil)
 	router := gin.New()
 	router.POST("/installations", api.CreateInstallation)
 
@@ -171,7 +171,7 @@ func TestCreateInstallationWithConflict(t *testing.T) {
 	}
 	db.Create(&existingInstallation)
 
-	api := NewInstallationAPI(db)
+	api := NewInstallationAPI(db, nil)
 	router := gin.New()
 	router.POST("/installations", api.CreateInstallation)
 
@@ -228,7 +228,7 @@ func TestGetInstallations(t *testing.T) {
 		db.Create(&installation)
 	}
 
-	api := NewInstallationAPI(db)
+	api := NewInstallationAPI(db, nil)
 	router := gin.New()
 	router.GET("/installations", api.GetInstallations)
 
@@ -277,7 +277,7 @@ func TestGetInstallationsWithFilters(t *testing.T) {
 		db.Create(&installation)
 	}
 
-	api := NewInstallationAPI(db)
+	api := NewInstallationAPI(db, nil)
 	router := gin.New()
 	router.GET("/installations", api.GetInstallations)
 
@@ -310,7 +310,7 @@ func TestStartInstallation(t *testing.T) {
 	}
 	db.Create(&installation)
 
-	api := NewInstallationAPI(db)
+	api := NewInstallationAPI(db, nil)
 	router := gin.New()
 	router.PUT("/installations/:id/start", api.StartInstallation)
 
@@ -351,7 +351,7 @@ func TestCompleteInstallation(t *testing.T) {
 	}
 	db.Create(&installation)
 
-	api := NewInstallationAPI(db)
+	api := NewInstallationAPI(db, nil)
 	router := gin.New()
 	router.PUT("/installations/:id/complete", api.CompleteInstallation)
 
@@ -419,7 +419,7 @@ func TestGetInstallerSchedule(t *testing.T) {
 		db.Create(&installation)
 	}
 
-	api := NewInstallationAPI(db)
+	api := NewInstallationAPI(db, nil)
 	router := gin.New()
 	router.GET("/installers/:installer_id/schedule", api.GetInstallerSchedule)
 
@@ -457,7 +457,7 @@ func TestGetInstallationStatistics(t *testing.T) {
 		db.Create(&installation)
 	}
 
-	api := NewInstallationAPI(db)
+	api := NewInstallationAPI(db, nil)
 	router := gin.New()
 	router.GET("/installations/statistics", api.GetInstallationStatistics)
 
@@ -514,7 +514,7 @@ func BenchmarkGetInstallations(b *testing.B) {
 		db.Create(&installation)
 	}
 
-	api := NewInstallationAPI(db)
+	api := NewInstallationAPI(db, nil)
 	router := gin.New()
 	router.GET("/installations", api.GetInstallations)
 
