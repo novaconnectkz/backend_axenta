@@ -611,6 +611,11 @@ func main() {
 
 	log.Println("✅ CMS endpoints registered without Axenta authentication")
 
+	// Notification admin API (templates, test send, logs, stats)
+	notificationAPI := api.NewNotificationAPI(notificationService)
+	notificationAPI.RegisterRoutes(apiGroup)
+	log.Println("✅ Notification API registered at /api/auth/notifications/*")
+
 	// Объекты (с аутентификацией) - проксирование к Axenta Cloud
 	log.Println("🔧 Registering Axenta Cloud proxy endpoints...")
 	apiGroup.GET("/objects", api.GetObjectsFromAxentaCloud)
