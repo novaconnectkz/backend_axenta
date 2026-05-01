@@ -1,0 +1,3 @@
+-- 0011_fix_invoice_notification_column_types.down.sql
+-- no-down available — миграция применена один раз и не предполагает отката
+-- (если потребуется откат, написать вручную DROP COLUMN/TABLE/INDEX)

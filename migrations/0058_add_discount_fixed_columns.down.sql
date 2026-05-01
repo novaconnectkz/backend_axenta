@@ -1,0 +1,3 @@
+-- 0058_add_discount_fixed_columns.down.sql
+-- no-down available — миграция применена один раз и не предполагает отката
+-- (если потребуется откат, написать вручную DROP COLUMN/TABLE/INDEX)

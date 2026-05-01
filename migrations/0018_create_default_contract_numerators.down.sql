@@ -1,0 +1,3 @@
+-- 0018_create_default_contract_numerators.down.sql
+-- no-down available — миграция применена один раз и не предполагает отката
+-- (если потребуется откат, написать вручную DROP COLUMN/TABLE/INDEX)

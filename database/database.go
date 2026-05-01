@@ -147,7 +147,15 @@ func ConnectDatabase() error {
 		log.Printf("⚠️ Ошибка выполнения миграций: %v", err)
 		log.Println("Продолжаем работу - основные таблицы уже созданы")
 	} else {
-		log.Println("✅ Миграции выполнены успешно")
+		log.Println("✅ Миграции GORM AutoMigrate выполнены успешно")
+	}
+
+	// Применяем SQL-миграции через golang-migrate (поверх AutoMigrate).
+	// Идемпотентно благодаря таблице schema_migrations. На первом запуске
+	// после baseline INSERT — no-change. Подробности в database/migrate_runner.go.
+	if err := RunGolangMigrate(DB); err != nil {
+		log.Printf("⚠️ Ошибка SQL миграций (golang-migrate): %v", err)
+		log.Println("Продолжаем работу - GORM AutoMigrate уже отработал")
 	}
 
 	// Создаем индексы производительности в фоновом режиме

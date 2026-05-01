@@ -13,7 +13,7 @@ DB_NAME="${DB_NAME:-axenta_backend}"
 echo "📊 Подключение к базе данных: $DB_USER@$DB_HOST:$DB_PORT/$DB_NAME"
 
 # Применяем миграцию 023
-psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -f migrations/023_add_contract_type_fields.sql
+psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -f migrations/0024_add_contract_type_fields.up.sql
 
 if [ $? -eq 0 ]; then
     echo "✅ Миграция 023 успешно применена"

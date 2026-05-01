@@ -14,7 +14,7 @@ import (
 // CreateMaterializedViews создает материализованные представления для биллинга
 func CreateMaterializedViews(db *gorm.DB) error {
 	// Путь к файлу миграции
-	migrationPath := filepath.Join("migrations", "002_create_materialized_views.sql")
+	migrationPath := filepath.Join("migrations", "0001_create_materialized_views.up.sql")
 	
 	// Проверяем существование файла
 	if _, err := os.Stat(migrationPath); os.IsNotExist(err) {

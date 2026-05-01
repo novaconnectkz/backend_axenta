@@ -1,0 +1,3 @@
+-- 0028_update_partner_snapshots_precision.down.sql
+-- no-down available — миграция применена один раз и не предполагает отката
+-- (если потребуется откат, написать вручную DROP COLUMN/TABLE/INDEX)
