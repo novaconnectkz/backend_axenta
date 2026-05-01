@@ -371,10 +371,12 @@ func (s *NotificationService) SendEquipmentMovementNotification(operation models
 	return nil
 }
 
-// ProcessRetryNotifications перезапустит отправку для NotificationLog со статусом
-// "pending" / "retry" чей next_retry_at прошёл. Phase 4.
+// ProcessRetryNotifications выполняет одну итерацию retry-цикла —
+// выбирает пакет failed/retry/pending записей чей next_retry_at прошёл
+// и пытается их переотправить. Используется внутри StartRetryWorker и
+// может быть вызвана вручную (например, из admin endpoint).
 func (s *NotificationService) ProcessRetryNotifications() error {
-	return nil
+	return s.processRetryBatch()
 }
 
 // GetNotificationLogs читает лог-записи для админ-API. Phase 1: реализовано,

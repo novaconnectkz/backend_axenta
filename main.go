@@ -8,10 +8,12 @@ import (
 	"backend_axenta/middleware"
 	"backend_axenta/services"
 
+	"context"
 	"log"
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -167,6 +169,19 @@ func main() {
 	)
 	_ = notificationService // используется в InstallationService и API ниже когда будут подключены
 	log.Println("✅ Notification System initialized (email/telegram/max channels)")
+
+	// Запускаем фоновый retry-worker для повторных попыток отправки
+	// failed/pending записей. Интервал из NOTIFICATION_RETRY_INTERVAL_SECONDS
+	// или 60с по умолчанию. Останавливается с процессом сервера.
+	{
+		retryInterval := time.Minute
+		if env := os.Getenv("NOTIFICATION_RETRY_INTERVAL_SECONDS"); env != "" {
+			if secs, err := strconv.Atoi(env); err == nil && secs > 0 {
+				retryInterval = time.Duration(secs) * time.Second
+			}
+		}
+		notificationService.StartRetryWorker(context.Background(), retryInterval)
+	}
 
 	// Выполняем миграции для основных таблиц (не мультитенантных)
 	// Миграции выполняются в database.ConnectDatabase() через RunAllMigrations()
