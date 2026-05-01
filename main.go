@@ -206,22 +206,11 @@ func main() {
 		log.Println("✅ Audit middleware enabled for all routes")
 	}
 
-	// Настройка CORS
+	// Настройка CORS — список origins берётся из CORS_ALLOWED_ORIGINS env
+	// (запятыми) с прод-дефолтом в config/config.go при пустом env.
+	log.Printf("🔧 CORS: %d allowed origins loaded", len(cfg.CORS.AllowedOrigins))
 	corsConfig := middleware.CustomCORSConfig{
-		AllowOrigins: []string{
-			"http://localhost:3000",
-			"http://127.0.0.1:3000",
-			"http://localhost:3001",
-			"http://127.0.0.1:3001",
-			"http://localhost:3002",
-			"http://127.0.0.1:3002",
-			"http://localhost:3003",
-			"http://127.0.0.1:3003",
-			"https://axenta.glonass-saratov.ru",
-			"http://axenta.glonass-saratov.ru",
-			"https://api.axenta.glonass-saratov.ru",
-			"http://api.axenta.glonass-saratov.ru",
-		},
+		AllowOrigins: cfg.CORS.AllowedOrigins,
 		AllowMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
 		AllowHeaders: []string{
 			"Origin",

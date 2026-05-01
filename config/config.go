@@ -206,7 +206,20 @@ func LoadConfig() (*Config, error) {
 			SyncInterval:  getEnvInt("AXENTA_SYNC_INTERVAL", 5), // По умолчанию 5 минут
 		},
 		CORS: CORSConfig{
-			AllowedOrigins:   getEnvSlice("CORS_ALLOWED_ORIGINS", []string{"*"}),
+			AllowedOrigins: getEnvSlice("CORS_ALLOWED_ORIGINS", []string{
+				"http://localhost:3000",
+				"http://127.0.0.1:3000",
+				"http://localhost:3001",
+				"http://127.0.0.1:3001",
+				"http://localhost:3002",
+				"http://127.0.0.1:3002",
+				"http://localhost:3003",
+				"http://127.0.0.1:3003",
+				"https://axenta.glonass-saratov.ru",
+				"http://axenta.glonass-saratov.ru",
+				"https://api.axenta.glonass-saratov.ru",
+				"http://api.axenta.glonass-saratov.ru",
+			}),
 			AllowedMethods:   getEnvSlice("CORS_ALLOWED_METHODS", []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}),
 			AllowedHeaders:   getEnvSlice("CORS_ALLOWED_HEADERS", []string{"Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin", "X-Tenant-ID", "x-tenant-id"}),
 			AllowCredentials: getEnvBool("CORS_ALLOW_CREDENTIALS", true),
