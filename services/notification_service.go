@@ -40,7 +40,7 @@ func NewNotificationService(db *gorm.DB, cache *CacheService, telegram *Telegram
 
 // SendNotification — generic точка входа: рендерит шаблон по type+channel и отправляет.
 //   - notificationType: ключ шаблона (например "installation_created", "billing_alert").
-//   - channel: "email" / "telegram" / "max" / "sms".
+//   - channel: "email" / "telegram" / "max".
 //   - recipient: email-адрес / chat_id / номер.
 //   - templateData: переменные для рендеринга шаблона.
 //   - companyID: компания (для tenant-настроек и логов).
@@ -125,14 +125,6 @@ func (s *NotificationService) SendNotification(notificationType, channel, recipi
 		writeNotificationLog(s.DB, logEntry)
 		return nil
 
-	case "sms":
-		// SMS — отдельный провайдер (settings.SMSProvider). Phase 4.
-		s.Logger.Printf("⚠️ NotificationService: SMS канал не реализован. Пропускаем %s для company=%d", notificationType, companyID)
-		logEntry.status = "pending"
-		logEntry.errorMessage = "sms channel not implemented yet"
-		writeNotificationLog(s.DB, logEntry)
-		return nil
-
 	default:
 		return fmt.Errorf("неизвестный канал: %s", channel)
 	}
@@ -153,7 +145,6 @@ func (s *NotificationService) GetNotificationSettings(companyID uint) (*models.N
 			CompanyID:        companyID,
 			EmailEnabled:     false,
 			TelegramEnabled:  false,
-			SMSEnabled:       false,
 			MaxEnabled:       false,
 			SMTPPort:         587,
 			SMTPUseTLS:       true,

@@ -16,7 +16,7 @@ type NotificationTemplate struct {
 	// Основные поля
 	Name        string `json:"name" gorm:"not null;uniqueIndex"`   // Уникальное имя шаблона
 	Type        string `json:"type" gorm:"not null"`               // installation_reminder, billing_alert, etc.
-	Channel     string `json:"channel" gorm:"not null"`            // telegram, email, sms
+	Channel     string `json:"channel" gorm:"not null"`            // telegram, email, max
 	Subject     string `json:"subject"`                            // Тема сообщения (для email)
 	Template    string `json:"template" gorm:"type:text;not null"` // Шаблон с плейсхолдерами
 	Description string `json:"description"`                        // Описание шаблона
@@ -90,13 +90,6 @@ type NotificationSettings struct {
 	SMTPUseTLS    bool   `json:"smtp_use_tls" gorm:"default:true"`   // Использовать TLS
 	EmailEnabled  bool   `json:"email_enabled" gorm:"default:false"` // Включен ли Email
 
-	// SMS настройки
-	SMSProvider   string `json:"sms_provider"`                     // Провайдер SMS
-	SMSApiKey     string `json:"sms_api_key"`                      // API ключ
-	SMSApiSecret  string `json:"sms_api_secret"`                   // API секрет
-	SMSFromNumber string `json:"sms_from_number"`                  // Номер отправителя
-	SMSEnabled    bool   `json:"sms_enabled" gorm:"default:false"` // Включен ли SMS
-
 	// MAX настройки (российский мессенджер)
 	MaxBotToken    string `json:"max_bot_token" gorm:"type:varchar(500)"` // Токен бота MAX
 	MaxWebhookURL  string `json:"max_webhook_url"`                        // URL для вебхуков
@@ -130,7 +123,6 @@ type UserNotificationPreferences struct {
 	// Настройки каналов
 	TelegramEnabled bool `json:"telegram_enabled" gorm:"default:true"`
 	EmailEnabled    bool `json:"email_enabled" gorm:"default:true"`
-	SMSEnabled      bool `json:"sms_enabled" gorm:"default:false"`
 	MaxEnabled      bool `json:"max_enabled" gorm:"default:true"` // MAX мессенджер
 
 	// Настройки типов уведомлений
@@ -172,8 +164,8 @@ func (nl *NotificationLog) GetChannelDisplayName() string {
 		return "Telegram"
 	case "email":
 		return "Email"
-	case "sms":
-		return "SMS"
+	case "max":
+		return "MAX"
 	default:
 		return "Неизвестно"
 	}

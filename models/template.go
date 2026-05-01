@@ -87,7 +87,6 @@ type MonitoringTemplate struct {
 
 	// Каналы уведомлений
 	EmailEnabled    bool `json:"email_enabled" gorm:"default:true"`
-	SMSEnabled      bool `json:"sms_enabled" gorm:"default:false"`
 	TelegramEnabled bool `json:"telegram_enabled" gorm:"default:false"`
 	WebhookEnabled  bool `json:"webhook_enabled" gorm:"default:false"`
 
@@ -122,7 +121,6 @@ type MonitoringNotificationTemplate struct {
 	// Шаблоны сообщений
 	EmailSubject    string `json:"email_subject" gorm:"type:varchar(200)"`
 	EmailBody       string `json:"email_body" gorm:"type:text"`
-	SMSMessage      string `json:"sms_message" gorm:"type:varchar(160)"`
 	TelegramMessage string `json:"telegram_message" gorm:"type:text"`
 	WebhookPayload  string `json:"webhook_payload" gorm:"type:text"`
 
@@ -205,8 +203,6 @@ func (nt *MonitoringNotificationTemplate) RenderMessage(messageType string, vari
 		template = nt.EmailSubject
 	case "email_body":
 		template = nt.EmailBody
-	case "sms":
-		template = nt.SMSMessage
 	case "telegram":
 		template = nt.TelegramMessage
 	case "webhook":

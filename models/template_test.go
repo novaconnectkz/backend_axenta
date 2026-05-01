@@ -305,7 +305,6 @@ func TestMonitoringTemplateModel(t *testing.T) {
 			NotifyOnSpeed:    true,
 			NotifyOnGeoFence: true,
 			EmailEnabled:     true,
-			SMSEnabled:       false,
 			TelegramEnabled:  true,
 			WebhookEnabled:   false,
 			Settings:         `{"advanced": {"sensitivity": "medium", "filter_noise": true}}`,
@@ -323,7 +322,6 @@ func TestMonitoringTemplateModel(t *testing.T) {
 		assert.True(t, template.NotifyOnOffline)
 		assert.True(t, template.EmailEnabled)
 		assert.True(t, template.TelegramEnabled)
-		assert.False(t, template.SMSEnabled)
 	})
 
 	t.Run("Различные профили мониторинга", func(t *testing.T) {
@@ -340,7 +338,6 @@ func TestMonitoringTemplateModel(t *testing.T) {
 				NotifyOnSpeed:    false,
 				NotifyOnGeoFence: false,
 				EmailEnabled:     true,
-				SMSEnabled:       false,
 				TelegramEnabled:  false,
 				WebhookEnabled:   false,
 				IsActive:         true,
@@ -357,7 +354,6 @@ func TestMonitoringTemplateModel(t *testing.T) {
 				NotifyOnSpeed:    true,
 				NotifyOnGeoFence: true,
 				EmailEnabled:     true,
-				SMSEnabled:       true,
 				TelegramEnabled:  true,
 				WebhookEnabled:   true,
 				IsActive:         true,
@@ -374,7 +370,6 @@ func TestMonitoringTemplateModel(t *testing.T) {
 				NotifyOnSpeed:    true,
 				NotifyOnGeoFence: true,
 				EmailEnabled:     true,
-				SMSEnabled:       false,
 				TelegramEnabled:  true,
 				WebhookEnabled:   false,
 				IsActive:         true,
@@ -396,8 +391,6 @@ func TestMonitoringTemplateModel(t *testing.T) {
 
 		assert.Greater(t, economical.CheckInterval, intensive.CheckInterval)
 		assert.Greater(t, economical.AlertThreshold, intensive.AlertThreshold)
-		assert.False(t, economical.SMSEnabled)
-		assert.True(t, intensive.SMSEnabled)
 	})
 
 	t.Run("Расширенные настройки мониторинга", func(t *testing.T) {
@@ -445,7 +438,6 @@ func TestMonitoringTemplateModel(t *testing.T) {
 			NotifyOnSpeed:    true,
 			NotifyOnGeoFence: true,
 			EmailEnabled:     true,
-			SMSEnabled:       true,
 			TelegramEnabled:  true,
 			WebhookEnabled:   true,
 			Settings:         advancedSettings,
@@ -472,7 +464,6 @@ func TestNotificationTemplateModel(t *testing.T) {
 			EventType:       "offline",
 			EmailSubject:    "Объект {{object_name}} потерял связь",
 			EmailBody:       "Объект {{object_name}} ({{object_imei}}) потерял связь в {{timestamp}}. Последнее местоположение: {{last_location}}",
-			SMSMessage:      "ВНИМАНИЕ: {{object_name}} не на связи с {{timestamp}}",
 			TelegramMessage: "🚨 *Потеря связи*\n\nОбъект: {{object_name}}\nIMEI: {{object_imei}}\nВремя: {{timestamp}}\nМесто: {{last_location}}",
 			WebhookPayload:  `{"event": "offline", "object": "{{object_name}}", "imei": "{{object_imei}}", "timestamp": "{{timestamp}}"}`,
 			Priority:        "high",
@@ -562,7 +553,6 @@ func TestNotificationTemplateModel(t *testing.T) {
 				EventType:       "speed",
 				EmailSubject:    "Превышение скорости: {{object_name}}",
 				EmailBody:       "Объект {{object_name}} превысил скорость. Текущая скорость: {{current_speed}} км/ч, лимит: {{speed_limit}} км/ч",
-				SMSMessage:      "СКОРОСТЬ: {{object_name}} - {{current_speed}} км/ч",
 				TelegramMessage: "⚠️ *Превышение скорости*\n\nОбъект: {{object_name}}\nСкорость: {{current_speed}} км/ч\nЛимит: {{speed_limit}} км/ч",
 				Priority:        "medium",
 				IsActive:        true,
@@ -574,7 +564,6 @@ func TestNotificationTemplateModel(t *testing.T) {
 				EventType:       "geofence",
 				EmailSubject:    "Нарушение геозоны: {{object_name}}",
 				EmailBody:       "Объект {{object_name}} покинул разрешенную зону {{geofence_name}} в {{timestamp}}",
-				SMSMessage:      "ГЕОЗОНА: {{object_name}} вне зоны {{geofence_name}}",
 				TelegramMessage: "🚫 *Нарушение геозоны*\n\nОбъект: {{object_name}}\nЗона: {{geofence_name}}\nВремя: {{timestamp}}",
 				Priority:        "high",
 				IsActive:        true,
@@ -586,7 +575,6 @@ func TestNotificationTemplateModel(t *testing.T) {
 				EventType:       "maintenance",
 				EmailSubject:    "Напоминание о ТО: {{object_name}}",
 				EmailBody:       "Для объекта {{object_name}} подошло время технического обслуживания. Пробег: {{mileage}} км, последнее ТО: {{last_maintenance}}",
-				SMSMessage:      "ТО: {{object_name}} - {{mileage}} км",
 				TelegramMessage: "🔧 *Время ТО*\n\nОбъект: {{object_name}}\nПробег: {{mileage}} км\nПоследнее ТО: {{last_maintenance}}",
 				Priority:        "low",
 				IsActive:        true,
@@ -622,7 +610,6 @@ func TestNotificationTemplateModel(t *testing.T) {
 			EventType:       "test",
 			EmailSubject:    "Тест {{variable1}}",
 			EmailBody:       "Сообщение с {{variable1}} и {{variable2}}",
-			SMSMessage:      "SMS: {{variable1}}",
 			TelegramMessage: "Telegram: {{variable1}} - {{variable2}}",
 			WebhookPayload:  `{"test": "{{variable1}}", "data": "{{variable2}}"}`,
 			IsActive:        true,
