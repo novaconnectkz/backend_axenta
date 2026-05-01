@@ -11,17 +11,24 @@ import (
 	"backend_axenta/models"
 )
 
-// InstallationService представляет сервис для работы с монтажами
+// InstallationService представляет сервис для работы с монтажами.
+// CompanyID передаётся при создании из tenant-контекста запроса (или
+// планировщика) — нужен для NotificationSettings в public schema.
 type InstallationService struct {
 	DB                  *gorm.DB
 	NotificationService *NotificationService
+	CompanyID           uint
 }
 
-// NewInstallationService создает новый экземпляр InstallationService
-func NewInstallationService(db *gorm.DB, notificationService *NotificationService) *InstallationService {
+// NewInstallationService создает новый экземпляр InstallationService.
+// companyID = 0 допустим (методы без уведомлений работают), но
+// convenience-методы NotificationService в этом случае выдадут ошибку
+// "company not found".
+func NewInstallationService(db *gorm.DB, notificationService *NotificationService, companyID uint) *InstallationService {
 	return &InstallationService{
 		DB:                  db,
 		NotificationService: notificationService,
+		CompanyID:           companyID,
 	}
 }
 
@@ -275,7 +282,7 @@ func (s *InstallationService) SendReminders() error {
 
 	for _, installation := range installations {
 		if s.NotificationService != nil {
-			err := s.NotificationService.SendInstallationReminder(&installation)
+			err := s.NotificationService.SendInstallationReminder(&installation, s.CompanyID)
 			if err == nil {
 				// Отмечаем, что напоминание отправлено
 				now := time.Now()
@@ -379,19 +386,19 @@ func (s *InstallationService) sendInstallationNotifications(installation *models
 
 	switch action {
 	case "created":
-		if err := s.NotificationService.SendInstallationCreated(installation); err != nil {
+		if err := s.NotificationService.SendInstallationCreated(installation, s.CompanyID); err != nil {
 			log.Printf("Ошибка отправки уведомления о создании: %v", err)
 		}
 	case "updated":
-		if err := s.NotificationService.SendInstallationUpdated(installation); err != nil {
+		if err := s.NotificationService.SendInstallationUpdated(installation, s.CompanyID); err != nil {
 			log.Printf("Ошибка отправки уведомления об обновлении: %v", err)
 		}
 	case "completed":
-		if err := s.NotificationService.SendInstallationCompleted(installation); err != nil {
+		if err := s.NotificationService.SendInstallationCompleted(installation, s.CompanyID); err != nil {
 			log.Printf("Ошибка отправки уведомления о завершении: %v", err)
 		}
 	case "cancelled":
-		if err := s.NotificationService.SendInstallationCancelled(installation); err != nil {
+		if err := s.NotificationService.SendInstallationCancelled(installation, s.CompanyID); err != nil {
 			log.Printf("Ошибка отправки уведомления об отмене: %v", err)
 		}
 	}
@@ -402,7 +409,7 @@ func (s *InstallationService) sendRescheduleNotifications(installation *models.I
 		return
 	}
 
-	if err := s.NotificationService.SendInstallationRescheduled(installation, oldScheduledAt); err != nil {
+	if err := s.NotificationService.SendInstallationRescheduled(installation, s.CompanyID, oldScheduledAt); err != nil {
 		log.Printf("Ошибка отправки уведомления о переносе: %v", err)
 	}
 }

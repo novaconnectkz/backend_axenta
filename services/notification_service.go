@@ -16,20 +16,25 @@ import (
 )
 
 // NotificationService сервис отправки уведомлений по нескольким каналам.
-// Phase 1: email канал работает реально, остальные методы — заглушки до Phase 2.
+// Поддерживаемые каналы: email (SMTP), telegram, max (MAX мессенджер).
 type NotificationService struct {
-	DB     *gorm.DB
-	Cache  *CacheService
-	Logger *log.Logger
+	DB       *gorm.DB
+	Cache    *CacheService
+	Telegram *TelegramIntegrationService
+	Max      *MaxIntegrationService
+	Logger   *log.Logger
 }
 
-// NewNotificationService создаёт сервис уведомлений.
-// Сигнатура совместима с текущим вызовом из main.go (db, cache).
-func NewNotificationService(db *gorm.DB, cache *CacheService) *NotificationService {
+// NewNotificationService создаёт сервис уведомлений с зависимостями
+// от существующих интеграционных сервисов. Если telegram/max == nil,
+// соответствующие каналы вернут ошибку при отправке.
+func NewNotificationService(db *gorm.DB, cache *CacheService, telegram *TelegramIntegrationService, max *MaxIntegrationService) *NotificationService {
 	return &NotificationService{
-		DB:     db,
-		Cache:  cache,
-		Logger: log.Default(),
+		DB:       db,
+		Cache:    cache,
+		Telegram: telegram,
+		Max:      max,
+		Logger:   log.Default(),
 	}
 }
 
@@ -92,11 +97,39 @@ func (s *NotificationService) SendNotification(notificationType, channel, recipi
 		writeNotificationLog(s.DB, logEntry)
 		return nil
 
-	case "telegram", "max", "sms":
-		// Phase 2: реальная отправка через TelegramIntegrationService / MaxIntegrationService
-		s.Logger.Printf("⚠️ NotificationService: канал %s не реализован (Phase 2). Пропускаем отправку %s для company=%d", channel, notificationType, companyID)
+	case "telegram":
+		if !settings.TelegramEnabled {
+			return fmt.Errorf("telegram канал отключён для компании %d", companyID)
+		}
+		if err := s.sendTelegram(context.Background(), companyID, recipient, body); err != nil {
+			logEntry.status = "failed"
+			logEntry.errorMessage = err.Error()
+			writeNotificationLog(s.DB, logEntry)
+			return err
+		}
+		logEntry.status = "sent"
+		writeNotificationLog(s.DB, logEntry)
+		return nil
+
+	case "max":
+		if !settings.MaxEnabled {
+			return fmt.Errorf("max канал отключён для компании %d", companyID)
+		}
+		if err := s.sendMax(context.Background(), companyID, recipient, body); err != nil {
+			logEntry.status = "failed"
+			logEntry.errorMessage = err.Error()
+			writeNotificationLog(s.DB, logEntry)
+			return err
+		}
+		logEntry.status = "sent"
+		writeNotificationLog(s.DB, logEntry)
+		return nil
+
+	case "sms":
+		// SMS — отдельный провайдер (settings.SMSProvider). Phase 4.
+		s.Logger.Printf("⚠️ NotificationService: SMS канал не реализован. Пропускаем %s для company=%d", notificationType, companyID)
 		logEntry.status = "pending"
-		logEntry.errorMessage = "channel not implemented yet"
+		logEntry.errorMessage = "sms channel not implemented yet"
 		writeNotificationLog(s.DB, logEntry)
 		return nil
 
@@ -196,55 +229,140 @@ func renderString(tmpl string, data map[string]interface{}) (string, error) {
 }
 
 // =====================================================================
-// Convenience methods — Phase 1 stub-уровень. Phase 2 заполнит реальной
-// логикой (resolve recipient → channel(s) → SendNotification).
+// Convenience methods для Installation*. Phase 2: реальная отправка
+// монтажнику на email + telegram (если включены и заполнены контакты).
+//
+// companyID нужен для определения tenant-настроек (NotificationSettings
+// в public schema). Caller обязан передать актуальный companyID.
 // =====================================================================
 
-func (s *NotificationService) SendInstallationReminder(installation *models.Installation) error {
+// sendToInstaller отправляет одно уведомление монтажнику по всем
+// активным каналам компании, для которых у монтажника заполнены контакты.
+func (s *NotificationService) sendToInstaller(installation *models.Installation, companyID uint, notifType string, extraData map[string]interface{}) error {
+	if installation == nil {
+		return errors.New("nil installation")
+	}
+
+	installer := installation.Installer
+	if installer == nil {
+		var loaded models.Installer
+		if err := s.DB.First(&loaded, installation.InstallerID).Error; err != nil {
+			return fmt.Errorf("монтажник %d не найден: %w", installation.InstallerID, err)
+		}
+		installer = &loaded
+	}
+
+	settings, err := s.GetNotificationSettings(companyID)
+	if err != nil {
+		return fmt.Errorf("настройки уведомлений: %w", err)
+	}
+
+	data := buildInstallationData(installation, installer)
+	for k, v := range extraData {
+		data[k] = v
+	}
+
+	var errs []string
+
+	if settings.EmailEnabled && installer.Email != "" {
+		if err := s.SendNotification(notifType, "email", installer.Email, data, companyID, installation.ID, "installation"); err != nil {
+			errs = append(errs, fmt.Sprintf("email: %v", err))
+		}
+	}
+
+	if settings.TelegramEnabled && installer.TelegramID != "" {
+		if err := s.SendNotification(notifType, "telegram", installer.TelegramID, data, companyID, installation.ID, "installation"); err != nil {
+			errs = append(errs, fmt.Sprintf("telegram: %v", err))
+		}
+	}
+
+	if len(errs) > 0 {
+		return errors.New("частичные ошибки отправки: " + strings.Join(errs, "; "))
+	}
 	return nil
 }
 
-func (s *NotificationService) SendInstallationCreated(installation *models.Installation) error {
-	return nil
+// buildInstallationData собирает переменные шаблона из объекта монтажа.
+func buildInstallationData(i *models.Installation, installer *models.Installer) map[string]interface{} {
+	data := map[string]interface{}{
+		"installation_id":    i.ID,
+		"installation_type":  i.Type,
+		"status":             i.Status,
+		"priority":           i.Priority,
+		"description":        i.Description,
+		"scheduled_at":       i.ScheduledAt.Format("2006-01-02 15:04"),
+		"estimated_duration": i.EstimatedDuration,
+		"address":            i.Address,
+		"client_contact":     i.ClientContact,
+		"notes":              i.Notes,
+	}
+	if installer != nil {
+		data["installer_first_name"] = installer.FirstName
+		data["installer_last_name"] = installer.LastName
+		data["installer_full_name"] = strings.TrimSpace(installer.FirstName + " " + installer.LastName)
+		data["installer_phone"] = installer.Phone
+	}
+	return data
 }
 
-func (s *NotificationService) SendInstallationUpdated(installation *models.Installation) error {
-	return nil
+func (s *NotificationService) SendInstallationReminder(installation *models.Installation, companyID uint) error {
+	return s.sendToInstaller(installation, companyID, "installation_reminder", nil)
 }
 
-func (s *NotificationService) SendInstallationCompleted(installation *models.Installation) error {
-	return nil
+func (s *NotificationService) SendInstallationCreated(installation *models.Installation, companyID uint) error {
+	return s.sendToInstaller(installation, companyID, "installation_created", nil)
 }
 
-func (s *NotificationService) SendInstallationCancelled(installation *models.Installation) error {
-	return nil
+func (s *NotificationService) SendInstallationUpdated(installation *models.Installation, companyID uint) error {
+	return s.sendToInstaller(installation, companyID, "installation_updated", nil)
 }
 
-func (s *NotificationService) SendInstallationRescheduled(installation *models.Installation, oldScheduledAt time.Time) error {
-	return nil
+func (s *NotificationService) SendInstallationCompleted(installation *models.Installation, companyID uint) error {
+	return s.sendToInstaller(installation, companyID, "installation_completed", nil)
 }
+
+func (s *NotificationService) SendInstallationCancelled(installation *models.Installation, companyID uint) error {
+	return s.sendToInstaller(installation, companyID, "installation_cancelled", nil)
+}
+
+func (s *NotificationService) SendInstallationRescheduled(installation *models.Installation, companyID uint, oldScheduledAt time.Time) error {
+	return s.sendToInstaller(installation, companyID, "installation_rescheduled", map[string]interface{}{
+		"old_scheduled_at": oldScheduledAt.Format("2006-01-02 15:04"),
+	})
+}
+
+// =====================================================================
+// Прочие convenience-методы. Резолв recipient (admin компании,
+// ответственный за биллинг/склад) — Phase 3.
+// =====================================================================
 
 func (s *NotificationService) SendBillingAlert(companyID uint, alertType string, message string) error {
+	s.Logger.Printf("ℹ️ BillingAlert (Phase 3): company=%d type=%s msg=%q", companyID, alertType, message)
 	return nil
 }
 
 func (s *NotificationService) SendWarehouseAlert(companyID uint, alertType string, message string) error {
+	s.Logger.Printf("ℹ️ WarehouseAlert (Phase 3): company=%d type=%s msg=%q", companyID, alertType, message)
 	return nil
 }
 
 func (s *NotificationService) SendStockAlert(alert models.StockAlert) error {
+	s.Logger.Printf("ℹ️ StockAlert (Phase 3): id=%d", alert.ID)
 	return nil
 }
 
 func (s *NotificationService) SendWarrantyAlert(alert models.StockAlert) error {
+	s.Logger.Printf("ℹ️ WarrantyAlert (Phase 3): id=%d", alert.ID)
 	return nil
 }
 
 func (s *NotificationService) SendMaintenanceAlert(alert models.StockAlert) error {
+	s.Logger.Printf("ℹ️ MaintenanceAlert (Phase 3): id=%d", alert.ID)
 	return nil
 }
 
 func (s *NotificationService) SendEquipmentMovementNotification(operation models.WarehouseOperation) error {
+	s.Logger.Printf("ℹ️ EquipmentMovement (Phase 3): operation=%d", operation.ID)
 	return nil
 }
 
@@ -320,5 +438,3 @@ func (s *NotificationService) CreateDefaultTemplates(companyID uint) error {
 	return nil
 }
 
-// _ ensures context import used (unused in Phase 1 but reserved for Phase 2 telegram/max calls)
-var _ = context.Background

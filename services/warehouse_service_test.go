@@ -28,7 +28,7 @@ func setupWarehouseServiceTest(t *testing.T) (*gorm.DB, *WarehouseService) {
 	assert.NoError(t, err)
 
 	cache := NewCacheService(nil, nil) // Простой кэш для тестов
-	notificationService := NewNotificationService(db, cache)
+	notificationService := NewNotificationService(db, cache, nil, nil)
 	warehouseService := NewWarehouseService(db, notificationService)
 
 	return db, warehouseService

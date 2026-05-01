@@ -15,8 +15,8 @@ func TestInstallationService_SendReminders(t *testing.T) {
 	object, installer, _ := createServiceTestData(db)
 
 	cache := NewCacheService(nil, nil)
-	notificationService := NewNotificationService(db, cache)
-	installationService := NewInstallationService(db, notificationService)
+	notificationService := NewNotificationService(db, cache, nil, nil)
+	installationService := NewInstallationService(db, notificationService, 0)
 
 	// Создаем монтаж на завтра (должен получить напоминание)
 	tomorrow := time.Now().Add(24 * time.Hour)
@@ -43,8 +43,8 @@ func TestInstallationService_RescheduleInstallation_Completed(t *testing.T) {
 	object, installer, _ := createServiceTestData(db)
 
 	cache := NewCacheService(nil, nil)
-	notificationService := NewNotificationService(db, cache)
-	installationService := NewInstallationService(db, notificationService)
+	notificationService := NewNotificationService(db, cache, nil, nil)
+	installationService := NewInstallationService(db, notificationService, 0)
 
 	nextMonday := getNextWeekday(time.Monday)
 	installation := &models.Installation{
@@ -68,8 +68,8 @@ func TestInstallationService_RescheduleInstallation_InstallerNotFound(t *testing
 	object, installer, _ := createServiceTestData(db)
 
 	cache := NewCacheService(nil, nil)
-	notificationService := NewNotificationService(db, cache)
-	installationService := NewInstallationService(db, notificationService)
+	notificationService := NewNotificationService(db, cache, nil, nil)
+	installationService := NewInstallationService(db, notificationService, 0)
 
 	nextMonday := getNextWeekday(time.Monday)
 	installation := &models.Installation{

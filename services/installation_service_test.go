@@ -110,8 +110,8 @@ func TestScheduleInstallation(t *testing.T) {
 	object, installer, _ := createServiceTestData(db)
 
 	cache := NewCacheService(nil, nil) // Простой кэш для тестов
-	notificationService := NewNotificationService(db, cache)
-	installationService := NewInstallationService(db, notificationService)
+	notificationService := NewNotificationService(db, cache, nil, nil)
+	installationService := NewInstallationService(db, notificationService, 0)
 
 	// Создаем монтаж на следующий рабочий день (понедельник)
 	nextMonday := getNextWeekday(time.Monday)
@@ -148,8 +148,8 @@ func TestScheduleInstallationWithConflict(t *testing.T) {
 	object, installer, _ := createServiceTestData(db)
 
 	cache := NewCacheService(nil, nil) // Простой кэш для тестов
-	notificationService := NewNotificationService(db, cache)
-	installationService := NewInstallationService(db, notificationService)
+	notificationService := NewNotificationService(db, cache, nil, nil)
+	installationService := NewInstallationService(db, notificationService, 0)
 
 	// Создаем существующий монтаж
 	nextMonday := getNextWeekday(time.Monday)
@@ -188,8 +188,8 @@ func TestScheduleInstallationOnWeekend(t *testing.T) {
 	object, installer, _ := createServiceTestData(db)
 
 	cache := NewCacheService(nil, nil) // Простой кэш для тестов
-	notificationService := NewNotificationService(db, cache)
-	installationService := NewInstallationService(db, notificationService)
+	notificationService := NewNotificationService(db, cache, nil, nil)
+	installationService := NewInstallationService(db, notificationService, 0)
 
 	// Пытаемся создать монтаж на выходные (суббота)
 	nextSaturday := getNextWeekday(time.Saturday)
@@ -216,8 +216,8 @@ func TestScheduleInstallationExceedsMaxDaily(t *testing.T) {
 	object, installer, _ := createServiceTestData(db)
 
 	cache := NewCacheService(nil, nil) // Простой кэш для тестов
-	notificationService := NewNotificationService(db, cache)
-	installationService := NewInstallationService(db, notificationService)
+	notificationService := NewNotificationService(db, cache, nil, nil)
+	installationService := NewInstallationService(db, notificationService, 0)
 
 	nextMonday := getNextWeekday(time.Monday)
 
@@ -257,8 +257,8 @@ func TestCheckScheduleConflicts(t *testing.T) {
 	object, installer, _ := createServiceTestData(db)
 
 	cache := NewCacheService(nil, nil) // Простой кэш для тестов
-	notificationService := NewNotificationService(db, cache)
-	installationService := NewInstallationService(db, notificationService)
+	notificationService := NewNotificationService(db, cache, nil, nil)
+	installationService := NewInstallationService(db, notificationService, 0)
 
 	nextMonday := getNextWeekday(time.Monday)
 	scheduledTime := nextMonday.Add(10 * time.Hour) // 10:00
@@ -335,8 +335,8 @@ func TestRescheduleInstallation(t *testing.T) {
 	object, installer, _ := createServiceTestData(db)
 
 	cache := NewCacheService(nil, nil) // Простой кэш для тестов
-	notificationService := NewNotificationService(db, cache)
-	installationService := NewInstallationService(db, notificationService)
+	notificationService := NewNotificationService(db, cache, nil, nil)
+	installationService := NewInstallationService(db, notificationService, 0)
 
 	nextMonday := getNextWeekday(time.Monday)
 	originalTime := nextMonday.Add(10 * time.Hour)
@@ -388,8 +388,8 @@ func TestRescheduleInstallationWithNewInstaller(t *testing.T) {
 	db.Create(&installer2)
 
 	cache := NewCacheService(nil, nil) // Простой кэш для тестов
-	notificationService := NewNotificationService(db, cache)
-	installationService := NewInstallationService(db, notificationService)
+	notificationService := NewNotificationService(db, cache, nil, nil)
+	installationService := NewInstallationService(db, notificationService, 0)
 
 	nextMonday := getNextWeekday(time.Monday)
 	newTime := nextMonday.Add(14 * time.Hour)
@@ -457,8 +457,8 @@ func TestGetAvailableInstallers(t *testing.T) {
 	db.Create(&installer3)
 
 	cache := NewCacheService(nil, nil) // Простой кэш для тестов
-	notificationService := NewNotificationService(db, cache)
-	installationService := NewInstallationService(db, notificationService)
+	notificationService := NewNotificationService(db, cache, nil, nil)
+	installationService := NewInstallationService(db, notificationService, 0)
 
 	nextMonday := getNextWeekday(time.Monday)
 
@@ -517,8 +517,8 @@ func TestGetInstallerWorkload(t *testing.T) {
 	object, installer, _ := createServiceTestData(db)
 
 	cache := NewCacheService(nil, nil) // Простой кэш для тестов
-	notificationService := NewNotificationService(db, cache)
-	installationService := NewInstallationService(db, notificationService)
+	notificationService := NewNotificationService(db, cache, nil, nil)
+	installationService := NewInstallationService(db, notificationService, 0)
 
 	nextMonday := getNextWeekday(time.Monday)
 	nextTuesday := nextMonday.Add(24 * time.Hour)
@@ -581,8 +581,8 @@ func TestGetOverdueInstallations(t *testing.T) {
 	object, installer, _ := createServiceTestData(db)
 
 	cache := NewCacheService(nil, nil) // Простой кэш для тестов
-	notificationService := NewNotificationService(db, cache)
-	installationService := NewInstallationService(db, notificationService)
+	notificationService := NewNotificationService(db, cache, nil, nil)
+	installationService := NewInstallationService(db, notificationService, 0)
 
 	// Создаем просроченные и непросроченные монтажи
 	installations := []models.Installation{
@@ -650,8 +650,8 @@ func BenchmarkScheduleInstallation(b *testing.B) {
 	object, installer, _ := createServiceTestData(db)
 
 	cache := NewCacheService(nil, nil) // Простой кэш для тестов
-	notificationService := NewNotificationService(db, cache)
-	installationService := NewInstallationService(db, notificationService)
+	notificationService := NewNotificationService(db, cache, nil, nil)
+	installationService := NewInstallationService(db, notificationService, 0)
 
 	nextMonday := getNextWeekday(time.Monday)
 
@@ -674,8 +674,8 @@ func BenchmarkCheckScheduleConflicts(b *testing.B) {
 	object, installer, _ := createServiceTestData(db)
 
 	cache := NewCacheService(nil, nil) // Простой кэш для тестов
-	notificationService := NewNotificationService(db, cache)
-	installationService := NewInstallationService(db, notificationService)
+	notificationService := NewNotificationService(db, cache, nil, nil)
+	installationService := NewInstallationService(db, notificationService, 0)
 
 	// Создаем много монтажей для тестирования производительности
 	nextMonday := getNextWeekday(time.Monday)
