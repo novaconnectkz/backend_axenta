@@ -107,7 +107,7 @@ func GetAllMigrations() []MigrationInfo {
 		{
 			TableName:   "notification_settings",
 			Model:       &models.NotificationSettings{},
-			Description: "Настройки уведомлений компаний (Email, Telegram, SMS, MAX)",
+			Description: "Настройки уведомлений компаний (Email, Telegram, MAX)",
 			IsGlobal:    true,
 		},
 		// Новые таблицы для продвинутого биллинга (roadmap)

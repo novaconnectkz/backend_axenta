@@ -36,7 +36,6 @@ type SystemSettings struct {
 
 	// Настройки уведомлений
 	EmailNotificationsEnabled    bool `json:"email_notifications_enabled" gorm:"default:true"`
-	SmsNotificationsEnabled      bool `json:"sms_notifications_enabled" gorm:"default:false"`
 	TelegramNotificationsEnabled bool `json:"telegram_notifications_enabled" gorm:"default:true"`
 
 	// Налоговые настройки

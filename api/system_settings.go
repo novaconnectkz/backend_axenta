@@ -87,7 +87,6 @@ func GetSystemSettings(c *gin.Context) {
 			PasswordRequireSpecial:       true,
 			MaxLoginAttempts:             5,
 			EmailNotificationsEnabled:    true,
-			SmsNotificationsEnabled:      false,
 			TelegramNotificationsEnabled: true,
 			VATRatePreset:                "russia",
 			VATRateCustom:                20,
