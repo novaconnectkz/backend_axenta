@@ -42,7 +42,7 @@ func main() {
 	go scheduler.RunManualSnapshotForDate(snapshotDate)
 
 	log.Println("✅ Запрос на создание снимков отправлен. Проверьте историю через несколько минут.")
-	log.Println("💡 Для проверки статуса используйте: go run cmd/check_jobs_stats/main.go")
+	log.Println("💡 Для проверки статуса используйте API endpoint /api/snapshots/jobs/stats")
 	
 	// Ждем немного, чтобы задача успела начаться
 	time.Sleep(2 * time.Second)
