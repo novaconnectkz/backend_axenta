@@ -36,6 +36,18 @@ func installationCompanyID(c *gin.Context) uint {
 	return 0
 }
 
+// getDB возвращает БД с правильной schema для текущего tenant (положена
+// tenantMiddleware.SetTenant в ключ "tenant_db"). Fallback на глобальный
+// api.DB — для тестов и dev-окружения без middleware.
+func (api *InstallationAPI) getDB(c *gin.Context) *gorm.DB {
+	if v, ok := c.Get("tenant_db"); ok {
+		if db, ok2 := v.(*gorm.DB); ok2 {
+			return db
+		}
+	}
+	return api.DB
+}
+
 // notifyAsync отправляет уведомление в горутине — не блокирует HTTP-ответ.
 // Ошибка отправки логируется, но не возвращается клиенту.
 func (api *InstallationAPI) notifyAsync(send func() error, label string) {
@@ -59,14 +71,14 @@ func (api *InstallationAPI) CreateInstallation(c *gin.Context) {
 
 	// Проверяем существование объекта
 	var object models.Object
-	if err := api.DB.First(&object, installation.ObjectID).Error; err != nil {
+	if err := api.getDB(c).First(&object, installation.ObjectID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Объект не найден"})
 		return
 	}
 
 	// Проверяем существование монтажника
 	var installer models.Installer
-	if err := api.DB.First(&installer, installation.InstallerID).Error; err != nil {
+	if err := api.getDB(c).First(&installer, installation.InstallerID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Монтажник не найден"})
 		return
 	}
@@ -82,7 +94,7 @@ func (api *InstallationAPI) CreateInstallation(c *gin.Context) {
 	startTime := installation.ScheduledAt
 	endTime := startTime.Add(time.Duration(installation.EstimatedDuration) * time.Minute)
 
-	err := api.DB.Where("installer_id = ? AND status IN ('planned', 'in_progress') AND scheduled_at BETWEEN ? AND ?",
+	err := api.getDB(c).Where("installer_id = ? AND status IN ('planned', 'in_progress') AND scheduled_at BETWEEN ? AND ?",
 		installation.InstallerID, startTime.Add(-2*time.Hour), endTime.Add(2*time.Hour)).
 		Find(&conflictingInstallations).Error
 
@@ -117,13 +129,13 @@ func (api *InstallationAPI) CreateInstallation(c *gin.Context) {
 		}
 	}
 
-	if err := api.DB.Create(&installation).Error; err != nil {
+	if err := api.getDB(c).Create(&installation).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при создании монтажа: " + err.Error()})
 		return
 	}
 
 	// Загружаем связанные данные
-	api.DB.Preload("Object").Preload("Installer").Preload("Location").
+	api.getDB(c).Preload("Object").Preload("Installer").Preload("Location").
 		Preload("Equipment").Preload("CreatedByUser").First(&installation, installation.ID)
 
 	// Уведомление монтажнику (асинхронно)
@@ -142,7 +154,7 @@ func (api *InstallationAPI) CreateInstallation(c *gin.Context) {
 // GetInstallations возвращает список монтажей с фильтрацией
 func (api *InstallationAPI) GetInstallations(c *gin.Context) {
 	var installations []models.Installation
-	query := api.DB.Preload("Object").Preload("Installer").Preload("Location").
+	query := api.getDB(c).Preload("Object").Preload("Installer").Preload("Location").
 		Preload("Equipment").Preload("CreatedByUser")
 
 	// Фильтры
@@ -183,7 +195,7 @@ func (api *InstallationAPI) GetInstallations(c *gin.Context) {
 
 	// Подсчет общего количества
 	var total int64
-	countQuery := api.DB.Model(&models.Installation{})
+	countQuery := api.getDB(c).Model(&models.Installation{})
 	if status := c.Query("status"); status != "" {
 		countQuery = countQuery.Where("status = ?", status)
 	}
@@ -217,7 +229,7 @@ func (api *InstallationAPI) GetInstallation(c *gin.Context) {
 	id := c.Param("id")
 	var installation models.Installation
 
-	if err := api.DB.Preload("Object").Preload("Installer").Preload("Location").
+	if err := api.getDB(c).Preload("Object").Preload("Installer").Preload("Location").
 		Preload("Equipment").Preload("CreatedByUser").First(&installation, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Монтаж не найден"})
@@ -235,7 +247,7 @@ func (api *InstallationAPI) UpdateInstallation(c *gin.Context) {
 	id := c.Param("id")
 	var installation models.Installation
 
-	if err := api.DB.First(&installation, id).Error; err != nil {
+	if err := api.getDB(c).First(&installation, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Монтаж не найден"})
 		} else {
@@ -253,7 +265,7 @@ func (api *InstallationAPI) UpdateInstallation(c *gin.Context) {
 	// Проверяем изменение монтажника или времени
 	if updateData.InstallerID != 0 && updateData.InstallerID != installation.InstallerID {
 		var installer models.Installer
-		if err := api.DB.First(&installer, updateData.InstallerID).Error; err != nil {
+		if err := api.getDB(c).First(&installer, updateData.InstallerID).Error; err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Монтажник не найден"})
 			return
 		}
@@ -261,13 +273,13 @@ func (api *InstallationAPI) UpdateInstallation(c *gin.Context) {
 
 	oldScheduledAt := installation.ScheduledAt
 
-	if err := api.DB.Model(&installation).Updates(updateData).Error; err != nil {
+	if err := api.getDB(c).Model(&installation).Updates(updateData).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при обновлении монтажа"})
 		return
 	}
 
 	// Загружаем обновленные данные
-	api.DB.Preload("Object").Preload("Installer").Preload("Location").
+	api.getDB(c).Preload("Object").Preload("Installer").Preload("Location").
 		Preload("Equipment").Preload("CreatedByUser").First(&installation, installation.ID)
 
 	// Уведомление: если поменялась дата → reschedule, иначе обычный update
@@ -294,7 +306,7 @@ func (api *InstallationAPI) DeleteInstallation(c *gin.Context) {
 	id := c.Param("id")
 	var installation models.Installation
 
-	if err := api.DB.First(&installation, id).Error; err != nil {
+	if err := api.getDB(c).First(&installation, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Монтаж не найден"})
 		} else {
@@ -303,7 +315,7 @@ func (api *InstallationAPI) DeleteInstallation(c *gin.Context) {
 		return
 	}
 
-	if err := api.DB.Delete(&installation).Error; err != nil {
+	if err := api.getDB(c).Delete(&installation).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при удалении монтажа"})
 		return
 	}
@@ -316,7 +328,7 @@ func (api *InstallationAPI) StartInstallation(c *gin.Context) {
 	id := c.Param("id")
 	var installation models.Installation
 
-	if err := api.DB.First(&installation, id).Error; err != nil {
+	if err := api.getDB(c).First(&installation, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Монтаж не найден"})
 		} else {
@@ -334,7 +346,7 @@ func (api *InstallationAPI) StartInstallation(c *gin.Context) {
 	installation.Status = "in_progress"
 	installation.StartedAt = &now
 
-	if err := api.DB.Save(&installation).Error; err != nil {
+	if err := api.getDB(c).Save(&installation).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при обновлении статуса монтажа"})
 		return
 	}
@@ -350,7 +362,7 @@ func (api *InstallationAPI) CompleteInstallation(c *gin.Context) {
 	id := c.Param("id")
 	var installation models.Installation
 
-	if err := api.DB.First(&installation, id).Error; err != nil {
+	if err := api.getDB(c).First(&installation, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Монтаж не найден"})
 		} else {
@@ -392,7 +404,7 @@ func (api *InstallationAPI) CompleteInstallation(c *gin.Context) {
 		installation.ActualDuration = int(duration.Minutes())
 	}
 
-	if err := api.DB.Save(&installation).Error; err != nil {
+	if err := api.getDB(c).Save(&installation).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при завершении монтажа"})
 		return
 	}
@@ -414,7 +426,7 @@ func (api *InstallationAPI) CancelInstallation(c *gin.Context) {
 	id := c.Param("id")
 	var installation models.Installation
 
-	if err := api.DB.First(&installation, id).Error; err != nil {
+	if err := api.getDB(c).First(&installation, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Монтаж не найден"})
 		} else {
@@ -440,7 +452,7 @@ func (api *InstallationAPI) CancelInstallation(c *gin.Context) {
 	installation.Status = "cancelled"
 	installation.Notes = "Отменен: " + cancelData.Reason
 
-	if err := api.DB.Save(&installation).Error; err != nil {
+	if err := api.getDB(c).Save(&installation).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при отмене монтажа"})
 		return
 	}
@@ -478,7 +490,7 @@ func (api *InstallationAPI) GetInstallerSchedule(c *gin.Context) {
 	}
 
 	var installations []models.Installation
-	if err := api.DB.Where("installer_id = ? AND scheduled_at BETWEEN ? AND ? AND status IN ('planned', 'in_progress')",
+	if err := api.getDB(c).Where("installer_id = ? AND scheduled_at BETWEEN ? AND ? AND status IN ('planned', 'in_progress')",
 		installerID, parsedDateFrom, parsedDateTo.Add(24*time.Hour)).
 		Preload("Object").Order("scheduled_at ASC").Find(&installations).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка при получении расписания"})
@@ -503,14 +515,14 @@ func (api *InstallationAPI) GetInstallationStatistics(c *gin.Context) {
 	}
 
 	// Общая статистика
-	api.DB.Model(&models.Installation{}).Count(&stats.Total)
-	api.DB.Model(&models.Installation{}).Where("status = 'planned'").Count(&stats.Planned)
-	api.DB.Model(&models.Installation{}).Where("status = 'in_progress'").Count(&stats.InProgress)
-	api.DB.Model(&models.Installation{}).Where("status = 'completed'").Count(&stats.Completed)
-	api.DB.Model(&models.Installation{}).Where("status = 'cancelled'").Count(&stats.Cancelled)
+	api.getDB(c).Model(&models.Installation{}).Count(&stats.Total)
+	api.getDB(c).Model(&models.Installation{}).Where("status = 'planned'").Count(&stats.Planned)
+	api.getDB(c).Model(&models.Installation{}).Where("status = 'in_progress'").Count(&stats.InProgress)
+	api.getDB(c).Model(&models.Installation{}).Where("status = 'completed'").Count(&stats.Completed)
+	api.getDB(c).Model(&models.Installation{}).Where("status = 'cancelled'").Count(&stats.Cancelled)
 
 	// Просроченные
-	api.DB.Model(&models.Installation{}).
+	api.getDB(c).Model(&models.Installation{}).
 		Where("status IN ('planned', 'in_progress') AND scheduled_at < ?", time.Now()).
 		Count(&stats.Overdue)
 
@@ -519,15 +531,15 @@ func (api *InstallationAPI) GetInstallationStatistics(c *gin.Context) {
 	weekStart := today.AddDate(0, 0, -int(today.Weekday())+1)
 	monthStart := time.Date(today.Year(), today.Month(), 1, 0, 0, 0, 0, today.Location())
 
-	api.DB.Model(&models.Installation{}).
+	api.getDB(c).Model(&models.Installation{}).
 		Where("scheduled_at >= ? AND scheduled_at < ?", today, today.Add(24*time.Hour)).
 		Count(&stats.Today)
 
-	api.DB.Model(&models.Installation{}).
+	api.getDB(c).Model(&models.Installation{}).
 		Where("scheduled_at >= ? AND scheduled_at < ?", weekStart, weekStart.AddDate(0, 0, 7)).
 		Count(&stats.ThisWeek)
 
-	api.DB.Model(&models.Installation{}).
+	api.getDB(c).Model(&models.Installation{}).
 		Where("scheduled_at >= ? AND scheduled_at < ?", monthStart, monthStart.AddDate(0, 1, 0)).
 		Count(&stats.ThisMonth)
 
