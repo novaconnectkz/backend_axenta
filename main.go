@@ -1005,6 +1005,8 @@ func main() {
 	apiGroup.GET("/dashboard/activity", api.GetDashboardActivitySimple)
 	apiGroup.GET("/dashboard/layouts", api.GetDashboardLayouts)
 	apiGroup.GET("/dashboard/layouts/default", api.GetDefaultDashboardLayout)
+	apiGroup.GET("/dashboard/alerts", api.GetDashboardAlerts)
+	apiGroup.GET("/dashboard/alerts/", api.GetDashboardAlerts)
 	apiGroup.GET("/notifications", api.GetDashboardNotificationsSimple)
 
 	// Системные настройки
