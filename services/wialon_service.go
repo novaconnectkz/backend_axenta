@@ -21,7 +21,8 @@ type WialonService struct {
 func NewWialonService() *WialonService {
 	return &WialonService{
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			// 120s — для core/batch на больших WH-подключениях (3000+ ресурсов в одном payload)
+			Timeout: 120 * time.Second,
 		},
 	}
 }
@@ -2202,4 +2203,333 @@ func (s *WialonService) GetTotalUnitsCount(host string, token string) (int, erro
 
 	log.Printf("📊 Wialon GetTotalUnitsCount: totalItemsCount = %d", searchResult.TotalItemsCount)
 	return searchResult.TotalItemsCount, nil
+}
+
+// callBatch выполняет один HTTP-запрос svc=core/batch с N упакованными вызовами.
+// Возвращает массив "сырых" json-ответов в том же порядке, что и calls.
+// Используется чтобы заменить множество последовательных round-trip к Wialon API на один.
+func (s *WialonService) callBatch(host string, sid string, calls []map[string]interface{}) ([]json.RawMessage, error) {
+	apiURL := fmt.Sprintf("%s/wialon/ajax.html", host)
+
+	batchPayload := map[string]interface{}{
+		"params": calls,
+		"flags":  0,
+	}
+	payloadJSON, err := json.Marshal(batchPayload)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка сериализации batch payload: %w", err)
+	}
+
+	params := url.Values{}
+	params.Set("svc", "core/batch")
+	params.Set("sid", sid)
+	params.Set("params", string(payloadJSON))
+
+	resp, err := s.httpClient.Post(apiURL+"?"+params.Encode(), "application/x-www-form-urlencoded", nil)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка запроса batch: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка чтения batch ответа: %w", err)
+	}
+
+	// core/batch возвращает либо массив результатов в порядке calls,
+	// либо объект с error при глобальном сбое.
+	var asError struct {
+		Error  int    `json:"error"`
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal(body, &asError); err == nil && asError.Error != 0 {
+		return nil, fmt.Errorf("core/batch вернул ошибку: code=%d reason=%s", asError.Error, asError.Reason)
+	}
+
+	var results []json.RawMessage
+	if err := json.Unmarshal(body, &results); err != nil {
+		return nil, fmt.Errorf("ошибка парсинга batch ответа (ожидался массив): %w; тело: %s", err, string(body)[:min(300, len(body))])
+	}
+
+	if len(results) != len(calls) {
+		return nil, fmt.Errorf("core/batch вернул %d результатов, ожидалось %d", len(results), len(calls))
+	}
+
+	return results, nil
+}
+
+// GetAccountsBatchFromHost — оптимизированная версия GetAccountsQuickFromHost.
+// Заменяет 5 последовательных search_items на один core/batch с 4 вызовами:
+//   - users:     SearchUsers (id, nm, ct, crt, bact, fl)
+//   - resources: все ресурсы (id, nm, bact) — служит и для billing-фильтра, и для resource-names
+//   - dealers:   ресурсы с sys_account_enable_parent=1 (для DealerRights)
+//   - disabled:  ресурсы с sys_account_disabled=1 (для IsActive)
+//
+// Round-trips к Wialon: было 6 (Login + 5×search), стало 3 (Login + batch + Logout).
+func (s *WialonService) GetAccountsBatchFromHost(host string, token string) ([]WialonAccount, error) {
+	loginResp, err := s.LoginWithHost(host, token)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err := s.LogoutWithHost(host, loginResp.Eid); err != nil {
+			log.Printf("Ошибка при выходе из Wialon (host, defer): %v", err)
+		}
+	}()
+
+	usersFlags := 0x00000001 | 0x00000002 | 0x00000004 | 0x00000100 // = 263
+
+	calls := []map[string]interface{}{
+		// 0: users
+		{
+			"svc": "core/search_items",
+			"params": map[string]interface{}{
+				"spec": map[string]interface{}{
+					"itemsType":     "user",
+					"propName":      "sys_name",
+					"propValueMask": "*",
+					"sortType":      "sys_name",
+				},
+				"force": 1,
+				"flags": usersFlags,
+				"from":  0,
+				"to":    0,
+			},
+		},
+		// 1: все ресурсы (id, nm, bact) — заменяет SearchAllBilling + GetResourceNames
+		{
+			"svc": "core/search_items",
+			"params": map[string]interface{}{
+				"spec": map[string]interface{}{
+					"itemsType":     "avl_resource",
+					"propName":      "sys_name",
+					"propValueMask": "*",
+					"sortType":      "sys_name",
+				},
+				"force": 1,
+				"flags": 5,
+				"from":  0,
+				"to":    0,
+			},
+		},
+		// 2: ресурсы с правами дилера
+		{
+			"svc": "core/search_items",
+			"params": map[string]interface{}{
+				"spec": map[string]interface{}{
+					"itemsType":     "avl_resource",
+					"propName":      "sys_account_enable_parent",
+					"propValueMask": "1",
+					"sortType":      "sys_name",
+				},
+				"force": 1,
+				"flags": 5,
+				"from":  0,
+				"to":    0,
+			},
+		},
+		// 3: заблокированные ресурсы
+		{
+			"svc": "core/search_items",
+			"params": map[string]interface{}{
+				"spec": map[string]interface{}{
+					"itemsType":     "avl_resource",
+					"propName":      "sys_account_disabled",
+					"propValueMask": "1",
+					"sortType":      "sys_name",
+				},
+				"force": 1,
+				"flags": 5,
+				"from":  0,
+				"to":    0,
+			},
+		},
+	}
+
+	t0 := time.Now()
+	results, err := s.callBatch(host, loginResp.Eid, calls)
+	if err != nil {
+		return nil, fmt.Errorf("batch search_items: %w", err)
+	}
+	log.Printf("⚡ Wialon BATCH: 4 search_items за %s (host=%s)", time.Since(t0), host)
+
+	// 0: users → []WialonAccount
+	var usersResp WialonSearchResponse
+	if err := json.Unmarshal(results[0], &usersResp); err != nil {
+		return nil, fmt.Errorf("парсинг users: %w", err)
+	}
+
+	accounts := make([]WialonAccount, 0, len(usersResp.Items))
+	for _, item := range usersResp.Items {
+		account := WialonAccount{Type: "user", IsActive: true}
+		if id, ok := item["id"].(float64); ok {
+			account.ID = int64(id)
+		}
+		if nm, ok := item["nm"].(string); ok {
+			account.Name = nm
+		}
+		if fl, ok := item["fl"].(float64); ok {
+			flags := int(fl)
+			if flags&0x00000001 != 0 {
+				account.IsActive = false
+			}
+			if flags&0x0010 != 0 {
+				account.DealerRights = true
+			}
+		}
+		if ct, ok := item["ct"].(float64); ok && ct > 0 {
+			account.CreatedAt = time.Unix(int64(ct), 0).Format(time.RFC3339)
+		}
+		if crt, ok := item["crt"].(float64); ok {
+			account.ParentId = int64(crt)
+		}
+		if bact, ok := item["bact"].(float64); ok {
+			account.BillingAccountID = int64(bact)
+		}
+		accounts = append(accounts, account)
+	}
+
+	// 1: все ресурсы → billingMap + resourceNamesMap
+	var allResResp WialonSearchResponse
+	if err := json.Unmarshal(results[1], &allResResp); err != nil {
+		return nil, fmt.Errorf("парсинг all resources: %w", err)
+	}
+	billingMap := make(map[int64]bool)
+	resourceNamesMap := make(map[int64]string)
+	for _, item := range allResResp.Items {
+		var resourceID, bactID int64
+		var resourceName string
+		if id, ok := item["id"].(float64); ok {
+			resourceID = int64(id)
+		}
+		if bact, ok := item["bact"].(float64); ok {
+			bactID = int64(bact)
+		}
+		if nm, ok := item["nm"].(string); ok {
+			resourceName = nm
+		}
+		if bactID > 0 {
+			billingMap[bactID] = true
+		}
+		if resourceID > 0 {
+			billingMap[resourceID-1] = true
+			if resourceName != "" {
+				resourceNamesMap[resourceID] = resourceName
+			}
+		}
+	}
+	log.Printf("⚡ Wialon BATCH: %d ресурсов → %d биллинговых, %d имён", len(allResResp.Items), len(billingMap), len(resourceNamesMap))
+
+	// 2: дилеры → dealerMap
+	var dealersResp WialonSearchResponse
+	if err := json.Unmarshal(results[2], &dealersResp); err != nil {
+		return nil, fmt.Errorf("парсинг dealers: %w", err)
+	}
+	dealerMap := make(map[int64]bool)
+	for _, item := range dealersResp.Items {
+		var resourceID, creatorID, bactID int64
+		if id, ok := item["id"].(float64); ok {
+			resourceID = int64(id)
+		}
+		if crt, ok := item["crt"].(float64); ok {
+			creatorID = int64(crt)
+		}
+		if bact, ok := item["bact"].(float64); ok {
+			bactID = int64(bact)
+		}
+		if creatorID > 0 {
+			dealerMap[creatorID] = true
+		}
+		if bactID > 0 {
+			dealerMap[bactID] = true
+		}
+		if resourceID > 0 {
+			dealerMap[resourceID] = true
+			dealerMap[resourceID-1] = true
+		}
+	}
+	log.Printf("⚡ Wialon BATCH: %d дилеров", len(dealerMap))
+
+	// 3: заблокированные → disabledMap
+	var disabledResp WialonSearchResponse
+	if err := json.Unmarshal(results[3], &disabledResp); err != nil {
+		return nil, fmt.Errorf("парсинг disabled: %w", err)
+	}
+	disabledMap := make(map[int64]bool)
+	for _, item := range disabledResp.Items {
+		var resourceID, bactID int64
+		if id, ok := item["id"].(float64); ok {
+			resourceID = int64(id)
+		}
+		if bact, ok := item["bact"].(float64); ok {
+			bactID = int64(bact)
+		}
+		if bactID > 0 {
+			disabledMap[bactID] = true
+		}
+		if resourceID > 0 {
+			disabledMap[resourceID-1] = true
+		}
+	}
+	log.Printf("⚡ Wialon BATCH: %d заблокированных аккаунтов", len(disabledMap))
+
+	// Применяем maps к accounts
+	for i := range accounts {
+		if dealerMap[accounts[i].ID] {
+			accounts[i].DealerRights = true
+		}
+		if disabledMap[accounts[i].ID] {
+			accounts[i].IsActive = false
+		}
+	}
+
+	// Карта ВСЕХ юзеров до фильтрации (для ParentName)
+	allAccountsMap := make(map[int64]string)
+	for _, acc := range accounts {
+		allAccountsMap[acc.ID] = acc.Name
+	}
+	if loginResp.User != nil && loginResp.User.ID > 0 {
+		allAccountsMap[loginResp.User.ID] = loginResp.User.Name
+	}
+
+	// Фильтр биллинговых
+	filtered := make([]WialonAccount, 0, len(accounts))
+	for _, acc := range accounts {
+		if billingMap[acc.ID] {
+			filtered = append(filtered, acc)
+		}
+	}
+	log.Printf("⚡ Wialon BATCH: отфильтровано %d биллинговых из %d пользователей", len(filtered), len(accounts))
+	accounts = filtered
+
+	// Замена имён на имена ресурсов
+	replaced := 0
+	for i := range accounts {
+		if accounts[i].BillingAccountID > 0 {
+			if name, ok := resourceNamesMap[accounts[i].BillingAccountID]; ok && name != "" {
+				accounts[i].Name = name
+				replaced++
+			}
+		}
+	}
+	log.Printf("⚡ Wialon BATCH: заменено %d имён на имена ресурсов", replaced)
+
+	// Обновляем карту имён после замены (для корректного ParentName)
+	for _, acc := range accounts {
+		allAccountsMap[acc.ID] = acc.Name
+	}
+
+	// Заполняем ParentName и сбрасываем objects (lazy)
+	for i := range accounts {
+		accounts[i].ObjectsTotal = -1
+		accounts[i].ObjectsActive = -1
+		if accounts[i].ParentId > 0 {
+			if parentName, ok := allAccountsMap[accounts[i].ParentId]; ok {
+				accounts[i].ParentName = parentName
+			}
+		}
+	}
+
+	log.Printf("⚡ Wialon BATCH: загружено %d аккаунтов (без статистики объектов)", len(accounts))
+	return accounts, nil
 }

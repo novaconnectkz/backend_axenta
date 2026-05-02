@@ -501,8 +501,8 @@ func (api *WialonConnectionAPI) GetAllAccounts(c *gin.Context) {
 			sourceLabel = "WL(" + conn.UserName + ")"
 		}
 
-		// Получаем аккаунты из этого подключения (БЫСТРАЯ ЗАГРУЗКА - без статистики объектов)
-		accounts, err := wialonService.GetAccountsQuickFromHost(conn.Host, conn.Token)
+		// Получаем аккаунты из этого подключения (BATCH — 1 round-trip вместо 5×search_items)
+		accounts, err := wialonService.GetAccountsBatchFromHost(conn.Host, conn.Token)
 		if err != nil {
 			log.Printf("⚠️ Ошибка получения аккаунтов из %s: %v", conn.Name, err)
 			continue
