@@ -88,6 +88,10 @@ func (api *WialonConnectionAPI) RegisterRoutes(r *gin.RouterGroup) {
 	// Endpoint для точечного обновления одной учётной записи (cache-invalidate + refresh stats для 1 ресурса)
 	r.POST("/wialon/connections/:id/refresh-account/:user_id", api.RefreshSingleAccount)
 
+	// Создание нового аккаунта в Wialon-подключении (билинг + dealer rights, 5-step flow)
+	r.GET("/wialon/connections/:id/billing-plans", api.GetBillingPlans)
+	r.POST("/wialon/connections/:id/accounts", api.CreateWialonAccount)
+
 	log.Println("✅ Wialon Connections API routes registered: /api/wialon/connections/*")
 }
 
@@ -1210,4 +1214,80 @@ func (api *WialonConnectionAPI) GetConnectionObjectsStats(c *gin.Context) {
 		"lastCollectedAt": oldestCollected,
 		"fromCache":       true,
 	})
+}
+
+// GetBillingPlans возвращает список доступных тарифов для wialon-подключения.
+// GET /api/wialon/connections/:id/billing-plans
+// Используется фронтом при создании аккаунта — заполняет селектор «Тарифный план».
+func (api *WialonConnectionAPI) GetBillingPlans(c *gin.Context) {
+	connectionID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректный ID подключения"})
+		return
+	}
+	companyID, exists := c.Get("company_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Компания не определена"})
+		return
+	}
+	conn, err := api.service.GetByID(uint(connectionID))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Подключение не найдено"})
+		return
+	}
+	if conn.CompanyID != companyID.(uint) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Нет доступа"})
+		return
+	}
+
+	svc := services.NewWialonAccountService()
+	plans, err := svc.GetBillingPlans(uint(connectionID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка получения тарифов: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"plans": plans})
+}
+
+// CreateWialonAccount создаёт новую учётную запись в wialon-подключении.
+// POST /api/wialon/connections/:id/accounts
+// Body: { name, username, password, email, type: client|partner, billingPlan }
+func (api *WialonConnectionAPI) CreateWialonAccount(c *gin.Context) {
+	connectionID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректный ID подключения"})
+		return
+	}
+	companyID, exists := c.Get("company_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Компания не определена"})
+		return
+	}
+	conn, err := api.service.GetByID(uint(connectionID))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Подключение не найдено"})
+		return
+	}
+	if conn.CompanyID != companyID.(uint) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Нет доступа"})
+		return
+	}
+
+	var req services.CreateWialonAccountRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Неверный формат: " + err.Error()})
+		return
+	}
+
+	svc := services.NewWialonAccountService()
+	result, err := svc.CreateAccount(uint(connectionID), req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка создания: " + err.Error()})
+		return
+	}
+
+	// Инвалидация cache /all-accounts чтобы новый аккаунт сразу появился в списке
+	invalidateAllAccountsCache(companyID.(uint))
+
+	c.JSON(http.StatusCreated, result)
 }
