@@ -62,49 +62,37 @@ func (s *WialonAccountService) GetBillingPlans(connectionID uint) ([]WialonBilli
 		currentUserID = loginResp.User.ID
 	}
 
-	body, err := s.callRaw(conn.Host, loginResp.Eid, "account/get_billing_plans", map[string]interface{}{
-		"userId": currentUserID,
-	})
+	// Wialon SDK: params={} (БЕЗ userId) для получения собственного плана + всех подчинённых.
+	// Если шлём userId — сужает до 1 плана. Запрос доступен ТОЛЬКО для top-level dealer
+	// (на WL не сработает — фолбэк через get_account_data).
+	body, err := s.callRaw(conn.Host, loginResp.Eid, "account/get_billing_plans", map[string]interface{}{})
 	if err != nil {
-		// callRaw возвращает err при wialon error N != 0. Пробуем фолбэк через get_account_data —
-		// берём текущий план дилера, отдаём как единственный вариант. На WL это типичная ситуация
-		// (метод get_billing_plans закрыт для не-главных дилеров).
 		log.Printf("⚠️ get_billing_plans не доступен (%v), фолбэк через account/get_account_data", err)
 		return s.getCurrentPlanFallback(conn.Host, loginResp.Eid, currentUserID)
 	}
 
-	// Ответ может быть:
-	//   1. ["Plan1", "Plan2"] — массив имён (dealer-юзер с разрешением)
-	//   2. [{"name":"Plan1"}, ...] — массив объектов
-	//   3. {"plan": {"name": "...", ...}} — единственный план текущего юзера (WH)
-	planNames := []string{}
-
-	var asArrayString []string
-	var asArrayObj []map[string]interface{}
-	var asSinglePlan struct {
-		Plan map[string]interface{} `json:"plan"`
+	// Ответ Wialon SDK: { plan: {name, ...}, subPlans: [{name, ...}, ...] }
+	// Собираем имя своего плана + всех подчинённых.
+	var resp struct {
+		Plan     map[string]interface{}   `json:"plan"`
+		SubPlans []map[string]interface{} `json:"subPlans"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("парсинг billing_plans: %w (raw: %s)", err, string(body)[:min(300, len(body))])
 	}
 
-	if err := json.Unmarshal(body, &asArrayString); err == nil && len(asArrayString) > 0 {
-		planNames = asArrayString
-	} else if err := json.Unmarshal(body, &asArrayObj); err == nil && len(asArrayObj) > 0 {
-		for _, p := range asArrayObj {
-			if name, ok := p["name"].(string); ok {
-				planNames = append(planNames, name)
-			}
+	plans := make([]WialonBillingPlan, 0)
+	if resp.Plan != nil {
+		if name, ok := resp.Plan["name"].(string); ok && name != "" {
+			plans = append(plans, WialonBillingPlan{Name: name})
 		}
-	} else if err := json.Unmarshal(body, &asSinglePlan); err == nil && asSinglePlan.Plan != nil {
-		if name, ok := asSinglePlan.Plan["name"].(string); ok {
-			planNames = append(planNames, name)
+	}
+	for _, p := range resp.SubPlans {
+		if name, ok := p["name"].(string); ok && name != "" {
+			plans = append(plans, WialonBillingPlan{Name: name})
 		}
-	} else {
-		return nil, fmt.Errorf("неизвестный формат billing_plans: %s", string(body)[:min(300, len(body))])
 	}
-
-	plans := make([]WialonBillingPlan, 0, len(planNames))
-	for _, name := range planNames {
-		plans = append(plans, WialonBillingPlan{Name: name})
-	}
+	log.Printf("⚡ Wialon billing_plans: получено %d тарифов (plan + subPlans) для %s", len(plans), conn.Name)
 	return plans, nil
 }
 
