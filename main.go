@@ -1009,6 +1009,10 @@ func main() {
 	apiGroup.GET("/dashboard/alerts/", api.GetDashboardAlerts)
 	apiGroup.GET("/dashboard/kpi", api.GetDashboardKPI)
 	apiGroup.GET("/dashboard/kpi/", api.GetDashboardKPI)
+	apiGroup.GET("/dashboard/today-installations", api.GetTodayInstallations)
+	apiGroup.GET("/dashboard/today-installations/", api.GetTodayInstallations)
+	apiGroup.GET("/dashboard/recent-invoices", api.GetRecentInvoices)
+	apiGroup.GET("/dashboard/recent-invoices/", api.GetRecentInvoices)
 	apiGroup.GET("/notifications", api.GetDashboardNotificationsSimple)
 
 	// Системные настройки
