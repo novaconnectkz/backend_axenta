@@ -93,6 +93,12 @@ func GetAllMigrations() []MigrationInfo {
 			IsGlobal:    true,
 		},
 		{
+			TableName:   "wialon_object_stats",
+			Model:       &models.WialonObjectStat{},
+			Description: "Кэш статистики объектов Wialon (заполняется фоновым cron каждые 15 мин)",
+			IsGlobal:    true,
+		},
+		{
 			TableName:   "local_users",
 			Model:       &models.LocalUser{},
 			Description: "Локальные пользователи для альтернативной авторизации",

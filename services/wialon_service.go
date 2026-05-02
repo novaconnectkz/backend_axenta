@@ -2312,7 +2312,7 @@ func (s *WialonService) GetAccountsBatchFromHost(host string, token string) ([]W
 				"to":    0,
 			},
 		},
-		// 2: ресурсы с правами дилера
+		// 2: ресурсы с правами дилера. flags=5 нужен — чтобы получить bact (для маппинга dealer прав на user.id через resourceID-1 и через bact)
 		{
 			"svc": "core/search_items",
 			"params": map[string]interface{}{
@@ -2328,7 +2328,7 @@ func (s *WialonService) GetAccountsBatchFromHost(host string, token string) ([]W
 				"to":    0,
 			},
 		},
-		// 3: заблокированные ресурсы
+		// 3: заблокированные ресурсы. flags=5 нужен — bact используется в маппинге disabled→user
 		{
 			"svc": "core/search_items",
 			"params": map[string]interface{}{

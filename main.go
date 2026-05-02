@@ -158,6 +158,24 @@ func main() {
 		log.Println("⚠️ Планировщики снимков отключены (ENABLE_SNAPSHOT_SCHEDULER != true)")
 	}
 
+	// Wialon stats scheduler — раз в N минут собирает usage объектов в public.wialon_object_stats.
+	// Endpoint /api/wialon/connections/:id/objects-stats читает из этой таблицы (live-запрос для
+	// WH с 3412 ресурсов занимает 6.5 минут). Включён всегда — это критично для UI.
+	wialonStatsInterval := 15
+	if v := os.Getenv("WIALON_STATS_INTERVAL_MIN"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			wialonStatsInterval = n
+		}
+	}
+	if os.Getenv("DISABLE_WIALON_STATS_SCHEDULER") != "true" {
+		wialonStatsScheduler := services.NewWialonStatsScheduler(wialonStatsInterval)
+		if err := wialonStatsScheduler.Start(); err != nil {
+			log.Printf("⚠️ WialonStatsScheduler failed to start: %v", err)
+		}
+	} else {
+		log.Println("⚠️ WialonStatsScheduler отключён (DISABLE_WIALON_STATS_SCHEDULER=true)")
+	}
+
 	// Инициализируем систему уведомлений (Phase 1+2: email/telegram/max каналы).
 	// Telegram и MAX-сервисы созданы выше через api.InitTelegramService/InitMaxService.
 	notifCache := services.NewCacheService(database.RedisClient, log.New(log.Writer(), "[Notif_Cache] ", log.LstdFlags))

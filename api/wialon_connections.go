@@ -1068,7 +1068,12 @@ type ObjectStat struct {
 	ObjectsDeactivated int `json:"objectsDeactivated"`
 }
 
-// GetConnectionObjectsStats получает статистику объектов для подключения (фоновая загрузка)
+// GetConnectionObjectsStats отдаёт статистику объектов из кэша БД (wialon_object_stats),
+// заполняемого фоновым WialonStatsScheduler. Раньше делался live-запрос к Wialon — для WH
+// с 3412 ресурсов это занимало 6.5 минут. Теперь — мгновенный SELECT из БД.
+//
+// Если ?force_refresh=true — синхронно собрать stats для одного подключения и записать в БД.
+// Используется для ручного обновления (UI-кнопка / админка).
 func (api *WialonConnectionAPI) GetConnectionObjectsStats(c *gin.Context) {
 	connectionID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
@@ -1082,52 +1087,68 @@ func (api *WialonConnectionAPI) GetConnectionObjectsStats(c *gin.Context) {
 		return
 	}
 
-	// Получаем подключение
+	// Получаем подключение для проверки доступа
 	conn, err := api.service.GetByID(uint(connectionID))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Подключение не найдено"})
 		return
 	}
-
-	// Проверяем принадлежность к компании
 	if conn.CompanyID != companyID.(uint) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Нет доступа к этому подключению"})
 		return
 	}
 
-	wialonService := services.NewWialonService()
+	statsService := services.NewWialonStatsService()
 
-	// Авторизуемся
-	loginResp, err := wialonService.LoginWithHost(conn.Host, conn.Token)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка авторизации: " + err.Error()})
-		return
-	}
-	defer func() { _ = wialonService.LogoutWithHost(conn.Host, loginResp.Eid) }()
-
-	// Получаем статистику объектов с учётом иерархии (рекурсивный подсчёт)
-	countPerAccount, totalObjects, err := wialonService.GetUnitsCountWithHierarchy(conn.Host, loginResp.Eid)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка получения статистики: " + err.Error()})
-		return
+	// Опциональный синхронный refresh (только если явно запрошен — иначе блокирует UI на минуты)
+	if c.Query("force_refresh") == "true" {
+		t0 := time.Now()
+		upserted, err := statsService.CollectForConnectionID(uint(connectionID))
+		if err != nil {
+			log.Printf("⚠️ force_refresh stats для conn=%d: %v", connectionID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка обновления статистики: " + err.Error()})
+			return
+		}
+		log.Printf("🔄 force_refresh: conn=%d, %d ресурсов upserted за %s", connectionID, upserted, time.Since(t0))
 	}
 
-	// Преобразуем в формат ответа
-	stats := make(map[int]ObjectStat)
-	for accountID, unitsStats := range countPerAccount {
-		stats[int(accountID)] = ObjectStat{
-			ObjectsTotal:       unitsStats.Total,
-			ObjectsActive:      unitsStats.Active,
-			ObjectsDeactivated: unitsStats.Deactivated,
+	rows, err := statsService.GetStatsForConnection(uint(connectionID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка чтения statистики из БД: " + err.Error()})
+		return
+	}
+
+	// Frontend ожидает map по userID (или resourceID, оба ключа исторически использовались).
+	// Заполняем оба, чтобы не сломать совместимость.
+	stats := make(map[int]ObjectStat, len(rows)*2)
+	totalObjects := 0
+	var oldestCollected time.Time
+	for _, r := range rows {
+		os := ObjectStat{
+			ObjectsTotal:       r.ObjectsTotal,
+			ObjectsActive:      r.ObjectsActive,
+			ObjectsDeactivated: r.ObjectsDeactivated,
+		}
+		if r.UserID > 0 {
+			stats[int(r.UserID)] = os
+		}
+		if r.ResourceID > 0 {
+			stats[int(r.ResourceID)] = os
+		}
+		totalObjects += r.ObjectsTotal
+		if oldestCollected.IsZero() || r.LastCollectedAt.Before(oldestCollected) {
+			oldestCollected = r.LastCollectedAt
 		}
 	}
 
-	log.Printf("📊 Wialon Stats: подключение %d, %d объектов, %d аккаунтов со статистикой",
-		connectionID, totalObjects, len(stats))
+	log.Printf("📊 Wialon Stats (кэш БД): conn=%d, %d записей, %d объектов, oldest=%s",
+		connectionID, len(rows), totalObjects, oldestCollected.Format(time.RFC3339))
 
-	c.JSON(http.StatusOK, ObjectsStatsResponse{
-		ConnectionID: uint(connectionID),
-		Stats:        stats,
-		TotalObjects: totalObjects,
+	c.JSON(http.StatusOK, gin.H{
+		"connectionId":    uint(connectionID),
+		"stats":           stats,
+		"totalObjects":    totalObjects,
+		"lastCollectedAt": oldestCollected,
+		"fromCache":       true,
 	})
 }
