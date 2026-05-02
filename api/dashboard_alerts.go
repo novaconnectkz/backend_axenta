@@ -7,7 +7,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
+	"gorm.io/gorm"
 
+	"backend_axenta/database"
 	"backend_axenta/middleware"
 	"backend_axenta/models"
 )
@@ -24,6 +26,26 @@ type DashboardAlert struct {
 	ActionURL   string    `json:"action_url"`   // CTA → frontend route
 	ActionLabel string    `json:"action_label"` // текст CTA-кнопки
 	CreatedAt   time.Time `json:"created_at"`   // момент агрегации (now)
+}
+
+// publicDBOrTenant возвращает database.DB (public schema) если он доступен,
+// иначе fallback на tenant DB. Нужно для запросов к глобальным таблицам
+// (invoices, notification_logs) при работающем tenant search_path.
+func publicDBOrTenant(tenantDB *gorm.DB) *gorm.DB {
+	if database.DB != nil {
+		return database.DB
+	}
+	return tenantDB
+}
+
+// publicTable возвращает имя таблицы с public-prefix для PostgreSQL,
+// иначе (SQLite в тестах) — без префикса. Работает в обход tenant
+// search_path для глобальных таблиц.
+func publicTable(db *gorm.DB, name string) string {
+	if db != nil && db.Dialector != nil && db.Dialector.Name() == "postgres" {
+		return "public." + name
+	}
+	return name
 }
 
 // severityRank возвращает приоритет для сортировки. Чем больше — тем выше показывается.
@@ -59,22 +81,24 @@ func GetDashboardAlerts(c *gin.Context) {
 	}
 
 	now := time.Now()
+	companyID := middleware.GetCompanyID(c)
+	publicDB := publicDBOrTenant(tenantDB) // invoices живут в public, не в tenant schema
 	alerts := []DashboardAlert{}
 
 	// 1. Просроченные счета — Invoice с DueDate < now() и не оплачен/не отменён.
 	var overdueCount int64
 	var overdueSum decimal.Decimal
-	tenantDB.Model(&models.Invoice{}).
-		Where("due_date < ? AND status NOT IN ?", now, []string{"paid", "cancelled"}).
+	publicDB.Table(publicTable(publicDB, "invoices")).
+		Where("company_id = ? AND due_date < ? AND status NOT IN ?", companyID, now, []string{"paid", "cancelled"}).
 		Count(&overdueCount)
 	if overdueCount > 0 {
 		// Суммируем remaining = total_amount - paid_amount
 		var sumRow struct {
 			Sum decimal.Decimal
 		}
-		tenantDB.Model(&models.Invoice{}).
+		publicDB.Table(publicTable(publicDB, "invoices")).
 			Select("COALESCE(SUM(total_amount - paid_amount), 0) as sum").
-			Where("due_date < ? AND status NOT IN ?", now, []string{"paid", "cancelled"}).
+			Where("company_id = ? AND due_date < ? AND status NOT IN ?", companyID, now, []string{"paid", "cancelled"}).
 			Scan(&sumRow)
 		overdueSum = sumRow.Sum
 
@@ -153,11 +177,11 @@ func GetDashboardAlerts(c *gin.Context) {
 		})
 	}
 
-	// 4. Failed уведомления за последние 24ч.
+	// 4. Failed уведомления за последние 24ч (notification_logs в public).
 	since := now.Add(-24 * time.Hour)
 	var failedNotif int64
-	tenantDB.Model(&models.NotificationLog{}).
-		Where("status IN ? AND created_at >= ?", []string{"failed", "failed_final"}, since).
+	publicDB.Table(publicTable(publicDB, "notification_logs")).
+		Where("company_id = ? AND status IN ? AND created_at >= ?", companyID, []string{"failed", "failed_final"}, since).
 		Count(&failedNotif)
 	if failedNotif > 0 {
 		severity := "low"

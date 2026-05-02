@@ -53,12 +53,14 @@ func GetDashboardKPI(c *gin.Context) {
 	}
 
 	now := time.Now()
+	companyID := middleware.GetCompanyID(c)
+	publicDB := publicDBOrTenant(tenantDB)
 
 	metrics := []KPIMetric{
 		buildActiveObjectsKPI(tenantDB, now),
-		buildMonthlyRevenueKPI(tenantDB, now),
+		buildMonthlyRevenueKPI(publicDB, companyID, now),
 		buildTodayInstallationsKPI(tenantDB, now),
-		buildAlertKPI(tenantDB, now),
+		buildAlertKPI(tenantDB, publicDB, companyID, now),
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -74,29 +76,61 @@ func GetDashboardKPI(c *gin.Context) {
 // Метрика 1: Активные объекты
 // =====================================================================
 //
-// Delta vs неделю назад. Поскольку snapshot прошлой недели не хранится,
-// аппроксимируем через created_at < weekAgo (объекты, существовавшие неделю
-// назад). Это даёт нижнюю оценку delta — не учитывает status changes.
-// Для точного delta нужен snapshot-механизм (см. wiki/concepts/billing-snapshots).
+// Объекты живут в Axenta Cloud (внешняя система), tenant.objects обычно
+// пуст. Берём актуальные числа из partner_daily_snapshots — агрегаты
+// по контрактам, наполняются cron Partner Snapshot (00:30 UTC).
+//
+// Current = SUM(active_objects_count) на последний snapshot_date.
+// Delta = current - SUM на (latest_date - 7 days).
 
-func buildActiveObjectsKPI(db *gorm.DB, now time.Time) KPIMetric {
-	var current int64
-	db.Model(&models.Object{}).Where("status = ?", "active").Count(&current)
+func buildActiveObjectsKPI(db *gorm.DB, _ time.Time) KPIMetric {
+	type snapshotRow struct {
+		Active int64
+	}
 
-	weekAgo := now.AddDate(0, 0, -7)
-	var prev int64
-	db.Model(&models.Object{}).
-		Where("status = ? AND created_at < ?", "active", weekAgo).
-		Count(&prev)
+	// Последний snapshot_date — берём из самой свежей строки.
+	var latestRow struct {
+		SnapshotDate time.Time
+	}
+	res := db.Table("partner_daily_snapshots").
+		Select("snapshot_date").
+		Order("snapshot_date DESC").
+		Limit(1).
+		Scan(&latestRow)
 
-	delta := current - prev
+	if res.Error != nil || res.RowsAffected == 0 {
+		return KPIMetric{
+			ID: "active_objects", Title: "Активные объекты",
+			Value: "0", RawValue: 0,
+			Delta: "нет данных snapshot", DeltaDirection: "flat",
+			ActionURL: "/objects",
+		}
+	}
+	latestDate := latestRow.SnapshotDate
+
+	// SUM(active) на последнюю дату
+	var cur snapshotRow
+	db.Table("partner_daily_snapshots").
+		Select("COALESCE(SUM(active_objects_count), 0) as active").
+		Where("DATE(snapshot_date) = DATE(?)", latestDate).
+		Scan(&cur)
+
+	// SUM(active) на дату на 7 дней раньше
+	weekBefore := latestDate.AddDate(0, 0, -7)
+	var prev snapshotRow
+	db.Table("partner_daily_snapshots").
+		Select("COALESCE(SUM(active_objects_count), 0) as active").
+		Where("DATE(snapshot_date) = DATE(?)", weekBefore).
+		Scan(&prev)
+
+	delta := cur.Active - prev.Active
 	dir, deltaText := formatCountDelta(delta, "за неделю")
 
 	return KPIMetric{
 		ID:             "active_objects",
 		Title:          "Активные объекты",
-		Value:          fmt.Sprintf("%d", current),
-		RawValue:       float64(current),
+		Value:          fmt.Sprintf("%d", cur.Active),
+		RawValue:       float64(cur.Active),
 		Delta:          deltaText,
 		DeltaDirection: dir,
 		DeltaValue:     float64(delta),
@@ -111,12 +145,12 @@ func buildActiveObjectsKPI(db *gorm.DB, now time.Time) KPIMetric {
 // Сумма paid_amount по invoices с paid_at в текущем месяце. Delta vs
 // прошлый месяц (та же арифметика для предыдущего month-range).
 
-func buildMonthlyRevenueKPI(db *gorm.DB, now time.Time) KPIMetric {
+func buildMonthlyRevenueKPI(db *gorm.DB, companyID uint, now time.Time) KPIMetric {
 	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 	prevMonthStart := monthStart.AddDate(0, -1, 0)
 
-	current := sumPaid(db, monthStart, monthStart.AddDate(0, 1, 0))
-	prev := sumPaid(db, prevMonthStart, monthStart)
+	current := sumPaid(db, companyID, monthStart, monthStart.AddDate(0, 1, 0))
+	prev := sumPaid(db, companyID, prevMonthStart, monthStart)
 
 	delta := current.Sub(prev)
 	dir, deltaText, pct := formatRublesDelta(current, delta, prev, "vs прошлый месяц")
@@ -134,13 +168,13 @@ func buildMonthlyRevenueKPI(db *gorm.DB, now time.Time) KPIMetric {
 	}
 }
 
-func sumPaid(db *gorm.DB, from, to time.Time) decimal.Decimal {
+func sumPaid(db *gorm.DB, companyID uint, from, to time.Time) decimal.Decimal {
 	var row struct {
 		Sum decimal.Decimal
 	}
-	db.Model(&models.Invoice{}).
+	db.Table(publicTable(db, "invoices")).
 		Select("COALESCE(SUM(paid_amount), 0) as sum").
-		Where("paid_at >= ? AND paid_at < ?", from, to).
+		Where("company_id = ? AND paid_at >= ? AND paid_at < ?", companyID, from, to).
 		Scan(&row)
 	return row.Sum
 }
@@ -191,7 +225,7 @@ func buildTodayInstallationsKPI(db *gorm.DB, now time.Time) KPIMetric {
 // которого максимальный severity. Если активных алертов нет — показываем
 // "Всё в норме" в качестве fallback.
 
-func buildAlertKPI(db *gorm.DB, now time.Time) KPIMetric {
+func buildAlertKPI(tenantDB, publicDB *gorm.DB, companyID uint, now time.Time) KPIMetric {
 	type candidate struct {
 		title    string
 		value    string
@@ -202,10 +236,10 @@ func buildAlertKPI(db *gorm.DB, now time.Time) KPIMetric {
 
 	candidates := []candidate{}
 
-	// Просроченные счета
+	// Просроченные счета (public.invoices)
 	var overdue int64
-	db.Model(&models.Invoice{}).
-		Where("due_date < ? AND status NOT IN ?", now, []string{"paid", "cancelled"}).
+	publicDB.Table(publicTable(publicDB, "invoices")).
+		Where("company_id = ? AND due_date < ? AND status NOT IN ?", companyID, now, []string{"paid", "cancelled"}).
 		Count(&overdue)
 	if overdue > 0 {
 		sev := "high"
@@ -221,9 +255,9 @@ func buildAlertKPI(db *gorm.DB, now time.Time) KPIMetric {
 		})
 	}
 
-	// Низкие остатки
+	// Низкие остатки (tenant.stock_alerts)
 	var lowStock int64
-	db.Model(&models.StockAlert{}).
+	tenantDB.Model(&models.StockAlert{}).
 		Where("status = ?", "active").
 		Count(&lowStock)
 	if lowStock > 0 {
@@ -240,9 +274,9 @@ func buildAlertKPI(db *gorm.DB, now time.Time) KPIMetric {
 		})
 	}
 
-	// Просроченные монтажи
+	// Просроченные монтажи (tenant.installations)
 	var overdueInst int64
-	db.Model(&models.Installation{}).
+	tenantDB.Model(&models.Installation{}).
 		Where("scheduled_at < ? AND status IN ?", now, []string{"planned", "in_progress"}).
 		Count(&overdueInst)
 	if overdueInst > 0 {

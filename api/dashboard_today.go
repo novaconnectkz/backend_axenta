@@ -113,6 +113,9 @@ type RecentInvoiceItem struct {
 
 // GetRecentInvoices возвращает последние 10 счетов компании (по created_at DESC).
 // Status и сумма — для отображения в Today row дашборда.
+//
+// Invoices живут в public schema (не в tenant) — используем публичную DB
+// с фильтром по company_id. Contract тоже в public.
 func GetRecentInvoices(c *gin.Context) {
 	tenantDB := middleware.GetTenantDB(c)
 	if tenantDB == nil {
@@ -121,14 +124,22 @@ func GetRecentInvoices(c *gin.Context) {
 		})
 		return
 	}
+	companyID := middleware.GetCompanyID(c)
+	publicDB := publicDBOrTenant(tenantDB)
 
 	limit := 10
 	var rows []models.Invoice
-	if err := tenantDB.
-		Preload("Contract").
+	// Явный schema-prefix через Table("public.invoices") — иначе при tenant
+	// search_path GORM ищет invoices в tenant_NNN, где её нет.
+	// TODO: вернуть Preload("Contract") когда выясним почему он
+	// возвращает []. Возможно GORM игнорирует Table() override и
+	// пытается найти invoices в tenant schema.
+	if err := publicDB.
+		Table(publicTable(publicDB, "invoices")).
+		Where("company_id = ?", companyID).
 		Order("created_at DESC").
 		Limit(limit).
-		Find(&rows).Error; err != nil {
+		Scan(&rows).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error", "error": "Ошибка получения счетов: " + err.Error(),
 		})

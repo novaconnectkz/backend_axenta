@@ -1013,6 +1013,8 @@ func main() {
 	apiGroup.GET("/dashboard/today-installations/", api.GetTodayInstallations)
 	apiGroup.GET("/dashboard/recent-invoices", api.GetRecentInvoices)
 	apiGroup.GET("/dashboard/recent-invoices/", api.GetRecentInvoices)
+	apiGroup.GET("/search", api.GetGlobalSearch)
+	apiGroup.GET("/search/", api.GetGlobalSearch)
 	apiGroup.GET("/notifications", api.GetDashboardNotificationsSimple)
 
 	// Системные настройки

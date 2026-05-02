@@ -104,6 +104,8 @@ func TestGetDashboardKPI_EmptyDB_Returns4Metrics(t *testing.T) {
 	require.NotNil(t, objects)
 	assert.Equal(t, "0", objects.Value)
 	assert.Equal(t, "flat", objects.DeltaDirection)
+	// Без snapshot table описание явно — "нет данных snapshot"
+	assert.Contains(t, objects.Delta, "нет данных")
 
 	alert := findMetric(data.Metrics, "alert")
 	require.NotNil(t, alert)
@@ -114,62 +116,52 @@ func TestGetDashboardKPI_EmptyDB_Returns4Metrics(t *testing.T) {
 // Метрика 1: active_objects + delta vs неделю назад
 // =====================================================================
 
+// Helper: создаёт partner_daily_snapshots table в SQLite (имитация tenant schema).
+func ensurePartnerSnapshotsTable(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	require.NoError(t, db.Exec(`CREATE TABLE IF NOT EXISTS partner_daily_snapshots (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		snapshot_date TIMESTAMP,
+		active_objects_count INTEGER DEFAULT 0,
+		total_objects_count INTEGER DEFAULT 0
+	)`).Error)
+}
+
 func TestGetDashboardKPI_ActiveObjects_PositiveDelta(t *testing.T) {
 	db := setupKPITestDB(t)
+	ensurePartnerSnapshotsTable(t, db)
 	now := time.Now()
-	weekAgo := now.AddDate(0, 0, -7)
 
-	// 5 активных, существуют > недели — попадут в prev
-	for i := 0; i < 5; i++ {
-		require.NoError(t, db.Exec(
-			"INSERT INTO objects (name, type, status, company_id, location_id, created_at, updated_at) VALUES (?, ?, ?, 1, 1, ?, ?)",
-			fmt.Sprintf("old-%d", i), "vehicle", "active", weekAgo.Add(-24*time.Hour), now,
-		).Error)
-	}
-	// 3 активных, добавлены вчера — current=8, prev=5, delta=+3
-	for i := 0; i < 3; i++ {
-		require.NoError(t, db.Exec(
-			"INSERT INTO objects (name, type, status, company_id, location_id, created_at, updated_at) VALUES (?, ?, ?, 1, 1, ?, ?)",
-			fmt.Sprintf("new-%d", i), "vehicle", "active", now.Add(-24*time.Hour), now,
-		).Error)
-	}
-	// 2 inactive — не должны попасть
-	for i := 0; i < 2; i++ {
-		require.NoError(t, db.Exec(
-			"INSERT INTO objects (name, type, status, company_id, location_id, created_at, updated_at) VALUES (?, ?, ?, 1, 1, ?, ?)",
-			fmt.Sprintf("inact-%d", i), "vehicle", "inactive", weekAgo.Add(-24*time.Hour), now,
-		).Error)
-	}
+	// Latest = вчера: 2 контракта × 30 + 50 = 80 active
+	yesterday := now.AddDate(0, 0, -1)
+	require.NoError(t, db.Exec("INSERT INTO partner_daily_snapshots (snapshot_date, active_objects_count) VALUES (?, ?)", yesterday, 30).Error)
+	require.NoError(t, db.Exec("INSERT INTO partner_daily_snapshots (snapshot_date, active_objects_count) VALUES (?, ?)", yesterday, 50).Error)
+
+	// Неделю до latest = 8 дней назад: 2 контракта × 25 + 35 = 60 active
+	weekBeforeLatest := yesterday.AddDate(0, 0, -7)
+	require.NoError(t, db.Exec("INSERT INTO partner_daily_snapshots (snapshot_date, active_objects_count) VALUES (?, ?)", weekBeforeLatest, 25).Error)
+	require.NoError(t, db.Exec("INSERT INTO partner_daily_snapshots (snapshot_date, active_objects_count) VALUES (?, ?)", weekBeforeLatest, 35).Error)
 
 	_, data := callKPI(t, db)
 	m := findMetric(data.Metrics, "active_objects")
 	require.NotNil(t, m)
-	assert.Equal(t, "8", m.Value)
+	assert.Equal(t, "80", m.Value)
 	assert.Equal(t, "up", m.DeltaDirection)
-	assert.Equal(t, float64(3), m.DeltaValue)
-	assert.Contains(t, m.Delta, "+3")
+	assert.Equal(t, float64(20), m.DeltaValue)
+	assert.Contains(t, m.Delta, "+20")
 	assert.Contains(t, m.Delta, "за неделю")
 }
 
-func TestGetDashboardKPI_ActiveObjects_FlatDelta(t *testing.T) {
+func TestGetDashboardKPI_ActiveObjects_NoSnapshots(t *testing.T) {
 	db := setupKPITestDB(t)
-	now := time.Now()
-	weekAgo := now.AddDate(0, 0, -8)
-
-	// 4 активных, все старше недели — current=4, prev=4, delta=0
-	for i := 0; i < 4; i++ {
-		require.NoError(t, db.Exec(
-			"INSERT INTO objects (name, type, status, company_id, location_id, created_at, updated_at) VALUES (?, ?, ?, 1, 1, ?, ?)",
-			fmt.Sprintf("o-%d", i), "vehicle", "active", weekAgo, now,
-		).Error)
-	}
+	ensurePartnerSnapshotsTable(t, db)
 
 	_, data := callKPI(t, db)
 	m := findMetric(data.Metrics, "active_objects")
 	require.NotNil(t, m)
-	assert.Equal(t, "4", m.Value)
+	assert.Equal(t, "0", m.Value)
 	assert.Equal(t, "flat", m.DeltaDirection)
-	assert.Contains(t, m.Delta, "без изменений")
+	assert.Contains(t, m.Delta, "нет данных snapshot")
 }
 
 // =====================================================================
