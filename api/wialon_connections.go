@@ -1,8 +1,10 @@
 package api
 
 import (
+	"backend_axenta/database"
 	"backend_axenta/models"
 	"backend_axenta/services"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +18,25 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
+
+// allAccountsCacheKey формирует ключ кэша Redis для /wialon/all-accounts по компании
+func allAccountsCacheKey(companyID uint) string {
+	return fmt.Sprintf("wialon:all-accounts:%d", companyID)
+}
+
+// allAccountsCacheTTL — длительность кэша. 5 минут — компромисс между свежестью и нагрузкой на Wialon.
+// При действиях, меняющих статус аккаунта (ToggleAccountStatus), кэш инвалидируется явно.
+const allAccountsCacheTTL = 5 * time.Minute
+
+// invalidateAllAccountsCache удаляет кэш списка для компании. Вызывается после изменений статуса.
+func invalidateAllAccountsCache(companyID uint) {
+	if database.RedisClient == nil {
+		return
+	}
+	if err := database.RedisClient.Del(context.Background(), allAccountsCacheKey(companyID)).Err(); err != nil {
+		log.Printf("⚠️ Ошибка инвалидации wialon all-accounts cache (company=%d): %v", companyID, err)
+	}
+}
 
 // WialonConnectionAPI обработчики для подключений Wialon
 type WialonConnectionAPI struct {
@@ -477,9 +498,21 @@ func (api *WialonConnectionAPI) GetAllAccounts(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Компания не определена"})
 		return
 	}
+	cid := companyID.(uint)
+
+	// Cache hit — отдаём из Redis. Источник правды — Wialon, но 5 минут stale-данных приемлемо
+	// (новые/удалённые аккаунты появятся в CRM с задержкой до 5 мин). При toggle статуса cache
+	// инвалидируется явно (см. invalidateAllAccountsCache).
+	if database.RedisClient != nil {
+		if cached, err := database.RedisClient.Get(context.Background(), allAccountsCacheKey(cid)).Bytes(); err == nil && len(cached) > 0 {
+			log.Printf("⚡ Wialon CACHE HIT: /all-accounts company=%d, %d bytes", cid, len(cached))
+			c.Data(http.StatusOK, "application/json", cached)
+			return
+		}
+	}
 
 	// Получаем все активные подключения
-	connections, err := api.service.GetAllByCompany(companyID.(uint))
+	connections, err := api.service.GetAllByCompany(cid)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка получения подключений: " + err.Error()})
 		return
@@ -576,7 +609,7 @@ func (api *WialonConnectionAPI) GetAllAccounts(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	responsePayload := gin.H{
 		"success": true,
 		"data": gin.H{
 			"items":         allAccounts,
@@ -589,7 +622,21 @@ func (api *WialonConnectionAPI) GetAllAccounts(c *gin.Context) {
 				"objects_total": totalObjects,
 			},
 		},
-	})
+	}
+
+	// Сохраняем в Redis. Сериализуем тот же payload, который отдаём клиенту, чтобы cache hit мог
+	// напрямую вернуть bytes без повторной сборки.
+	if database.RedisClient != nil {
+		if payloadBytes, err := json.Marshal(responsePayload); err == nil {
+			if err := database.RedisClient.Set(context.Background(), allAccountsCacheKey(cid), payloadBytes, allAccountsCacheTTL).Err(); err != nil {
+				log.Printf("⚠️ Ошибка записи wialon all-accounts cache (company=%d): %v", cid, err)
+			} else {
+				log.Printf("⚡ Wialon CACHE SET: /all-accounts company=%d, %d bytes, TTL=%s", cid, len(payloadBytes), allAccountsCacheTTL)
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, responsePayload)
 }
 
 // ToggleAccountStatusRequest запрос на изменение статуса аккаунта
@@ -642,6 +689,11 @@ func (api *WialonConnectionAPI) ToggleAccountStatus(c *gin.Context) {
 	statusText := "активирован"
 	if !req.Enable {
 		statusText = "заблокирован"
+	}
+
+	// Инвалидируем cache /all-accounts — новый статус должен сразу отражаться в списке
+	if companyID, exists := c.Get("company_id"); exists {
+		invalidateAllAccountsCache(companyID.(uint))
 	}
 
 	c.JSON(http.StatusOK, gin.H{
