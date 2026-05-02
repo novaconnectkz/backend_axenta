@@ -1,0 +1,341 @@
+package api
+
+import (
+	"fmt"
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/shopspring/decimal"
+	"gorm.io/gorm"
+
+	"backend_axenta/middleware"
+	"backend_axenta/models"
+)
+
+// KPIMetric — одна метрика верхнего бара дашборда с delta vs предыдущий период.
+type KPIMetric struct {
+	ID              string  `json:"id"`               // active_objects, monthly_revenue, today_installations, alert
+	Title           string  `json:"title"`            // "Активные объекты"
+	Value           string  `json:"value"`            // "9710" / "25 500 ₽" — отформатировано для UI
+	RawValue        float64 `json:"raw_value"`        // числовое значение для сортировки/чартов
+	Delta           string  `json:"delta"`            // "+12 за неделю" — текст для отображения
+	DeltaDirection  string  `json:"delta_direction"`  // up, down, flat — для цвета
+	DeltaValue      float64 `json:"delta_value"`      // числовая дельта (может быть отрицательной)
+	DeltaPercentage float64 `json:"delta_percentage"` // % изменения, если применимо
+	ActionURL       string  `json:"action_url"`       // CTA → frontend route
+}
+
+// KPIResponse — payload ответа /api/auth/dashboard/kpi.
+type KPIResponse struct {
+	Metrics     []KPIMetric `json:"metrics"`
+	GeneratedAt time.Time   `json:"generated_at"`
+}
+
+// GetDashboardKPI возвращает 4 ключевые метрики верхнего бара дашборда
+// с дельтами vs предыдущий сравнимый период.
+//
+// GET /api/auth/dashboard/kpi
+//
+// Метрики (фиксированные, без кастомизации):
+//  1. active_objects — текущее число активных объектов + delta vs неделю назад (snapshot)
+//  2. monthly_revenue — выручка за текущий месяц + delta vs прошлый месяц
+//  3. today_installations — запланированные на сегодня монтажи
+//  4. alert — самый severe из активных алертов (для top-of-mind)
+func GetDashboardKPI(c *gin.Context) {
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Ошибка подключения к базе данных компании",
+		})
+		return
+	}
+
+	now := time.Now()
+
+	metrics := []KPIMetric{
+		buildActiveObjectsKPI(tenantDB, now),
+		buildMonthlyRevenueKPI(tenantDB, now),
+		buildTodayInstallationsKPI(tenantDB, now),
+		buildAlertKPI(tenantDB, now),
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data": KPIResponse{
+			Metrics:     metrics,
+			GeneratedAt: now,
+		},
+	})
+}
+
+// =====================================================================
+// Метрика 1: Активные объекты
+// =====================================================================
+//
+// Delta vs неделю назад. Поскольку snapshot прошлой недели не хранится,
+// аппроксимируем через created_at < weekAgo (объекты, существовавшие неделю
+// назад). Это даёт нижнюю оценку delta — не учитывает status changes.
+// Для точного delta нужен snapshot-механизм (см. wiki/concepts/billing-snapshots).
+
+func buildActiveObjectsKPI(db *gorm.DB, now time.Time) KPIMetric {
+	var current int64
+	db.Model(&models.Object{}).Where("status = ?", "active").Count(&current)
+
+	weekAgo := now.AddDate(0, 0, -7)
+	var prev int64
+	db.Model(&models.Object{}).
+		Where("status = ? AND created_at < ?", "active", weekAgo).
+		Count(&prev)
+
+	delta := current - prev
+	dir, deltaText := formatCountDelta(delta, "за неделю")
+
+	return KPIMetric{
+		ID:             "active_objects",
+		Title:          "Активные объекты",
+		Value:          fmt.Sprintf("%d", current),
+		RawValue:       float64(current),
+		Delta:          deltaText,
+		DeltaDirection: dir,
+		DeltaValue:     float64(delta),
+		ActionURL:      "/objects",
+	}
+}
+
+// =====================================================================
+// Метрика 2: Выручка за месяц
+// =====================================================================
+//
+// Сумма paid_amount по invoices с paid_at в текущем месяце. Delta vs
+// прошлый месяц (та же арифметика для предыдущего month-range).
+
+func buildMonthlyRevenueKPI(db *gorm.DB, now time.Time) KPIMetric {
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	prevMonthStart := monthStart.AddDate(0, -1, 0)
+
+	current := sumPaid(db, monthStart, monthStart.AddDate(0, 1, 0))
+	prev := sumPaid(db, prevMonthStart, monthStart)
+
+	delta := current.Sub(prev)
+	dir, deltaText, pct := formatRublesDelta(current, delta, prev, "vs прошлый месяц")
+
+	return KPIMetric{
+		ID:              "monthly_revenue",
+		Title:           "Выручка за месяц",
+		Value:           formatRublesValue(current),
+		RawValue:        rublesAsFloat(current),
+		Delta:           deltaText,
+		DeltaDirection:  dir,
+		DeltaValue:      rublesAsFloat(delta),
+		DeltaPercentage: pct,
+		ActionURL:       "/billing",
+	}
+}
+
+func sumPaid(db *gorm.DB, from, to time.Time) decimal.Decimal {
+	var row struct {
+		Sum decimal.Decimal
+	}
+	db.Model(&models.Invoice{}).
+		Select("COALESCE(SUM(paid_amount), 0) as sum").
+		Where("paid_at >= ? AND paid_at < ?", from, to).
+		Scan(&row)
+	return row.Sum
+}
+
+// =====================================================================
+// Метрика 3: Монтажи на сегодня
+// =====================================================================
+//
+// Count installations со scheduled_at в окне [today_start, today_end).
+// Delta vs того же дня прошлой недели (Mon→Mon, Tue→Tue) — учитывает
+// недельную сезонность.
+
+func buildTodayInstallationsKPI(db *gorm.DB, now time.Time) KPIMetric {
+	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	dayEnd := dayStart.Add(24 * time.Hour)
+
+	prevDayStart := dayStart.AddDate(0, 0, -7)
+	prevDayEnd := dayEnd.AddDate(0, 0, -7)
+
+	var current, prev int64
+	db.Model(&models.Installation{}).
+		Where("scheduled_at >= ? AND scheduled_at < ?", dayStart, dayEnd).
+		Count(&current)
+	db.Model(&models.Installation{}).
+		Where("scheduled_at >= ? AND scheduled_at < ?", prevDayStart, prevDayEnd).
+		Count(&prev)
+
+	delta := current - prev
+	dir, deltaText := formatCountDelta(delta, "vs прошлая неделя")
+
+	return KPIMetric{
+		ID:             "today_installations",
+		Title:          "Монтажи сегодня",
+		Value:          fmt.Sprintf("%d", current),
+		RawValue:       float64(current),
+		Delta:          deltaText,
+		DeltaDirection: dir,
+		DeltaValue:     float64(delta),
+		ActionURL:      "/installations",
+	}
+}
+
+// =====================================================================
+// Метрика 4: Самый severe алерт (для top-of-mind)
+// =====================================================================
+//
+// Берём count из тех же 4 источников что и Alerts row, выбираем тот, у
+// которого максимальный severity. Если активных алертов нет — показываем
+// "Всё в норме" в качестве fallback.
+
+func buildAlertKPI(db *gorm.DB, now time.Time) KPIMetric {
+	type candidate struct {
+		title    string
+		value    string
+		count    int64
+		severity string
+		url      string
+	}
+
+	candidates := []candidate{}
+
+	// Просроченные счета
+	var overdue int64
+	db.Model(&models.Invoice{}).
+		Where("due_date < ? AND status NOT IN ?", now, []string{"paid", "cancelled"}).
+		Count(&overdue)
+	if overdue > 0 {
+		sev := "high"
+		if overdue >= 10 {
+			sev = "critical"
+		}
+		candidates = append(candidates, candidate{
+			title:    "Просроченные счета",
+			value:    fmt.Sprintf("%d", overdue),
+			count:    overdue,
+			severity: sev,
+			url:      "/billing/overdue",
+		})
+	}
+
+	// Низкие остатки
+	var lowStock int64
+	db.Model(&models.StockAlert{}).
+		Where("status = ?", "active").
+		Count(&lowStock)
+	if lowStock > 0 {
+		sev := "medium"
+		if lowStock >= 20 {
+			sev = "critical"
+		}
+		candidates = append(candidates, candidate{
+			title:    "Низкие остатки",
+			value:    fmt.Sprintf("%d", lowStock),
+			count:    lowStock,
+			severity: sev,
+			url:      "/warehouse/alerts",
+		})
+	}
+
+	// Просроченные монтажи
+	var overdueInst int64
+	db.Model(&models.Installation{}).
+		Where("scheduled_at < ? AND status IN ?", now, []string{"planned", "in_progress"}).
+		Count(&overdueInst)
+	if overdueInst > 0 {
+		sev := "medium"
+		if overdueInst >= 5 {
+			sev = "high"
+		}
+		candidates = append(candidates, candidate{
+			title:    "Просроченные монтажи",
+			value:    fmt.Sprintf("%d", overdueInst),
+			count:    overdueInst,
+			severity: sev,
+			url:      "/installations?filter=overdue",
+		})
+	}
+
+	if len(candidates) == 0 {
+		return KPIMetric{
+			ID:             "alert",
+			Title:          "Состояние",
+			Value:          "OK",
+			RawValue:       0,
+			Delta:          "Нет активных алертов",
+			DeltaDirection: "flat",
+			ActionURL:      "/notification-logs",
+		}
+	}
+
+	// Выбираем максимально severe (при равенстве — больший count)
+	best := candidates[0]
+	for _, c := range candidates[1:] {
+		if severityRank(c.severity) > severityRank(best.severity) ||
+			(severityRank(c.severity) == severityRank(best.severity) && c.count > best.count) {
+			best = c
+		}
+	}
+
+	return KPIMetric{
+		ID:             "alert",
+		Title:          best.title,
+		Value:          best.value,
+		RawValue:       float64(best.count),
+		Delta:          "Требует внимания · " + best.severity,
+		DeltaDirection: "down",
+		DeltaValue:     float64(best.count),
+		ActionURL:      best.url,
+	}
+}
+
+// =====================================================================
+// Форматтеры
+// =====================================================================
+
+// formatCountDelta — для целочисленных метрик (объекты, монтажи).
+// Возвращает direction (up/down/flat) и текст вида "▲ +12 за неделю".
+// Стрелки добавляет frontend по direction — здесь только число.
+func formatCountDelta(delta int64, suffix string) (direction, text string) {
+	switch {
+	case delta > 0:
+		return "up", fmt.Sprintf("+%d %s", delta, suffix)
+	case delta < 0:
+		return "down", fmt.Sprintf("%d %s", delta, suffix)
+	default:
+		return "flat", "без изменений " + suffix
+	}
+}
+
+// formatRublesDelta — для денежных метрик. Возвращает direction, текст и %.
+// Если предыдущий период == 0, percentage = 0 (избегаем деления на ноль).
+func formatRublesDelta(current, delta, prev decimal.Decimal, suffix string) (direction, text string, pct float64) {
+	zero := decimal.NewFromInt(0)
+	cmp := delta.Cmp(zero)
+
+	if !prev.IsZero() {
+		pctDec := delta.Mul(decimal.NewFromInt(100)).Div(prev)
+		pct, _ = pctDec.Float64()
+	}
+
+	switch {
+	case cmp > 0:
+		return "up", fmt.Sprintf("+%s %s", formatRublesValue(delta), suffix), pct
+	case cmp < 0:
+		return "down", fmt.Sprintf("%s %s", formatRublesValue(delta), suffix), pct
+	default:
+		return "flat", "без изменений " + suffix, 0
+	}
+}
+
+func formatRublesValue(d decimal.Decimal) string {
+	return d.Round(0).String() + " ₽"
+}
+
+func rublesAsFloat(d decimal.Decimal) float64 {
+	f, _ := d.Float64()
+	return f
+}
