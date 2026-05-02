@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -488,36 +490,54 @@ func (api *WialonConnectionAPI) GetAllAccounts(c *gin.Context) {
 
 	wialonService := services.NewWialonService()
 
+	// Параллелим загрузку по connections — WL и WH идут одновременно (Wialon разрешает до 5 concurrent sessions per token).
+	// Раньше for-loop делал sum(time_WL, time_WH); теперь max(time_WL, time_WH).
+	type connResult struct {
+		conn        models.WialonConnection
+		sourceLabel string
+		accounts    []services.WialonAccount
+		err         error
+		duration    time.Duration
+	}
+
+	var wg sync.WaitGroup
+	resultsCh := make(chan connResult, len(connections))
+
+	tStart := time.Now()
 	for _, conn := range connections {
 		if !conn.IsActive {
 			continue
 		}
+		wg.Add(1)
+		go func(conn models.WialonConnection) {
+			defer wg.Done()
+			sourceLabel := "WL(" + conn.UserName + ")"
+			if conn.ConnectionType == models.WialonConnectionTypeHosting {
+				sourceLabel = "WH(" + conn.UserName + ")"
+			}
+			t0 := time.Now()
+			accs, err := wialonService.GetAccountsBatchFromHost(conn.Host, conn.Token)
+			resultsCh <- connResult{conn: conn, sourceLabel: sourceLabel, accounts: accs, err: err, duration: time.Since(t0)}
+		}(conn)
+	}
+	wg.Wait()
+	close(resultsCh)
 
-		// Формируем метку источника
-		sourceLabel := ""
-		if conn.ConnectionType == models.WialonConnectionTypeHosting {
-			sourceLabel = "WH(" + conn.UserName + ")"
-		} else {
-			sourceLabel = "WL(" + conn.UserName + ")"
-		}
-
-		// Получаем аккаунты из этого подключения (BATCH — 1 round-trip вместо 5×search_items)
-		accounts, err := wialonService.GetAccountsBatchFromHost(conn.Host, conn.Token)
-		if err != nil {
-			log.Printf("⚠️ Ошибка получения аккаунтов из %s: %v", conn.Name, err)
+	for r := range resultsCh {
+		if r.err != nil {
+			log.Printf("⚠️ Ошибка получения аккаунтов из %s: %v (за %s)", r.conn.Name, r.err, r.duration)
 			continue
 		}
+		log.Printf("⚡ Wialon PARALLEL: connection=%s загружена за %s, %d аккаунтов", r.conn.Name, r.duration, len(r.accounts))
 
-		for _, acc := range accounts {
-			// Формируем полную иерархию: "WL(Профмонитор) > Родитель > ИмяАккаунта"
+		for _, acc := range r.accounts {
 			var hierarchy string
 			if acc.ParentName != "" {
-				hierarchy = sourceLabel + " > " + acc.ParentName + " > " + acc.Name
+				hierarchy = r.sourceLabel + " > " + acc.ParentName + " > " + acc.Name
 			} else {
-				hierarchy = sourceLabel + " > " + acc.Name
+				hierarchy = r.sourceLabel + " > " + acc.Name
 			}
 
-			// Определяем тип компании на основе прав дилера
 			accountType := "client"
 			if acc.DealerRights {
 				accountType = "partner"
@@ -526,16 +546,16 @@ func (api *WialonConnectionAPI) GetAllAccounts(c *gin.Context) {
 			allAccounts = append(allAccounts, WialonAccountInfo{
 				ID:            int(acc.ID),
 				Name:          acc.Name,
-				Type:          accountType, // "partner" если DealerRights, иначе "client"
+				Type:          accountType,
 				IsActive:      acc.IsActive,
-				DealerRights:  acc.DealerRights, // Передаём права дилера
+				DealerRights:  acc.DealerRights,
 				ObjectsTotal:  acc.ObjectsTotal,
-				ObjectsActive: acc.ObjectsActive, // Передаём активные объекты
+				ObjectsActive: acc.ObjectsActive,
 				Source:        "wialon",
-				SourceLabel:   sourceLabel,
+				SourceLabel:   r.sourceLabel,
 				Hierarchy:     hierarchy,
-				ConnectionID:  conn.ID,
-				CreatedAt:     acc.CreatedAt, // Дата создания из Wialon
+				ConnectionID:  r.conn.ID,
+				CreatedAt:     acc.CreatedAt,
 			})
 
 			if acc.IsActive {
@@ -546,6 +566,7 @@ func (api *WialonConnectionAPI) GetAllAccounts(c *gin.Context) {
 			totalObjects += acc.ObjectsTotal
 		}
 	}
+	log.Printf("⚡ Wialon PARALLEL: все connections обработаны за %s, всего %d аккаунтов", time.Since(tStart), len(allAccounts))
 
 	// Собираем уникальные connectionIds для фоновой загрузки статистики
 	connectionIds := make([]uint, 0)
