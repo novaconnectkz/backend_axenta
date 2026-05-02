@@ -85,6 +85,9 @@ func (api *WialonConnectionAPI) RegisterRoutes(r *gin.RouterGroup) {
 	// Endpoint для получения статистики объектов (фоновая загрузка)
 	r.GET("/wialon/connections/:id/objects-stats", api.GetConnectionObjectsStats)
 
+	// Endpoint для точечного обновления одной учётной записи (cache-invalidate + refresh stats для 1 ресурса)
+	r.POST("/wialon/connections/:id/refresh-account/:user_id", api.RefreshSingleAccount)
+
 	log.Println("✅ Wialon Connections API routes registered: /api/wialon/connections/*")
 }
 
@@ -637,6 +640,62 @@ func (api *WialonConnectionAPI) GetAllAccounts(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, responsePayload)
+}
+
+// RefreshSingleAccount — точечное обновление stats одной учётной записи.
+// POST /api/wialon/connections/:id/refresh-account/:user_id
+//
+// Делает live-запрос к Wialon на 1 ресурс (~200-500 ms) + обновляет запись в wialon_object_stats
+// + инвалидирует cache /all-accounts. Используется фронтом после действия пользователя
+// (toggle, edit), чтобы пользователь сразу видел свежие данные без ожидания scheduler-цикла.
+func (api *WialonConnectionAPI) RefreshSingleAccount(c *gin.Context) {
+	connectionID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректный ID подключения"})
+		return
+	}
+	userID, err := strconv.ParseInt(c.Param("user_id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректный user_id"})
+		return
+	}
+
+	companyID, exists := c.Get("company_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Компания не определена"})
+		return
+	}
+
+	// Проверка доступа
+	conn, err := api.service.GetByID(uint(connectionID))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Подключение не найдено"})
+		return
+	}
+	if conn.CompanyID != companyID.(uint) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Нет доступа к этому подключению"})
+		return
+	}
+
+	statsService := services.NewWialonStatsService()
+	stat, err := statsService.RefreshSingleAccount(uint(connectionID), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка обновления: " + err.Error()})
+		return
+	}
+
+	// Инвалидация cache /all-accounts чтобы при следующем заходе пользователь увидел свежий список
+	invalidateAllAccountsCache(companyID.(uint))
+
+	c.JSON(http.StatusOK, gin.H{
+		"connectionId":       connectionID,
+		"userId":             userID,
+		"resourceId":         stat.ResourceID,
+		"objectsTotal":       stat.ObjectsTotal,
+		"objectsActive":      stat.ObjectsActive,
+		"objectsDeactivated": stat.ObjectsDeactivated,
+		"lastCollectedAt":    stat.LastCollectedAt,
+	})
 }
 
 // ToggleAccountStatusRequest запрос на изменение статуса аккаунта

@@ -197,6 +197,165 @@ func (s *WialonStatsService) GetStatsForConnection(connectionID uint) ([]models.
 	return stats, nil
 }
 
+// RefreshSingleAccount обновляет stats одной учётки точечно: live-запрос к Wialon на 1 ресурс
+// (account/get_account_data) → upsert в БД. ETA <1 сек. Используется при ручных действиях
+// пользователя (после toggle/edit), чтобы показать свежие числа без запуска полного scheduler-сбора.
+//
+// userID — это user.id в Wialon, по которому фронт идентифицирует аккаунт. Внутри определяем
+// resourceID из таблицы wialon_object_stats (там user_id есть от предыдущего полного сбора).
+func (s *WialonStatsService) RefreshSingleAccount(connectionID uint, userID int64) (*models.WialonObjectStat, error) {
+	t0 := time.Now()
+
+	var conn models.WialonConnection
+	if err := s.db.Where("id = ? AND is_active = ?", connectionID, true).First(&conn).Error; err != nil {
+		return nil, fmt.Errorf("connection %d не найден или неактивен: %w", connectionID, err)
+	}
+
+	loginResp, err := s.wialonService.LoginWithHost(conn.Host, conn.Token)
+	if err != nil {
+		return nil, fmt.Errorf("login: %w", err)
+	}
+	defer func() { _ = s.wialonService.LogoutWithHost(conn.Host, loginResp.Eid) }()
+
+	// Wialon связь user → собственный resource хранится в user.bact (billing_account_id) = resource.id.
+	// Резолвим bact через search_items на конкретного user.
+	resourceID, err := s.resolveBactForUser(conn.Host, loginResp.Eid, userID)
+	if err != nil {
+		log.Printf("⚠️ RefreshSingleAccount: resolveBactForUser(user=%d) не вышел: %v, фолбэк к кандидатам", userID, err)
+	}
+
+	candidates := []int64{}
+	if resourceID > 0 {
+		candidates = append(candidates, resourceID)
+	}
+	// Фолбэк: пробуем существующий маппинг из БД, потом стандартные id+1 / id
+	var existing models.WialonObjectStat
+	if err := s.db.Where("connection_id = ? AND user_id = ?", connectionID, userID).First(&existing).Error; err == nil && existing.ResourceID > 0 {
+		candidates = append(candidates, existing.ResourceID)
+	}
+	candidates = append(candidates, userID+1, userID)
+
+	// Один account/get_account_data на 1 ресурс — самый быстрый путь
+	for _, resourceID := range candidates {
+		stat, err := s.fetchSingleResourceStat(conn.Host, loginResp.Eid, resourceID)
+		if err != nil {
+			log.Printf("⚠️ RefreshSingleAccount: resource=%d не вышло: %v, пробуем следующий кандидат", resourceID, err)
+			continue
+		}
+		if stat == nil {
+			continue
+		}
+		stat.ConnectionID = connectionID
+		stat.UserID = userID
+		stat.ResourceID = resourceID
+		stat.LastCollectedAt = time.Now()
+
+		if err := s.db.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "connection_id"}, {Name: "resource_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"user_id", "objects_total", "objects_active", "objects_deactivated",
+				"last_collected_at", "updated_at",
+			}),
+		}).Create(stat).Error; err != nil {
+			return nil, fmt.Errorf("upsert: %w", err)
+		}
+
+		log.Printf("⚡ RefreshSingleAccount: conn=%d user=%d resource=%d → total=%d active=%d за %s",
+			connectionID, userID, resourceID, stat.ObjectsTotal, stat.ObjectsActive, time.Since(t0))
+		return stat, nil
+	}
+
+	return nil, fmt.Errorf("не удалось найти ресурс для user_id=%d (пробовали %v)", userID, candidates)
+}
+
+// resolveBactForUser — найти resourceID (bact) который "принадлежит" пользователю.
+// Wialon: user.bact указывает на user-собственный billing-resource (avl_resource).
+// flags=5 даёт id+nm+bact для user.
+func (s *WialonStatsService) resolveBactForUser(host, eid string, userID int64) (int64, error) {
+	calls := []map[string]interface{}{
+		{
+			"svc": "core/search_item",
+			"params": map[string]interface{}{
+				"id":    userID,
+				"flags": 5,
+			},
+		},
+	}
+	results, err := s.wialonService.callBatch(host, eid, calls)
+	if err != nil {
+		return 0, err
+	}
+	var resp struct {
+		Item map[string]interface{} `json:"item"`
+	}
+	if err := json.Unmarshal(results[0], &resp); err != nil {
+		return 0, fmt.Errorf("парсинг search_item: %w", err)
+	}
+	if resp.Item == nil {
+		return 0, fmt.Errorf("user %d не найден", userID)
+	}
+	if bact, ok := resp.Item["bact"].(float64); ok && bact > 0 {
+		return int64(bact), nil
+	}
+	return 0, fmt.Errorf("у user %d нет bact", userID)
+}
+
+// fetchSingleResourceStat — один запрос account/get_account_data на ресурс. Парсинг как
+// в GetUnitsCountWithHierarchy, но для одной записи.
+func (s *WialonStatsService) fetchSingleResourceStat(host, eid string, resourceID int64) (*models.WialonObjectStat, error) {
+	calls := []map[string]interface{}{
+		{
+			"svc": "account/get_account_data",
+			"params": map[string]interface{}{
+				"itemId": resourceID,
+				"type":   2,
+			},
+		},
+	}
+	results, err := s.wialonService.callBatch(host, eid, calls)
+	if err != nil {
+		return nil, err
+	}
+
+	var accountData map[string]interface{}
+	if err := json.Unmarshal(results[0], &accountData); err != nil {
+		return nil, fmt.Errorf("парсинг account_data: %w", err)
+	}
+
+	// Wialon при ошибке возвращает {"error": N, "reason": "..."}. Если поле error != 0 — нет такого ресурса.
+	if errCode, ok := accountData["error"].(float64); ok && errCode != 0 {
+		return nil, fmt.Errorf("wialon error %d", int(errCode))
+	}
+
+	stat := &models.WialonObjectStat{}
+	if settings, ok := accountData["settings"].(map[string]interface{}); ok {
+		if combined, ok := settings["combined"].(map[string]interface{}); ok {
+			if svcs, ok := combined["services"].(map[string]interface{}); ok {
+				if avlUnit, ok := svcs["avl_unit"].(map[string]interface{}); ok {
+					if usage, ok := avlUnit["usage"].(float64); ok {
+						stat.ObjectsTotal = int(usage)
+					}
+				}
+				if act, ok := svcs["activated_units"].(map[string]interface{}); ok {
+					if usage, ok := act["usage"].(float64); ok {
+						stat.ObjectsActive = int(usage)
+					}
+				}
+				if season, ok := svcs["seasonal_units"].(map[string]interface{}); ok {
+					if usage, ok := season["usage"].(float64); ok {
+						stat.ObjectsDeactivated = int(usage)
+					}
+				}
+				if stat.ObjectsTotal == 0 && (stat.ObjectsActive > 0 || stat.ObjectsDeactivated > 0) {
+					stat.ObjectsTotal = stat.ObjectsActive + stat.ObjectsDeactivated
+				}
+				return stat, nil
+			}
+		}
+	}
+	return stat, nil // ресурс существует, но без объектов
+}
+
 // CollectStatsResult — результат запуска CollectAll, для логов и API статуса
 type CollectStatsResult struct {
 	StartedAt            time.Time     `json:"started_at"`
