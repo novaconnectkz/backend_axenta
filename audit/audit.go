@@ -45,14 +45,22 @@ type AuditEntry struct {
 	Duration   int64                  `json:"duration_ms,omitempty"`
 }
 
-// Logger представляет логгер аудита
+// Logger представляет логгер аудита.
+// Запись неблокирующая: Log() кладёт entry в буферизированный канал, отдельная goroutine writeLoop
+// сериализует и пишет в stdout/file. Раньше mutex.Lock на каждую Log сделал concurrent HTTP-запросы
+// последовательными (8 параллельных запросов serialize-ились через mutex → ttfb 1с * 8 = 8с).
 type Logger struct {
-	file       *os.File
-	mu         sync.Mutex
+	file        *os.File
 	logToStdout bool
-	logToFile  bool
-	encoder    *json.Encoder
-	config     *Config
+	logToFile   bool
+	encoder     *json.Encoder
+	config      *Config
+
+	ch       chan *AuditEntry // буфер для async-записи
+	wg       sync.WaitGroup
+	closeMu  sync.Mutex
+	closed   bool
+	dropped  uint64 // счётчик потерянных записей при переполнении канала
 }
 
 // Config конфигурация аудит-логгера
@@ -74,15 +82,19 @@ var (
 // DefaultConfig возвращает конфигурацию по умолчанию
 func DefaultConfig() *Config {
 	return &Config{
-		LogFilePath:  "audit_logs.jsonl",
-		LogToStdout:  true,
-		LogToFile:    true,
-		MaxFileSize:  100 * 1024 * 1024, // 100 MB
-		MaxBackups:   10,
-		FlushPeriod:  1 * time.Second,
-		Enabled:      true,
+		LogFilePath: "audit_logs.jsonl",
+		LogToStdout: true,
+		LogToFile:   true,
+		MaxFileSize: 100 * 1024 * 1024, // 100 MB
+		MaxBackups:  10,
+		FlushPeriod: 1 * time.Second,
+		Enabled:     true,
 	}
 }
+
+// auditChannelSize — буфер async-канала. При переполнении (writeLoop тормозит) Log() сбрасывает
+// записи и инкрементирует Logger.dropped. 4096 даёт ≈30с буфера при 100 RPS.
+const auditChannelSize = 4096
 
 // Init инициализирует глобальный аудит-логгер
 func Init(cfg *Config) error {
@@ -101,6 +113,7 @@ func Init(cfg *Config) error {
 			logToStdout: cfg.LogToStdout,
 			logToFile:   cfg.LogToFile,
 			config:      cfg,
+			ch:          make(chan *AuditEntry, auditChannelSize),
 		}
 
 		if cfg.LogToFile {
@@ -122,9 +135,13 @@ func Init(cfg *Config) error {
 			logger.encoder = json.NewEncoder(io.MultiWriter(file))
 		}
 
+		// Запускаем единственную writer-goroutine. Все Log()-вызовы шлют в канал non-blocking.
+		logger.wg.Add(1)
+		go logger.writeLoop()
+
 		globalLogger = logger
-		log.Printf("✅ Audit logging initialized: file=%s, stdout=%t, file_logging=%t",
-			cfg.LogFilePath, cfg.LogToStdout, cfg.LogToFile)
+		log.Printf("✅ Audit logging initialized: file=%s, stdout=%t, file_logging=%t (async, buf=%d)",
+			cfg.LogFilePath, cfg.LogToStdout, cfg.LogToFile, auditChannelSize)
 	})
 
 	return initErr
@@ -142,10 +159,21 @@ func GetLogger() *Logger {
 	return globalLogger
 }
 
-// Close закрывает аудит-логгер
+// Close корректно завершает writer-goroutine и закрывает файл.
+// Безопасно вызывать несколько раз — повторные вызовы no-op.
 func (l *Logger) Close() error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.closeMu.Lock()
+	if l.closed {
+		l.closeMu.Unlock()
+		return nil
+	}
+	l.closed = true
+	if l.ch != nil {
+		close(l.ch)
+	}
+	l.closeMu.Unlock()
+
+	l.wg.Wait() // ждём чтобы writeLoop сбросил буфер в файл
 
 	if l.file != nil {
 		return l.file.Close()
@@ -153,18 +181,17 @@ func (l *Logger) Close() error {
 	return nil
 }
 
-// Log записывает событие в аудит-лог
+// Log кладёт entry в async-канал (не блокирует HTTP-обработчик).
+// Если канал переполнен (writeLoop тормозит) — entry дропается, dropped инкрементируется.
 func (l *Logger) Log(entry *AuditEntry) {
 	if l == nil || l.config == nil || !l.config.Enabled {
 		return
 	}
 
-	// Устанавливаем timestamp если не установлен
 	if entry.Timestamp.IsZero() {
 		entry.Timestamp = time.Now()
 	}
 
-	// Устанавливаем уровень по умолчанию
 	if entry.Level == "" {
 		if entry.Success {
 			entry.Level = LevelSuccess
@@ -175,22 +202,44 @@ func (l *Logger) Log(entry *AuditEntry) {
 		}
 	}
 
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	if l.ch == nil {
+		// Lazy fallback: канал не инициализирован (например, до Init) — пишем синхронно.
+		l.writeOne(entry)
+		return
+	}
 
-	// Сериализуем в JSON
+	select {
+	case l.ch <- entry:
+	default:
+		l.dropped++
+		// Не блокируем HTTP — просто считаем потерянные записи.
+		// Логируем переполнение редко, чтобы не засорять stdout (раз в 1000 дропов).
+		if l.dropped%1000 == 1 {
+			log.Printf("⚠️ audit channel переполнен, dropped=%d", l.dropped)
+		}
+	}
+}
+
+// writeLoop читает entry-shotgun из канала и пишет в stdout/file. Single goroutine = no mutex.
+func (l *Logger) writeLoop() {
+	defer l.wg.Done()
+	for entry := range l.ch {
+		l.writeOne(entry)
+	}
+}
+
+// writeOne сериализует одну entry и пишет в stdout/file.
+func (l *Logger) writeOne(entry *AuditEntry) {
 	jsonData, err := json.Marshal(entry)
 	if err != nil {
 		log.Printf("Failed to marshal audit entry: %v", err)
 		return
 	}
 
-	// Логируем в stdout
 	if l.logToStdout {
 		fmt.Printf("[AUDIT] %s\n", string(jsonData))
 	}
 
-	// Логируем в файл
 	if l.logToFile && l.file != nil {
 		if _, err := l.file.Write(append(jsonData, '\n')); err != nil {
 			log.Printf("Failed to write audit entry to file: %v", err)
