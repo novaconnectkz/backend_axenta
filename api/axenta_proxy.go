@@ -2,6 +2,7 @@ package api
 
 import (
 	"backend_axenta/database"
+	"backend_axenta/middleware"
 	"backend_axenta/models"
 	"backend_axenta/services"
 	"encoding/json"
@@ -757,8 +758,22 @@ func GetUsersFromAxentaCloud(c *gin.Context) {
 	})
 }
 
-// GetUsersStatsFromAxentaCloud получает статистику пользователей из Axenta Cloud
+// GetUsersStatsFromAxentaCloud получает статистику пользователей.
+// Read-path: snapshot tenant_<id>.axenta_user_snapshots (TTL 60м, COUNT FILTER одним SQL).
+// Fallback: live-fetch из Axenta Cloud при пустом/устаревшем snapshot.
 func GetUsersStatsFromAxentaCloud(c *gin.Context) {
+	// Read-path через snapshot — мгновенный ответ если данные свежие
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB != nil {
+		if data, ok := tryServeUsersStatsFromSnapshot(tenantDB); ok {
+			c.JSON(http.StatusOK, gin.H{
+				"status": "success",
+				"data":   data,
+			})
+			return
+		}
+	}
+
 	// Получаем токен пользователя из заголовка Authorization
 	authHeader := c.GetHeader("Authorization")
 	if authHeader == "" {

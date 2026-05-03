@@ -293,6 +293,73 @@ func tryServeUnifiedUsersFromSnapshot(db *gorm.DB, search, active, role string) 
 	return users, int(totalCount), int(activeCount), true
 }
 
+// tryServeUsersStatsFromSnapshot — read-path для GET /api/auth/users/stats.
+// Один COUNT FILTER (...) запрос к snapshot вместо live-fetch 2.6с с per_page=1000.
+// Возвращает (data, true) если snapshot непуст и свежий.
+func tryServeUsersStatsFromSnapshot(db *gorm.DB) (gin.H, bool) {
+	if db == nil {
+		return nil, false
+	}
+
+	var lastSync time.Time
+	if err := db.
+		Model(&models.AxentaUserSnapshot{}).
+		Select("MAX(last_synced_at)").
+		Scan(&lastSync).Error; err != nil || lastSync.IsZero() {
+		return nil, false
+	}
+
+	if time.Since(lastSync) > unifiedUsersSnapshotTTL {
+		return nil, false
+	}
+
+	type counts struct {
+		Total       int64
+		Active      int64
+		Inactive    int64
+		PartnerCnt  int64
+		ClientCnt   int64
+		StaffCnt    int64
+	}
+	var c counts
+	if err := db.
+		Model(&models.AxentaUserSnapshot{}).
+		Select(`
+			COUNT(*) AS total,
+			COUNT(*) FILTER (WHERE is_active) AS active,
+			COUNT(*) FILTER (WHERE NOT is_active) AS inactive,
+			COUNT(*) FILTER (WHERE account_type = 'partner') AS partner_cnt,
+			COUNT(*) FILTER (WHERE account_type = 'client') AS client_cnt,
+			COUNT(*) FILTER (WHERE account_type = 'staff') AS staff_cnt
+		`).
+		Scan(&c).Error; err != nil {
+		log.Printf("⚠️ tryServeUsersStatsFromSnapshot count: %v", err)
+		return nil, false
+	}
+
+	roleStats := gin.H{
+		"partner": c.PartnerCnt,
+		"client":  c.ClientCnt,
+	}
+	if c.StaffCnt > 0 {
+		roleStats["staff"] = c.StaffCnt
+	}
+
+	return gin.H{
+		"total_users":    c.Total,
+		"active_users":   c.Active,
+		"inactive_users": c.Inactive,
+		"recent_users":   0, // recent_logins требует поля last_login в snapshot — добавим в Этапе 5 если нужно
+		"total":          c.Total,
+		"active":         c.Active,
+		"inactive":       c.Inactive,
+		"recent_logins":  0,
+		"role_stats":     roleStats,
+		"last_updated":   lastSync.Format("2006-01-02T15:04:05Z"),
+		"from_snapshot":  true,
+	}, true
+}
+
 // splitSearchTerms — разделяет search-строку через запятую, тримит, отбрасывает пустые
 func splitSearchTerms(search string) []string {
 	if !strings.Contains(search, ",") {
