@@ -1111,6 +1111,18 @@ func (api *WialonConnectionAPI) DeleteWialonUser(c *gin.Context) {
 
 	log.Printf("✅ Пользователь %d успешно удалён", userID)
 
+	// Удаляем запись из кэша wialon_object_stats и инвалидируем Redis cache /all-accounts
+	// чтобы фронт сразу не видел удалённую учётку
+	if database.DB != nil {
+		if err := database.DB.Where("connection_id = ? AND user_id = ?", connectionID, userID).
+			Delete(&models.WialonObjectStat{}).Error; err != nil {
+			log.Printf("⚠️ Не удалось удалить wialon_object_stats для user=%d: %v", userID, err)
+		}
+	}
+	if companyID, exists := c.Get("company_id"); exists {
+		invalidateAllAccountsCache(companyID.(uint))
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "Пользователь успешно удалён",
