@@ -185,27 +185,27 @@ func (s *WialonAccountService) CreateAccount(connectionID uint, req CreateWialon
 	}
 	log.Printf("⚡ Wialon CreateAccount: user '%s' создан id=%d", req.Username, userID)
 
-	// Шаг 2: create_resource
-	resourceID, err := s.callCreateResource(conn.Host, loginResp.Eid, creatorID, req.Name)
+	// Шаг 2: create_resource. ВАЖНО: creatorId должен быть НОВЫЙ юзер (userID), а НЕ login-юзер.
+	// Wialon error 2014 «выбранный пользователь является создателем каких-либо элементов системы»
+	// возникает если creatorId = существующий dealer (glomoskz). Ресурс должен принадлежать
+	// своему юзеру.
+	resourceID, err := s.callCreateResource(conn.Host, loginResp.Eid, userID, req.Name)
 	if err != nil {
 		return nil, fmt.Errorf("create_resource: %w (юзер %d создан, нужна ручная очистка)", err, userID)
 	}
 	log.Printf("⚡ Wialon CreateAccount: resource '%s' создан id=%d", req.Name, resourceID)
 
-	// Шаг 3: update_billing_properties — ресурс → billing account
-	if err := s.callUpdateBillingProperties(conn.Host, loginResp.Eid, resourceID); err != nil {
-		return nil, fmt.Errorf("update_billing_properties: %w (юзер=%d, ресурс=%d)", err, userID, resourceID)
-	}
-
-	// Шаг 4: change_billing_plan (если задан — на Wialon Local плана может не быть)
+	// Шаг 3: account/create_account — превращает ресурс в биллинг-аккаунт + сразу назначает план.
+	// Заменяет связку update_billing_properties + change_billing_plan (метод update_billing_properties
+	// не существует, выдаёт error 2 Invalid service).
 	if req.BillingPlan != "" {
-		if err := s.callChangeBillingPlan(conn.Host, loginResp.Eid, resourceID, req.BillingPlan); err != nil {
-			log.Printf("⚠️ change_billing_plan '%s' не сработал: %v (продолжаем — для WL билинг может быть не нужен)", req.BillingPlan, err)
+		if err := s.callCreateBillingAccount(conn.Host, loginResp.Eid, resourceID, req.BillingPlan); err != nil {
+			return nil, fmt.Errorf("create_account billing '%s': %w (юзер=%d, ресурс=%d)", req.BillingPlan, err, userID, resourceID)
 		}
 	}
 
-	// Шаг 5: email
-	if err := s.callUpdateUserProperty(conn.Host, loginResp.Eid, userID, "email", req.Email); err != nil {
+	// Шаг 5: email — это user property prp.email, ставится через item/update_custom_property с itemId=userID
+	if err := s.callUpdateCustomProperty(conn.Host, loginResp.Eid, userID, "email", req.Email); err != nil {
 		log.Printf("⚠️ Wialon CreateAccount: не удалось установить email: %v (продолжаем)", err)
 	}
 
@@ -222,10 +222,8 @@ func (s *WialonAccountService) CreateAccount(connectionID uint, req CreateWialon
 		log.Printf("⚠️ Wialon CreateAccount: не удалось выдать access: %v (продолжаем — Wialon обычно даёт права автоматом если creatorId совпадает)", err)
 	}
 
-	// Также сохранить bact = resourceID на user (важно для frontend identity)
-	if err := s.callUpdateUserProperty(conn.Host, loginResp.Eid, userID, "bact", fmt.Sprintf("%d", resourceID)); err != nil {
-		log.Printf("⚠️ Wialon CreateAccount: не удалось установить bact: %v", err)
-	}
+	// bact (billing_account_id) на user — Wialon сам устанавливает его при account/create_account.
+	// Ручное обновление не требуется.
 
 	// Сохраняем в БД-кэш чтобы запись сразу появилась в /accounts UI без ожидания scheduler
 	now := time.Now()
@@ -291,37 +289,14 @@ func (s *WialonAccountService) callCreateResource(host, eid string, creatorID in
 	return extractItemID(body)
 }
 
-// callUpdateBillingProperties — нулевые балансы, начало биллинга
-func (s *WialonAccountService) callUpdateBillingProperties(host, eid string, resourceID int64) error {
-	params := map[string]interface{}{
-		"itemId":      resourceID,
-		"balance":     "0",
-		"days":        0,
-		"blockBalance": "0",
-		"blockDays":    0,
-		"denyBalance":  "0",
-		"denyDays":     0,
-	}
-	_, err := s.callRaw(host, eid, "account/update_billing_properties", params)
-	return err
-}
-
-func (s *WialonAccountService) callChangeBillingPlan(host, eid string, resourceID int64, plan string) error {
+// callCreateBillingAccount — превращает avl_resource в биллинговый аккаунт с указанным планом.
+// account/create_account params={itemId, plan}, response={} при успехе.
+func (s *WialonAccountService) callCreateBillingAccount(host, eid string, resourceID int64, plan string) error {
 	params := map[string]interface{}{
 		"itemId": resourceID,
 		"plan":   plan,
 	}
-	_, err := s.callRaw(host, eid, "account/change_billing_plan", params)
-	return err
-}
-
-func (s *WialonAccountService) callUpdateUserProperty(host, eid string, userID int64, name, value string) error {
-	params := map[string]interface{}{
-		"userId": userID,
-		"name":   name,
-		"value":  value,
-	}
-	_, err := s.callRaw(host, eid, "core/update_user_property", params)
+	_, err := s.callRaw(host, eid, "account/create_account", params)
 	return err
 }
 
