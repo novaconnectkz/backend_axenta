@@ -73,13 +73,17 @@ dev: ## Запустить в режиме разработки (локальн�
 # ============================================================================
 
 prod-build: ## Собрать бинарник для продакшена (linux/amd64)
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-w -s" -o axenta_backend_linux main.go
-	@echo "✅ Бинарник создан: axenta_backend_linux"
+	$(eval COMMIT_COUNT := $(shell git rev-list --count HEAD))
+	$(eval COMMIT_HASH := $(shell git rev-parse --short HEAD))
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-w -s -X main.gitCommitCount=$(COMMIT_COUNT) -X main.gitCommitHash=$(COMMIT_HASH)" -o axenta_backend_linux main.go
+	@echo "✅ Бинарник создан: axenta_backend_linux (commit=$(COMMIT_COUNT) hash=$(COMMIT_HASH))"
 	@ls -lh axenta_backend_linux
 
 prod-build-local: ## Собрать бинарник для локальной ОС
-	go build -ldflags="-w -s" -o axenta_backend main.go
-	@echo "✅ Бинарник создан: axenta_backend"
+	$(eval COMMIT_COUNT := $(shell git rev-list --count HEAD))
+	$(eval COMMIT_HASH := $(shell git rev-parse --short HEAD))
+	go build -ldflags="-w -s -X main.gitCommitCount=$(COMMIT_COUNT) -X main.gitCommitHash=$(COMMIT_HASH)" -o axenta_backend main.go
+	@echo "✅ Бинарник создан: axenta_backend (commit=$(COMMIT_COUNT) hash=$(COMMIT_HASH))"
 
 # ============================================================================
 # Docker (ОПЦИОНАЛЬНО - только для экспериментов, не используется в продакшене)

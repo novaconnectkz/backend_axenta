@@ -18,6 +18,19 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Подставляются через -ldflags при сборке (см. Makefile prod-build).
+// В dev-режиме (`go run`) остаются дефолтами.
+var (
+	gitCommitCount = "0"
+	gitCommitHash  = "dev"
+)
+
+// GetGitCommitCount возвращает count для api.RegisterVersionRoute
+func GetGitCommitCount() string { return gitCommitCount }
+
+// GetGitCommitHash возвращает hash для api.RegisterVersionRoute
+func GetGitCommitHash() string { return gitCommitHash }
+
 func main() {
 	log.Println("Starting Axenta Backend Server...")
 	log.Println("🔧 DEBUG: Main function started")
@@ -370,6 +383,12 @@ func main() {
 	r.POST("/api/cms/create-user", api.CreateCmsUserWithCurrentToken)
 	// Endpoint для создания пользователей CMS с проверкой сохраненного токена
 	r.POST("/api/cms/create-user-with-saved-token", api.CreateCmsUserWithCurrentToken)
+
+	// === ВЕРСИЯ BACKEND === (public, без auth — нужно фронту до логина для footer)
+	api.SetVersionInfoProvider(func() api.VersionInfo {
+		return api.VersionInfo{CommitCount: gitCommitCount, CommitHash: gitCommitHash}
+	})
+	r.GET("/api/version", api.GetAppVersion)
 
 	// === ЛОКАЛЬНАЯ АВТОРИЗАЦИЯ ===
 	localAuthAPI := api.NewLocalAuthAPI(database.DB, jwtService)
