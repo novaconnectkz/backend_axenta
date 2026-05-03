@@ -197,6 +197,21 @@ func (s *AxentaSyncService) syncAdminWithTokenAndDBAndProgress(adminAccountID ui
 	log.Printf("✅ Шаг 1 завершен: сохранено %d аккаунтов за %v", len(accounts), accountsDuration.Round(time.Second))
 	log.Println(strings.Repeat("-", 60))
 
+	// Шаг 1.5: Загрузка и сохранение пользователей (для read-path /unified/users)
+	log.Printf("👥 Шаг 1.5: Загрузка и сохранение пользователей...")
+	usersStartTime := time.Now()
+
+	users, err := s.fetchUsers(token)
+	if err != nil {
+		log.Printf("⚠️ Ошибка загрузки пользователей (некритично, продолжаем): %v", err)
+	} else if err := s.storeUsersWithDB(adminAccountID, users, now, db); err != nil {
+		log.Printf("⚠️ Ошибка сохранения пользователей (некритично): %v", err)
+	} else {
+		usersDuration := time.Since(usersStartTime)
+		log.Printf("✅ Шаг 1.5 завершен: сохранено %d пользователей за %v", len(users), usersDuration.Round(time.Second))
+	}
+	log.Println(strings.Repeat("-", 60))
+
 	// Шаг 2: Загрузка и сохранение объектов
 	log.Printf("📦 Шаг 2: Загрузка и сохранение объектов...")
 	objectsStartTime := time.Now()
@@ -240,6 +255,17 @@ func (s *AxentaSyncService) syncAdminWithTokenAndDBAndProgress(adminAccountID ui
 			Where("admin_account_id = ? AND last_synced_at < ?", adminAccountID, cutoff).
 			Count(&deletedObjects)
 		log.Printf("   ✅ Удалено устаревших объектов: %d", deletedObjects)
+	}
+
+	var deletedUsers int64
+	if err := db.Where("admin_account_id = ? AND last_synced_at < ?", adminAccountID, cutoff).
+		Delete(&models.AxentaUserSnapshot{}).Error; err != nil {
+		log.Printf("   ⚠️ Ошибка очистки устаревших пользователей admin=%d: %v", adminAccountID, err)
+	} else {
+		db.Model(&models.AxentaUserSnapshot{}).
+			Where("admin_account_id = ? AND last_synced_at < ?", adminAccountID, cutoff).
+			Count(&deletedUsers)
+		log.Printf("   ✅ Удалено устаревших пользователей: %d", deletedUsers)
 	}
 
 	cleanupDuration := time.Since(cleanupStartTime)
@@ -860,6 +886,141 @@ func (s *AxentaSyncService) syncAllObjectsWithDBAndProgress(adminAccountID uint,
 }
 
 
+
+// axentaUser представляет пользователя в ответе Axenta /api/cms/users/
+// Поля camelCase согласно реальному API.
+type axentaUser struct {
+	ID               int64  `json:"id"`
+	Username         string `json:"username"`
+	Name             string `json:"name"`
+	FirstName        string `json:"first_name"`
+	LastName         string `json:"last_name"`
+	Email            string `json:"email"`
+	AccountType      string `json:"accountType"`
+	IsActive         bool   `json:"isActive"`
+	CreationDatetime string `json:"creationDatetime"`
+	CreatorName      string `json:"creatorName"`
+}
+
+type axentaUsersResponse struct {
+	Count    int          `json:"count"`
+	Next     *string      `json:"next"`
+	Previous *string      `json:"previous"`
+	Results  []axentaUser `json:"results"`
+}
+
+// fetchUsers загружает все страницы пользователей из Axenta Cloud.
+// Использует per_page=1000 (как делал старый unified_users handler).
+// Возвращает полный список — caller сохранит в snapshot.
+func (s *AxentaSyncService) fetchUsers(token string) ([]axentaUser, error) {
+	result := make([]axentaUser, 0)
+	nextURL := axentaAPIBase + "/api/cms/users/?per_page=1000"
+
+	log.Printf("👥 Начинаем загрузку пользователей Axenta...")
+
+	page := 1
+	totalCount := 0
+	startTime := time.Now()
+
+	for nextURL != "" {
+		var response axentaUsersResponse
+		var err error
+		maxRetries := 3
+		for attempt := 1; attempt <= maxRetries; attempt++ {
+			err = s.getJSON(nextURL, token, &response)
+			if err == nil {
+				break
+			}
+			if attempt < maxRetries {
+				time.Sleep(time.Duration(attempt) * time.Second)
+			}
+		}
+
+		if err != nil {
+			return nil, fmt.Errorf("ошибка получения пользователей (страница %d после %d попыток): %w", page, maxRetries, err)
+		}
+
+		if page == 1 {
+			totalCount = response.Count
+			log.Printf("   📊 Всего пользователей в Axenta: %d", totalCount)
+		}
+
+		result = append(result, response.Results...)
+		log.Printf("   ✅ Страница %d: получено %d пользователей (итого %d/%d)",
+			page, len(response.Results), len(result), totalCount)
+
+		if response.Next == nil || *response.Next == "" {
+			break
+		}
+
+		nextURL = s.resolveURL(*response.Next)
+		page++
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	log.Printf("✅ Пользователи Axenta загружены: %d за %v", len(result), time.Since(startTime).Round(time.Second))
+	return result, nil
+}
+
+// storeUsersWithDB сохраняет пользователей в snapshot-таблицу tenant'а через UPSERT.
+func (s *AxentaSyncService) storeUsersWithDB(adminAccountID uint, users []axentaUser, syncedAt time.Time, db *gorm.DB) error {
+	log.Printf("💾 Сохранение %d пользователей в БД...", len(users))
+
+	saved, updated, errs := 0, 0, 0
+
+	for _, u := range users {
+		// Приоритет имени: Name > FirstName + LastName > Username
+		name := strings.TrimSpace(u.Name)
+		if name == "" {
+			name = strings.TrimSpace(u.FirstName + " " + u.LastName)
+		}
+		if name == "" {
+			name = u.Username
+		}
+
+		raw, _ := json.Marshal(u)
+		snapshot := models.AxentaUserSnapshot{
+			AdminAccountID:   adminAccountID,
+			ExternalUserID:   u.ID,
+			Username:         u.Username,
+			Name:             name,
+			Email:            u.Email,
+			AccountType:      u.AccountType,
+			IsActive:         u.IsActive,
+			CreatorName:      u.CreatorName,
+			CreationDatetime: u.CreationDatetime,
+			LastSyncedAt:     syncedAt,
+			RawPayload:       string(raw),
+		}
+
+		var existing models.AxentaUserSnapshot
+		isUpdate := db.Where("admin_account_id = ? AND external_user_id = ?", adminAccountID, u.ID).First(&existing).Error == nil
+
+		if err := db.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "admin_account_id"}, {Name: "external_user_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"username", "name", "email", "account_type", "is_active",
+				"creator_name", "creation_datetime", "last_synced_at", "raw_payload",
+			}),
+		}).Create(&snapshot).Error; err != nil {
+			errs++
+			log.Printf("   ❌ Ошибка сохранения пользователя %d: %v", u.ID, err)
+			continue
+		}
+
+		if isUpdate {
+			updated++
+		} else {
+			saved++
+		}
+	}
+
+	log.Printf("   📊 Пользователи: новых=%d, обновлено=%d, ошибок=%d", saved, updated, errs)
+	if errs > 0 {
+		return fmt.Errorf("сохранение пользователей с ошибками: %d из %d", errs, len(users))
+	}
+	return nil
+}
 
 func parseAxentaTime(value string) *time.Time {
 	if value == "" {

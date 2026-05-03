@@ -184,6 +184,12 @@ func GetAllMigrations() []MigrationInfo {
 			IsGlobal:    false, // Изолированы по тенантам
 		},
 		{
+			TableName:   "axenta_user_snapshots",
+			Model:       &models.AxentaUserSnapshot{},
+			Description: "Снимки пользователей Axenta (read-path для /unified/users)",
+			IsGlobal:    false, // Изолированы по тенантам
+		},
+		{
 			TableName:   "invoice_headers",
 			Model:       &models.InvoiceHeader{},
 			Description: "Заголовки счетов (advanced billing)",

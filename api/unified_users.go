@@ -2,19 +2,24 @@ package api
 
 import (
 	"backend_axenta/database"
+	"backend_axenta/middleware"
 	"backend_axenta/models"
 	"backend_axenta/services"
+	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // UnifiedUser представляет единую структуру пользователя из любого источника
@@ -55,7 +60,14 @@ type UnifiedUsersStats struct {
 	WialonActive int `json:"wialon_active"`
 }
 
+// unifiedUsersSnapshotTTL — окно свежести snapshot Axenta для read-path.
+// 60 мин совпадает с TTL для accounts (см. tryServeAccountsFromSnapshot).
+const unifiedUsersSnapshotTTL = 60 * time.Minute
+
 // GetUnifiedUsers возвращает пользователей из всех источников (Axenta + Wialon)
+// Read-path: snapshot для Axenta (TTL 60м) + Redis для Wialon (через wialon:all-accounts).
+// Fallback: live-fetch если snapshot/cache пустые/устаревшие.
+//
 // @Summary Получить унифицированный список пользователей
 // @Tags Unified Users
 // @Produce json
@@ -68,7 +80,6 @@ type UnifiedUsersStats struct {
 // @Success 200 {object} UnifiedUsersResponse
 // @Router /api/unified/users [get]
 func GetUnifiedUsers(c *gin.Context) {
-	// Параметры запроса
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
 	search := strings.TrimSpace(c.Query("search"))
@@ -84,7 +95,6 @@ func GetUnifiedUsers(c *gin.Context) {
 		limit = 20
 	}
 
-	// Получаем токен из заголовка
 	authHeader := c.GetHeader("Authorization")
 	var userToken string
 	if strings.HasPrefix(authHeader, "Token ") {
@@ -93,17 +103,13 @@ func GetUnifiedUsers(c *gin.Context) {
 		userToken = strings.TrimPrefix(authHeader, "Bearer ")
 	}
 
-	// Получаем company_id для Wialon
 	companyID, _ := c.Get("company_id")
 
-	// Инициализируем пустой слайс, чтобы избежать null в JSON ответе
 	allUsers := make([]UnifiedUser, 0)
 	var stats UnifiedUsersStats
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 
-	// Параллельная загрузка из обоих источников
-	// source может быть: all, axenta, wialon, wh (Wialon Hosting), wl (Wialon Local)
 	loadAxenta := source == "all" || source == "axenta"
 	loadWialon := source == "all" || source == "wialon" || source == "wh" || source == "wl"
 
@@ -111,7 +117,10 @@ func GetUnifiedUsers(c *gin.Context) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			axentaUsers, axentaTotal, axentaActive := fetchAxentaUsers(userToken, search, activeStr, role, ordering)
+			tenantDB := middleware.GetTenantDB(c)
+			t0 := time.Now()
+			axentaUsers, axentaTotal, axentaActive, fromSnapshot := fetchAxentaUsersFast(tenantDB, userToken, search, activeStr, role, ordering)
+			log.Printf("🔍 unified/users axenta: %d users (snapshot=%v) за %s", len(axentaUsers), fromSnapshot, time.Since(t0).Round(time.Millisecond))
 			mu.Lock()
 			allUsers = append(allUsers, axentaUsers...)
 			stats.AxentaTotal = axentaTotal
@@ -125,8 +134,9 @@ func GetUnifiedUsers(c *gin.Context) {
 		go func() {
 			defer wg.Done()
 			if companyID != nil {
-				// Передаём тип подключения для фильтрации (wh или wl)
-				wialonUsers, wialonTotal, wialonActive := fetchWialonUsersFiltered(companyID.(uint), search, activeStr, source)
+				t0 := time.Now()
+				wialonUsers, wialonTotal, wialonActive, fromCache := fetchWialonUsersFast(companyID.(uint), search, activeStr, source)
+				log.Printf("🔍 unified/users wialon: %d users (cache=%v) за %s", len(wialonUsers), fromCache, time.Since(t0).Round(time.Millisecond))
 				mu.Lock()
 				allUsers = append(allUsers, wialonUsers...)
 				stats.WialonTotal = wialonTotal
@@ -138,10 +148,11 @@ func GetUnifiedUsers(c *gin.Context) {
 
 	wg.Wait()
 
-	// Общий счётчик
+	// Серверная сортировка по ordering (если задан)
+	sortUnifiedUsers(allUsers, ordering)
+
 	total := len(allUsers)
 
-	// Пагинация на объединённых данных
 	startIndex := (page - 1) * limit
 	endIndex := startIndex + limit
 	if startIndex > total {
@@ -167,7 +178,291 @@ func GetUnifiedUsers(c *gin.Context) {
 	})
 }
 
-// fetchAxentaUsers загружает пользователей из Axenta Cloud
+// fetchAxentaUsersFast — read-path с snapshot, fallback на live при пустом/устаревшем snapshot.
+// Возвращает (users, total, active, fromSnapshot).
+func fetchAxentaUsersFast(db *gorm.DB, userToken, search, active, role, ordering string) ([]UnifiedUser, int, int, bool) {
+	if users, total, activeN, ok := tryServeUnifiedUsersFromSnapshot(db, search, active, role); ok {
+		return users, total, activeN, true
+	}
+	users, total, activeN := fetchAxentaUsers(userToken, search, active, role, ordering)
+	return users, total, activeN, false
+}
+
+// tryServeUnifiedUsersFromSnapshot читает пользователей Axenta из snapshot (axenta_user_snapshots).
+// TTL 60 мин — fallback на live при устаревании. Фильтры применяются на стороне БД.
+func tryServeUnifiedUsersFromSnapshot(db *gorm.DB, search, active, role string) ([]UnifiedUser, int, int, bool) {
+	if db == nil {
+		return nil, 0, 0, false
+	}
+
+	var lastSync time.Time
+	if err := db.
+		Model(&models.AxentaUserSnapshot{}).
+		Select("MAX(last_synced_at)").
+		Scan(&lastSync).Error; err != nil || lastSync.IsZero() {
+		return nil, 0, 0, false
+	}
+
+	if time.Since(lastSync) > unifiedUsersSnapshotTTL {
+		log.Printf("⏰ AxentaUserSnapshot устарел (last=%v), fallback на live", lastSync)
+		return nil, 0, 0, false
+	}
+
+	q := db.Model(&models.AxentaUserSnapshot{})
+
+	// Множественный поиск через запятую (как для accounts): "user1, user2" → IN
+	if search != "" {
+		terms := splitSearchTerms(search)
+		if len(terms) > 1 {
+			// Множественный поиск — точное совпадение (с любым из перечисленных)
+			lowered := make([]string, 0, len(terms)*3)
+			placeholders := make([]string, 0, len(terms)*3)
+			for _, t := range terms {
+				p := "%" + strings.ToLower(t) + "%"
+				lowered = append(lowered, p, p, p)
+				placeholders = append(placeholders, "LOWER(username) LIKE ?", "LOWER(name) LIKE ?", "LOWER(email) LIKE ?")
+			}
+			args := make([]any, 0, len(lowered))
+			for _, l := range lowered {
+				args = append(args, l)
+			}
+			q = q.Where(strings.Join(placeholders, " OR "), args...)
+		} else {
+			pattern := "%" + strings.ToLower(search) + "%"
+			q = q.Where("LOWER(username) LIKE ? OR LOWER(name) LIKE ? OR LOWER(email) LIKE ?", pattern, pattern, pattern)
+		}
+	}
+
+	if active != "" {
+		switch active {
+		case "true", "1":
+			q = q.Where("is_active = ?", true)
+		case "false", "0":
+			q = q.Where("is_active = ?", false)
+		}
+	}
+
+	if role != "" {
+		// role в API Axenta = display name ("Партнёр"/"Клиент") — мапим обратно на account_type
+		switch role {
+		case "Партнёр", "Партнер", "partner":
+			q = q.Where("account_type = ?", "partner")
+		case "Клиент", "client":
+			q = q.Where("account_type = ?", "client")
+		case "Администратор", "staff":
+			q = q.Where("account_type = ?", "staff")
+		default:
+			q = q.Where("account_type = ?", role)
+		}
+	}
+
+	// Считаем total/active отдельным запросом до применения LIMIT
+	var totalCount int64
+	if err := q.Count(&totalCount).Error; err != nil {
+		log.Printf("⚠️ AxentaUserSnapshot count: %v", err)
+		return nil, 0, 0, false
+	}
+
+	var activeCount int64
+	q.Session(&gorm.Session{}).Where("is_active = ?", true).Count(&activeCount)
+
+	// Загружаем все matched-rows (без пагинации — пагинация делается в caller для merged set)
+	var rows []models.AxentaUserSnapshot
+	if err := q.Order("creation_datetime DESC").Find(&rows).Error; err != nil {
+		log.Printf("⚠️ AxentaUserSnapshot find: %v", err)
+		return nil, 0, 0, false
+	}
+
+	users := make([]UnifiedUser, 0, len(rows))
+	for _, r := range rows {
+		users = append(users, UnifiedUser{
+			ID:               r.ExternalUserID,
+			Username:         r.Username,
+			Name:             r.Name,
+			Email:            r.Email,
+			Role:             mapAxentaTypeToRole(r.AccountType),
+			IsActive:         r.IsActive,
+			CreationDatetime: r.CreationDatetime,
+			CreatorName:      r.CreatorName,
+			Source:           "axenta",
+			SourceLabel:      "Axenta Cloud",
+			AccountType:      r.AccountType,
+		})
+	}
+
+	return users, int(totalCount), int(activeCount), true
+}
+
+// splitSearchTerms — разделяет search-строку через запятую, тримит, отбрасывает пустые
+func splitSearchTerms(search string) []string {
+	if !strings.Contains(search, ",") {
+		return []string{search}
+	}
+	parts := strings.Split(search, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		t := strings.TrimSpace(p)
+		if t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// fetchWialonUsersFast — read-path через Redis cache wialon:all-accounts:<cid>.
+// Cache наполняется WialonAllAccountsScheduler @5m. Если cache пуст — fallback на live (старая реализация).
+func fetchWialonUsersFast(companyID uint, search, activeStr, sourceFilter string) ([]UnifiedUser, int, int, bool) {
+	if database.RedisClient == nil {
+		users, total, active := fetchWialonUsersFiltered(companyID, search, activeStr, sourceFilter)
+		return users, total, active, false
+	}
+
+	cached, err := database.RedisClient.Get(context.Background(), allAccountsCacheKey(companyID)).Bytes()
+	if err != nil || len(cached) == 0 {
+		users, total, active := fetchWialonUsersFiltered(companyID, search, activeStr, sourceFilter)
+		return users, total, active, false
+	}
+
+	// Парсим Redis-payload (тот же формат что отдаёт /wialon/all-accounts)
+	var resp struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Items []WialonAccountInfo `json:"items"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(cached, &resp); err != nil {
+		log.Printf("⚠️ unified/users wialon cache parse: %v", err)
+		users, total, active := fetchWialonUsersFiltered(companyID, search, activeStr, sourceFilter)
+		return users, total, active, false
+	}
+
+	users := make([]UnifiedUser, 0, len(resp.Data.Items))
+	totalUsers, activeUsers := 0, 0
+
+	// Для определения connection_id по source_label нужны connections — подтянем 1 раз
+	var connections []models.WialonConnection
+	_ = database.DB.Where("company_id = ? AND is_active = ?", companyID, true).Find(&connections).Error
+	connByName := make(map[string]uint)
+	for _, c := range connections {
+		connByName["WH("+c.UserName+")"] = c.ID
+		connByName["WL("+c.UserName+")"] = c.ID
+	}
+
+	for _, acc := range resp.Data.Items {
+		// Фильтрация по типу подключения
+		if sourceFilter == "wh" && !strings.HasPrefix(acc.SourceLabel, "WH(") {
+			continue
+		}
+		if sourceFilter == "wl" && !strings.HasPrefix(acc.SourceLabel, "WL(") {
+			continue
+		}
+
+		// Фильтр по поиску
+		if search != "" {
+			terms := splitSearchTerms(search)
+			matched := false
+			nameLower := strings.ToLower(acc.Name)
+			for _, t := range terms {
+				if strings.Contains(nameLower, strings.ToLower(t)) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+
+		// Фильтр активности
+		if activeStr != "" {
+			isActiveFilter := activeStr == "true" || activeStr == "1"
+			if acc.IsActive != isActiveFilter {
+				continue
+			}
+		}
+
+		// hierarchy — берём из cache как есть, parent → CreatorName
+		var creatorName string
+		if acc.Hierarchy != "" {
+			parts := strings.Split(acc.Hierarchy, " > ")
+			if len(parts) >= 2 {
+				creatorName = parts[len(parts)-2]
+			}
+		}
+
+		accountType := acc.Type
+		if accountType == "" {
+			accountType = "client"
+		}
+
+		connID := connByName[acc.SourceLabel]
+		var connIDPtr *uint
+		if connID != 0 {
+			connIDPtr = &connID
+		}
+
+		users = append(users, UnifiedUser{
+			ID:               int64(acc.ID),
+			Username:         acc.Name,
+			Name:             acc.Name,
+			Email:            "",
+			Role:             accountType,
+			IsActive:         acc.IsActive,
+			CreationDatetime: acc.CreatedAt,
+			CreatorName:      creatorName,
+			Source:           "wialon",
+			SourceLabel:      acc.SourceLabel,
+			Hierarchy:        acc.Hierarchy,
+			ConnectionID:     connIDPtr,
+			AccountType:      accountType,
+			DealerRights:     acc.DealerRights,
+			ObjectsTotal:     acc.ObjectsTotal,
+			ObjectsActive:    acc.ObjectsActive,
+		})
+
+		totalUsers++
+		if acc.IsActive {
+			activeUsers++
+		}
+	}
+
+	return users, totalUsers, activeUsers, true
+}
+
+// sortUnifiedUsers сортирует merged-set по полю ordering ("-creation_datetime", "username", etc.)
+func sortUnifiedUsers(users []UnifiedUser, ordering string) {
+	if ordering == "" {
+		ordering = "-creation_datetime"
+	}
+	desc := strings.HasPrefix(ordering, "-")
+	field := strings.TrimPrefix(ordering, "-")
+
+	sort.SliceStable(users, func(i, j int) bool {
+		var less bool
+		switch field {
+		case "id":
+			less = users[i].ID < users[j].ID
+		case "username":
+			less = strings.ToLower(users[i].Username) < strings.ToLower(users[j].Username)
+		case "email":
+			less = strings.ToLower(users[i].Email) < strings.ToLower(users[j].Email)
+		case "name":
+			less = strings.ToLower(users[i].Name) < strings.ToLower(users[j].Name)
+		case "creator_name":
+			less = strings.ToLower(users[i].CreatorName) < strings.ToLower(users[j].CreatorName)
+		case "creation_datetime":
+			less = users[i].CreationDatetime < users[j].CreationDatetime
+		default:
+			less = users[i].CreationDatetime < users[j].CreationDatetime
+		}
+		if desc {
+			return !less
+		}
+		return less
+	})
+}
+
+// fetchAxentaUsers — fallback live-fetch (старая реализация). Используется если snapshot пуст.
 func fetchAxentaUsers(userToken, search, active, role, ordering string) ([]UnifiedUser, int, int) {
 	var users []UnifiedUser
 	var totalUsers, activeUsers int
@@ -177,12 +472,10 @@ func fetchAxentaUsers(userToken, search, active, role, ordering string) ([]Unifi
 		return users, 0, 0
 	}
 
-	// Загружаем все страницы для получения полного списка (для фильтрации и статистики)
-	// Но ограничиваем до 1000 пользователей для производительности
 	baseURL := "https://axenta.cloud/api/cms/users/"
 	params := url.Values{}
 	params.Add("page", "1")
-	params.Add("per_page", "1000") // Загружаем максимум
+	params.Add("per_page", "1000")
 
 	if search != "" {
 		params.Add("search", search)
@@ -222,21 +515,19 @@ func fetchAxentaUsers(userToken, search, active, role, ordering string) ([]Unifi
 		return users, 0, 0
 	}
 
-	// Парсим ответ
-	// ВАЖНО: API Axenta Cloud использует camelCase для полей
 	var axentaResp struct {
 		Count   int `json:"count"`
 		Results []struct {
 			ID               int64  `json:"id"`
 			Username         string `json:"username"`
-			Name             string `json:"name"`       // Полное имя пользователя
-			FirstName        string `json:"first_name"` // Fallback
-			LastName         string `json:"last_name"`  // Fallback
+			Name             string `json:"name"`
+			FirstName        string `json:"first_name"`
+			LastName         string `json:"last_name"`
 			Email            string `json:"email"`
-			AccountType      string `json:"accountType"`      // camelCase в API
-			IsActive         bool   `json:"isActive"`         // camelCase в API
-			CreationDatetime string `json:"creationDatetime"` // camelCase в API
-			CreatorName      string `json:"creatorName"`      // camelCase в API
+			AccountType      string `json:"accountType"`
+			IsActive         bool   `json:"isActive"`
+			CreationDatetime string `json:"creationDatetime"`
+			CreatorName      string `json:"creatorName"`
 		} `json:"results"`
 	}
 
@@ -248,7 +539,6 @@ func fetchAxentaUsers(userToken, search, active, role, ordering string) ([]Unifi
 	totalUsers = axentaResp.Count
 
 	for _, u := range axentaResp.Results {
-		// Приоритет: Name > FirstName + LastName > Username
 		name := strings.TrimSpace(u.Name)
 		if name == "" {
 			name = strings.TrimSpace(u.FirstName + " " + u.LastName)
@@ -278,18 +568,15 @@ func fetchAxentaUsers(userToken, search, active, role, ordering string) ([]Unifi
 		}
 	}
 
-	log.Printf("✅ fetchAxentaUsers: загружено %d пользователей (активных: %d)", len(users), activeUsers)
+	log.Printf("✅ fetchAxentaUsers (live fallback): %d пользователей (активных: %d)", len(users), activeUsers)
 	return users, totalUsers, activeUsers
 }
 
-// fetchWialonUsersFiltered загружает пользователей из Wialon с поддержкой фильтрации по типу подключения
-// sourceFilter: "all" | "wialon" - все подключения, "wh" - только Hosting, "wl" - только Local
+// fetchWialonUsersFiltered — fallback live-fetch (без cache). Используется если Redis пуст.
 func fetchWialonUsersFiltered(companyID uint, search, activeStr, sourceFilter string) ([]UnifiedUser, int, int) {
-	// Инициализируем пустой слайс, чтобы избежать null в JSON ответе
 	users := make([]UnifiedUser, 0)
 	var totalUsers, activeUsers int
 
-	// Получаем все активные подключения Wialon для компании
 	var connections []models.WialonConnection
 	if err := database.DB.Where("company_id = ? AND is_active = ?", companyID, true).Find(&connections).Error; err != nil {
 		log.Printf("❌ fetchWialonUsersFiltered: ошибка получения подключений: %v", err)
@@ -299,7 +586,6 @@ func fetchWialonUsersFiltered(companyID uint, search, activeStr, sourceFilter st
 	wialonService := services.NewWialonService()
 
 	for _, conn := range connections {
-		// Фильтрация по типу подключения
 		if sourceFilter == "wh" && conn.ConnectionType != models.WialonConnectionTypeHosting {
 			continue
 		}
@@ -307,15 +593,11 @@ func fetchWialonUsersFiltered(companyID uint, search, activeStr, sourceFilter st
 			continue
 		}
 
-		// Формируем метку источника
-		sourceLabel := ""
+		sourceLabel := "WL(" + conn.UserName + ")"
 		if conn.ConnectionType == models.WialonConnectionTypeHosting {
 			sourceLabel = "WH(" + conn.UserName + ")"
-		} else {
-			sourceLabel = "WL(" + conn.UserName + ")"
 		}
 
-		// Получаем аккаунты из подключения
 		accounts, err := wialonService.GetAccountsQuickFromHost(conn.Host, conn.Token)
 		if err != nil {
 			log.Printf("⚠️ Ошибка получения аккаунтов из %s: %v", conn.Name, err)
@@ -323,16 +605,11 @@ func fetchWialonUsersFiltered(companyID uint, search, activeStr, sourceFilter st
 		}
 
 		for _, acc := range accounts {
-			// Фильтрация по поиску
 			if search != "" {
-				searchLower := strings.ToLower(search)
-				nameLower := strings.ToLower(acc.Name)
-				if !strings.Contains(nameLower, searchLower) {
+				if !strings.Contains(strings.ToLower(acc.Name), strings.ToLower(search)) {
 					continue
 				}
 			}
-
-			// Фильтрация по активности
 			if activeStr != "" {
 				isActiveFilter := activeStr == "true" || activeStr == "1"
 				if acc.IsActive != isActiveFilter {
@@ -340,7 +617,6 @@ func fetchWialonUsersFiltered(companyID uint, search, activeStr, sourceFilter st
 				}
 			}
 
-			// Формируем иерархию
 			var hierarchy string
 			if acc.ParentName != "" {
 				hierarchy = sourceLabel + " > " + acc.ParentName + " > " + acc.Name
@@ -348,7 +624,6 @@ func fetchWialonUsersFiltered(companyID uint, search, activeStr, sourceFilter st
 				hierarchy = sourceLabel + " > " + acc.Name
 			}
 
-			// Определяем тип
 			accountType := "client"
 			if acc.DealerRights {
 				accountType = "partner"
@@ -362,8 +637,8 @@ func fetchWialonUsersFiltered(companyID uint, search, activeStr, sourceFilter st
 				Email:            "",
 				Role:             accountType,
 				IsActive:         acc.IsActive,
-				CreationDatetime: acc.CreatedAt,  // Дата создания из Wialon (ct)
-				CreatorName:      acc.ParentName, // Создатель = родительская учётная запись (crt)
+				CreationDatetime: acc.CreatedAt,
+				CreatorName:      acc.ParentName,
 				Source:           "wialon",
 				SourceLabel:      sourceLabel,
 				Hierarchy:        hierarchy,
@@ -381,7 +656,7 @@ func fetchWialonUsersFiltered(companyID uint, search, activeStr, sourceFilter st
 		}
 	}
 
-	log.Printf("✅ fetchWialonUsersFiltered (filter=%s): загружено %d пользователей (активных: %d)", sourceFilter, len(users), activeUsers)
+	log.Printf("✅ fetchWialonUsersFiltered live (filter=%s): %d users (active=%d)", sourceFilter, len(users), activeUsers)
 	return users, totalUsers, activeUsers
 }
 
@@ -405,3 +680,6 @@ func RegisterUnifiedUsersRoutes(apiGroup *gin.RouterGroup) {
 	apiGroup.GET("/unified/users/", GetUnifiedUsers)
 	log.Println("✅ Unified Users API routes registered")
 }
+
+// Подавить unused warning на fmt при отключённом debug
+var _ = fmt.Sprintf
