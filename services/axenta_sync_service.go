@@ -900,6 +900,7 @@ type axentaUser struct {
 	IsActive         bool   `json:"isActive"`
 	CreationDatetime string `json:"creationDatetime"`
 	CreatorName      string `json:"creatorName"`
+	LastLogin        string `json:"lastLogin"`
 }
 
 type axentaUsersResponse struct {
@@ -993,6 +994,12 @@ func (s *AxentaSyncService) storeUsersWithDB(adminAccountID uint, users []axenta
 			RawPayload:       string(raw),
 		}
 
+		if u.LastLogin != "" {
+			if t := parseAxentaTime(u.LastLogin); t != nil {
+				snapshot.LastLogin = t
+			}
+		}
+
 		var existing models.AxentaUserSnapshot
 		isUpdate := db.Where("admin_account_id = ? AND external_user_id = ?", adminAccountID, u.ID).First(&existing).Error == nil
 
@@ -1000,7 +1007,7 @@ func (s *AxentaSyncService) storeUsersWithDB(adminAccountID uint, users []axenta
 			Columns: []clause.Column{{Name: "admin_account_id"}, {Name: "external_user_id"}},
 			DoUpdates: clause.AssignmentColumns([]string{
 				"username", "name", "email", "account_type", "is_active",
-				"creator_name", "creation_datetime", "last_synced_at", "raw_payload",
+				"creator_name", "creation_datetime", "last_login", "last_synced_at", "raw_payload",
 			}),
 		}).Create(&snapshot).Error; err != nil {
 			errs++
@@ -1029,6 +1036,8 @@ func parseAxentaTime(value string) *time.Time {
 
 	layouts := []string{
 		time.RFC3339,
+		time.RFC3339Nano,
+		"2006-01-02T15:04:05.999999Z",
 		"2006-01-02T15:04:05.000Z",
 		"2006-01-02 15:04:05",
 		"2006-01-02",

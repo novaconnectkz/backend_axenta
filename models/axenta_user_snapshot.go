@@ -22,9 +22,10 @@ type AxentaUserSnapshot struct {
 	Name             string `json:"name" gorm:"type:varchar(300)"`
 	Email            string `json:"email" gorm:"type:varchar(200);index"`
 	AccountType      string `json:"account_type" gorm:"type:varchar(50);index:idx_axenta_user_account_type"`
-	IsActive         bool   `json:"is_active" gorm:"index"`
-	CreatorName      string `json:"creator_name" gorm:"type:varchar(200);index"`
-	CreationDatetime string `json:"creation_datetime" gorm:"type:varchar(50)"`
+	IsActive         bool       `json:"is_active" gorm:"index"`
+	CreatorName      string     `json:"creator_name" gorm:"type:varchar(200);index"`
+	CreationDatetime string     `json:"creation_datetime" gorm:"type:varchar(50)"`
+	LastLogin        *time.Time `json:"last_login" gorm:"index"`
 
 	LastSyncedAt time.Time `json:"last_synced_at" gorm:"not null;index"`
 	RawPayload   string    `json:"raw_payload" gorm:"type:jsonb"`

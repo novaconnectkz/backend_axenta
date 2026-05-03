@@ -314,13 +314,15 @@ func tryServeUsersStatsFromSnapshot(db *gorm.DB) (gin.H, bool) {
 	}
 
 	type counts struct {
-		Total       int64
-		Active      int64
-		Inactive    int64
-		PartnerCnt  int64
-		ClientCnt   int64
-		StaffCnt    int64
+		Total      int64
+		Active     int64
+		Inactive   int64
+		Recent     int64
+		PartnerCnt int64
+		ClientCnt  int64
+		StaffCnt   int64
 	}
+	weekAgo := time.Now().Add(-7 * 24 * time.Hour)
 	var c counts
 	if err := db.
 		Model(&models.AxentaUserSnapshot{}).
@@ -328,10 +330,11 @@ func tryServeUsersStatsFromSnapshot(db *gorm.DB) (gin.H, bool) {
 			COUNT(*) AS total,
 			COUNT(*) FILTER (WHERE is_active) AS active,
 			COUNT(*) FILTER (WHERE NOT is_active) AS inactive,
+			COUNT(*) FILTER (WHERE last_login IS NOT NULL AND last_login > ?) AS recent,
 			COUNT(*) FILTER (WHERE account_type = 'partner') AS partner_cnt,
 			COUNT(*) FILTER (WHERE account_type = 'client') AS client_cnt,
 			COUNT(*) FILTER (WHERE account_type = 'staff') AS staff_cnt
-		`).
+		`, weekAgo).
 		Scan(&c).Error; err != nil {
 		log.Printf("⚠️ tryServeUsersStatsFromSnapshot count: %v", err)
 		return nil, false
@@ -349,11 +352,11 @@ func tryServeUsersStatsFromSnapshot(db *gorm.DB) (gin.H, bool) {
 		"total_users":    c.Total,
 		"active_users":   c.Active,
 		"inactive_users": c.Inactive,
-		"recent_users":   0, // recent_logins требует поля last_login в snapshot — добавим в Этапе 5 если нужно
+		"recent_users":   c.Recent,
 		"total":          c.Total,
 		"active":         c.Active,
 		"inactive":       c.Inactive,
-		"recent_logins":  0,
+		"recent_logins":  c.Recent,
 		"role_stats":     roleStats,
 		"last_updated":   lastSync.Format("2006-01-02T15:04:05Z"),
 		"from_snapshot":  true,
