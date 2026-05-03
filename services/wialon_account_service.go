@@ -402,6 +402,79 @@ func (s *WialonAccountService) CreateAccount(connectionID uint, req CreateWialon
 	return result, nil
 }
 
+// CreateWialonUserRequest — параметры создания одиночного юзера (без ресурса/билинга).
+type CreateWialonUserRequest struct {
+	Username  string `json:"username"`            // login юзера
+	Password  string `json:"password"`            // пароль (Wialon ≥4 символов, латиница+цифры+спецсимволы)
+	Email     string `json:"email,omitempty"`     // опционально
+	CreatorID int64  `json:"creatorId,omitempty"` // ID учётной записи (билинг-аккаунта/юзера) под которой создаём; если 0 — текущий login-юзер
+}
+
+// CreateWialonUserResult — ответ create-user
+type CreateWialonUserResult struct {
+	UserID       int64  `json:"userId"`
+	Username     string `json:"username"`
+	Email        string `json:"email,omitempty"`
+	ConnectionID uint   `json:"connectionId"`
+	SourceLabel  string `json:"sourceLabel"`
+	CreatorID    int64  `json:"creatorId"`
+}
+
+// CreateUser — создание одиночного Wialon-юзера (без ресурса/биллинга).
+// Используется со страницы /users/create. creatorId — это ID существующего юзера/аккаунта
+// в Wialon под которым будет числиться новый. Если 0 — берём login-юзера connection-токена.
+func (s *WialonAccountService) CreateUser(connectionID uint, req CreateWialonUserRequest) (*CreateWialonUserResult, error) {
+	t0 := time.Now()
+
+	var conn models.WialonConnection
+	if err := s.db.Where("id = ? AND is_active = ?", connectionID, true).First(&conn).Error; err != nil {
+		return nil, fmt.Errorf("connection %d не найден: %w", connectionID, err)
+	}
+
+	loginResp, err := s.wialonService.LoginWithHost(conn.Host, conn.Token)
+	if err != nil {
+		return nil, fmt.Errorf("login: %w", err)
+	}
+	defer func() { _ = s.wialonService.LogoutWithHost(conn.Host, loginResp.Eid) }()
+
+	creatorID := req.CreatorID
+	if creatorID == 0 {
+		if loginResp.User != nil && loginResp.User.ID > 0 {
+			creatorID = loginResp.User.ID
+		}
+	}
+	if creatorID == 0 {
+		return nil, fmt.Errorf("не удалось определить creator_id (ни в request, ни в login response)")
+	}
+
+	userID, err := s.callCreateUser(conn.Host, loginResp.Eid, creatorID, req.Username, req.Password)
+	if err != nil {
+		return nil, fmt.Errorf("create_user: %w", err)
+	}
+	log.Printf("⚡ Wialon CreateUser: user '%s' создан id=%d (creator=%d)", req.Username, userID, creatorID)
+
+	if req.Email != "" {
+		if err := s.callUpdateCustomProperty(conn.Host, loginResp.Eid, userID, "email", req.Email); err != nil {
+			log.Printf("⚠️ Wialon CreateUser: не удалось установить email: %v (user уже создан id=%d)", err, userID)
+		}
+	}
+
+	sourceLabel := "WL(" + conn.UserName + ")"
+	if conn.ConnectionType == models.WialonConnectionTypeHosting {
+		sourceLabel = "WH(" + conn.UserName + ")"
+	}
+
+	log.Printf("✅ Wialon CreateUser: '%s' (id=%d) за %s", req.Username, userID, time.Since(t0))
+	return &CreateWialonUserResult{
+		UserID:       userID,
+		Username:     req.Username,
+		Email:        req.Email,
+		ConnectionID: connectionID,
+		SourceLabel:  sourceLabel,
+		CreatorID:    creatorID,
+	}, nil
+}
+
 // callCreateUser — core/create_user. Возвращает item.id.
 func (s *WialonAccountService) callCreateUser(host, eid string, creatorID int64, username, password string) (int64, error) {
 	params := map[string]interface{}{

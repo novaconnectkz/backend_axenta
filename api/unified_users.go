@@ -135,7 +135,7 @@ func GetUnifiedUsers(c *gin.Context) {
 			defer wg.Done()
 			if companyID != nil {
 				t0 := time.Now()
-				wialonUsers, wialonTotal, wialonActive, fromCache := fetchWialonUsersFast(companyID.(uint), search, activeStr, source)
+				wialonUsers, wialonTotal, wialonActive, fromCache := fetchWialonUsersFast(companyID.(uint), search, activeStr, source, role)
 				log.Printf("🔍 unified/users wialon: %d users (cache=%v) за %s", len(wialonUsers), fromCache, time.Since(t0).Round(time.Millisecond))
 				mu.Lock()
 				allUsers = append(allUsers, wialonUsers...)
@@ -381,7 +381,7 @@ func splitSearchTerms(search string) []string {
 
 // fetchWialonUsersFast — read-path через Redis cache wialon:all-accounts:<cid>.
 // Cache наполняется WialonAllAccountsScheduler @5m. Если cache пуст — fallback на live (старая реализация).
-func fetchWialonUsersFast(companyID uint, search, activeStr, sourceFilter string) ([]UnifiedUser, int, int, bool) {
+func fetchWialonUsersFast(companyID uint, search, activeStr, sourceFilter, roleFilter string) ([]UnifiedUser, int, int, bool) {
 	if database.RedisClient == nil {
 		users, total, active := fetchWialonUsersFiltered(companyID, search, activeStr, sourceFilter)
 		return users, total, active, false
@@ -391,6 +391,16 @@ func fetchWialonUsersFast(companyID uint, search, activeStr, sourceFilter string
 	if err != nil || len(cached) == 0 {
 		users, total, active := fetchWialonUsersFiltered(companyID, search, activeStr, sourceFilter)
 		return users, total, active, false
+	}
+
+	// Маппинг роли: UI присылает display_name ("Партнёр"/"Клиент") или английский "partner"/"client"
+	wantPartner := false
+	wantClient := false
+	switch roleFilter {
+	case "Партнёр", "Партнер", "partner":
+		wantPartner = true
+	case "Клиент", "client":
+		wantClient = true
 	}
 
 	// Парсим Redis-payload (тот же формат что отдаёт /wialon/all-accounts)
@@ -449,6 +459,14 @@ func fetchWialonUsersFast(companyID uint, search, activeStr, sourceFilter string
 			if acc.IsActive != isActiveFilter {
 				continue
 			}
+		}
+
+		// Фильтр по роли (для wialon: dealer_rights = partner, иначе client)
+		if wantPartner && !acc.DealerRights {
+			continue
+		}
+		if wantClient && acc.DealerRights {
+			continue
 		}
 
 		// hierarchy — берём из cache как есть, parent → CreatorName
@@ -522,6 +540,15 @@ func sortUnifiedUsers(users []UnifiedUser, ordering string) {
 			less = strings.ToLower(users[i].CreatorName) < strings.ToLower(users[j].CreatorName)
 		case "creation_datetime":
 			less = users[i].CreationDatetime < users[j].CreationDatetime
+		case "source":
+			// Сорт по source_label (axenta → "Axenta Cloud", wialon → "WH(...)" / "WL(...)")
+			a := strings.ToLower(users[i].SourceLabel)
+			b := strings.ToLower(users[j].SourceLabel)
+			if a == b {
+				less = strings.ToLower(users[i].Username) < strings.ToLower(users[j].Username)
+			} else {
+				less = a < b
+			}
 		default:
 			less = users[i].CreationDatetime < users[j].CreationDatetime
 		}

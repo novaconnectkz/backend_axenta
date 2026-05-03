@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -92,6 +93,7 @@ func (api *WialonConnectionAPI) RegisterRoutes(r *gin.RouterGroup) {
 	// Создание нового аккаунта в Wialon-подключении (билинг + dealer rights, 5-step flow)
 	r.GET("/wialon/connections/:id/billing-plans", api.GetBillingPlans)
 	r.POST("/wialon/connections/:id/accounts", api.CreateWialonAccount)
+	r.POST("/wialon/connections/:id/users", api.CreateWialonUser)
 
 	log.Println("✅ Wialon Connections API routes registered: /api/wialon/connections/*")
 }
@@ -1284,6 +1286,51 @@ func (api *WialonConnectionAPI) GetBillingPlans(c *gin.Context) {
 }
 
 // CreateWialonAccount создаёт новую учётную запись в wialon-подключении.
+// POST /api/wialon/connections/:id/users
+// Body: { username, password, email?, creatorId? }
+// Создаёт одиночного Wialon-юзера (без ресурса/биллинга) — для страницы /users/create.
+func (api *WialonConnectionAPI) CreateWialonUser(c *gin.Context) {
+	connectionID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректный ID подключения"})
+		return
+	}
+	companyID, exists := c.Get("company_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Компания не определена"})
+		return
+	}
+	conn, err := api.service.GetByID(uint(connectionID))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Подключение не найдено"})
+		return
+	}
+	if conn.CompanyID != companyID.(uint) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Нет доступа"})
+		return
+	}
+
+	var req services.CreateWialonUserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Неверный формат: " + err.Error()})
+		return
+	}
+
+	if strings.TrimSpace(req.Username) == "" || strings.TrimSpace(req.Password) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "username и password обязательны"})
+		return
+	}
+
+	svc := services.NewWialonAccountService()
+	result, err := svc.CreateUser(uint(connectionID), req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка создания юзера: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, result)
+}
+
 // POST /api/wialon/connections/:id/accounts
 // Body: { name, username, password, email, type: client|partner, billingPlan }
 func (api *WialonConnectionAPI) CreateWialonAccount(c *gin.Context) {
