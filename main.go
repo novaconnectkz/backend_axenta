@@ -109,19 +109,30 @@ func main() {
 
 	// Инициализируем сервис синхронизации Axenta
 	axentaSyncService := services.NewAxentaSyncService(database.DB)
-	log.Printf("🔧 AxentaSync: инициализация планировщика автоматической синхронизации")
-	log.Printf("   ⚠️  Автоматическая синхронизация ОТКЛЮЧЕНА")
-	log.Printf("   🔄 Ручной запуск: POST /api/auth/axenta-sync/trigger")
-	axentaSyncScheduler := services.NewAxentaSyncScheduler(axentaSyncService, cfg.Axenta.SyncInterval)
-	// Автоматическая синхронизация отключена - планировщик не запускается
-	// if err := axentaSyncScheduler.Start(); err != nil {
-	// 	log.Printf("⚠️ Axenta Sync Scheduler failed to start: %v", err)
-	// } else {
-	// 	services.SetAxentaSyncScheduler(axentaSyncScheduler)
-	// 	defer axentaSyncScheduler.Stop()
-	// }
-	// Регистрируем планировщик для возможности ручного запуска через API
+	axentaSyncIntervalMin := cfg.Axenta.SyncInterval
+	if envInterval := os.Getenv("AXENTA_SYNC_INTERVAL_MIN"); envInterval != "" {
+		if v, err := strconv.Atoi(envInterval); err == nil && v > 0 {
+			axentaSyncIntervalMin = v
+		}
+	}
+	if axentaSyncIntervalMin <= 0 {
+		axentaSyncIntervalMin = 10
+	}
+	axentaSyncScheduler := services.NewAxentaSyncScheduler(axentaSyncService, axentaSyncIntervalMin)
 	services.SetAxentaSyncScheduler(axentaSyncScheduler)
+
+	disableAxentaSync := os.Getenv("DISABLE_AXENTA_SYNC_SCHEDULER") == "true"
+	if disableAxentaSync {
+		log.Printf("🔧 AxentaSync: планировщик ОТКЛЮЧЕН через DISABLE_AXENTA_SYNC_SCHEDULER=true")
+		log.Printf("   🔄 Ручной запуск: POST /api/auth/axenta-sync/trigger")
+	} else {
+		log.Printf("🔧 AxentaSync: запуск планировщика, интервал %d мин", axentaSyncIntervalMin)
+		if err := axentaSyncScheduler.Start(); err != nil {
+			log.Printf("⚠️ Axenta Sync Scheduler failed to start: %v", err)
+		} else {
+			defer axentaSyncScheduler.Stop()
+		}
+	}
 
 	// Инициализируем планировщик ежедневных снимков партнерских договоров
 	// Проверяем, включен ли планировщик через переменную окружения
@@ -192,6 +203,27 @@ func main() {
 		}
 	} else {
 		log.Println("⚠️ WialonBillingPlansScheduler отключён (DISABLE_WIALON_PLANS_SCHEDULER=true)")
+	}
+
+	// Wialon all-accounts scheduler — каждые N мин дёргает /wialon/all-accounts для каждой company,
+	// чтобы Redis cache (TTL 15 мин) всегда был свежий. F5 пользователя = cache-hit (~50ms) вместо live (18s).
+	wialonAccountsInterval := 5
+	if v := os.Getenv("WIALON_ACCOUNTS_REFRESH_INTERVAL_MIN"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			wialonAccountsInterval = n
+		}
+	}
+	if os.Getenv("DISABLE_WIALON_ACCOUNTS_SCHEDULER") != "true" {
+		wialonAccountsRefresh := func(companyID uint) error {
+			_, err := api.BuildAndCacheAllAccountsForCompany(companyID, database.DB)
+			return err
+		}
+		wialonAccountsScheduler := services.NewWialonAllAccountsScheduler(wialonAccountsInterval, wialonAccountsRefresh)
+		if err := wialonAccountsScheduler.Start(); err != nil {
+			log.Printf("⚠️ WialonAllAccountsScheduler failed to start: %v", err)
+		}
+	} else {
+		log.Println("⚠️ WialonAllAccountsScheduler отключён (DISABLE_WIALON_ACCOUNTS_SCHEDULER=true)")
 	}
 
 	// Инициализируем систему уведомлений (Phase 1+2: email/telegram/max каналы).

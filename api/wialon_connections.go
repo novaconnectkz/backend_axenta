@@ -24,9 +24,10 @@ func allAccountsCacheKey(companyID uint) string {
 	return fmt.Sprintf("wialon:all-accounts:%d", companyID)
 }
 
-// allAccountsCacheTTL — длительность кэша. 5 минут — компромисс между свежестью и нагрузкой на Wialon.
+// allAccountsCacheTTL — длительность кэша. Scheduler рефрешит каждые 5 мин, TTL=15 мин даёт окно
+// 3× refresh-cycle, чтобы при сбое scheduler пользователь не падал на live-fetch (18s+).
 // При действиях, меняющих статус аккаунта (ToggleAccountStatus), кэш инвалидируется явно.
-const allAccountsCacheTTL = 5 * time.Minute
+const allAccountsCacheTTL = 15 * time.Minute
 
 // invalidateAllAccountsCache удаляет кэш списка для компании. Вызывается после изменений статуса.
 func invalidateAllAccountsCache(companyID uint) {
@@ -518,11 +519,25 @@ func (api *WialonConnectionAPI) GetAllAccounts(c *gin.Context) {
 		}
 	}
 
-	// Получаем все активные подключения
-	connections, err := api.service.GetAllByCompany(cid)
+	payload, err := buildAndCacheAllAccountsForCompany(cid, api.service)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка получения подключений: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка получения аккаунтов: " + err.Error()})
 		return
+	}
+	c.Data(http.StatusOK, "application/json", payload)
+}
+
+// BuildAndCacheAllAccountsForCompany — exported wrapper для scheduler. Без gin.Context, чтобы scheduler мог дёргать в фоне.
+func BuildAndCacheAllAccountsForCompany(companyID uint, db *gorm.DB) ([]byte, error) {
+	connService := services.NewWialonConnectionService(db)
+	return buildAndCacheAllAccountsForCompany(companyID, connService)
+}
+
+// buildAndCacheAllAccountsForCompany — общая логика fetch-всех-connections + Redis SET. Используется и handler'ом и scheduler'ом.
+func buildAndCacheAllAccountsForCompany(cid uint, connService *services.WialonConnectionService) ([]byte, error) {
+	connections, err := connService.GetAllByCompany(cid)
+	if err != nil {
+		return nil, fmt.Errorf("получение подключений: %w", err)
 	}
 
 	var allAccounts []WialonAccountInfo
@@ -631,19 +646,19 @@ func (api *WialonConnectionAPI) GetAllAccounts(c *gin.Context) {
 		},
 	}
 
-	// Сохраняем в Redis. Сериализуем тот же payload, который отдаём клиенту, чтобы cache hit мог
-	// напрямую вернуть bytes без повторной сборки.
+	// Сериализуем payload и сохраняем в Redis. Возвращаем bytes — handler отдаст клиенту, scheduler просто игнорирует
+	payloadBytes, err := json.Marshal(responsePayload)
+	if err != nil {
+		return nil, fmt.Errorf("сериализация payload: %w", err)
+	}
 	if database.RedisClient != nil {
-		if payloadBytes, err := json.Marshal(responsePayload); err == nil {
-			if err := database.RedisClient.Set(context.Background(), allAccountsCacheKey(cid), payloadBytes, allAccountsCacheTTL).Err(); err != nil {
-				log.Printf("⚠️ Ошибка записи wialon all-accounts cache (company=%d): %v", cid, err)
-			} else {
-				log.Printf("⚡ Wialon CACHE SET: /all-accounts company=%d, %d bytes, TTL=%s", cid, len(payloadBytes), allAccountsCacheTTL)
-			}
+		if err := database.RedisClient.Set(context.Background(), allAccountsCacheKey(cid), payloadBytes, allAccountsCacheTTL).Err(); err != nil {
+			log.Printf("⚠️ Ошибка записи wialon all-accounts cache (company=%d): %v", cid, err)
+		} else {
+			log.Printf("⚡ Wialon CACHE SET: /all-accounts company=%d, %d bytes, TTL=%s", cid, len(payloadBytes), allAccountsCacheTTL)
 		}
 	}
-
-	c.JSON(http.StatusOK, responsePayload)
+	return payloadBytes, nil
 }
 
 // RefreshSingleAccount — точечное обновление stats одной учётной записи.

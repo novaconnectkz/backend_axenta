@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/robfig/cron/v3"
 )
@@ -35,13 +36,14 @@ func NewAxentaSyncScheduler(syncService *AxentaSyncService, intervalMinutes int)
 }
 
 // Start запускает планировщик для автоматической синхронизации
-// Синхронизация запускается каждую минуту
+// Интервал берётся из s.interval (минуты), управляется через ENV AXENTA_SYNC_INTERVAL_MIN
 // Для ручного запуска используйте API endpoint /api/auth/axenta-sync/trigger
 func (s *AxentaSyncScheduler) Start() error {
-	// Cron выражение для запуска каждую минуту
-	// Формат: "секунды минуты часы день месяц день_недели"
-	// "0 * * * * *" = каждую минуту в 0 секунд
-	cronExpr := "0 * * * * *"
+	intervalMin := s.interval
+	if intervalMin <= 0 {
+		intervalMin = 10
+	}
+	cronExpr := fmt.Sprintf("@every %dm", intervalMin)
 
 	_, err := s.cron.AddFunc(cronExpr, func() {
 		s.runSyncAll()
@@ -50,9 +52,16 @@ func (s *AxentaSyncScheduler) Start() error {
 		return fmt.Errorf("ошибка добавления cron задачи: %w", err)
 	}
 
+	// Первый sync через 5 секунд после старта приложения, чтобы snapshot не был пустым на холодном старте
+	go func() {
+		time.Sleep(5 * time.Second)
+		log.Println("⏰ AxentaSync: запуск первичной синхронизации после старта приложения")
+		s.runSyncAll()
+	}()
+
 	s.cron.Start()
 	log.Printf("⏰ AxentaSync: планировщик автоматической синхронизации запущен")
-	log.Printf("   📅 Расписание: каждую минуту")
+	log.Printf("   📅 Расписание: каждые %d мин", intervalMin)
 	log.Printf("   🔧 Cron выражение: %s", cronExpr)
 	log.Printf("   🔄 Ручной запуск: POST /api/auth/axenta-sync/trigger")
 	return nil

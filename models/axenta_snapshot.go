@@ -15,8 +15,8 @@ type AxentaAccountSnapshot struct {
 
 	AdminAccountID    uint   `json:"admin_account_id" gorm:"not null;index;uniqueIndex:idx_axenta_account_admin_external"`
 	ExternalAccountID int64  `json:"external_account_id" gorm:"not null;uniqueIndex:idx_axenta_account_admin_external"`
-	AccountName       string `json:"account_name" gorm:"type:varchar(200)"`
-	AccountType       string `json:"account_type" gorm:"type:varchar(50)"`
+	AccountName       string `json:"account_name" gorm:"type:varchar(200);index:idx_axenta_snap_account_name"`
+	AccountType       string `json:"account_type" gorm:"type:varchar(50);index:idx_axenta_snap_account_type"`
 	AdminFullname     string `json:"admin_fullname" gorm:"type:varchar(200)"`
 	AdminExternalID   *int64 `json:"admin_external_id"`
 	ParentAccountName string `json:"parent_account_name" gorm:"type:varchar(200)"`

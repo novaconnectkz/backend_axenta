@@ -7,9 +7,15 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
+	"backend_axenta/database"
+	"backend_axenta/middleware"
+	"backend_axenta/models"
+
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // AccountsHandler обрабатывает запросы к API учетных записей Axenta
@@ -71,6 +77,17 @@ func (h *AccountsHandler) GetAccounts(c *gin.Context) {
 	search := c.Query("search")
 	accountType := c.Query("type")
 	isActive := c.Query("is_active")
+
+	// Сначала пробуем читать из локального snapshot (axenta_account_snapshots)
+	// Берём БД из tenant-контекста (snapshot живёт в tenant_<id>, не в public)
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB == nil {
+		tenantDB = database.DB
+	}
+	if resp, ok := tryServeAccountsFromSnapshot(tenantDB, page, perPage, ordering, search, accountType, isActive); ok {
+		c.JSON(http.StatusOK, resp)
+		return
+	}
 
 	// Строим URL для Axenta API
 	axentaURL := "https://axenta.cloud/api/cms/accounts/"
@@ -539,3 +556,153 @@ func (h *AccountsHandler) MoveAccount(c *gin.Context) {
 	})
 }
 
+
+// tryServeAccountsFromSnapshot читает учётные записи из локального snapshot (axenta_account_snapshots).
+// Возвращает (response, true) если snapshot непуст и достаточно свежий, иначе (nil, false) — caller сделает fallback на Axenta proxy.
+//
+// TTL свежести = 60 мин. Если последняя синхронизация старше — считаем устаревшим и идём в Axenta.
+func tryServeAccountsFromSnapshot(db *gorm.DB, page, perPage, ordering, search, accountType, isActive string) (*AccountsResponse, bool) {
+	if db == nil {
+		return nil, false
+	}
+
+	// Проверяем наличие хотя бы одной записи и свежесть последнего sync
+	var lastSync time.Time
+	if err := db.
+		Model(&models.AxentaAccountSnapshot{}).
+		Select("MAX(last_synced_at)").
+		Scan(&lastSync).Error; err != nil || lastSync.IsZero() {
+		return nil, false
+	}
+
+	// TTL: 60 мин по умолчанию. Если snapshot старше — fallback на Axenta
+	if time.Since(lastSync) > 60*time.Minute {
+		fmt.Printf("⏰ Snapshot устарел (last_synced_at=%v), fallback на Axenta proxy\n", lastSync)
+		return nil, false
+	}
+
+	q := db.Model(&models.AxentaAccountSnapshot{})
+
+	// Фильтры
+	if search != "" {
+		pattern := "%" + strings.ToLower(search) + "%"
+		q = q.Where("LOWER(account_name) LIKE ? OR LOWER(admin_fullname) LIKE ? OR LOWER(parent_account_name) LIKE ?", pattern, pattern, pattern)
+	}
+	if accountType != "" {
+		q = q.Where("account_type = ?", accountType)
+	}
+	if isActive != "" {
+		if isActive == "true" {
+			q = q.Where("is_active = ?", true)
+		} else if isActive == "false" {
+			q = q.Where("is_active = ?", false)
+		}
+	}
+
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		fmt.Printf("⚠️ Snapshot count failed: %v\n", err)
+		return nil, false
+	}
+
+	// Сортировка: маппим имена полей фронта (camelCase) на колонки snapshot
+	orderClause := snapshotOrderClause(ordering)
+
+	// Пагинация
+	pageNum, _ := strconv.Atoi(page)
+	if pageNum < 1 {
+		pageNum = 1
+	}
+	pageSize, _ := strconv.Atoi(perPage)
+	if pageSize <= 0 {
+		pageSize = 50
+	}
+	offset := (pageNum - 1) * pageSize
+
+	var rows []models.AxentaAccountSnapshot
+	if err := q.Order(orderClause).Limit(pageSize).Offset(offset).Find(&rows).Error; err != nil {
+		fmt.Printf("⚠️ Snapshot query failed: %v\n", err)
+		return nil, false
+	}
+
+	// Преобразуем snapshot rows в формат Axenta API (Account)
+	results := make([]Account, 0, len(rows))
+	for _, r := range rows {
+		var acc Account
+		// RawPayload содержит оригинальный JSON от Axenta — desearializaция даёт все поля
+		if r.RawPayload != "" {
+			_ = json.Unmarshal([]byte(r.RawPayload), &acc)
+		}
+		// Подстраховка: если RawPayload неполон — заполняем из колонок
+		if acc.ID == 0 {
+			acc.ID = int(r.ExternalAccountID)
+		}
+		if acc.Name == "" {
+			acc.Name = r.AccountName
+		}
+		if acc.Type == "" {
+			acc.Type = r.AccountType
+		}
+		if acc.AdminFullname == "" {
+			acc.AdminFullname = r.AdminFullname
+		}
+		if acc.Hierarchy == "" {
+			acc.Hierarchy = r.Hierarchy
+		}
+		if acc.ParentAccountName == "" {
+			acc.ParentAccountName = r.ParentAccountName
+		}
+		if acc.ObjectsTotal == 0 {
+			acc.ObjectsTotal = r.ObjectsTotal
+		}
+		if acc.ObjectsActive == 0 {
+			acc.ObjectsActive = r.ObjectsActive
+		}
+		if !acc.IsActive {
+			acc.IsActive = r.IsActive
+		}
+		if acc.CreationDatetime == "" && !r.CreatedAt.IsZero() {
+			acc.CreationDatetime = r.CreatedAt.Format(time.RFC3339)
+		}
+		results = append(results, acc)
+	}
+
+	resp := &AccountsResponse{
+		Count:    int(total),
+		Next:     nil,
+		Previous: nil,
+		Results:  results,
+	}
+	fmt.Printf("⚡ Snapshot served: total=%d, page=%d, returned=%d (last_sync=%v)\n", total, pageNum, len(results), lastSync.Format(time.RFC3339))
+	return resp, true
+}
+
+// snapshotOrderClause маппит ordering из фронта (camelCase, опционально с минусом) на SQL ORDER BY для snapshot
+func snapshotOrderClause(ordering string) string {
+	desc := false
+	if strings.HasPrefix(ordering, "-") {
+		desc = true
+		ordering = strings.TrimPrefix(ordering, "-")
+	}
+	col := "account_name"
+	switch ordering {
+	case "name":
+		col = "account_name"
+	case "id":
+		col = "external_account_id"
+	case "type":
+		col = "account_type"
+	case "isActive", "is_active":
+		col = "is_active"
+	case "objectsTotal", "objects_total":
+		col = "objects_total"
+	case "creationDatetime", "creation_datetime", "created_at":
+		col = "created_at"
+	case "adminFullname", "admin_fullname":
+		col = "admin_fullname"
+	}
+	if desc {
+		return col + " DESC"
+	}
+	return col + " ASC"
+}
