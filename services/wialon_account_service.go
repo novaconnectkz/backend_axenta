@@ -180,8 +180,11 @@ func (s *WialonAccountService) upsertPlans(connectionID uint, plans []WialonBill
 				PlanName:     p.Name,
 				LastSyncedAt: now,
 			}
-			if raw, ok := rawByName[p.Name]; ok {
+			if raw, ok := rawByName[p.Name]; ok && len(raw) > 0 {
 				row.RawPayload = string(raw)
+			} else {
+				// пустая строка ломает jsonb → пишем валидный пустой объект
+				row.RawPayload = "{}"
 			}
 			rows = append(rows, row)
 		}
@@ -222,28 +225,42 @@ func (s *WialonAccountService) upsertPlans(connectionID uint, plans []WialonBill
 	return plans, nil
 }
 
-// getCurrentPlanFallback — когда get_billing_plans не доступен, читаем план текущего юзера
-// через account/get_account_data type=2. На Wialon Local билинга может не быть вообще —
-// в этом случае возвращаем пустой массив без ошибки.
+// getCurrentPlanFallback — когда account/get_billing_plans не доступен (типично для Wialon Local
+// и не-root dealer), используем core/get_account_data с params={"type":1} (БЕЗ itemId).
+// Этот метод работает на любом юзере и возвращает {plan, subPlans:[...]} — собственный план
+// + массив доступных подчинённых планов. Именно его дёргает Wialon CMS Manager при открытии
+// диалога "Создать учётную запись".
 func (s *WialonAccountService) getCurrentPlanFallback(host, eid string, userID int64) ([]WialonBillingPlan, error) {
-	body, err := s.callRaw(host, eid, "account/get_account_data", map[string]interface{}{
-		"itemId": userID,
-		"type":   2,
+	body, err := s.callRaw(host, eid, "core/get_account_data", map[string]interface{}{
+		"type": 1,
 	})
 	if err != nil {
-		log.Printf("⚠️ get_account_data fallback не доступен (%v) — возвращаем пустой список тарифов (Wialon Local без билинга)", err)
+		log.Printf("⚠️ get_account_data fallback не доступен (%v) — возвращаем пустой список тарифов", err)
 		return []WialonBillingPlan{}, nil
 	}
-	var data map[string]interface{}
+	var data struct {
+		Plan     string   `json:"plan"`
+		SubPlans []string `json:"subPlans"`
+	}
 	if err := json.Unmarshal(body, &data); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("парсинг get_account_data: %w", err)
 	}
-	if plan, ok := data["plan"].(map[string]interface{}); ok {
-		if name, ok := plan["name"].(string); ok && name != "" {
-			return []WialonBillingPlan{{Name: name}}, nil
+
+	plans := make([]WialonBillingPlan, 0, len(data.SubPlans)+1)
+	seen := map[string]bool{}
+	add := func(name string) {
+		if name == "" || seen[name] {
+			return
 		}
+		seen[name] = true
+		plans = append(plans, WialonBillingPlan{Name: name})
 	}
-	return []WialonBillingPlan{}, nil
+	add(data.Plan)
+	for _, name := range data.SubPlans {
+		add(name)
+	}
+	log.Printf("⚡ get_account_data fallback: получено %d планов (plan + subPlans)", len(plans))
+	return plans, nil
 }
 
 // CreateAccountRequest — тело запроса на создание аккаунта в Wialon
