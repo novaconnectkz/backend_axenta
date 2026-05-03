@@ -20,9 +20,22 @@ start_app() {
 
 stop_app() {
     if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+        # Убиваем всё дерево процессов (go run + дочерний main), чтобы порт освободился до перезапуска
+        pkill -P "$PID" 2>/dev/null || true
         kill "$PID" 2>/dev/null || true
         wait "$PID" 2>/dev/null || true
     fi
+    # Ждём освобождения порта 8080 — иначе следующий старт получит "address already in use"
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+        if ! lsof -iTCP:8080 -sTCP:LISTEN -t >/dev/null 2>&1; then
+            break
+        fi
+        # Принудительный kill любого процесса на порту 8080
+        if [ "$i" -ge 5 ]; then
+            lsof -iTCP:8080 -sTCP:LISTEN -t 2>/dev/null | xargs -r kill -9 2>/dev/null || true
+        fi
+        sleep 1
+    done
     PID=""
 }
 

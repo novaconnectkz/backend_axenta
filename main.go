@@ -843,6 +843,9 @@ func main() {
 	accountsHandler = api.NewAccountsHandler()
 	apiGroup.GET("/accounts", accountsHandler.GetAccounts)
 	apiGroup.GET("/accounts/", accountsHandler.GetAccounts)
+	// stats: total/active/blocked/clients/partners одним запросом из snapshot
+	apiGroup.GET("/accounts/stats", accountsHandler.GetAccountsStats)
+	apiGroup.GET("/accounts/stats/", accountsHandler.GetAccountsStats)
 	apiGroup.POST("/accounts", accountsHandler.CreateAccount)
 	apiGroup.POST("/accounts/", accountsHandler.CreateAccount)
 	apiGroup.GET("/accounts/:id", accountsHandler.GetAccount)

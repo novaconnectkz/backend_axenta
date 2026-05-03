@@ -706,3 +706,129 @@ func snapshotOrderClause(ordering string) string {
 	}
 	return col + " ASC"
 }
+
+// GetAccountsStats возвращает агрегированную статистику snapshot одним запросом.
+// Заменяет 4 параллельных вызова /accounts с per_page=1 (~4 × middleware overhead = ~6с).
+//
+// GET /api/auth/accounts/stats → { total, active, blocked, clients, partners }
+//
+// Если snapshot пуст / устарел >60м — fallback на 4 проксированных запроса к Axenta (старое поведение).
+func (h *AccountsHandler) GetAccountsStats(c *gin.Context) {
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		authHeader = c.GetHeader("authorization")
+	}
+	if authHeader == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": "Authorization header is required"})
+		return
+	}
+
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB == nil {
+		tenantDB = database.DB
+	}
+
+	if stats, ok := computeAccountsStatsFromSnapshot(tenantDB); ok {
+		c.JSON(http.StatusOK, stats)
+		return
+	}
+
+	// Fallback: дёргаем /accounts proxy с разными фильтрами параллельно (старая логика, но в одном handler'е)
+	type result struct {
+		key string
+		val int
+	}
+	out := make(chan result, 4)
+	go func() { out <- result{"total", proxyAccountsCount(authHeader, c.GetHeader("X-Tenant-ID"), "")} }()
+	go func() { out <- result{"active", proxyAccountsCount(authHeader, c.GetHeader("X-Tenant-ID"), "is_active=true&active=true&status=active")} }()
+	go func() { out <- result{"clients", proxyAccountsCount(authHeader, c.GetHeader("X-Tenant-ID"), "type=client")} }()
+	go func() { out <- result{"partners", proxyAccountsCount(authHeader, c.GetHeader("X-Tenant-ID"), "type=partner")} }()
+
+	stats := gin.H{}
+	for i := 0; i < 4; i++ {
+		r := <-out
+		stats[r.key] = r.val
+	}
+	if total, ok := stats["total"].(int); ok {
+		if active, ok := stats["active"].(int); ok {
+			stats["blocked"] = total - active
+		}
+	}
+	c.JSON(http.StatusOK, stats)
+}
+
+// computeAccountsStatsFromSnapshot — один SELECT с COUNT FILTER (...) на snapshot. Быстрее чем 4 отдельных запроса.
+func computeAccountsStatsFromSnapshot(db *gorm.DB) (gin.H, bool) {
+	if db == nil {
+		return nil, false
+	}
+
+	// Проверяем свежесть snapshot
+	var lastSync time.Time
+	if err := db.Model(&models.AxentaAccountSnapshot{}).Select("MAX(last_synced_at)").Scan(&lastSync).Error; err != nil || lastSync.IsZero() {
+		return nil, false
+	}
+	if time.Since(lastSync) > 60*time.Minute {
+		return nil, false
+	}
+
+	type counts struct {
+		Total    int64
+		Active   int64
+		Clients  int64
+		Partners int64
+	}
+	var c counts
+	err := db.Raw(`
+		SELECT
+			COUNT(*) AS total,
+			COUNT(*) FILTER (WHERE is_active = true) AS active,
+			COUNT(*) FILTER (WHERE account_type = 'client') AS clients,
+			COUNT(*) FILTER (WHERE account_type = 'partner') AS partners
+		FROM axenta_account_snapshots
+		WHERE deleted_at IS NULL
+	`).Scan(&c).Error
+	if err != nil {
+		fmt.Printf("⚠️ accounts/stats snapshot query failed: %v\n", err)
+		return nil, false
+	}
+
+	return gin.H{
+		"total":    c.Total,
+		"active":   c.Active,
+		"blocked":  c.Total - c.Active,
+		"clients":  c.Clients,
+		"partners": c.Partners,
+	}, true
+}
+
+// proxyAccountsCount — fallback для случая когда snapshot недоступен. Дёргает Axenta API per_page=1, парсит count.
+func proxyAccountsCount(authHeader, tenantID, extraQuery string) int {
+	url := "https://axenta.cloud/api/cms/accounts/?page=1&per_page=1&ordering=name"
+	if extraQuery != "" {
+		url += "&" + extraQuery
+	}
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return 0
+	}
+	req.Header.Set("Authorization", authHeader)
+	if tenantID != "" {
+		req.Header.Set("X-Tenant-ID", tenantID)
+	}
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0
+	}
+	var ar AccountsResponse
+	if err := json.Unmarshal(body, &ar); err != nil {
+		return 0
+	}
+	return ar.Count
+}
