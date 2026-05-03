@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // WialonAccountService — создание новых учётных записей в Wialon (user + resource + billing).
@@ -42,9 +43,42 @@ type WialonBillingPlan struct {
 	Name string `json:"name"`
 }
 
-// GetBillingPlans возвращает список доступных тарифов для подключения.
-// Используется фронтом при создании аккаунта — селектор «Тарифный план».
+// GetBillingPlans возвращает список тарифов из БД-кэша. Если кэш пустой — auto-sync с Wialon (lazy-init).
+// Используется фронтом для селектора «Тарифный план».
 func (s *WialonAccountService) GetBillingPlans(connectionID uint) ([]WialonBillingPlan, error) {
+	cached, err := s.getCachedPlans(connectionID)
+	if err != nil {
+		return nil, err
+	}
+	if len(cached) > 0 {
+		return cached, nil
+	}
+
+	// Cache miss → синхронный sync, потом возвращаем
+	log.Printf("⚡ billing-plans cache miss для conn=%d, lazy-init", connectionID)
+	if _, err := s.SyncBillingPlans(connectionID); err != nil {
+		return nil, err
+	}
+	return s.getCachedPlans(connectionID)
+}
+
+// getCachedPlans читает из таблицы wialon_billing_plans
+func (s *WialonAccountService) getCachedPlans(connectionID uint) ([]WialonBillingPlan, error) {
+	var rows []models.WialonBillingPlan
+	if err := s.db.Where("connection_id = ?", connectionID).Order("plan_name").Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("read cache: %w", err)
+	}
+	plans := make([]WialonBillingPlan, 0, len(rows))
+	for _, r := range rows {
+		plans = append(plans, WialonBillingPlan{Name: r.PlanName})
+	}
+	return plans, nil
+}
+
+// SyncBillingPlans — fetch из Wialon → upsert в БД → diff (added/removed) → лог.
+// Возвращает список свежих тарифов. Используется WialonBillingPlansScheduler и при ?force_refresh=true.
+func (s *WialonAccountService) SyncBillingPlans(connectionID uint) ([]WialonBillingPlan, error) {
+	t0 := time.Now()
 	var conn models.WialonConnection
 	if err := s.db.Where("id = ? AND is_active = ?", connectionID, true).First(&conn).Error; err != nil {
 		return nil, fmt.Errorf("connection %d не найден: %w", connectionID, err)
@@ -56,23 +90,24 @@ func (s *WialonAccountService) GetBillingPlans(connectionID uint) ([]WialonBilli
 	}
 	defer func() { _ = s.wialonService.LogoutWithHost(conn.Host, loginResp.Eid) }()
 
-	// userId — login user. По SDK params {"userId": <id>}; userId=0 не всегда работает (зависит от прав)
 	currentUserID := int64(0)
 	if loginResp.User != nil {
 		currentUserID = loginResp.User.ID
 	}
 
-	// Wialon SDK: params={} (БЕЗ userId) для получения собственного плана + всех подчинённых.
-	// Если шлём userId — сужает до 1 плана. Запрос доступен ТОЛЬКО для top-level dealer
-	// (на WL не сработает — фолбэк через get_account_data).
+	// Wialon SDK: params={} (БЕЗ userId) для получения собственного плана + subPlans.
+	// На WL get_billing_plans закрыт → фолбэк через get_account_data (отдаёт текущий план).
 	body, err := s.callRaw(conn.Host, loginResp.Eid, "account/get_billing_plans", map[string]interface{}{})
 	if err != nil {
 		log.Printf("⚠️ get_billing_plans не доступен (%v), фолбэк через account/get_account_data", err)
-		return s.getCurrentPlanFallback(conn.Host, loginResp.Eid, currentUserID)
+		fallback, ferr := s.getCurrentPlanFallback(conn.Host, loginResp.Eid, currentUserID)
+		if ferr != nil {
+			return nil, ferr
+		}
+		return s.upsertPlans(connectionID, fallback, nil)
 	}
 
-	// Ответ Wialon SDK: { plan: {name, ...}, subPlans: [{name, ...}, ...] }
-	// Собираем имя своего плана + всех подчинённых.
+	// Ответ: { plan: {...}, subPlans: [...] }. Сохраняем raw_payload для diagnostics.
 	var resp struct {
 		Plan     map[string]interface{}   `json:"plan"`
 		SubPlans []map[string]interface{} `json:"subPlans"`
@@ -82,17 +117,108 @@ func (s *WialonAccountService) GetBillingPlans(connectionID uint) ([]WialonBilli
 	}
 
 	plans := make([]WialonBillingPlan, 0)
+	rawByName := make(map[string][]byte)
+	seenNames := map[string]bool{}
+	addPlan := func(name string, raw []byte) {
+		if name == "" || seenNames[name] {
+			return
+		}
+		seenNames[name] = true
+		plans = append(plans, WialonBillingPlan{Name: name})
+		if raw != nil {
+			rawByName[name] = raw
+		}
+	}
 	if resp.Plan != nil {
-		if name, ok := resp.Plan["name"].(string); ok && name != "" {
-			plans = append(plans, WialonBillingPlan{Name: name})
+		if name, ok := resp.Plan["name"].(string); ok {
+			raw, _ := json.Marshal(resp.Plan)
+			addPlan(name, raw)
 		}
 	}
 	for _, p := range resp.SubPlans {
-		if name, ok := p["name"].(string); ok && name != "" {
-			plans = append(plans, WialonBillingPlan{Name: name})
+		if name, ok := p["name"].(string); ok {
+			raw, _ := json.Marshal(p)
+			addPlan(name, raw)
 		}
 	}
-	log.Printf("⚡ Wialon billing_plans: получено %d тарифов (plan + subPlans) для %s", len(plans), conn.Name)
+	log.Printf("⚡ billing-plans sync: получено %d тарифов из Wialon (conn=%d %s) за %s",
+		len(plans), connectionID, conn.Name, time.Since(t0))
+	return s.upsertPlans(connectionID, plans, rawByName)
+}
+
+// upsertPlans — записывает план-имена в БД и удаляет те, что Wialon больше не возвращает.
+// Лог diff (added/removed) полезен для отладки изменений тарифной сетки у дилера.
+func (s *WialonAccountService) upsertPlans(connectionID uint, plans []WialonBillingPlan, rawByName map[string][]byte) ([]WialonBillingPlan, error) {
+	now := time.Now()
+
+	// Текущие в БД для diff
+	var existing []models.WialonBillingPlan
+	if err := s.db.Where("connection_id = ?", connectionID).Find(&existing).Error; err != nil {
+		return nil, fmt.Errorf("read existing: %w", err)
+	}
+	existingNames := map[string]bool{}
+	for _, e := range existing {
+		existingNames[e.PlanName] = true
+	}
+	freshNames := map[string]bool{}
+	for _, p := range plans {
+		freshNames[p.Name] = true
+	}
+
+	// Upsert свежие. Дедуплицируем — Wialon может вернуть один и тот же plan и в plan, и в subPlans
+	// (например, "glomoskz" фигурирует дважды). PostgreSQL ON CONFLICT не любит дубликаты в одном batch.
+	if len(plans) > 0 {
+		seen := map[string]bool{}
+		rows := make([]models.WialonBillingPlan, 0, len(plans))
+		for _, p := range plans {
+			if seen[p.Name] {
+				continue
+			}
+			seen[p.Name] = true
+			row := models.WialonBillingPlan{
+				ConnectionID: connectionID,
+				PlanName:     p.Name,
+				LastSyncedAt: now,
+			}
+			if raw, ok := rawByName[p.Name]; ok {
+				row.RawPayload = string(raw)
+			}
+			rows = append(rows, row)
+		}
+		if err := s.db.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "connection_id"}, {Name: "plan_name"}},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"raw_payload", "last_synced_at", "updated_at",
+			}),
+		}).Create(rows).Error; err != nil {
+			return nil, fmt.Errorf("upsert: %w", err)
+		}
+	}
+
+	// Удаляем устаревшие (которых больше нет в Wialon-ответе)
+	added, removed := 0, 0
+	for name := range freshNames {
+		if !existingNames[name] {
+			added++
+		}
+	}
+	toRemove := []string{}
+	for name := range existingNames {
+		if !freshNames[name] {
+			toRemove = append(toRemove, name)
+			removed++
+		}
+	}
+	if len(toRemove) > 0 {
+		if err := s.db.Where("connection_id = ? AND plan_name IN ?", connectionID, toRemove).
+			Delete(&models.WialonBillingPlan{}).Error; err != nil {
+			log.Printf("⚠️ billing-plans: не смогли удалить устаревшие %v: %v", toRemove, err)
+		}
+	}
+	if added > 0 || removed > 0 {
+		log.Printf("📊 billing-plans diff (conn=%d): +%d added, -%d removed", connectionID, added, removed)
+	}
+
 	return plans, nil
 }
 

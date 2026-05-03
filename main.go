@@ -176,6 +176,24 @@ func main() {
 		log.Println("⚠️ WialonStatsScheduler отключён (DISABLE_WIALON_STATS_SCHEDULER=true)")
 	}
 
+	// Wialon billing plans scheduler — раз в час обходит connections и обновляет тарифы.
+	// Раньше тарифы дёргались с Wialon на каждое открытие формы создания (1-2с overhead),
+	// теперь — мгновенный SELECT из public.wialon_billing_plans.
+	wialonPlansInterval := 60
+	if v := os.Getenv("WIALON_PLANS_INTERVAL_MIN"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			wialonPlansInterval = n
+		}
+	}
+	if os.Getenv("DISABLE_WIALON_PLANS_SCHEDULER") != "true" {
+		wialonPlansScheduler := services.NewWialonBillingPlansScheduler(wialonPlansInterval)
+		if err := wialonPlansScheduler.Start(); err != nil {
+			log.Printf("⚠️ WialonBillingPlansScheduler failed to start: %v", err)
+		}
+	} else {
+		log.Println("⚠️ WialonBillingPlansScheduler отключён (DISABLE_WIALON_PLANS_SCHEDULER=true)")
+	}
+
 	// Инициализируем систему уведомлений (Phase 1+2: email/telegram/max каналы).
 	// Telegram и MAX-сервисы созданы выше через api.InitTelegramService/InitMaxService.
 	notifCache := services.NewCacheService(database.RedisClient, log.New(log.Writer(), "[Notif_Cache] ", log.LstdFlags))

@@ -99,6 +99,12 @@ func GetAllMigrations() []MigrationInfo {
 			IsGlobal:    true,
 		},
 		{
+			TableName:   "wialon_billing_plans",
+			Model:       &models.WialonBillingPlan{},
+			Description: "Кэш тарифных планов Wialon (фоновый sync раз в час)",
+			IsGlobal:    true,
+		},
+		{
 			TableName:   "local_users",
 			Model:       &models.LocalUser{},
 			Description: "Локальные пользователи для альтернативной авторизации",

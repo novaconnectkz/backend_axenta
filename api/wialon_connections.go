@@ -1241,9 +1241,16 @@ func (api *WialonConnectionAPI) GetBillingPlans(c *gin.Context) {
 	}
 
 	svc := services.NewWialonAccountService()
-	plans, err := svc.GetBillingPlans(uint(connectionID))
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка получения тарифов: " + err.Error()})
+	var plans []services.WialonBillingPlan
+	var err2 error
+	if c.Query("force_refresh") == "true" {
+		// Принудительный sync: дёргаем Wialon, обновляем БД, возвращаем свежие
+		plans, err2 = svc.SyncBillingPlans(uint(connectionID))
+	} else {
+		plans, err2 = svc.GetBillingPlans(uint(connectionID))
+	}
+	if err2 != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка получения тарифов: " + err2.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"plans": plans})
