@@ -16,6 +16,9 @@ help: ## Показать справку
 run: ## Запустить приложение локально (без Docker)
 	go run ./main.go
 
+dev-watch: ## Запустить с авто-перезапуском при смене git HEAD (`git pull` / `git fetch && reset` подхватываются)
+	@./scripts/dev-watch.sh
+
 test: ## Запустить тесты
 	go test ./... -v
 
