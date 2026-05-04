@@ -516,6 +516,80 @@ func (s *WialonAccountService) callCreateBillingAccount(host, eid string, resour
 	return err
 }
 
+// UpdateWialonUserRequest — точечное редактирование Wialon-юзера (name + custom props).
+// Поля nil-указатели: nil = не менять, "" = очистить.
+type UpdateWialonUserRequest struct {
+	Email    *string `json:"email,omitempty"`
+	Name     *string `json:"name,omitempty"`
+	Phone    *string `json:"phone,omitempty"`
+	Telegram *string `json:"telegram,omitempty"`
+}
+
+// UpdateUser — изменяет Wialon-юзера. Email через item/update_custom_property,
+// Name через item/update_name. Возвращает финальные значения.
+func (s *WialonAccountService) UpdateUser(connectionID uint, userID int64, req UpdateWialonUserRequest) (*UpdateWialonUserResult, error) {
+	t0 := time.Now()
+	var conn models.WialonConnection
+	if err := s.db.Where("id = ? AND is_active = ?", connectionID, true).First(&conn).Error; err != nil {
+		return nil, fmt.Errorf("connection %d не найден: %w", connectionID, err)
+	}
+	loginResp, err := s.wialonService.LoginWithHost(conn.Host, conn.Token)
+	if err != nil {
+		return nil, fmt.Errorf("login: %w", err)
+	}
+	defer func() { _ = s.wialonService.LogoutWithHost(conn.Host, loginResp.Eid) }()
+
+	res := &UpdateWialonUserResult{UserID: userID, ConnectionID: connectionID}
+
+	if req.Name != nil {
+		if err := s.callRenameItem(conn.Host, loginResp.Eid, userID, *req.Name); err != nil {
+			return nil, fmt.Errorf("update_name: %w", err)
+		}
+		res.Name = *req.Name
+	}
+	if req.Email != nil {
+		if err := s.callUpdateCustomProperty(conn.Host, loginResp.Eid, userID, "email", *req.Email); err != nil {
+			return nil, fmt.Errorf("update email: %w", err)
+		}
+		res.Email = *req.Email
+	}
+	if req.Phone != nil {
+		if err := s.callUpdateCustomProperty(conn.Host, loginResp.Eid, userID, "phone", *req.Phone); err != nil {
+			return nil, fmt.Errorf("update phone: %w", err)
+		}
+		res.Phone = *req.Phone
+	}
+	if req.Telegram != nil {
+		if err := s.callUpdateCustomProperty(conn.Host, loginResp.Eid, userID, "telegram", *req.Telegram); err != nil {
+			return nil, fmt.Errorf("update telegram: %w", err)
+		}
+		res.Telegram = *req.Telegram
+	}
+
+	log.Printf("✅ Wialon UpdateUser: id=%d за %s", userID, time.Since(t0))
+	return res, nil
+}
+
+// UpdateWialonUserResult — ответ на PUT /wialon/connections/:id/users/:user_id.
+type UpdateWialonUserResult struct {
+	UserID       int64  `json:"user_id"`
+	ConnectionID uint   `json:"connection_id"`
+	Email        string `json:"email,omitempty"`
+	Name         string `json:"name,omitempty"`
+	Phone        string `json:"phone,omitempty"`
+	Telegram     string `json:"telegram,omitempty"`
+}
+
+// callRenameItem — item/update_name. itemId, name.
+func (s *WialonAccountService) callRenameItem(host, eid string, itemID int64, name string) error {
+	params := map[string]interface{}{
+		"itemId": itemID,
+		"name":   name,
+	}
+	_, err := s.callRaw(host, eid, "item/update_name", params)
+	return err
+}
+
 func (s *WialonAccountService) callUpdateCustomProperty(host, eid string, itemID int64, name, value string) error {
 	params := map[string]interface{}{
 		"itemId": itemID,

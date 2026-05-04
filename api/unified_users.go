@@ -40,6 +40,9 @@ type UnifiedUser struct {
 	DealerRights     bool   `json:"dealer_rights,omitempty"`
 	ObjectsTotal     int    `json:"objects_total,omitempty"`
 	ObjectsActive    int    `json:"objects_active,omitempty"`
+	Phone            string `json:"phone,omitempty"`
+	TelegramID       string `json:"telegram_id,omitempty"`
+	LastLogin        string `json:"last_login,omitempty"`
 }
 
 // UnifiedUsersResponse структура ответа для унифицированного API
@@ -460,19 +463,36 @@ func fetchWialonUsersFast(companyID uint, search, activeStr, sourceFilter, roleF
 			continue
 		}
 
-		// Фильтр по поиску
+		// Фильтр по поиску. Учитываем sub-users: если parent.Name не matches,
+		// но матчится хотя бы один sub — оставляем acc, parent отдельно скипнем ниже.
+		parentMatched := true
 		if search != "" {
 			terms := splitSearchTerms(search)
-			matched := false
+			parentMatched = false
 			nameLower := strings.ToLower(acc.Name)
 			for _, t := range terms {
 				if strings.Contains(nameLower, strings.ToLower(t)) {
-					matched = true
+					parentMatched = true
 					break
 				}
 			}
-			if !matched {
-				continue
+			if !parentMatched {
+				subMatched := false
+				for _, su := range acc.SubUsers {
+					suLower := strings.ToLower(su.Name)
+					for _, t := range terms {
+						if strings.Contains(suLower, strings.ToLower(t)) {
+							subMatched = true
+							break
+						}
+					}
+					if subMatched {
+						break
+					}
+				}
+				if !subMatched {
+					continue
+				}
 			}
 		}
 
@@ -512,30 +532,35 @@ func fetchWialonUsersFast(companyID uint, search, activeStr, sourceFilter, roleF
 			connIDPtr = &connID
 		}
 
-		users = append(users, UnifiedUser{
-			ID:               int64(acc.ID),
-			Username:         acc.Name,
-			Name:             acc.Name,
-			Email:            "",
-			Role:             accountType,
-			IsActive:         acc.IsActive,
-			CreationDatetime: acc.CreatedAt,
-			CreatorName:      creatorName,
-			Source:           "wialon",
-			SourceLabel:      acc.SourceLabel,
-			Hierarchy:        acc.Hierarchy,
-			ConnectionID:     connIDPtr,
-			AccountType:      accountType,
-			DealerRights:     acc.DealerRights,
-			ObjectsTotal:     acc.ObjectsTotal,
-			ObjectsActive:    acc.ObjectsActive,
-		})
+		if parentMatched {
+			users = append(users, UnifiedUser{
+				ID:               int64(acc.ID),
+				Username:         acc.Name,
+				Name:             acc.Name,
+				Email:            acc.Email,
+				Role:             accountType,
+				IsActive:         acc.IsActive,
+				CreationDatetime: acc.CreatedAt,
+				CreatorName:      creatorName,
+				Source:           "wialon",
+				SourceLabel:      acc.SourceLabel,
+				Hierarchy:        acc.Hierarchy,
+				ConnectionID:     connIDPtr,
+				AccountType:      accountType,
+				DealerRights:     acc.DealerRights,
+				ObjectsTotal:     acc.ObjectsTotal,
+				ObjectsActive:    acc.ObjectsActive,
+				Phone:            acc.Phone,
+				TelegramID:       acc.Telegram,
+				LastLogin:        acc.LastLogin,
+			})
 
-		totalUsers++
-		if acc.IsActive {
-			activeUsers++
+			totalUsers++
+			if acc.IsActive {
+				activeUsers++
+			}
+			bumpBreakdown(acc.SourceLabel, acc.IsActive)
 		}
-		bumpBreakdown(acc.SourceLabel, acc.IsActive)
 
 		// Sub-users аккаунта (вложенные юзеры без своего биллинг-ресурса).
 		// Применяем те же фильтры (search/active/role): role у sub всегда "client", DealerRights=false.
@@ -568,7 +593,7 @@ func fetchWialonUsersFast(companyID uint, search, activeStr, sourceFilter, roleF
 				ID:               su.ID,
 				Username:         su.Name,
 				Name:             su.Name,
-				Email:            "",
+				Email:            su.Email,
 				Role:             "client",
 				IsActive:         su.IsActive,
 				CreationDatetime: su.CreatedAt,
@@ -579,6 +604,9 @@ func fetchWialonUsersFast(companyID uint, search, activeStr, sourceFilter, roleF
 				ConnectionID:     connIDPtr,
 				AccountType:      "client",
 				DealerRights:     false,
+				Phone:            su.Phone,
+				TelegramID:       su.Telegram,
+				LastLogin:        su.LastLogin,
 			})
 
 			totalUsers++

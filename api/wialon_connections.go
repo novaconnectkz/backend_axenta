@@ -94,6 +94,7 @@ func (api *WialonConnectionAPI) RegisterRoutes(r *gin.RouterGroup) {
 	r.GET("/wialon/connections/:id/billing-plans", api.GetBillingPlans)
 	r.POST("/wialon/connections/:id/accounts", api.CreateWialonAccount)
 	r.POST("/wialon/connections/:id/users", api.CreateWialonUser)
+	r.PUT("/wialon/connections/:id/users/:user_id", api.UpdateWialonUser)
 
 	log.Println("✅ Wialon Connections API routes registered: /api/wialon/connections/*")
 }
@@ -494,6 +495,10 @@ type WialonAccountInfo struct {
 	Hierarchy     string                 `json:"hierarchy"`      // Иерархия: "WL(Профмонитор) > ИмяАккаунта"
 	ConnectionID  uint                   `json:"connection_id"`
 	CreatedAt     string                 `json:"created_at,omitempty"` // Дата создания из Wialon
+	Email         string                 `json:"email,omitempty"`      // prp.email из Wialon
+	Phone         string                 `json:"phone,omitempty"`      // prp.phone из Wialon
+	Telegram      string                 `json:"telegram,omitempty"`   // prp.telegram из Wialon
+	LastLogin     string                 `json:"last_login,omitempty"` // login_date из admin fields Wialon
 	SubUsers      []WialonSubAccountInfo `json:"sub_users,omitempty"`  // Вложенные юзеры аккаунта (без биллинг-ресурса)
 }
 
@@ -503,6 +508,10 @@ type WialonSubAccountInfo struct {
 	Name      string `json:"name"`
 	IsActive  bool   `json:"is_active"`
 	CreatedAt string `json:"created_at,omitempty"`
+	Email     string `json:"email,omitempty"`
+	Phone     string `json:"phone,omitempty"`
+	Telegram  string `json:"telegram,omitempty"`
+	LastLogin string `json:"last_login,omitempty"`
 }
 
 // GetAllAccounts получает аккаунты из всех подключений Wialon
@@ -616,6 +625,10 @@ func buildAndCacheAllAccountsForCompany(cid uint, connService *services.WialonCo
 					Name:      su.Name,
 					IsActive:  su.IsActive,
 					CreatedAt: su.CreatedAt,
+					Email:     su.Email,
+					Phone:     su.Phone,
+					Telegram:  su.Telegram,
+					LastLogin: su.LastLogin,
 				})
 			}
 
@@ -632,6 +645,10 @@ func buildAndCacheAllAccountsForCompany(cid uint, connService *services.WialonCo
 				Hierarchy:     hierarchy,
 				ConnectionID:  r.conn.ID,
 				CreatedAt:     acc.CreatedAt,
+				Email:         acc.Email,
+				Phone:         acc.Phone,
+				Telegram:      acc.Telegram,
+				LastLogin:     acc.LastLogin,
 				SubUsers:      subUsers,
 			})
 
@@ -1353,6 +1370,56 @@ func (api *WialonConnectionAPI) CreateWialonUser(c *gin.Context) {
 	invalidateAllAccountsCache(companyID.(uint))
 
 	c.JSON(http.StatusCreated, result)
+}
+
+// UpdateWialonUser — точечное редактирование Wialon-юзера (email/name).
+// PUT /api/wialon/connections/:id/users/:user_id
+// Body: { email?: string, name?: string } — nil = не менять.
+func (api *WialonConnectionAPI) UpdateWialonUser(c *gin.Context) {
+	connectionID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректный ID подключения"})
+		return
+	}
+	userID, err := strconv.ParseInt(c.Param("user_id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректный user_id"})
+		return
+	}
+	companyID, exists := c.Get("company_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Компания не определена"})
+		return
+	}
+	conn, err := api.service.GetByID(uint(connectionID))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Подключение не найдено"})
+		return
+	}
+	if conn.CompanyID != companyID.(uint) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Нет доступа"})
+		return
+	}
+
+	var req services.UpdateWialonUserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Неверный формат: " + err.Error()})
+		return
+	}
+	if req.Email == nil && req.Name == nil && req.Phone == nil && req.Telegram == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Передайте хотя бы одно поле для обновления"})
+		return
+	}
+
+	svc := services.NewWialonAccountService()
+	result, err := svc.UpdateUser(uint(connectionID), userID, req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка обновления юзера: " + err.Error()})
+		return
+	}
+
+	invalidateAllAccountsCache(companyID.(uint))
+	c.JSON(http.StatusOK, result)
 }
 
 // POST /api/wialon/connections/:id/accounts

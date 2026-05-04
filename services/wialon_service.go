@@ -364,10 +364,14 @@ type WialonAccount struct {
 	ObjectsTotal     int             `json:"objects_total"`
 	ObjectsActive    int             `json:"objects_active"`
 	CreatedAt        string          `json:"created_at,omitempty"`
+	Email            string          `json:"email,omitempty"`              // prp.email из Wialon
 	ParentId         int64           `json:"parent_id,omitempty"`          // ID родительской учётной записи (bpact)
 	ParentName       string          `json:"parent_name,omitempty"`        // Имя родительской учётной записи
 	DealerRights     bool            `json:"dealer_rights"`                // Права дилера
 	BillingAccountID int64           `json:"billing_account_id,omitempty"` // ID ресурса биллинга (bact)
+	Phone            string          `json:"phone,omitempty"`              // prp.phone из Wialon
+	Telegram         string          `json:"telegram,omitempty"`           // prp.telegram из Wialon
+	LastLogin        string          `json:"last_login,omitempty"`         // Последний вход (login_date из admin fields)
 	SubUsers         []WialonSubUser `json:"sub_users,omitempty"`          // Вложенные юзеры аккаунта (без биллинг-ресурса)
 }
 
@@ -378,6 +382,10 @@ type WialonSubUser struct {
 	Name      string `json:"name"`
 	IsActive  bool   `json:"is_active"`
 	CreatedAt string `json:"created_at,omitempty"`
+	Email     string `json:"email,omitempty"`
+	Phone     string `json:"phone,omitempty"`
+	Telegram  string `json:"telegram,omitempty"`
+	LastLogin string `json:"last_login,omitempty"`
 }
 
 // SearchUsers поиск пользователей (аккаунтов) Wialon
@@ -2287,7 +2295,9 @@ func (s *WialonService) GetAccountsBatchFromHost(host string, token string) ([]W
 		}
 	}()
 
-	usersFlags := 0x00000001 | 0x00000002 | 0x00000004 | 0x00000100 // = 263
+	// 0x01 base + 0x02 custom_fields + 0x04 billing + 0x10 connection_settings
+	// + 0x100 admin_fields + 0x80 prp (custom_properties) — нужен для prp.email.
+	usersFlags := 0x00000001 | 0x00000002 | 0x00000004 | 0x00000010 | 0x00000080 | 0x00000100 // = 407
 
 	calls := []map[string]interface{}{
 		// 0: users
@@ -2395,6 +2405,51 @@ func (s *WialonService) GetAccountsBatchFromHost(host string, token string) ([]W
 		}
 		if bact, ok := item["bact"].(float64); ok {
 			account.BillingAccountID = int64(bact)
+		}
+		// Email/Phone/Telegram из prp (custom properties Wialon).
+		if prp, ok := item["prp"].(map[string]interface{}); ok {
+			if v, ok := prp["email"].(string); ok && v != "" {
+				account.Email = v
+			} else if v, ok := prp["eml"].(string); ok && v != "" {
+				account.Email = v
+			}
+			for _, k := range []string{"phone", "phone_number", "tel"} {
+				if v, ok := prp[k].(string); ok && v != "" {
+					account.Phone = v
+					break
+				}
+			}
+			for _, k := range []string{"telegram", "telegram_id", "tg"} {
+				if v, ok := prp[k].(string); ok && v != "" {
+					account.Telegram = v
+					break
+				}
+			}
+			// last_login: пробуем admin field "login_date" в prp, либо "lst" / "lt".
+			for _, k := range []string{"login_date", "ld", "lst", "lt", "last_login"} {
+				switch v := prp[k].(type) {
+				case float64:
+					if v > 0 {
+						account.LastLogin = time.Unix(int64(v), 0).Format(time.RFC3339)
+					}
+				case string:
+					if v != "" && v != "0" {
+						account.LastLogin = v
+					}
+				}
+				if account.LastLogin != "" {
+					break
+				}
+			}
+		}
+		// Иногда login_date приходит на корне item (admin fields).
+		if account.LastLogin == "" {
+			for _, k := range []string{"login_date", "ld"} {
+				if v, ok := item[k].(float64); ok && v > 0 {
+					account.LastLogin = time.Unix(int64(v), 0).Format(time.RFC3339)
+					break
+				}
+			}
 		}
 		accounts = append(accounts, account)
 	}
@@ -2518,6 +2573,10 @@ func (s *WialonService) GetAccountsBatchFromHost(host string, token string) ([]W
 				Name:      acc.Name,
 				IsActive:  acc.IsActive,
 				CreatedAt: acc.CreatedAt,
+				Email:     acc.Email,
+				Phone:     acc.Phone,
+				Telegram:  acc.Telegram,
+				LastLogin: acc.LastLogin,
 			})
 			subTotal++
 		}
