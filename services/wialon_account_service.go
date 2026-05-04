@@ -580,6 +580,331 @@ type UpdateWialonUserResult struct {
 	Telegram     string `json:"telegram,omitempty"`
 }
 
+// ===================== Аккаунт: чтение деталей + обновление + платёж =====================
+
+// WialonAccountDetails — то что отдаёт account/get_account_data (type=2/4).
+// Используется фронтом для отображения карточки аккаунта (балансы, период истории, лимиты, флаги).
+type WialonAccountDetails struct {
+	UserID            int64    `json:"user_id"`
+	ResourceID        int64    `json:"resource_id"`
+	Plan              string   `json:"plan,omitempty"`
+	SubPlans          []string `json:"sub_plans,omitempty"`
+	Enabled           int      `json:"enabled"`
+	Flags             uint64   `json:"flags"`
+	Balance           string   `json:"balance,omitempty"`
+	BalanceValue      float64  `json:"balance_value"`
+	DaysCounter       int      `json:"days_counter"`
+	BlockBalance      float64  `json:"block_balance"`
+	DenyBalance       float64  `json:"deny_balance"`
+	HistoryPeriod     int      `json:"history_period"`
+	MinDays           int      `json:"min_days"`
+	DealerRights      bool     `json:"dealer_rights"`
+	ParentAccountID   int64    `json:"parent_account_id,omitempty"`
+	ParentAccountName string   `json:"parent_account_name,omitempty"`
+	CreatedAt         string   `json:"created_at,omitempty"`
+}
+
+// GetAccountDetails — детали аккаунта Wialon. itemId = ID ресурса (не юзера!).
+// Frontend передаёт user_id в URL, мы резолвим resource_id из WialonObjectStat.
+func (s *WialonAccountService) GetAccountDetails(connectionID uint, userID int64) (*WialonAccountDetails, error) {
+	conn, err := s.getConn(connectionID)
+	if err != nil {
+		return nil, err
+	}
+	resourceID, err := s.resolveResourceID(connectionID, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	loginResp, err := s.wialonService.LoginWithHost(conn.Host, conn.Token)
+	if err != nil {
+		return nil, fmt.Errorf("login: %w", err)
+	}
+	defer func() { _ = s.wialonService.LogoutWithHost(conn.Host, loginResp.Eid) }()
+
+	body, err := s.callRaw(conn.Host, loginResp.Eid, "account/get_account_data", map[string]interface{}{
+		"itemId": resourceID,
+		"type":   2,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get_account_data: %w", err)
+	}
+
+	var raw struct {
+		Plan              string   `json:"plan"`
+		SubPlans          []string `json:"subPlans"`
+		Enabled           int      `json:"enabled"`
+		Flags             uint64   `json:"flags"`
+		Balance           string   `json:"balance"`
+		DaysCounter       int      `json:"daysCounter"`
+		Created           int64    `json:"created"`
+		ParentAccountID   int64    `json:"parentAccountId"`
+		ParentAccountName string   `json:"parentAccountName"`
+		Settings          struct {
+			Balance       float64 `json:"balance"`
+			BlockBalance  float64 `json:"blockBalance"`
+			DenyBalance   float64 `json:"denyBalance"`
+			HistoryPeriod int     `json:"historyPeriod"`
+			MinDays       int     `json:"minDays"`
+			Flags         uint64  `json:"flags"`
+		} `json:"settings"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, fmt.Errorf("парсинг account_data: %w", err)
+	}
+
+	d := &WialonAccountDetails{
+		UserID:            userID,
+		ResourceID:        resourceID,
+		Plan:              raw.Plan,
+		SubPlans:          raw.SubPlans,
+		Enabled:           raw.Enabled,
+		Flags:             raw.Flags,
+		Balance:           raw.Balance,
+		BalanceValue:      raw.Settings.Balance,
+		DaysCounter:       raw.DaysCounter,
+		BlockBalance:      raw.Settings.BlockBalance,
+		DenyBalance:       raw.Settings.DenyBalance,
+		HistoryPeriod:     raw.Settings.HistoryPeriod,
+		MinDays:           raw.Settings.MinDays,
+		ParentAccountID:   raw.ParentAccountID,
+		ParentAccountName: raw.ParentAccountName,
+	}
+	if d.Flags == 0 && raw.Settings.Flags > 0 {
+		d.Flags = raw.Settings.Flags
+	}
+	if raw.Created > 0 {
+		d.CreatedAt = time.Unix(raw.Created, 0).Format(time.RFC3339)
+	}
+	// dealer_rights — флаг ACL ресурса (sys_account_enable_parent), косвенно по Flags не определишь.
+	// Достаём отдельным search_items на ресурс с propName=sys_account_enable_parent.
+	d.DealerRights = s.checkDealerRights(conn.Host, loginResp.Eid, resourceID)
+
+	return d, nil
+}
+
+// checkDealerRights — true если у ресурса prp.sys_account_enable_parent="1".
+func (s *WialonAccountService) checkDealerRights(host, eid string, resourceID int64) bool {
+	body, err := s.callRaw(host, eid, "core/search_item", map[string]interface{}{
+		"id":    resourceID,
+		"flags": 0x00000005, // base + custom_props
+	})
+	if err != nil {
+		return false
+	}
+	var resp struct {
+		Item map[string]interface{} `json:"item"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return false
+	}
+	if prp, ok := resp.Item["prp"].(map[string]interface{}); ok {
+		if v, ok := prp["sys_account_enable_parent"].(string); ok && v == "1" {
+			return true
+		}
+	}
+	return false
+}
+
+// UpdateWialonAccountRequest — поля для PUT /wialon/connections/:id/accounts/:user_id.
+// Все nil = не менять.
+type UpdateWialonAccountRequest struct {
+	Name          *string   `json:"name,omitempty"`           // item/update_name
+	Enable        *bool     `json:"enable,omitempty"`         // account/enable_account
+	Plan          *string   `json:"plan,omitempty"`           // account/update_plan
+	DealerRights  *bool     `json:"dealer_rights,omitempty"`  // account/update_dealer_rights
+	HistoryPeriod *int      `json:"history_period,omitempty"` // account/update_history_period (дни; маска 0x10000 = месяцы)
+	MinDays       *int      `json:"min_days,omitempty"`       // account/update_min_days
+	Flags         *uint64   `json:"flags,omitempty"`          // account/update_flags
+	BlockBalance  *float64  `json:"block_balance,omitempty"`  // account/update_flags
+	DenyBalance   *float64  `json:"deny_balance,omitempty"`   // account/update_flags
+	SubPlans      *[]string `json:"sub_plans,omitempty"`      // account/update_sub_plans
+}
+
+// UpdateAccount — точечное обновление аккаунта Wialon (ресурс/billing).
+func (s *WialonAccountService) UpdateAccount(connectionID uint, userID int64, req UpdateWialonAccountRequest) error {
+	conn, err := s.getConn(connectionID)
+	if err != nil {
+		return err
+	}
+	resourceID, err := s.resolveResourceID(connectionID, userID)
+	if err != nil {
+		return err
+	}
+	loginResp, err := s.wialonService.LoginWithHost(conn.Host, conn.Token)
+	if err != nil {
+		return fmt.Errorf("login: %w", err)
+	}
+	defer func() { _ = s.wialonService.LogoutWithHost(conn.Host, loginResp.Eid) }()
+
+	t0 := time.Now()
+	host, eid := conn.Host, loginResp.Eid
+
+	if req.Name != nil {
+		if err := s.callRenameItem(host, eid, userID, *req.Name); err != nil {
+			return fmt.Errorf("rename user: %w", err)
+		}
+		// Также переименовываем сам ресурс (имя в /accounts берётся из ресурса)
+		if err := s.callRenameItem(host, eid, resourceID, *req.Name); err != nil {
+			log.Printf("⚠️ rename resource %d не удалось: %v", resourceID, err)
+		}
+	}
+	if req.Enable != nil {
+		v := 0
+		if *req.Enable {
+			v = 1
+		}
+		if _, err := s.callRaw(host, eid, "account/enable_account", map[string]interface{}{
+			"itemId": resourceID, "enable": v,
+		}); err != nil {
+			return fmt.Errorf("enable_account: %w", err)
+		}
+	}
+	if req.Plan != nil {
+		if _, err := s.callRaw(host, eid, "account/update_plan", map[string]interface{}{
+			"itemId": resourceID, "plan": *req.Plan,
+		}); err != nil {
+			return fmt.Errorf("update_plan: %w", err)
+		}
+	}
+	if req.DealerRights != nil {
+		v := 0
+		if *req.DealerRights {
+			v = 1
+		}
+		if _, err := s.callRaw(host, eid, "account/update_dealer_rights", map[string]interface{}{
+			"itemId": resourceID, "enable": v,
+		}); err != nil {
+			return fmt.Errorf("update_dealer_rights: %w", err)
+		}
+	}
+	if req.HistoryPeriod != nil {
+		if _, err := s.callRaw(host, eid, "account/update_history_period", map[string]interface{}{
+			"itemId": resourceID, "historyPeriod": *req.HistoryPeriod,
+		}); err != nil {
+			return fmt.Errorf("update_history_period: %w", err)
+		}
+	}
+	if req.MinDays != nil {
+		if _, err := s.callRaw(host, eid, "account/update_min_days", map[string]interface{}{
+			"itemId": resourceID, "minDays": *req.MinDays,
+		}); err != nil {
+			return fmt.Errorf("update_min_days: %w", err)
+		}
+	}
+	if req.Flags != nil || req.BlockBalance != nil || req.DenyBalance != nil {
+		params := map[string]interface{}{"itemId": resourceID}
+		if req.Flags != nil {
+			params["flags"] = *req.Flags
+		}
+		if req.BlockBalance != nil {
+			params["blockBalance"] = *req.BlockBalance
+		}
+		if req.DenyBalance != nil {
+			params["denyBalance"] = *req.DenyBalance
+		}
+		if _, err := s.callRaw(host, eid, "account/update_flags", params); err != nil {
+			return fmt.Errorf("update_flags: %w", err)
+		}
+	}
+	if req.SubPlans != nil {
+		if _, err := s.callRaw(host, eid, "account/update_sub_plans", map[string]interface{}{
+			"itemId": resourceID, "plans": *req.SubPlans,
+		}); err != nil {
+			return fmt.Errorf("update_sub_plans: %w", err)
+		}
+	}
+
+	log.Printf("✅ Wialon UpdateAccount: user=%d resource=%d за %s", userID, resourceID, time.Since(t0))
+	return nil
+}
+
+// DoPaymentRequest — тело пополнения.
+type DoPaymentRequest struct {
+	BalanceUpdate float64 `json:"balance_update"` // может быть отрицательным
+	DaysUpdate    int     `json:"days_update"`    // может быть отрицательным
+	Description   string  `json:"description"`
+}
+
+// DoPayment — account/do_payment.
+func (s *WialonAccountService) DoPayment(connectionID uint, userID int64, req DoPaymentRequest) error {
+	conn, err := s.getConn(connectionID)
+	if err != nil {
+		return err
+	}
+	resourceID, err := s.resolveResourceID(connectionID, userID)
+	if err != nil {
+		return err
+	}
+	loginResp, err := s.wialonService.LoginWithHost(conn.Host, conn.Token)
+	if err != nil {
+		return fmt.Errorf("login: %w", err)
+	}
+	defer func() { _ = s.wialonService.LogoutWithHost(conn.Host, loginResp.Eid) }()
+
+	if _, err := s.callRaw(conn.Host, loginResp.Eid, "account/do_payment", map[string]interface{}{
+		"itemId":        resourceID,
+		"balanceUpdate": req.BalanceUpdate,
+		"daysUpdate":    req.DaysUpdate,
+		"description":   req.Description,
+	}); err != nil {
+		return fmt.Errorf("do_payment: %w", err)
+	}
+	log.Printf("💰 Wialon DoPayment: user=%d resource=%d balance=%+f days=%+d", userID, resourceID, req.BalanceUpdate, req.DaysUpdate)
+	return nil
+}
+
+// resolveResourceID — ищет resource_id в WialonObjectStat по (connectionID, userID).
+// Если нет — fallback live через core/search_items по creatorId=userID.
+func (s *WialonAccountService) resolveResourceID(connectionID uint, userID int64) (int64, error) {
+	var stat models.WialonObjectStat
+	if err := s.db.Where("connection_id = ? AND user_id = ?", connectionID, userID).First(&stat).Error; err == nil && stat.ResourceID > 0 {
+		return stat.ResourceID, nil
+	}
+	// Fallback: search_items avl_resource by creatorId
+	conn, err := s.getConn(connectionID)
+	if err != nil {
+		return 0, err
+	}
+	loginResp, err := s.wialonService.LoginWithHost(conn.Host, conn.Token)
+	if err != nil {
+		return 0, fmt.Errorf("login: %w", err)
+	}
+	defer func() { _ = s.wialonService.LogoutWithHost(conn.Host, loginResp.Eid) }()
+
+	body, err := s.callRaw(conn.Host, loginResp.Eid, "core/search_items", map[string]interface{}{
+		"spec": map[string]interface{}{
+			"itemsType":    "avl_resource",
+			"propName":     "sys_user_creator",
+			"propValueMask": fmt.Sprintf("%d", userID),
+			"sortType":     "sys_name",
+		},
+		"force": 1, "flags": 1, "from": 0, "to": 0,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("search resource: %w", err)
+	}
+	var resp struct {
+		Items []map[string]interface{} `json:"items"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil || len(resp.Items) == 0 {
+		return 0, fmt.Errorf("ресурс не найден для user_id=%d", userID)
+	}
+	if id, ok := resp.Items[0]["id"].(float64); ok {
+		return int64(id), nil
+	}
+	return 0, fmt.Errorf("ресурс без id для user_id=%d", userID)
+}
+
+// getConn — общий getter с проверкой is_active.
+func (s *WialonAccountService) getConn(connectionID uint) (*models.WialonConnection, error) {
+	var conn models.WialonConnection
+	if err := s.db.Where("id = ? AND is_active = ?", connectionID, true).First(&conn).Error; err != nil {
+		return nil, fmt.Errorf("connection %d не найден: %w", connectionID, err)
+	}
+	return &conn, nil
+}
+
 // callRenameItem — item/update_name. itemId, name.
 func (s *WialonAccountService) callRenameItem(host, eid string, itemID int64, name string) error {
 	params := map[string]interface{}{

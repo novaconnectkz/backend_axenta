@@ -95,6 +95,21 @@ func (api *WialonConnectionAPI) RegisterRoutes(r *gin.RouterGroup) {
 	r.POST("/wialon/connections/:id/accounts", api.CreateWialonAccount)
 	r.POST("/wialon/connections/:id/users", api.CreateWialonUser)
 	r.PUT("/wialon/connections/:id/users/:user_id", api.UpdateWialonUser)
+	r.GET("/wialon/connections/:id/accounts/:user_id", api.GetWialonAccountDetails)
+	r.PUT("/wialon/connections/:id/accounts/:user_id", api.UpdateWialonAccount)
+	r.POST("/wialon/connections/:id/accounts/:user_id/payment", api.WialonAccountPayment)
+	// Расширенные вкладки CMS Manager
+	r.GET("/wialon/connections/:id/accounts/:user_id/services", api.GetWialonAccountServices)
+	r.PUT("/wialon/connections/:id/accounts/:user_id/services", api.UpdateWialonAccountService)
+	r.GET("/wialon/connections/:id/accounts/:user_id/access", api.GetWialonAccountAccessList)
+	r.PUT("/wialon/connections/:id/accounts/:user_id/access/:target_user_id", api.UpdateWialonAccountUserAccess)
+	r.GET("/wialon/connections/:id/accounts/:user_id/custom-fields", api.GetWialonAccountCustomFields)
+	r.POST("/wialon/connections/:id/accounts/:user_id/custom-fields", api.UpsertWialonAccountCustomField)
+	r.DELETE("/wialon/connections/:id/accounts/:user_id/custom-fields/:field_id", api.DeleteWialonAccountCustomField)
+	r.GET("/wialon/connections/:id/accounts/:user_id/extra", api.GetWialonAccountExtra)
+	r.PUT("/wialon/connections/:id/accounts/:user_id/extra/ftp", api.UpdateWialonAccountFTP)
+	r.PUT("/wialon/connections/:id/accounts/:user_id/extra/email-template", api.UpdateWialonAccountEmailTemplate)
+	r.GET("/wialon/connections/:id/accounts/:user_id/history", api.GetWialonAccountHistory)
 
 	log.Println("✅ Wialon Connections API routes registered: /api/wialon/connections/*")
 }
@@ -1420,6 +1435,93 @@ func (api *WialonConnectionAPI) UpdateWialonUser(c *gin.Context) {
 
 	invalidateAllAccountsCache(companyID.(uint))
 	c.JSON(http.StatusOK, result)
+}
+
+// helper для извлечения connectionID + userID из URL + проверки доступа.
+func (api *WialonConnectionAPI) parseAccountPath(c *gin.Context) (uint, int64, uint, bool) {
+	connectionID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректный ID подключения"})
+		return 0, 0, 0, false
+	}
+	userID, err := strconv.ParseInt(c.Param("user_id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Некорректный user_id"})
+		return 0, 0, 0, false
+	}
+	companyID, exists := c.Get("company_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Компания не определена"})
+		return 0, 0, 0, false
+	}
+	conn, err := api.service.GetByID(uint(connectionID))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Подключение не найдено"})
+		return 0, 0, 0, false
+	}
+	if conn.CompanyID != companyID.(uint) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Нет доступа"})
+		return 0, 0, 0, false
+	}
+	return uint(connectionID), userID, companyID.(uint), true
+}
+
+// GetWialonAccountDetails — детали аккаунта Wialon (баланс, тариф, история, лимиты).
+// GET /api/wialon/connections/:id/accounts/:user_id
+func (api *WialonConnectionAPI) GetWialonAccountDetails(c *gin.Context) {
+	connectionID, userID, _, ok := api.parseAccountPath(c)
+	if !ok {
+		return
+	}
+	svc := services.NewWialonAccountService()
+	d, err := svc.GetAccountDetails(connectionID, userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка деталей: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, d)
+}
+
+// UpdateWialonAccount — обновление аккаунта (тариф, дилерские права, флаги, лимиты, история).
+// PUT /api/wialon/connections/:id/accounts/:user_id
+func (api *WialonConnectionAPI) UpdateWialonAccount(c *gin.Context) {
+	connectionID, userID, companyID, ok := api.parseAccountPath(c)
+	if !ok {
+		return
+	}
+	var req services.UpdateWialonAccountRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Неверный формат: " + err.Error()})
+		return
+	}
+	svc := services.NewWialonAccountService()
+	if err := svc.UpdateAccount(connectionID, userID, req); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка обновления: " + err.Error()})
+		return
+	}
+	invalidateAllAccountsCache(companyID)
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+// WialonAccountPayment — пополнение баланса/добавление дней.
+// POST /api/wialon/connections/:id/accounts/:user_id/payment
+func (api *WialonConnectionAPI) WialonAccountPayment(c *gin.Context) {
+	connectionID, userID, companyID, ok := api.parseAccountPath(c)
+	if !ok {
+		return
+	}
+	var req services.DoPaymentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Неверный формат: " + err.Error()})
+		return
+	}
+	svc := services.NewWialonAccountService()
+	if err := svc.DoPayment(connectionID, userID, req); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка платежа: " + err.Error()})
+		return
+	}
+	invalidateAllAccountsCache(companyID)
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
 // POST /api/wialon/connections/:id/accounts
