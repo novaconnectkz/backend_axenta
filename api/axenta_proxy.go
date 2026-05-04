@@ -307,8 +307,18 @@ func GetObjectsFromAxentaCloud(c *gin.Context) {
 	})
 }
 
-// GetObjectsStatsFromAxentaCloud получает статистику объектов
+// GetObjectsStatsFromAxentaCloud получает статистику объектов.
+// Read-path: один SQL по axenta_object_snapshots с Redis cache TTL 60s.
+// Fallback на live Axenta Cloud при устаревании/ошибке snapshot.
 func GetObjectsStatsFromAxentaCloud(c *gin.Context) {
+	// 1) Snapshot read-path: один SQL + Redis cache
+	t0 := time.Now()
+	if tryServeObjectsStatsFromSnapshot(c) {
+		log.Printf("📸 /objects/stats из snapshot за %s", time.Since(t0).Round(time.Millisecond))
+		return
+	}
+	log.Printf("🌐 /objects/stats fallback на live Axenta Cloud (snapshot stale/empty)")
+
 	// Получаем токен пользователя из заголовка Authorization
 	authHeader := c.GetHeader("Authorization")
 	if authHeader == "" {

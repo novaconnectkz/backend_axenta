@@ -4,6 +4,7 @@ import (
 	"backend_axenta/database"
 	"backend_axenta/middleware"
 	"backend_axenta/models"
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -13,6 +14,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// objectsStatsCacheTTL — TTL Redis-кэша для /objects/stats. 60s — точность KPI vs нагрузка на БД.
+const objectsStatsCacheTTL = 60 * time.Second
+
+// objectsStatsCacheKey — ключ Redis-кэша stats. Глобальный snapshot, общий на всех партнёров.
+const objectsStatsCacheKey = "objects:stats:axenta:v1"
 
 // objectsSnapshotTTL — окно свежести AxentaObjectSnapshot. Сверх него — fallback на live Axenta Cloud.
 const objectsSnapshotTTL = 24 * time.Hour
@@ -206,6 +213,129 @@ func tryServeObjectsFromSnapshot(c *gin.Context, page, perPage int) bool {
 			"page":                 page,
 			"per_page":             perPage,
 			"total_pages":          totalPages,
+			"from_snapshot":        true,
+			"snapshot_age_seconds": int(time.Since(lastSync).Seconds()),
+		},
+	})
+	return true
+}
+
+// objectsStatsResult — структура для bind COUNT FILTER в одном SQL.
+type objectsStatsResult struct {
+	Total              int64 `json:"total"`
+	Active             int64 `json:"active"`
+	Inactive           int64 `json:"inactive"`
+	ScheduledForDelete int64 `json:"scheduled_for_delete"`
+	Deleted            int64 `json:"deleted"` // объекты в корзине (axenta_deleted_at IS NOT NULL)
+}
+
+// tryServeObjectsStatsFromSnapshot отдаёт KPI-агрегаты одним SQL по axenta_object_snapshots.
+// Redis cache TTL 60s (общий на всех партнёров — snapshot глобальный).
+// Возвращает true если успешно отдал, false → caller fallback на live Axenta Cloud.
+func tryServeObjectsStatsFromSnapshot(c *gin.Context) bool {
+	db := middleware.GetTenantDB(c)
+	if db == nil {
+		db = database.DB
+	}
+	if db == nil {
+		return false
+	}
+
+	// Свежесть snapshot
+	var lastSync time.Time
+	if err := db.Model(&models.AxentaObjectSnapshot{}).
+		Select("MAX(last_synced_at)").
+		Scan(&lastSync).Error; err != nil || lastSync.IsZero() {
+		return false
+	}
+	if time.Since(lastSync) > objectsSnapshotTTL {
+		log.Printf("⏰ AxentaObjectSnapshot устарел для stats (last=%v), fallback на live", lastSync)
+		return false
+	}
+
+	// 1) Redis cache hit
+	if rdb := database.GetRedis(); rdb != nil {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 200*time.Millisecond)
+		defer cancel()
+		if cached, err := rdb.Get(ctx, objectsStatsCacheKey).Bytes(); err == nil && len(cached) > 0 {
+			var stats objectsStatsResult
+			if err := json.Unmarshal(cached, &stats); err == nil {
+				c.JSON(http.StatusOK, gin.H{
+					"status": "success",
+					"data": gin.H{
+						"total":                stats.Total,
+						"active":               stats.Active,
+						"inactive":             stats.Inactive,
+						"scheduled_for_delete": stats.ScheduledForDelete,
+						"deleted":              stats.Deleted,
+						"by_type":              gin.H{"vehicle": stats.Total},
+						"by_status": gin.H{
+							"active":   stats.Active,
+							"inactive": stats.Inactive,
+						},
+						"from_cache": true,
+					},
+				})
+				return true
+			}
+		}
+	}
+
+	// 2) Один SQL агрегат (паттерн из dashboard_sources_stats.buildAxentaSourceStats)
+	var stats objectsStatsResult
+	if err := db.Raw(`
+		SELECT
+			COUNT(*) FILTER (
+				WHERE deleted_at IS NULL
+				  AND scheduled_delete_at IS NULL
+				  AND axenta_deleted_at IS NULL
+			) AS total,
+			COUNT(*) FILTER (
+				WHERE deleted_at IS NULL
+				  AND scheduled_delete_at IS NULL
+				  AND axenta_deleted_at IS NULL
+				  AND is_active = true
+			) AS active,
+			COUNT(*) FILTER (
+				WHERE deleted_at IS NULL
+				  AND scheduled_delete_at IS NULL
+				  AND axenta_deleted_at IS NULL
+				  AND is_active = false
+			) AS inactive,
+			COUNT(*) FILTER (
+				WHERE scheduled_delete_at IS NOT NULL
+			) AS scheduled_for_delete,
+			COUNT(*) FILTER (
+				WHERE axenta_deleted_at IS NOT NULL
+			) AS deleted
+		FROM axenta_object_snapshots
+	`).Scan(&stats).Error; err != nil {
+		log.Printf("⚠️ AxentaObjectSnapshot stats SQL: %v", err)
+		return false
+	}
+
+	// 3) Save to Redis cache
+	if rdb := database.GetRedis(); rdb != nil {
+		if payload, err := json.Marshal(stats); err == nil {
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 200*time.Millisecond)
+			defer cancel()
+			_ = rdb.Set(ctx, objectsStatsCacheKey, payload, objectsStatsCacheTTL).Err()
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data": gin.H{
+			"total":                stats.Total,
+			"active":               stats.Active,
+			"inactive":             stats.Inactive,
+			"scheduled_for_delete": stats.ScheduledForDelete,
+			"deleted":              stats.Deleted,
+			"by_type":              gin.H{"vehicle": stats.Total},
+			"by_status": gin.H{
+				"active":   stats.Active,
+				"inactive": stats.Inactive,
+			},
 			"from_snapshot":        true,
 			"snapshot_age_seconds": int(time.Since(lastSync).Seconds()),
 		},
