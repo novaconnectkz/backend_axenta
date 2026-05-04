@@ -176,76 +176,40 @@ func buildWialonSourceStats(companyID uint) (SourceStats, SourceStats) {
 		return wh, wl
 	}
 
-	// Объекты по типу подключения. Точный COUNT(DISTINCT unit_id) из wialon_units.
-	// Активность per unit не отслеживаем (Wialon API не отдаёт активацию пер-unit), поэтому
-	// applying пропорцию active/total из агрегатов wialon_object_stats к distinct_total.
+	// Объекты по типу подключения — точные числа из wialon_connection_summary
+	// (заполняется WialonStatsScheduler из top-level resource user.bact). Это те же
+	// числа что Wialon CMS Manager показывает на корневом аккаунте.
 	type objRow struct {
-		ConnType      string
-		DistinctTotal int64
-		AggTotal      int64
-		AggActive     int64
-		AggInactive   int64
+		ConnType string
+		Total    int64
+		Active   int64
+		Inactive int64
 	}
 	var rows []objRow
 	if err := database.DB.Raw(`
-		WITH distinct_units AS (
-			SELECT wc.connection_type AS conn_type, COUNT(*) AS distinct_total
-			FROM wialon_units wu
-			JOIN wialon_connections wc ON wc.id = wu.connection_id
-			WHERE wc.company_id = ? AND wc.deleted_at IS NULL AND wc.is_active = true
-			GROUP BY wc.connection_type
-		),
-		agg AS (
-			SELECT wc.connection_type AS conn_type,
-			       COALESCE(SUM(wos.objects_total), 0)        AS agg_total,
-			       COALESCE(SUM(wos.objects_active), 0)       AS agg_active,
-			       COALESCE(SUM(wos.objects_deactivated), 0)  AS agg_inactive
-			FROM wialon_object_stats wos
-			JOIN wialon_connections wc ON wc.id = wos.connection_id
-			WHERE wc.company_id = ? AND wc.deleted_at IS NULL AND wc.is_active = true
-			GROUP BY wc.connection_type
-		)
 		SELECT
-			COALESCE(d.conn_type, a.conn_type) AS conn_type,
-			COALESCE(d.distinct_total, 0)      AS distinct_total,
-			COALESCE(a.agg_total, 0)           AS agg_total,
-			COALESCE(a.agg_active, 0)          AS agg_active,
-			COALESCE(a.agg_inactive, 0)        AS agg_inactive
-		FROM distinct_units d
-		FULL OUTER JOIN agg a ON a.conn_type = d.conn_type
-	`, companyID, companyID).Scan(&rows).Error; err != nil {
+			wc.connection_type                       AS conn_type,
+			COALESCE(SUM(wcs.objects_total), 0)      AS total,
+			COALESCE(SUM(wcs.objects_active), 0)     AS active,
+			COALESCE(SUM(wcs.objects_inactive), 0)   AS inactive
+		FROM wialon_connections wc
+		LEFT JOIN wialon_connection_summary wcs ON wcs.connection_id = wc.id
+		WHERE wc.company_id = ? AND wc.deleted_at IS NULL AND wc.is_active = true
+		GROUP BY wc.connection_type
+	`, companyID).Scan(&rows).Error; err != nil {
 		log.Printf("⚠️ sources-stats wialon objects: %v", err)
 	}
 
-	// Применяем proportion активности из агрегатов к distinct-total.
-	scaleByProp := func(distinctTotal, aggTotal, aggActive, aggInactive int64) (int, int, int) {
-		if distinctTotal == 0 {
-			return 0, 0, 0
-		}
-		if aggTotal == 0 {
-			// нет агрегатов — считаем всё активным
-			return int(distinctTotal), int(distinctTotal), 0
-		}
-		active := int(distinctTotal * aggActive / aggTotal)
-		inactive := int(distinctTotal * aggInactive / aggTotal)
-		// Округление: добавляем разницу к активным
-		if rem := int(distinctTotal) - active - inactive; rem > 0 {
-			active += rem
-		}
-		return int(distinctTotal), active, inactive
-	}
-
 	for _, r := range rows {
-		total, active, inactive := scaleByProp(r.DistinctTotal, r.AggTotal, r.AggActive, r.AggInactive)
 		switch r.ConnType {
 		case "hosting":
-			wh.Objects.Total = total
-			wh.Objects.Active = active
-			wh.Objects.Inactive = inactive
+			wh.Objects.Total = int(r.Total)
+			wh.Objects.Active = int(r.Active)
+			wh.Objects.Inactive = int(r.Inactive)
 		case "local":
-			wl.Objects.Total = total
-			wl.Objects.Active = active
-			wl.Objects.Inactive = inactive
+			wl.Objects.Total = int(r.Total)
+			wl.Objects.Active = int(r.Active)
+			wl.Objects.Inactive = int(r.Inactive)
 		}
 	}
 

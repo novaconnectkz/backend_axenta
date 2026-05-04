@@ -105,6 +105,12 @@ func GetAllMigrations() []MigrationInfo {
 			IsGlobal:    true,
 		},
 		{
+			TableName:   "wialon_connection_summary",
+			Model:       &models.WialonConnectionSummary{},
+			Description: "Точные счётчики объектов от top-level resource (user.bact) — заполняется WialonStatsScheduler",
+			IsGlobal:    true,
+		},
+		{
 			TableName:   "wialon_billing_plans",
 			Model:       &models.WialonBillingPlan{},
 			Description: "Кэш тарифных планов Wialon (фоновый sync раз в час)",

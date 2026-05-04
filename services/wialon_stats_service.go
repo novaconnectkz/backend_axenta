@@ -149,7 +149,65 @@ func (s *WialonStatsService) collectForConnection(conn models.WialonConnection) 
 		log.Printf("📦 WialonStats units: connection=%d, distinct units=%d", conn.ID, unitsCount)
 	}
 
+	// Точные active/inactive counts от top-level resource (user.bact).
+	if loginResp.User != nil && loginResp.User.ID > 0 {
+		if serr := s.collectSummaryForConnection(conn, loginResp.Eid, loginResp.User.ID); serr != nil {
+			log.Printf("⚠️ WialonStats summary: connection=%d не удалось собрать: %v", conn.ID, serr)
+		}
+	}
+
 	return len(upserts), nil
+}
+
+// collectSummaryForConnection — точные счётчики объектов из главного resource юзера (user.bact).
+// Один search_item для resolve bact + один account/get_account_data → upsert в wialon_connection_summary.
+//
+// Wialon-семантика:
+//   - avl_unit.usage         = total объектов в ресурсе
+//   - activated_units.usage  = активные (active)
+//   - seasonal_units.usage   = сезонные/отключённые (inactive)
+//
+// Это те же числа что показывает Wialon CMS Manager на корневом аккаунте.
+func (s *WialonStatsService) collectSummaryForConnection(conn models.WialonConnection, eid string, ownUserID int64) error {
+	// 1. Resolve user.bact (главный resource)
+	resourceID, err := s.resolveBactForUser(conn.Host, eid, ownUserID)
+	if err != nil {
+		return fmt.Errorf("resolve bact for user=%d: %w", ownUserID, err)
+	}
+	if resourceID == 0 {
+		return fmt.Errorf("user %d has no bact", ownUserID)
+	}
+
+	// 2. account/get_account_data
+	stat, err := s.fetchSingleResourceStat(conn.Host, eid, resourceID)
+	if err != nil {
+		return fmt.Errorf("get_account_data resource=%d: %w", resourceID, err)
+	}
+	if stat == nil {
+		return fmt.Errorf("get_account_data resource=%d: nil", resourceID)
+	}
+
+	// 3. Upsert
+	summary := models.WialonConnectionSummary{
+		ConnectionID:    conn.ID,
+		ObjectsTotal:    stat.ObjectsTotal,
+		ObjectsActive:   stat.ObjectsActive,
+		ObjectsInactive: stat.ObjectsDeactivated, // seasonal_units → inactive
+		LastCollectedAt: time.Now(),
+	}
+	if err := s.db.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "connection_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"objects_total", "objects_active", "objects_inactive",
+			"last_collected_at", "updated_at",
+		}),
+	}).Create(&summary).Error; err != nil {
+		return fmt.Errorf("upsert summary: %w", err)
+	}
+
+	log.Printf("📊 WialonStats summary: connection=%d (bact=%d) → total=%d active=%d inactive=%d",
+		conn.ID, resourceID, summary.ObjectsTotal, summary.ObjectsActive, summary.ObjectsInactive)
+	return nil
 }
 
 // collectUnitsForConnection — paginated search_items avl_unit → upsert в wialon_units.
