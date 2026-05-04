@@ -357,17 +357,27 @@ func (s *WialonService) getErrorMessage(code int) string {
 
 // WialonAccount аккаунт (пользователь) Wialon
 type WialonAccount struct {
-	ID               int64  `json:"id"`
-	Name             string `json:"name"`
-	Type             string `json:"type"` // "user" или "resource"
-	IsActive         bool   `json:"is_active"`
-	ObjectsTotal     int    `json:"objects_total"`
-	ObjectsActive    int    `json:"objects_active"`
-	CreatedAt        string `json:"created_at,omitempty"`
-	ParentId         int64  `json:"parent_id,omitempty"`          // ID родительской учётной записи (bpact)
-	ParentName       string `json:"parent_name,omitempty"`        // Имя родительской учётной записи
-	DealerRights     bool   `json:"dealer_rights"`                // Права дилера
-	BillingAccountID int64  `json:"billing_account_id,omitempty"` // ID ресурса биллинга (bact)
+	ID               int64           `json:"id"`
+	Name             string          `json:"name"`
+	Type             string          `json:"type"` // "user" или "resource"
+	IsActive         bool            `json:"is_active"`
+	ObjectsTotal     int             `json:"objects_total"`
+	ObjectsActive    int             `json:"objects_active"`
+	CreatedAt        string          `json:"created_at,omitempty"`
+	ParentId         int64           `json:"parent_id,omitempty"`          // ID родительской учётной записи (bpact)
+	ParentName       string          `json:"parent_name,omitempty"`        // Имя родительской учётной записи
+	DealerRights     bool            `json:"dealer_rights"`                // Права дилера
+	BillingAccountID int64           `json:"billing_account_id,omitempty"` // ID ресурса биллинга (bact)
+	SubUsers         []WialonSubUser `json:"sub_users,omitempty"`          // Вложенные юзеры аккаунта (без биллинг-ресурса)
+}
+
+// WialonSubUser — вложенный пользователь аккаунта Wialon, созданный администратором аккаунта,
+// но не имеющий собственного биллинг-ресурса. Видны в /users отдельной строкой с creator = parent.
+type WialonSubUser struct {
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	IsActive  bool   `json:"is_active"`
+	CreatedAt string `json:"created_at,omitempty"`
 }
 
 // SearchUsers поиск пользователей (аккаунтов) Wialon
@@ -2492,14 +2502,27 @@ func (s *WialonService) GetAccountsBatchFromHost(host string, token string) ([]W
 		allAccountsMap[loginResp.User.ID] = loginResp.User.Name
 	}
 
-	// Фильтр биллинговых
+	// Разделяем на billing-аккаунты и sub-users (юзеры без своего ресурса).
+	// Sub-users группируем по ParentId — позже attach к соответствующему billing-аккаунту.
+	subByParent := make(map[int64][]WialonSubUser)
 	filtered := make([]WialonAccount, 0, len(accounts))
+	subTotal := 0
 	for _, acc := range accounts {
 		if billingMap[acc.ID] {
 			filtered = append(filtered, acc)
+			continue
+		}
+		if acc.ParentId > 0 {
+			subByParent[acc.ParentId] = append(subByParent[acc.ParentId], WialonSubUser{
+				ID:        acc.ID,
+				Name:      acc.Name,
+				IsActive:  acc.IsActive,
+				CreatedAt: acc.CreatedAt,
+			})
+			subTotal++
 		}
 	}
-	log.Printf("⚡ Wialon BATCH: отфильтровано %d биллинговых из %d пользователей", len(filtered), len(accounts))
+	log.Printf("⚡ Wialon BATCH: отфильтровано %d биллинговых, собрано %d sub-users из %d пользователей", len(filtered), subTotal, len(accounts))
 	accounts = filtered
 
 	// Замена имён на имена ресурсов
@@ -2519,7 +2542,8 @@ func (s *WialonService) GetAccountsBatchFromHost(host string, token string) ([]W
 		allAccountsMap[acc.ID] = acc.Name
 	}
 
-	// Заполняем ParentName и сбрасываем objects (lazy)
+	// Заполняем ParentName, сбрасываем objects (lazy) и attach sub-users
+	attachedSubs := 0
 	for i := range accounts {
 		accounts[i].ObjectsTotal = -1
 		accounts[i].ObjectsActive = -1
@@ -2528,8 +2552,12 @@ func (s *WialonService) GetAccountsBatchFromHost(host string, token string) ([]W
 				accounts[i].ParentName = parentName
 			}
 		}
+		if subs, ok := subByParent[accounts[i].ID]; ok {
+			accounts[i].SubUsers = subs
+			attachedSubs += len(subs)
+		}
 	}
 
-	log.Printf("⚡ Wialon BATCH: загружено %d аккаунтов (без статистики объектов)", len(accounts))
+	log.Printf("⚡ Wialon BATCH: загружено %d аккаунтов (без статистики объектов), attached %d sub-users", len(accounts), attachedSubs)
 	return accounts, nil
 }

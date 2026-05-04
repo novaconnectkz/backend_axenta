@@ -482,18 +482,27 @@ func (api *WialonConnectionAPI) GetConnectionStats(c *gin.Context) {
 
 // WialonAccountInfo информация об аккаунте Wialon
 type WialonAccountInfo struct {
-	ID            int    `json:"id"`
-	Name          string `json:"name"`
-	Type          string `json:"type"` // "client" или "partner"
-	IsActive      bool   `json:"is_active"`
-	DealerRights  bool   `json:"dealer_rights"` // Права дилера
-	ObjectsTotal  int    `json:"objects_total"`
-	ObjectsActive int    `json:"objects_active"` // Активные объекты
-	Source        string `json:"source"`         // "wialon"
-	SourceLabel   string `json:"source_label"`   // "WH(ACRM)" или "WL(Профмонитор)"
-	Hierarchy     string `json:"hierarchy"`      // Иерархия: "WL(Профмонитор) > ИмяАккаунта"
-	ConnectionID  uint   `json:"connection_id"`
-	CreatedAt     string `json:"created_at,omitempty"` // Дата создания из Wialon
+	ID            int                    `json:"id"`
+	Name          string                 `json:"name"`
+	Type          string                 `json:"type"` // "client" или "partner"
+	IsActive      bool                   `json:"is_active"`
+	DealerRights  bool                   `json:"dealer_rights"` // Права дилера
+	ObjectsTotal  int                    `json:"objects_total"`
+	ObjectsActive int                    `json:"objects_active"` // Активные объекты
+	Source        string                 `json:"source"`         // "wialon"
+	SourceLabel   string                 `json:"source_label"`   // "WH(ACRM)" или "WL(Профмонитор)"
+	Hierarchy     string                 `json:"hierarchy"`      // Иерархия: "WL(Профмонитор) > ИмяАккаунта"
+	ConnectionID  uint                   `json:"connection_id"`
+	CreatedAt     string                 `json:"created_at,omitempty"` // Дата создания из Wialon
+	SubUsers      []WialonSubAccountInfo `json:"sub_users,omitempty"`  // Вложенные юзеры аккаунта (без биллинг-ресурса)
+}
+
+// WialonSubAccountInfo — вложенный пользователь аккаунта Wialon, прокидывается в snapshot для read-path в /users.
+type WialonSubAccountInfo struct {
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	IsActive  bool   `json:"is_active"`
+	CreatedAt string `json:"created_at,omitempty"`
 }
 
 // GetAllAccounts получает аккаунты из всех подключений Wialon
@@ -600,6 +609,16 @@ func buildAndCacheAllAccountsForCompany(cid uint, connService *services.WialonCo
 				accountType = "partner"
 			}
 
+			subUsers := make([]WialonSubAccountInfo, 0, len(acc.SubUsers))
+			for _, su := range acc.SubUsers {
+				subUsers = append(subUsers, WialonSubAccountInfo{
+					ID:        su.ID,
+					Name:      su.Name,
+					IsActive:  su.IsActive,
+					CreatedAt: su.CreatedAt,
+				})
+			}
+
 			allAccounts = append(allAccounts, WialonAccountInfo{
 				ID:            int(acc.ID),
 				Name:          acc.Name,
@@ -613,6 +632,7 @@ func buildAndCacheAllAccountsForCompany(cid uint, connService *services.WialonCo
 				Hierarchy:     hierarchy,
 				ConnectionID:  r.conn.ID,
 				CreatedAt:     acc.CreatedAt,
+				SubUsers:      subUsers,
 			})
 
 			if acc.IsActive {
@@ -1327,6 +1347,10 @@ func (api *WialonConnectionAPI) CreateWialonUser(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка создания юзера: " + err.Error()})
 		return
 	}
+
+	// Sub-user попадает в snapshot wialon:all-accounts.SubUsers — инвалидируем cache,
+	// чтобы новый юзер сразу появился в /users без ожидания scheduler-цикла (5 мин).
+	invalidateAllAccountsCache(companyID.(uint))
 
 	c.JSON(http.StatusCreated, result)
 }

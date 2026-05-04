@@ -54,10 +54,14 @@ type UnifiedUsersResponse struct {
 
 // UnifiedUsersStats статистика пользователей
 type UnifiedUsersStats struct {
-	AxentaTotal  int `json:"axenta_total"`
-	AxentaActive int `json:"axenta_active"`
-	WialonTotal  int `json:"wialon_total"`
-	WialonActive int `json:"wialon_active"`
+	AxentaTotal    int `json:"axenta_total"`
+	AxentaActive   int `json:"axenta_active"`
+	WialonTotal    int `json:"wialon_total"`
+	WialonActive   int `json:"wialon_active"`
+	WialonWHTotal  int `json:"wialon_wh_total"`
+	WialonWHActive int `json:"wialon_wh_active"`
+	WialonWLTotal  int `json:"wialon_wl_total"`
+	WialonWLActive int `json:"wialon_wl_active"`
 }
 
 // unifiedUsersSnapshotTTL — окно свежести snapshot Axenta для read-path.
@@ -135,12 +139,16 @@ func GetUnifiedUsers(c *gin.Context) {
 			defer wg.Done()
 			if companyID != nil {
 				t0 := time.Now()
-				wialonUsers, wialonTotal, wialonActive, fromCache := fetchWialonUsersFast(companyID.(uint), search, activeStr, source, role)
+				wialonUsers, wTotal, wActive, whTotal, whActive, wlTotal, wlActive, fromCache := fetchWialonUsersFast(companyID.(uint), search, activeStr, source, role)
 				log.Printf("🔍 unified/users wialon: %d users (cache=%v) за %s", len(wialonUsers), fromCache, time.Since(t0).Round(time.Millisecond))
 				mu.Lock()
 				allUsers = append(allUsers, wialonUsers...)
-				stats.WialonTotal = wialonTotal
-				stats.WialonActive = wialonActive
+				stats.WialonTotal = wTotal
+				stats.WialonActive = wActive
+				stats.WialonWHTotal = whTotal
+				stats.WialonWHActive = whActive
+				stats.WialonWLTotal = wlTotal
+				stats.WialonWLActive = wlActive
 				mu.Unlock()
 			}
 		}()
@@ -381,16 +389,17 @@ func splitSearchTerms(search string) []string {
 
 // fetchWialonUsersFast — read-path через Redis cache wialon:all-accounts:<cid>.
 // Cache наполняется WialonAllAccountsScheduler @5m. Если cache пуст — fallback на live (старая реализация).
-func fetchWialonUsersFast(companyID uint, search, activeStr, sourceFilter, roleFilter string) ([]UnifiedUser, int, int, bool) {
+// Возвращает: users, total, active, whTotal, whActive, wlTotal, wlActive, fromCache.
+func fetchWialonUsersFast(companyID uint, search, activeStr, sourceFilter, roleFilter string) ([]UnifiedUser, int, int, int, int, int, int, bool) {
 	if database.RedisClient == nil {
 		users, total, active := fetchWialonUsersFiltered(companyID, search, activeStr, sourceFilter)
-		return users, total, active, false
+		return users, total, active, 0, 0, 0, 0, false
 	}
 
 	cached, err := database.RedisClient.Get(context.Background(), allAccountsCacheKey(companyID)).Bytes()
 	if err != nil || len(cached) == 0 {
 		users, total, active := fetchWialonUsersFiltered(companyID, search, activeStr, sourceFilter)
-		return users, total, active, false
+		return users, total, active, 0, 0, 0, 0, false
 	}
 
 	// Маппинг роли: UI присылает display_name ("Партнёр"/"Клиент") или английский "partner"/"client"
@@ -413,11 +422,25 @@ func fetchWialonUsersFast(companyID uint, search, activeStr, sourceFilter, roleF
 	if err := json.Unmarshal(cached, &resp); err != nil {
 		log.Printf("⚠️ unified/users wialon cache parse: %v", err)
 		users, total, active := fetchWialonUsersFiltered(companyID, search, activeStr, sourceFilter)
-		return users, total, active, false
+		return users, total, active, 0, 0, 0, 0, false
 	}
 
 	users := make([]UnifiedUser, 0, len(resp.Data.Items))
 	totalUsers, activeUsers := 0, 0
+	whTotal, whActive, wlTotal, wlActive := 0, 0, 0, 0
+	bumpBreakdown := func(label string, isActive bool) {
+		if strings.HasPrefix(label, "WH(") {
+			whTotal++
+			if isActive {
+				whActive++
+			}
+		} else if strings.HasPrefix(label, "WL(") {
+			wlTotal++
+			if isActive {
+				wlActive++
+			}
+		}
+	}
 
 	// Для определения connection_id по source_label нужны connections — подтянем 1 раз
 	var connections []models.WialonConnection
@@ -512,9 +535,61 @@ func fetchWialonUsersFast(companyID uint, search, activeStr, sourceFilter, roleF
 		if acc.IsActive {
 			activeUsers++
 		}
+		bumpBreakdown(acc.SourceLabel, acc.IsActive)
+
+		// Sub-users аккаунта (вложенные юзеры без своего биллинг-ресурса).
+		// Применяем те же фильтры (search/active/role): role у sub всегда "client", DealerRights=false.
+		if wantPartner {
+			continue
+		}
+		for _, su := range acc.SubUsers {
+			if search != "" {
+				terms := splitSearchTerms(search)
+				matched := false
+				nameLower := strings.ToLower(su.Name)
+				for _, t := range terms {
+					if strings.Contains(nameLower, strings.ToLower(t)) {
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					continue
+				}
+			}
+			if activeStr != "" {
+				isActiveFilter := activeStr == "true" || activeStr == "1"
+				if su.IsActive != isActiveFilter {
+					continue
+				}
+			}
+
+			users = append(users, UnifiedUser{
+				ID:               su.ID,
+				Username:         su.Name,
+				Name:             su.Name,
+				Email:            "",
+				Role:             "client",
+				IsActive:         su.IsActive,
+				CreationDatetime: su.CreatedAt,
+				CreatorName:      acc.Name,
+				Source:           "wialon",
+				SourceLabel:      acc.SourceLabel,
+				Hierarchy:        acc.Hierarchy + " > " + su.Name,
+				ConnectionID:     connIDPtr,
+				AccountType:      "client",
+				DealerRights:     false,
+			})
+
+			totalUsers++
+			if su.IsActive {
+				activeUsers++
+			}
+			bumpBreakdown(acc.SourceLabel, su.IsActive)
+		}
 	}
 
-	return users, totalUsers, activeUsers, true
+	return users, totalUsers, activeUsers, whTotal, whActive, wlTotal, wlActive, true
 }
 
 // sortUnifiedUsers сортирует merged-set по полю ordering ("-creation_datetime", "username", etc.)
