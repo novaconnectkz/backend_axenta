@@ -243,7 +243,7 @@ func fetchAxentaObjectsFast(db *gorm.DB, search, active string) ([]UnifiedObject
 	}
 
 	var rows []models.AxentaObjectSnapshot
-	if err := q.Order("object_name ASC").Limit(5000).Find(&rows).Error; err != nil {
+	if err := q.Order("object_name ASC").Find(&rows).Error; err != nil {
 		log.Printf("⚠️ unified/objects axenta find: %v", err)
 		return nil, agg, false
 	}
