@@ -5,7 +5,9 @@ import (
 	"backend_axenta/models"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/url"
 	"time"
 
 	"gorm.io/gorm"
@@ -138,7 +140,137 @@ func (s *WialonStatsService) collectForConnection(conn models.WialonConnection) 
 
 	log.Printf("✅ WialonStats: connection=%d (%s), upserted=%d ресурсов за %s",
 		conn.ID, conn.Name, len(upserts), time.Since(t0))
+
+	// Дополнительно — собираем DISTINCT-реестр юнитов (для dashboard COUNT DISTINCT).
+	// Не критично если упадёт — wialon_object_stats остаётся источником для /accounts.
+	if unitsCount, uerr := s.collectUnitsForConnection(conn, loginResp.Eid); uerr != nil {
+		log.Printf("⚠️ WialonStats units: connection=%d не удалось собрать: %v", conn.ID, uerr)
+	} else {
+		log.Printf("📦 WialonStats units: connection=%d, distinct units=%d", conn.ID, unitsCount)
+	}
+
 	return len(upserts), nil
+}
+
+// collectUnitsForConnection — paginated search_items avl_unit → upsert в wialon_units.
+// UNIQUE(connection_id, unit_id) гарантирует дедупликацию: если у нескольких билинг-ресурсов
+// один токен видит одни и те же объекты, в таблице будет одна строка.
+//
+// После полного цикла удаляем строки которые не были обновлены (last_collected_at < cycleStart) —
+// это чистит юниты которые исчезли из Wialon (удалены/перенесены в другой аккаунт).
+func (s *WialonStatsService) collectUnitsForConnection(conn models.WialonConnection, eid string) (int, error) {
+	cycleStart := time.Now()
+
+	// Wialon возвращает максимум ~10к items за один search_items вызов.
+	// Пагинируем через `from`/`to` пока не получим меньше pageSize.
+	const pageSize = 10000
+	apiURL := conn.Host + "/wialon/ajax.html"
+
+	// flags: 1 (base id+name) | 4 (billing: crt+bact) — минимально нужное.
+	const flags = 0x00000001 | 0x00000004
+
+	type unitItem struct {
+		ID  int64   `json:"id"`
+		Nm  string  `json:"nm"`
+		Crt float64 `json:"crt"` // creator user.id
+		Bact float64 `json:"bact"` // billing-account = avl_resource.id
+	}
+
+	totalSeen := 0
+	from := 0
+	for page := 0; page < 100; page++ { // защита от бесконечного цикла
+		to := from + pageSize - 1
+
+		searchParams := map[string]interface{}{
+			"spec": map[string]interface{}{
+				"itemsType":     "avl_unit",
+				"propName":      "sys_name",
+				"propValueMask": "*",
+				"sortType":      "sys_name",
+			},
+			"force": 1,
+			"flags": flags,
+			"from":  from,
+			"to":    to,
+		}
+		paramsJSON, _ := json.Marshal(searchParams)
+
+		params := url.Values{}
+		params.Set("svc", "core/search_items")
+		params.Set("sid", eid)
+		params.Set("params", string(paramsJSON))
+
+		resp, err := s.wialonService.httpClient.Post(apiURL+"?"+params.Encode(), "application/x-www-form-urlencoded", nil)
+		if err != nil {
+			return totalSeen, fmt.Errorf("search_items units page=%d: %w", page, err)
+		}
+		body, rerr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if rerr != nil {
+			return totalSeen, fmt.Errorf("read body page=%d: %w", page, rerr)
+		}
+
+		var sr struct {
+			TotalItemsCount int        `json:"totalItemsCount"`
+			Items           []unitItem `json:"items"`
+		}
+		if err := json.Unmarshal(body, &sr); err != nil {
+			return totalSeen, fmt.Errorf("parse page=%d: %w", page, err)
+		}
+
+		if len(sr.Items) == 0 {
+			break
+		}
+
+		// Upsert батчем по 1000
+		batch := make([]models.WialonUnit, 0, len(sr.Items))
+		for _, it := range sr.Items {
+			if it.ID == 0 {
+				continue
+			}
+			batch = append(batch, models.WialonUnit{
+				ConnectionID:    conn.ID,
+				UnitID:          it.ID,
+				Name:            it.Nm,
+				IsActive:        true, // активацию per-unit не получаем — оставим true
+				CreatorID:       int64(it.Crt),
+				BillingID:       int64(it.Bact),
+				LastCollectedAt: cycleStart,
+			})
+		}
+
+		const chunk = 1000
+		for i := 0; i < len(batch); i += chunk {
+			end := i + chunk
+			if end > len(batch) {
+				end = len(batch)
+			}
+			if err := s.db.Clauses(clause.OnConflict{
+				Columns: []clause.Column{{Name: "connection_id"}, {Name: "unit_id"}},
+				DoUpdates: clause.AssignmentColumns([]string{
+					"name", "creator_id", "billing_id", "last_collected_at", "updated_at",
+				}),
+			}).Create(batch[i:end]).Error; err != nil {
+				return totalSeen, fmt.Errorf("upsert units chunk: %w", err)
+			}
+		}
+
+		totalSeen += len(sr.Items)
+
+		// Если вернулось меньше pageSize — последняя страница
+		if len(sr.Items) < pageSize {
+			break
+		}
+		from += pageSize
+	}
+
+	// Удаляем юниты которые исчезли из Wialon (не обновлены в текущем цикле)
+	if err := s.db.Where("connection_id = ? AND last_collected_at < ?", conn.ID, cycleStart).
+		Delete(&models.WialonUnit{}).Error; err != nil {
+		log.Printf("⚠️ WialonStats units cleanup conn=%d: %v", conn.ID, err)
+	}
+
+	return totalSeen, nil
 }
 
 // fetchResourceCreatorMap делает один search_items на avl_resource и возвращает resourceID -> creatorID.

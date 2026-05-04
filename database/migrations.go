@@ -99,6 +99,12 @@ func GetAllMigrations() []MigrationInfo {
 			IsGlobal:    true,
 		},
 		{
+			TableName:   "wialon_units",
+			Model:       &models.WialonUnit{},
+			Description: "Реестр Wialon-юнитов с UNIQUE(connection_id, unit_id) — точный COUNT DISTINCT для dashboard",
+			IsGlobal:    true,
+		},
+		{
 			TableName:   "wialon_billing_plans",
 			Model:       &models.WialonBillingPlan{},
 			Description: "Кэш тарифных планов Wialon (фоновый sync раз в час)",

@@ -1101,6 +1101,8 @@ func main() {
 	apiGroup.GET("/dashboard/kpi/", api.GetDashboardKPI)
 	apiGroup.GET("/dashboard/today-installations", api.GetTodayInstallations)
 	apiGroup.GET("/dashboard/today-installations/", api.GetTodayInstallations)
+	apiGroup.GET("/dashboard/sources-stats", api.GetDashboardSourcesStats)
+	apiGroup.GET("/dashboard/sources-stats/", api.GetDashboardSourcesStats)
 	apiGroup.GET("/dashboard/recent-invoices", api.GetRecentInvoices)
 	apiGroup.GET("/dashboard/recent-invoices/", api.GetRecentInvoices)
 	apiGroup.GET("/search", api.GetGlobalSearch)
