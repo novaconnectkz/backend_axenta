@@ -20,23 +20,25 @@ import (
 )
 
 // UnifiedObject — единая структура объекта мониторинга из любого источника.
+// json-теги в camelCase для совместимости с frontend-таблицей (которая исторически
+// читает поля Axenta Cloud в camelCase: accountName, creatorName, deviceTypeName и т.п.).
 type UnifiedObject struct {
 	ID                  int64    `json:"id"`
 	Name                string   `json:"name"`
-	UniqueID            string   `json:"unique_id"`
+	UniqueID            string   `json:"uniqueId"`
 	IMEI                string   `json:"imei"`
 	IsActive            bool     `json:"is_active"`
-	AccountName         string   `json:"account_name,omitempty"`
-	AccountID           int64    `json:"account_id,omitempty"`
-	CreatorName         string   `json:"creator_name,omitempty"`
-	DeviceTypeName      string   `json:"device_type_name,omitempty"`
-	PhoneNumbers        []string `json:"phone_numbers,omitempty"`
-	CreatedAt           string   `json:"created_at,omitempty"`
-	LastMessageDatetime string   `json:"last_message_datetime,omitempty"`
-	Source              string   `json:"source"`                  // "axenta" | "wh" | "wl"
-	SourceLabel         string   `json:"source_label,omitempty"`  // "Axenta Cloud" | "WH(...)" | "WL(...)"
-	ConnectionID        *uint    `json:"connection_id,omitempty"` // только для wh/wl
-	ScheduledDelete     bool     `json:"scheduled_delete,omitempty"`
+	AccountName         string   `json:"accountName,omitempty"`
+	AccountID           int64    `json:"accountId,omitempty"`
+	CreatorName         string   `json:"creatorName,omitempty"`
+	DeviceTypeName      string   `json:"deviceTypeName,omitempty"`
+	PhoneNumbers        []string `json:"phoneNumbers,omitempty"`
+	CreatedAt           string   `json:"createdAt,omitempty"`
+	LastMessageDatetime string   `json:"lastMessageDatetime,omitempty"`
+	Source              string   `json:"source"`                 // "axenta" | "wh" | "wl"
+	SourceLabel         string   `json:"sourceLabel,omitempty"`  // "Axenta Cloud" | "WH(...)" | "WL(...)"
+	ConnectionID        *uint    `json:"connectionId,omitempty"` // только для wh/wl
+	ScheduledDelete     bool     `json:"scheduledDelete,omitempty"`
 }
 
 // UnifiedObjectsStats — KPI-разбивка по источникам.
