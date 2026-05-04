@@ -40,6 +40,25 @@ func invalidateAllAccountsCache(companyID uint) {
 	}
 }
 
+// allUnitsCacheKey формирует ключ кэша Redis для /wialon/all-units по компании.
+func allUnitsCacheKey(companyID uint) string {
+	return fmt.Sprintf("wialon:all-units:%d", companyID)
+}
+
+// allUnitsCacheTTL — длительность кэша списка объектов Wialon. 5 минут — компромисс между
+// свежестью (Wialon last_message обновляется часто) и нагрузкой (live-fetch может занимать секунды).
+const allUnitsCacheTTL = 5 * time.Minute
+
+// invalidateAllUnitsCache удаляет кэш списка объектов для компании.
+func invalidateAllUnitsCache(companyID uint) {
+	if database.RedisClient == nil {
+		return
+	}
+	if err := database.RedisClient.Del(context.Background(), allUnitsCacheKey(companyID)).Err(); err != nil {
+		log.Printf("⚠️ Ошибка инвалидации wialon all-units cache (company=%d): %v", companyID, err)
+	}
+}
+
 // WialonConnectionAPI обработчики для подключений Wialon
 type WialonConnectionAPI struct {
 	service *services.WialonConnectionService
@@ -439,36 +458,71 @@ func (api *WialonConnectionAPI) GetConnectionUnits(c *gin.Context) {
 	})
 }
 
-// GetAllUnits возвращает объекты из всех активных подключений
+// GetAllUnits возвращает объекты из всех активных подключений.
+// Read-path: Redis cache TTL 5 мин. При cache miss — параллельный live-fetch ко всем
+// активным WialonConnection (WH+WL) через GetAllUnitsFromActiveConnections.
 // @Summary Получить объекты из всех подключений Wialon
 // @Tags Wialon Connections
 // @Produce json
 // @Success 200 {object} map[string]interface{}
 // @Router /api/wialon/all-units [get]
 func (api *WialonConnectionAPI) GetAllUnits(c *gin.Context) {
-	companyID, exists := c.Get("company_id")
+	companyIDRaw, exists := c.Get("company_id")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Компания не определена"})
 		return
 	}
+	companyID := companyIDRaw.(uint)
 
-	units, err := api.service.GetAllUnitsFromActiveConnections(companyID.(uint))
+	// 1) Redis cache hit
+	if database.RedisClient != nil {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 200*time.Millisecond)
+		if cached, err := database.RedisClient.Get(ctx, allUnitsCacheKey(companyID)).Bytes(); err == nil && len(cached) > 0 {
+			cancel()
+			var payload gin.H
+			if err := json.Unmarshal(cached, &payload); err == nil {
+				log.Printf("📦 /wialon/all-units из cache (company=%d)", companyID)
+				c.JSON(http.StatusOK, gin.H{"success": true, "data": payload})
+				return
+			}
+		} else {
+			cancel()
+		}
+	}
+
+	// 2) Live-fetch через активные подключения (WH+WL параллельно внутри сервиса)
+	t0 := time.Now()
+	units, err := api.service.GetAllUnitsFromActiveConnections(companyID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка получения объектов: " + err.Error()})
 		return
 	}
+	log.Printf("🌐 /wialon/all-units live (company=%d, units=%d) за %s",
+		companyID, len(units), time.Since(t0).Round(time.Millisecond))
 
 	// Получаем статистику подключений
-	stats, _ := api.service.GetConnectionStats(companyID.(uint))
+	stats, _ := api.service.GetConnectionStats(companyID)
+	connectionsCount := 0
+	if stats != nil {
+		connectionsCount = stats.Active
+	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data": gin.H{
-			"items":             units,
-			"total":             len(units),
-			"connections_count": stats.Active,
-		},
-	})
+	payload := gin.H{
+		"items":             units,
+		"total":             len(units),
+		"connections_count": connectionsCount,
+	}
+
+	// 3) Save to Redis cache
+	if database.RedisClient != nil {
+		if encoded, err := json.Marshal(payload); err == nil {
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 200*time.Millisecond)
+			defer cancel()
+			_ = database.RedisClient.Set(ctx, allUnitsCacheKey(companyID), encoded, allUnitsCacheTTL).Err()
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": payload})
 }
 
 // GetConnectionStats возвращает статистику подключений
@@ -838,8 +892,8 @@ func (api *WialonConnectionAPI) ToggleAccountStatus(c *gin.Context) {
 func (api *WialonConnectionAPI) LoginToMonitoring(c *gin.Context) {
 	var req struct {
 		ConnectionID int64  `json:"connection_id" binding:"required"`
-		UserName     string `json:"user_name"`   // Имя пользователя для входа (опционально, используется если указано)
-		AccountID    int64  `json:"account_id"`  // ID ресурса (учётной записи) для поиска пользователя по bact
+		UserName     string `json:"user_name"`  // Имя пользователя для входа (опционально, используется если указано)
+		AccountID    int64  `json:"account_id"` // ID ресурса (учётной записи) для поиска пользователя по bact
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -870,7 +924,7 @@ func (api *WialonConnectionAPI) LoginToMonitoring(c *gin.Context) {
 
 	// Определяем имя пользователя для входа
 	userName := req.UserName
-	
+
 	// Если имя не указано, но указан account_id — ищем пользователя по bact
 	if userName == "" && req.AccountID > 0 {
 		log.Printf("🔍 Поиск пользователя с bact=%d", req.AccountID)
@@ -909,8 +963,8 @@ func (api *WialonConnectionAPI) LoginToMonitoring(c *gin.Context) {
 func (api *WialonConnectionAPI) LoginToCms(c *gin.Context) {
 	var req struct {
 		ConnectionID int64  `json:"connection_id" binding:"required"`
-		UserName     string `json:"user_name"`   // Имя пользователя для входа (опционально, используется если указано)
-		AccountID    int64  `json:"account_id"`  // ID ресурса (учётной записи) для поиска пользователя
+		UserName     string `json:"user_name"`  // Имя пользователя для входа (опционально, используется если указано)
+		AccountID    int64  `json:"account_id"` // ID ресурса (учётной записи) для поиска пользователя
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -941,7 +995,7 @@ func (api *WialonConnectionAPI) LoginToCms(c *gin.Context) {
 
 	// Определяем имя пользователя для входа
 	userName := req.UserName
-	
+
 	// Если имя не указано, но указан account_id — ищем пользователя по ID
 	if userName == "" && req.AccountID > 0 {
 		log.Printf("🔍 Поиск пользователя с account_id=%d", req.AccountID)
