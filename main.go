@@ -820,6 +820,9 @@ func main() {
 	// Унифицированный API для пользователей (объединяет Axenta + Wialon)
 	api.RegisterUnifiedUsersRoutes(apiGroup)
 
+	// Унифицированный API для объектов (объединяет Axenta + Wialon)
+	api.RegisterUnifiedObjectsRoutes(apiGroup)
+
 	// CMS endpoints для пользователей
 	apiGroup.GET("/cms/users", api.GetUsersFromAxentaCloud)
 	apiGroup.GET("/cms/users/", api.GetUsersFromAxentaCloud)
