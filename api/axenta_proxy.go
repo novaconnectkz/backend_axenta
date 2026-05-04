@@ -117,12 +117,33 @@ type AxentaCloudResponse struct {
 	Results  []AxentaCloudObject `json:"results"`
 }
 
-// GetObjectsFromAxentaCloud проксирует запрос к Axenta Cloud API
+// GetObjectsFromAxentaCloud проксирует запрос к Axenta Cloud API.
+// Read-path: сначала пытается отдать страницу из axenta_object_snapshots (TTL 24ч),
+// при устаревании/ошибке — fallback на live HTTP к Axenta Cloud.
 func GetObjectsFromAxentaCloud(c *gin.Context) {
 	// Получаем параметры запроса
 	page := c.DefaultQuery("page", "1")
 	perPage := c.DefaultQuery("per_page", "50")
 	ordering := c.DefaultQuery("ordering", "name")
+
+	pageNumEarly, _ := strconv.Atoi(page)
+	perPageNumEarly, _ := strconv.Atoi(perPage)
+	if pageNumEarly < 1 {
+		pageNumEarly = 1
+	}
+	if perPageNumEarly < 1 || perPageNumEarly > 1000 {
+		perPageNumEarly = 50
+	}
+
+	// 1) Snapshot read-path: быстрый ответ из БД, без RTT к Axenta Cloud.
+	t0 := time.Now()
+	if tryServeObjectsFromSnapshot(c, pageNumEarly, perPageNumEarly) {
+		log.Printf("📸 /objects из snapshot за %s", time.Since(t0).Round(time.Millisecond))
+		return
+	}
+
+	// 2) Fallback: live-запрос к Axenta Cloud
+	log.Printf("🌐 /objects fallback на live Axenta Cloud (snapshot stale/empty)")
 
 	// Формируем URL для Axenta Cloud API с базовыми параметрами
 	axentaURL := fmt.Sprintf("https://axenta.cloud/api/cms/objects/?page=%s&per_page=%s&ordering=%s", page, perPage, ordering)
@@ -403,7 +424,7 @@ func GetObjectsStatsFromAxentaCloud(c *gin.Context) {
 	// Проверяем, работают ли фильтры
 	// Если фильтры не работают, API возвращает одинаковое количество для всех запросов
 	filtersNotWorking := (activeCount == int64(totalResponse.Count) && inactiveCount == int64(totalResponse.Count))
-	
+
 	if filtersNotWorking {
 		log.Printf("⚠️ Фильтры is_active не работают (active=%d, inactive=%d, total=%d), используем fallback", activeCount, inactiveCount, totalResponse.Count)
 	}
@@ -418,7 +439,7 @@ func GetObjectsStatsFromAxentaCloud(c *gin.Context) {
 			log.Printf("📦 Получена выборка: %d объектов", len(objectsResponse.Results))
 			sampleActiveCount := int64(0)
 			sampleInactiveCount := int64(0)
-			
+
 			// Подсчитываем в выборке
 			for _, obj := range objectsResponse.Results {
 				if obj.IsActive {
@@ -428,7 +449,7 @@ func GetObjectsStatsFromAxentaCloud(c *gin.Context) {
 				}
 			}
 			log.Printf("📊 В выборке: активных=%d, неактивных=%d", sampleActiveCount, sampleInactiveCount)
-			
+
 			// Если выборка достаточно большая, используем её
 			if int64(len(objectsResponse.Results)) >= 100 {
 				log.Printf("🔢 Выборка большая, используем экстраполяцию")
@@ -439,7 +460,7 @@ func GetObjectsStatsFromAxentaCloud(c *gin.Context) {
 					activeCount = int64(float64(sampleActiveCount) * ratio)
 					inactiveCount = int64(float64(sampleInactiveCount) * ratio)
 					log.Printf("📈 Экстраполяция: активных=%d, неактивных=%d (ratio=%.2f)", activeCount, inactiveCount, ratio)
-					
+
 					// Корректируем, чтобы сумма была равна общему количеству
 					totalCount := int64(totalResponse.Count)
 					if activeCount+inactiveCount != totalCount {
@@ -1787,7 +1808,7 @@ func ExportObjectsToXLSX(c *gin.Context) {
 
 		// Форматируем данные
 		phones := strings.Join(obj.PhoneNumbers, ", ")
-		
+
 		// Обрабатываем CurrentUserAccess, который может быть []string или number
 		accessRights := ""
 		if accessArray, ok := obj.CurrentUserAccess.([]interface{}); ok {
@@ -1801,7 +1822,7 @@ func ExportObjectsToXLSX(c *gin.Context) {
 		} else {
 			accessRights = fmt.Sprintf("%v", obj.CurrentUserAccess)
 		}
-		
+
 		isActive := "Да"
 		if !obj.IsActive {
 			isActive = "Нет"
