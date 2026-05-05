@@ -636,7 +636,18 @@ func (h *AccountsHandler) ToggleAccountStatus(c *gin.Context) {
 		adminID = getAccountIDFromToken(token)
 	}
 
-	tenantDB := middleware.GetTenantDB(c)
+	// CMS endpoints без tenant middleware → middleware.GetTenantDB(c) вернёт nil.
+	// Вытаскиваем tenant из X-Tenant-ID заголовка вручную, иначе RefreshAccount
+	// запишет в public, а UI читает из tenant_<id>.
+	var tenantDB *gorm.DB
+	if tenantIDStr := c.GetHeader("X-Tenant-ID"); tenantIDStr != "" {
+		if tid, err := strconv.ParseUint(tenantIDStr, 10, 32); err == nil {
+			tenantDB = database.GetTenantDBByID(uint(tid))
+		}
+	}
+	if tenantDB == nil {
+		tenantDB = middleware.GetTenantDB(c)
+	}
 	if tenantDB == nil {
 		tenantDB = database.GetDB()
 	}
