@@ -89,6 +89,7 @@ type WialonUnit struct {
 	LastMessage      int64   `json:"last_message"` // Время последнего сообщения (UTC)
 	CreatedAt        int64   `json:"ct"`           // Время создания объекта (UTC)
 	CreatorId        int64   `json:"crt"`          // ID пользователя-создателя
+	BillingAccountId int64   `json:"bact"`         // ID биллинг-ресурса (учётной записи)
 }
 
 // WialonHardwareType тип оборудования
@@ -1297,15 +1298,16 @@ func (s *WialonService) SearchUnitsWithHost(host string, token string) ([]Wialon
 		if ct, ok := item["ct"].(float64); ok {
 			unit.CreatedAt = int64(ct)
 		}
-		// Пробуем crt (creator ID)
+		// crt — creator user_id (кто создал unit), bact — billing-ресурс (учётка)
 		if crt, ok := item["crt"].(float64); ok {
 			unit.CreatorId = int64(crt)
 		}
-		// Если нет crt, пробуем bact (billing account ID)
+		if bact, ok := item["bact"].(float64); ok {
+			unit.BillingAccountId = int64(bact)
+		}
+		// Fallback: если нет crt — используем bact как creator (старое поведение)
 		if unit.CreatorId == 0 {
-			if bact, ok := item["bact"].(float64); ok {
-				unit.CreatorId = int64(bact)
-			}
+			unit.CreatorId = unit.BillingAccountId
 		}
 
 		// Местоположение
@@ -1968,7 +1970,7 @@ func (s *WialonService) FindUserByBillingAccountID(host string, token string, bi
 	// Проверяем тип найденного элемента (cls: 1=user, 3=resource)
 	if cls, ok := resourceData.Item["cls"].(float64); ok {
 		log.Printf("🔍 Найден элемент cls=%d (1=user, 3=resource)", int(cls))
-		
+
 		// Если это пользователь (cls=1), используем его имя напрямую
 		if int(cls) == 1 {
 			if nm, ok := resourceData.Item["nm"].(string); ok {

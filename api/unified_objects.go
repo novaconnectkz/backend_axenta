@@ -384,6 +384,11 @@ func fetchWialonObjectsFast(companyID uint, search, active, source string) ([]Un
 		}
 	}
 
+	// Маппинг user_id → name через Redis cache /wialon/all-accounts.
+	// Нужен для подмены accountName (биллинг-ресурс bact) и creatorName (crt user)
+	// реальными именами аккаунтов вместо UserName подключения.
+	userIDToName := buildWialonUserIDToNameMap(companyID)
+
 	// Items — отдельным проходом (для отображения нужны телефоны/hw/last_message).
 	pattern := strings.ToLower(search)
 	out := make([]UnifiedObject, 0, len(units))
@@ -430,6 +435,17 @@ func fetchWialonObjectsFast(companyID uint, search, active, source string) ([]Un
 			lastMsg = time.Unix(u.LastMessage, 0).UTC().Format(time.RFC3339)
 		}
 
+		// accountName ← имя биллинг-ресурса (bact) если в map; иначе ConnectionName
+		// creatorName ← имя creator user (crt); иначе UserName подключения
+		accountName := userIDToName[u.BillingAccountId]
+		if accountName == "" {
+			accountName = u.ConnectionName
+		}
+		creatorName := userIDToName[u.CreatorId]
+		if creatorName == "" {
+			creatorName = connOwner[u.ConnectionID]
+		}
+
 		connID := u.ConnectionID
 		out = append(out, UnifiedObject{
 			ID:                  u.ID,
@@ -437,8 +453,8 @@ func fetchWialonObjectsFast(companyID uint, search, active, source string) ([]Un
 			UniqueID:            u.UniqueID,
 			IMEI:                u.UniqueID,
 			IsActive:            true,
-			AccountName:         u.ConnectionName,
-			CreatorName:         connOwner[u.ConnectionID], // имя владельца подключения как fallback
+			AccountName:         accountName,
+			CreatorName:         creatorName,
 			DeviceTypeName:      u.HardwareTypeName,
 			PhoneNumbers:        phones,
 			CreatedAt:           createdAt,
@@ -450,6 +466,55 @@ func fetchWialonObjectsFast(companyID uint, search, active, source string) ([]Un
 	}
 
 	return out, whTotal, whActive, wlTotal, wlActive, fromCache
+}
+
+// buildWialonUserIDToNameMap читает Redis cache /wialon/all-accounts и строит
+// map user_id (avl_user.id или avl_resource.id) → name. Используется для
+// подмены creator/accountName в /unified/objects реальными именами аккаунтов.
+func buildWialonUserIDToNameMap(companyID uint) map[int64]string {
+	out := make(map[int64]string)
+	if database.RedisClient == nil {
+		return out
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	cached, err := database.RedisClient.Get(ctx, allAccountsCacheKey(companyID)).Bytes()
+	if err != nil || len(cached) == 0 {
+		return out
+	}
+	// Cache wrap: { "data": { "items": [...] } } или { "items": [...] } — пробуем оба
+	type accountItem struct {
+		ID       int64  `json:"id"`
+		Name     string `json:"name"`
+		SubUsers []struct {
+			ID   int64  `json:"id"`
+			Name string `json:"name"`
+		} `json:"sub_users,omitempty"`
+	}
+	var wrapped struct {
+		Data struct {
+			Items []accountItem `json:"items"`
+		} `json:"data"`
+		Items []accountItem `json:"items"`
+	}
+	if err := json.Unmarshal(cached, &wrapped); err != nil {
+		return out
+	}
+	items := wrapped.Data.Items
+	if len(items) == 0 {
+		items = wrapped.Items
+	}
+	for _, a := range items {
+		if a.ID > 0 && a.Name != "" {
+			out[a.ID] = a.Name
+		}
+		for _, s := range a.SubUsers {
+			if s.ID > 0 && s.Name != "" {
+				out[s.ID] = s.Name
+			}
+		}
+	}
+	return out
 }
 
 // sortUnifiedObjects сортирует in-place по ordering ("name", "-name", "created_at", "-created_at").
