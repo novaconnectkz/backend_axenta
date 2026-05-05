@@ -22,7 +22,8 @@ const objectsStatsCacheTTL = 60 * time.Second
 const objectsStatsCacheKey = "objects:stats:axenta:v1"
 
 // objectsSnapshotTTL — окно свежести AxentaObjectSnapshot. Сверх него — fallback на live Axenta Cloud.
-const objectsSnapshotTTL = 24 * time.Hour
+// Использует общий SnapshotTTL (60 мин), см. snapshot_ttl.go.
+const objectsSnapshotTTL = SnapshotTTL
 
 // tryServeObjectsFromSnapshot возвращает true, если страница успешно отдана из axenta_object_snapshots.
 // Применяет фильтры/пагинацию на стороне БД. При устаревании snapshot или ошибке — false (caller fallback на live).

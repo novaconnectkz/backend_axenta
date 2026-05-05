@@ -571,7 +571,8 @@ func (h *AccountsHandler) MoveAccount(c *gin.Context) {
 // tryServeAccountsFromSnapshot читает учётные записи из локального snapshot (axenta_account_snapshots).
 // Возвращает (response, true) если snapshot непуст и достаточно свежий, иначе (nil, false) — caller сделает fallback на Axenta proxy.
 //
-// TTL свежести = 60 мин. Если последняя синхронизация старше — считаем устаревшим и идём в Axenta.
+// TTL свежести задан общей константой SnapshotTTL (60 мин). Если последняя
+// синхронизация старше — считаем устаревшим и идём в Axenta.
 func tryServeAccountsFromSnapshot(db *gorm.DB, page, perPage, ordering, search, accountType, isActive string) (*AccountsResponse, bool) {
 	if db == nil {
 		return nil, false
@@ -586,9 +587,10 @@ func tryServeAccountsFromSnapshot(db *gorm.DB, page, perPage, ordering, search, 
 		return nil, false
 	}
 
-	// TTL: 60 мин по умолчанию. Если snapshot старше — fallback на Axenta
-	if time.Since(lastSync) > 60*time.Minute {
-		fmt.Printf("⏰ Snapshot устарел (last_synced_at=%v), fallback на Axenta proxy\n", lastSync)
+	// TTL: общая константа SnapshotTTL. Если snapshot старше — fallback на Axenta.
+	if time.Since(lastSync) > SnapshotTTL {
+		fmt.Printf("⏰ Snapshot устарел (last_synced_at=%v, age=%v > TTL=%v), fallback на Axenta proxy\n",
+			lastSync.Format(time.RFC3339), time.Since(lastSync).Round(time.Second), SnapshotTTL)
 		return nil, false
 	}
 
@@ -780,12 +782,12 @@ func computeAccountsStatsFromSnapshot(db *gorm.DB) (gin.H, bool) {
 		return nil, false
 	}
 
-	// Проверяем свежесть snapshot
+	// Проверяем свежесть snapshot (TTL общая константа SnapshotTTL)
 	var lastSync time.Time
 	if err := db.Model(&models.AxentaAccountSnapshot{}).Select("MAX(last_synced_at)").Scan(&lastSync).Error; err != nil || lastSync.IsZero() {
 		return nil, false
 	}
-	if time.Since(lastSync) > 60*time.Minute {
+	if time.Since(lastSync) > SnapshotTTL {
 		return nil, false
 	}
 

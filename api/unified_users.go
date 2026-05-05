@@ -68,8 +68,8 @@ type UnifiedUsersStats struct {
 }
 
 // unifiedUsersSnapshotTTL — окно свежести snapshot Axenta для read-path.
-// 60 мин совпадает с TTL для accounts (см. tryServeAccountsFromSnapshot).
-const unifiedUsersSnapshotTTL = 60 * time.Minute
+// Использует общий SnapshotTTL (60 мин), см. snapshot_ttl.go.
+const unifiedUsersSnapshotTTL = SnapshotTTL
 
 // GetUnifiedUsers возвращает пользователей из всех источников (Axenta + Wialon)
 // Read-path: snapshot для Axenta (TTL 60м) + Redis для Wialon (через wialon:all-accounts).
