@@ -568,6 +568,78 @@ func (h *AccountsHandler) MoveAccount(c *gin.Context) {
 	})
 }
 
+// ToggleAccountStatus — proxy к Axenta Cloud API /cms/accounts/:id/activate/.
+// Без proxy frontend дёргал axenta.cloud напрямую, мы не знали о мутации,
+// snapshot оставался устаревшим до cron (10 мин). Теперь после успешного
+// тогла триггерим SnapshotInvalidator → snapshot обновляется через 5-10s.
+//
+// Body: {"state": true|false}. Возвращает ответ Axenta как есть.
+func (h *AccountsHandler) ToggleAccountStatus(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "ID не указан"})
+		return
+	}
+
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		authHeader = c.GetHeader("authorization")
+	}
+	if authHeader == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": "Authorization header is required"})
+		return
+	}
+
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Failed to read request body: " + err.Error()})
+		return
+	}
+
+	axentaURL := fmt.Sprintf("https://axenta.cloud/api/cms/accounts/%s/activate/", id)
+	client := &http.Client{Timeout: 30 * time.Second}
+	req, err := http.NewRequest("POST", axentaURL, bytes.NewBuffer(body))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "Failed to create request: " + err.Error()})
+		return
+	}
+	req.Header.Set("Authorization", authHeader)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	if tenantID := c.GetHeader("X-Tenant-ID"); tenantID != "" {
+		req.Header.Set("X-Tenant-ID", tenantID)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": "Axenta connect failed: " + err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode >= 400 {
+		c.Data(resp.StatusCode, "application/json", respBody)
+		return
+	}
+
+	// Триггерим резинк snapshot'ов чтобы статус (is_active) обновился в /accounts.
+	// CMS endpoints без auth-middleware → GetAdminAccountID может вернуть 0.
+	// Fallback: вытаскиваем accountId через Axenta /current_user/ по токену.
+	adminID, _ := middleware.GetAdminAccountID(c)
+	if adminID == 0 {
+		token := strings.TrimPrefix(authHeader, "Token ")
+		token = strings.TrimPrefix(token, "Bearer ")
+		adminID = getAccountIDFromToken(token)
+	}
+	if adminID > 0 {
+		services.GetSnapshotInvalidator().Invalidate(adminID, "account.toggle_status")
+	}
+
+	c.Data(resp.StatusCode, "application/json", respBody)
+}
+
 // tryServeAccountsFromSnapshot читает учётные записи из локального snapshot (axenta_account_snapshots).
 // Возвращает (response, true) если snapshot непуст и достаточно свежий, иначе (nil, false) — caller сделает fallback на Axenta proxy.
 //

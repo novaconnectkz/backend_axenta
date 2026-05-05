@@ -700,6 +700,8 @@ func main() {
 	// Добавляем обработчик для перемещения учетных записей
 	accountsHandler := api.NewAccountsHandler()
 	cmsGroup.POST("/accounts/change_account", accountsHandler.MoveAccount)
+	// Toggle activate/deactivate — proxy в Axenta + триггер SnapshotInvalidator
+	cmsGroup.POST("/accounts/:id/activate", accountsHandler.ToggleAccountStatus)
 	log.Println("✅ CMS endpoints registered without Axenta authentication")
 
 	// Notification admin API (templates, test send, logs, stats)
