@@ -505,11 +505,10 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 
 		// Проверяем совпадение с общей статистикой из /stats/
 		if totalFromStats > 0 {
-			var sumTotal, sumActive int64
-			if err := tenantDB.Model(&models.PartnerDailySnapshot{}).
-				Where("DATE(snapshot_date AT TIME ZONE 'UTC') = ?", snapshotDate.Format("2006-01-02")).
-				Select("COALESCE(SUM(total_objects_count), 0) as sum_total, COALESCE(SUM(active_objects_count), 0) as sum_active").
-				Row().Scan(&sumTotal, &sumActive); err == nil {
+			analytics := NewAnalyticsService(tenantDB)
+			if agg, err := analytics.GetTotalAndActiveForDate(snapshotDate); err == nil {
+				sumTotal := agg.Total
+				sumActive := agg.Active
 
 				diffTotal := totalFromStats - int(sumTotal)
 				diffActive := activeFromStats - int(sumActive)

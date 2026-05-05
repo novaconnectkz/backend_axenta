@@ -11,6 +11,7 @@ import (
 
 	"backend_axenta/middleware"
 	"backend_axenta/models"
+	"backend_axenta/services"
 )
 
 // KPIMetric — одна метрика верхнего бара дашборда с delta vs предыдущий период.
@@ -84,21 +85,12 @@ func GetDashboardKPI(c *gin.Context) {
 // Delta = current - SUM на (latest_date - 7 days).
 
 func buildActiveObjectsKPI(db *gorm.DB, _ time.Time) KPIMetric {
-	type snapshotRow struct {
-		Active int64
-	}
+	// Один источник истины для агрегатов partner_daily_snapshots — services.AnalyticsService.
+	// Раньше SQL дублировался здесь и в partner_snapshot_scheduler.go.
+	analytics := services.NewAnalyticsService(db)
 
-	// Последний snapshot_date — берём из самой свежей строки.
-	var latestRow struct {
-		SnapshotDate time.Time
-	}
-	res := db.Table("partner_daily_snapshots").
-		Select("snapshot_date").
-		Order("snapshot_date DESC").
-		Limit(1).
-		Scan(&latestRow)
-
-	if res.Error != nil || res.RowsAffected == 0 {
+	latestDate, ok := analytics.GetLatestSnapshotDate()
+	if !ok {
 		return KPIMetric{
 			ID: "active_objects", Title: "Активные объекты",
 			Value: "0", RawValue: 0,
@@ -106,31 +98,18 @@ func buildActiveObjectsKPI(db *gorm.DB, _ time.Time) KPIMetric {
 			ActionURL: "/objects",
 		}
 	}
-	latestDate := latestRow.SnapshotDate
 
-	// SUM(active) на последнюю дату
-	var cur snapshotRow
-	db.Table("partner_daily_snapshots").
-		Select("COALESCE(SUM(active_objects_count), 0) as active").
-		Where("DATE(snapshot_date) = DATE(?)", latestDate).
-		Scan(&cur)
+	curActive := analytics.GetActiveCountForDate(latestDate)
+	prevActive := analytics.GetActiveCountForDate(latestDate.AddDate(0, 0, -7))
 
-	// SUM(active) на дату на 7 дней раньше
-	weekBefore := latestDate.AddDate(0, 0, -7)
-	var prev snapshotRow
-	db.Table("partner_daily_snapshots").
-		Select("COALESCE(SUM(active_objects_count), 0) as active").
-		Where("DATE(snapshot_date) = DATE(?)", weekBefore).
-		Scan(&prev)
-
-	delta := cur.Active - prev.Active
+	delta := curActive - prevActive
 	dir, deltaText := formatCountDelta(delta, "за неделю")
 
 	return KPIMetric{
 		ID:             "active_objects",
 		Title:          "Активные объекты",
-		Value:          fmt.Sprintf("%d", cur.Active),
-		RawValue:       float64(cur.Active),
+		Value:          fmt.Sprintf("%d", curActive),
+		RawValue:       float64(curActive),
 		Delta:          deltaText,
 		DeltaDirection: dir,
 		DeltaValue:     float64(delta),
