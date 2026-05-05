@@ -1009,7 +1009,11 @@ type axentaUsersResponse struct {
 // Возвращает полный список — caller сохранит в snapshot.
 func (s *AxentaSyncService) fetchUsers(token string) ([]axentaUser, error) {
 	result := make([]axentaUser, 0)
-	nextURL := axentaAPIBase + "/api/cms/users/?per_page=1000"
+	// ВАЖНО: ?ordering=-id обязателен. Без ordering Axenta API paginate'ит по
+	// какому-то non-id полю и ИСКЛЮЧАЕТ admin-юзеров аккаунтов (у них
+	// creation_datetime=null) — на проде потеряно 15 свежих admin'ов.
+	// С ordering=-id они идут в page 1 и точно попадают в snapshot.
+	nextURL := axentaAPIBase + "/api/cms/users/?per_page=1000&ordering=-id"
 
 	log.Printf("👥 Начинаем загрузку пользователей Axenta...")
 
