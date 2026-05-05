@@ -149,6 +149,14 @@ func (s *WialonStatsService) collectForConnection(conn models.WialonConnection) 
 		log.Printf("📦 WialonStats units: connection=%d, distinct units=%d", conn.ID, unitsCount)
 	}
 
+	// Реестр avl_user'ов с prp.label (short_name) — для подмены creator/account
+	// в /unified/objects реальными именами 1:1 с CMS Manager.
+	if usersCount, uerr := s.collectUsersForConnection(conn, loginResp.Eid); uerr != nil {
+		log.Printf("⚠️ WialonStats users: connection=%d не удалось собрать: %v", conn.ID, uerr)
+	} else {
+		log.Printf("👤 WialonStats users: connection=%d, users=%d", conn.ID, usersCount)
+	}
+
 	// Точные active/inactive counts от top-level resource (user.bact).
 	if loginResp.User != nil && loginResp.User.ID > 0 {
 		if serr := s.collectSummaryForConnection(conn, loginResp.Eid, loginResp.User.ID); serr != nil {
@@ -228,9 +236,9 @@ func (s *WialonStatsService) collectUnitsForConnection(conn models.WialonConnect
 	const flags = 0x00000001 | 0x00000004
 
 	type unitItem struct {
-		ID  int64   `json:"id"`
-		Nm  string  `json:"nm"`
-		Crt float64 `json:"crt"` // creator user.id
+		ID   int64   `json:"id"`
+		Nm   string  `json:"nm"`
+		Crt  float64 `json:"crt"`  // creator user.id
 		Bact float64 `json:"bact"` // billing-account = avl_resource.id
 	}
 
@@ -326,6 +334,123 @@ func (s *WialonStatsService) collectUnitsForConnection(conn models.WialonConnect
 	if err := s.db.Where("connection_id = ? AND last_collected_at < ?", conn.ID, cycleStart).
 		Delete(&models.WialonUnit{}).Error; err != nil {
 		log.Printf("⚠️ WialonStats units cleanup conn=%d: %v", conn.ID, err)
+	}
+
+	return totalSeen, nil
+}
+
+// collectUsersForConnection — paginated search_items avl_user → upsert в wialon_users.
+// flags=0x00000002 (custom prop) даёт prp.label/prp.short_name которое CMS показывает в
+// колонке "Создатель" (короткое имя вместо полного name). Используется в /unified/objects.
+func (s *WialonStatsService) collectUsersForConnection(conn models.WialonConnection, eid string) (int, error) {
+	cycleStart := time.Now()
+	const pageSize = 10000
+	apiURL := conn.Host + "/wialon/ajax.html"
+
+	// 1 (base id+nm) + 2 (custom prop = prp) — нужно prp.label/short_name
+	const flags = 0x00000001 | 0x00000002
+
+	type userItem struct {
+		ID  int64                  `json:"id"`
+		Nm  string                 `json:"nm"`
+		Prp map[string]interface{} `json:"prp"`
+	}
+
+	totalSeen := 0
+	from := 0
+	for page := 0; page < 100; page++ {
+		to := from + pageSize - 1
+		searchParams := map[string]interface{}{
+			"spec": map[string]interface{}{
+				"itemsType":     "avl_user",
+				"propName":      "sys_name",
+				"propValueMask": "*",
+				"sortType":      "sys_name",
+			},
+			"force": 1,
+			"flags": flags,
+			"from":  from,
+			"to":    to,
+		}
+		paramsJSON, _ := json.Marshal(searchParams)
+
+		params := url.Values{}
+		params.Set("svc", "core/search_items")
+		params.Set("sid", eid)
+		params.Set("params", string(paramsJSON))
+
+		resp, err := s.wialonService.httpClient.Post(apiURL+"?"+params.Encode(), "application/x-www-form-urlencoded", nil)
+		if err != nil {
+			return totalSeen, fmt.Errorf("search_items users page=%d: %w", page, err)
+		}
+		body, rerr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if rerr != nil {
+			return totalSeen, fmt.Errorf("read body page=%d: %w", page, rerr)
+		}
+
+		var sr struct {
+			TotalItemsCount int        `json:"totalItemsCount"`
+			Items           []userItem `json:"items"`
+		}
+		if err := json.Unmarshal(body, &sr); err != nil {
+			return totalSeen, fmt.Errorf("parse page=%d: %w", page, err)
+		}
+		if len(sr.Items) == 0 {
+			break
+		}
+
+		batch := make([]models.WialonUser, 0, len(sr.Items))
+		for _, it := range sr.Items {
+			if it.ID == 0 {
+				continue
+			}
+			short := ""
+			if it.Prp != nil {
+				// CMS показывает либо prp.label, либо prp.short_name (зависит от installation)
+				if v, ok := it.Prp["label"].(string); ok && v != "" {
+					short = v
+				} else if v, ok := it.Prp["short_name"].(string); ok && v != "" {
+					short = v
+				}
+			}
+			batch = append(batch, models.WialonUser{
+				ConnectionID:    conn.ID,
+				UserID:          it.ID,
+				Name:            it.Nm,
+				ShortName:       short,
+				IsActive:        true,
+				LastCollectedAt: cycleStart,
+			})
+		}
+
+		const chunk = 1000
+		for i := 0; i < len(batch); i += chunk {
+			end := i + chunk
+			if end > len(batch) {
+				end = len(batch)
+			}
+			if err := s.db.Clauses(clause.OnConflict{
+				Columns: []clause.Column{{Name: "connection_id"}, {Name: "user_id"}},
+				DoUpdates: clause.AssignmentColumns([]string{
+					"name", "short_name", "last_collected_at", "updated_at",
+				}),
+			}).Create(batch[i:end]).Error; err != nil {
+				return totalSeen, fmt.Errorf("upsert users chunk: %w", err)
+			}
+		}
+
+		totalSeen += len(sr.Items)
+		if len(sr.Items) < pageSize {
+			break
+		}
+		from += pageSize
+	}
+
+	// cleanup устаревших
+	if err := s.db.Where("connection_id = ? AND last_collected_at < ?", conn.ID, cycleStart).
+		Delete(&models.WialonUser{}).Error; err != nil {
+		log.Printf("⚠️ WialonStats users cleanup conn=%d: %v", conn.ID, err)
 	}
 
 	return totalSeen, nil

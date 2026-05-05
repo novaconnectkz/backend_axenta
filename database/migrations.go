@@ -105,6 +105,12 @@ func GetAllMigrations() []MigrationInfo {
 			IsGlobal:    true,
 		},
 		{
+			TableName:   "wialon_users",
+			Model:       &models.WialonUser{},
+			Description: "Реестр Wialon avl_user'ов с prp.label/short_name — для creator/account names в /unified/objects",
+			IsGlobal:    true,
+		},
+		{
 			TableName:   "wialon_connection_summary",
 			Model:       &models.WialonConnectionSummary{},
 			Description: "Точные счётчики объектов от top-level resource (user.bact) — заполняется WialonStatsScheduler",

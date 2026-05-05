@@ -468,13 +468,41 @@ func fetchWialonObjectsFast(companyID uint, search, active, source string) ([]Un
 	return out, whTotal, whActive, wlTotal, wlActive, fromCache
 }
 
-// buildWialonUserIDToNameMap читает Redis cache /wialon/all-accounts и строит
-// map user_id (avl_user.id) → name. Также добавляет map resource_id → user.name
-// через таблицу wialon_object_stats (resource_id, user_id) — нужно для подмены
-// accountName когда avl_unit.bact = resource.id (биллинг-ресурс), а cache
-// хранит avl_user'ов.
+// buildWialonUserIDToNameMap строит map id → name для Wialon-юнитов.
+// Источники приоритетно:
+//  1. wialon_users.short_name (prp.label/short_name — то что CMS Manager показывает)
+//  2. wialon_users.name (полное имя avl_user.nm)
+//  3. Redis cache /wialon/all-accounts (top-level + sub_users)
+//  4. resource_id → user.name через wialon_object_stats (для bact ресурсов)
 func buildWialonUserIDToNameMap(companyID uint) map[int64]string {
 	out := make(map[int64]string)
+
+	// 1+2) wialon_users — самый точный источник, ровно как CMS показывает.
+	type userRow struct {
+		UserID    int64
+		Name      string
+		ShortName string
+	}
+	var userRows []userRow
+	if err := database.DB.Raw(`
+		SELECT wu.user_id, wu.name, wu.short_name
+		FROM wialon_users wu
+		JOIN wialon_connections wc ON wc.id = wu.connection_id
+		WHERE wc.company_id = ? AND wc.deleted_at IS NULL
+	`, companyID).Scan(&userRows).Error; err == nil {
+		for _, r := range userRows {
+			if r.UserID <= 0 {
+				continue
+			}
+			if r.ShortName != "" {
+				out[r.UserID] = r.ShortName
+			} else if r.Name != "" {
+				out[r.UserID] = r.Name
+			}
+		}
+	}
+
+	// 3) Redis fallback на случай если scheduler ещё не успел собрать users
 	if database.RedisClient == nil {
 		return out
 	}
@@ -507,11 +535,11 @@ func buildWialonUserIDToNameMap(companyID uint) map[int64]string {
 		items = wrapped.Items
 	}
 	for _, a := range items {
-		if a.ID > 0 && a.Name != "" {
+		if a.ID > 0 && a.Name != "" && out[a.ID] == "" {
 			out[a.ID] = a.Name
 		}
 		for _, s := range a.SubUsers {
-			if s.ID > 0 && s.Name != "" {
+			if s.ID > 0 && s.Name != "" && out[s.ID] == "" {
 				out[s.ID] = s.Name
 			}
 		}
