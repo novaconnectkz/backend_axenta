@@ -4,6 +4,7 @@ import (
 	"backend_axenta/database"
 	"backend_axenta/middleware"
 	"backend_axenta/models"
+	"backend_axenta/services"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -730,6 +731,11 @@ func PermanentDeleteObject(c *gin.Context) {
 		case http.StatusOK, http.StatusNoContent:
 			if err := deleteLocalTrashObjectIfExists(tenantDB, id); err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 				log.Printf("⚠️ Не удалось удалить объект %d из локальной БД после успешного удаления в Axenta Cloud: %v", id, err)
+			}
+
+			// Триггерим резинк snapshot'ов чтобы счётчики KPI и /unified/objects обновились без cron.
+			if adminID, gErr := middleware.GetAdminAccountID(c); gErr == nil {
+				services.GetSnapshotInvalidator().Invalidate(adminID, "object.permanent_delete")
 			}
 
 			c.JSON(200, gin.H{

@@ -13,6 +13,7 @@ import (
 	"backend_axenta/database"
 	"backend_axenta/middleware"
 	"backend_axenta/models"
+	"backend_axenta/services"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -419,6 +420,12 @@ func (h *AccountsHandler) CreateAccount(c *gin.Context) {
 		return
 	}
 
+	// Триггерим резинк snapshot'ов чтобы новый аккаунт появился в /unified/accounts
+	// и в KPI dashboard без ожидания scheduled cron.
+	if adminID, err := middleware.GetAdminAccountID(c); err == nil {
+		services.GetSnapshotInvalidator().Invalidate(adminID, "account.create")
+	}
+
 	// Возвращаем данные
 	c.JSON(http.StatusCreated, account)
 }
@@ -544,6 +551,11 @@ func (h *AccountsHandler) MoveAccount(c *gin.Context) {
 
 	fmt.Printf("✅ Successfully moved account %d to target account %d\n",
 		moveRequest.AccountID, moveRequest.TargetAccountID)
+
+	// Триггерим резинк snapshot'ов — иерархия аккаунтов изменилась.
+	if adminID, err := middleware.GetAdminAccountID(c); err == nil {
+		services.GetSnapshotInvalidator().Invalidate(adminID, "account.move")
+	}
 
 	// Возвращаем успешный ответ
 	c.JSON(http.StatusOK, gin.H{

@@ -134,6 +134,11 @@ func main() {
 	axentaSyncScheduler := services.NewAxentaSyncScheduler(axentaSyncService, axentaSyncIntervalMin)
 	services.SetAxentaSyncScheduler(axentaSyncScheduler)
 
+	// Инвалидатор snapshot'ов: после mutation user/account/object
+	// API-handler вызывает Invalidate(adminID), воркер с debounce делает SyncAdmin.
+	snapshotInvalidator := services.InitSnapshotInvalidator(axentaSyncService)
+	defer snapshotInvalidator.Stop()
+
 	disableAxentaSync := os.Getenv("DISABLE_AXENTA_SYNC_SCHEDULER") == "true"
 	if disableAxentaSync {
 		log.Printf("🔧 AxentaSync: планировщик ОТКЛЮЧЕН через DISABLE_AXENTA_SYNC_SCHEDULER=true")

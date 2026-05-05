@@ -2,6 +2,7 @@ package api
 
 import (
 	"backend_axenta/database"
+	"backend_axenta/middleware"
 	"backend_axenta/models"
 	"backend_axenta/services"
 	"bytes"
@@ -1185,6 +1186,12 @@ func CreateUserInAxentaCloud(c *gin.Context) {
 			"error":  "Failed to parse Axenta Cloud response",
 		})
 		return
+	}
+
+	// Триггерим резинк snapshot'ов чтобы новый юзер появился в /unified/users
+	// и в creator-полях /unified/objects без ожидания scheduled cron.
+	if adminID, err := middleware.GetAdminAccountID(c); err == nil {
+		services.GetSnapshotInvalidator().Invalidate(adminID, "user.create")
 	}
 
 	// Возвращаем успешный ответ
