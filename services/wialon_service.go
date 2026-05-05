@@ -21,8 +21,10 @@ type WialonService struct {
 func NewWialonService() *WialonService {
 	return &WialonService{
 		httpClient: &http.Client{
-			// 120s — для core/batch на больших WH-подключениях (3000+ ресурсов в одном payload)
-			Timeout: 120 * time.Second,
+			// 300s — для core/batch на больших WH-подключениях (3000+ ресурсов в одном
+			// payload). Прежние 120s истекали с медленных сетей (локальный dev на WiFi
+			// не успевал за 2m34s), на проде в datacenter обычно 30-60s, запас не мешает.
+			Timeout: 300 * time.Second,
 		},
 	}
 }
@@ -2225,6 +2227,86 @@ func (s *WialonService) GetTotalUnitsCount(host string, token string) (int, erro
 	return searchResult.TotalItemsCount, nil
 }
 
+// searchItemsPaginated делает search_items с пагинацией по pageSize элементов.
+// Возвращает агрегированный массив raw items и totalItemsCount из первого ответа.
+// Используется чтобы не упираться в HTTP timeout/Wialon error code=6 на больших
+// payload (3000+ ресурсов с force=1+flags вернут многомегабайтный JSON в одном
+// search_items "from=0,to=0").
+func (s *WialonService) searchItemsPaginated(host, sid string, spec map[string]interface{}, flags int, pageSize int) ([]map[string]interface{}, int, error) {
+	if pageSize <= 0 {
+		pageSize = 1000
+	}
+	apiURL := fmt.Sprintf("%s/wialon/ajax.html", host)
+
+	allItems := make([]map[string]interface{}, 0)
+	totalItemsCount := 0
+
+	from := 0
+	for {
+		to := from + pageSize - 1
+		params := url.Values{}
+		params.Set("svc", "core/search_items")
+		params.Set("sid", sid)
+
+		callParams := map[string]interface{}{
+			"spec":  spec,
+			"force": 1,
+			"flags": flags,
+			"from":  from,
+			"to":    to,
+		}
+		callJSON, err := json.Marshal(callParams)
+		if err != nil {
+			return nil, 0, fmt.Errorf("сериализация call params: %w", err)
+		}
+		params.Set("params", string(callJSON))
+
+		resp, err := s.httpClient.Post(apiURL+"?"+params.Encode(), "application/x-www-form-urlencoded", nil)
+		if err != nil {
+			return nil, 0, fmt.Errorf("paginated search_items from=%d: %w", from, err)
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, 0, fmt.Errorf("paginated read body from=%d: %w", from, err)
+		}
+
+		// Wialon error: {"error":N, "reason":"..."}
+		var asError struct {
+			Error  int    `json:"error"`
+			Reason string `json:"reason"`
+		}
+		if err := json.Unmarshal(body, &asError); err == nil && asError.Error != 0 {
+			return nil, 0, fmt.Errorf("paginated search_items code=%d reason=%s from=%d", asError.Error, asError.Reason, from)
+		}
+
+		var pageResp struct {
+			TotalItemsCount int                      `json:"totalItemsCount"`
+			Items           []map[string]interface{} `json:"items"`
+		}
+		if err := json.Unmarshal(body, &pageResp); err != nil {
+			return nil, 0, fmt.Errorf("paginated parse from=%d: %w", from, err)
+		}
+
+		if from == 0 {
+			totalItemsCount = pageResp.TotalItemsCount
+		}
+		allItems = append(allItems, pageResp.Items...)
+
+		// Завершение: получили все либо страница вернула меньше pageSize.
+		if len(pageResp.Items) < pageSize || len(allItems) >= totalItemsCount {
+			break
+		}
+		from += pageSize
+		// safety cap — на случай если total меняется или баг
+		if from > 1_000_000 {
+			break
+		}
+	}
+
+	return allItems, totalItemsCount, nil
+}
+
 // callBatch выполняет один HTTP-запрос svc=core/batch с N упакованными вызовами.
 // Возвращает массив "сырых" json-ответов в том же порядке, что и calls.
 // Используется чтобы заменить множество последовательных round-trip к Wialon API на один.
@@ -2301,40 +2383,42 @@ func (s *WialonService) GetAccountsBatchFromHost(host string, token string) ([]W
 	// + 0x100 admin_fields + 0x80 prp (custom_properties) — нужен для prp.email.
 	usersFlags := 0x00000001 | 0x00000002 | 0x00000004 | 0x00000010 | 0x00000080 | 0x00000100 // = 407
 
-	calls := []map[string]interface{}{
-		// 0: users
-		{
-			"svc": "core/search_items",
-			"params": map[string]interface{}{
-				"spec": map[string]interface{}{
-					"itemsType":     "user",
-					"propName":      "sys_name",
-					"propValueMask": "*",
-					"sortType":      "sys_name",
-				},
-				"force": 1,
-				"flags": usersFlags,
-				"from":  0,
-				"to":    0,
-			},
-		},
-		// 1: все ресурсы (id, nm, bact) — заменяет SearchAllBilling + GetResourceNames
-		{
-			"svc": "core/search_items",
-			"params": map[string]interface{}{
-				"spec": map[string]interface{}{
-					"itemsType":     "avl_resource",
-					"propName":      "sys_name",
-					"propValueMask": "*",
-					"sortType":      "sys_name",
-				},
-				"force": 1,
-				"flags": 5,
-				"from":  0,
-				"to":    0,
-			},
-		},
-		// 2: ресурсы с правами дилера. flags=5 нужен — чтобы получить bact (для маппинга dealer прав на user.id через resourceID-1 и через bact)
+	// Самые тяжёлые два запроса (users 4500+, resources 3000+ на больших WH-подключениях
+	// типа glomoskz) делаем PAGINATED через searchItemsPaginated. Раньше один batch с
+	// to=0 (все элементы) на больших аккаунтах упирался в HTTP timeout 120s+, либо в
+	// Wialon error code=6 «возвращаемый результат превышает допустимое количество
+	// символов». Pagination по 1000 элементов держит per-response <2MB и стабильно
+	// проходит за <30s на каждый round-trip.
+	const pageSize = 1000
+
+	t0 := time.Now()
+	usersItems, usersTotal, err := s.searchItemsPaginated(host, loginResp.Eid, map[string]interface{}{
+		"itemsType":     "user",
+		"propName":      "sys_name",
+		"propValueMask": "*",
+		"sortType":      "sys_name",
+	}, usersFlags, pageSize)
+	if err != nil {
+		return nil, fmt.Errorf("paginated users: %w", err)
+	}
+	log.Printf("⚡ Wialon BATCH: users paginated за %s — %d/%d", time.Since(t0).Round(time.Millisecond), len(usersItems), usersTotal)
+
+	t1 := time.Now()
+	allResItems, allResTotal, err := s.searchItemsPaginated(host, loginResp.Eid, map[string]interface{}{
+		"itemsType":     "avl_resource",
+		"propName":      "sys_name",
+		"propValueMask": "*",
+		"sortType":      "sys_name",
+	}, 5, pageSize)
+	if err != nil {
+		return nil, fmt.Errorf("paginated all resources: %w", err)
+	}
+	log.Printf("⚡ Wialon BATCH: resources paginated за %s — %d/%d", time.Since(t1).Round(time.Millisecond), len(allResItems), allResTotal)
+
+	// dealers + disabled — обычно маленькие (десятки-сотни ресурсов), оставляем в
+	// одном batch с двумя calls для экономии round-trips.
+	smallCalls := []map[string]interface{}{
+		// 0: dealers
 		{
 			"svc": "core/search_items",
 			"params": map[string]interface{}{
@@ -2350,7 +2434,7 @@ func (s *WialonService) GetAccountsBatchFromHost(host string, token string) ([]W
 				"to":    0,
 			},
 		},
-		// 3: заблокированные ресурсы. flags=5 нужен — bact используется в маппинге disabled→user
+		// 1: disabled
 		{
 			"svc": "core/search_items",
 			"params": map[string]interface{}{
@@ -2368,21 +2452,15 @@ func (s *WialonService) GetAccountsBatchFromHost(host string, token string) ([]W
 		},
 	}
 
-	t0 := time.Now()
-	results, err := s.callBatch(host, loginResp.Eid, calls)
+	t2 := time.Now()
+	smallResults, err := s.callBatch(host, loginResp.Eid, smallCalls)
 	if err != nil {
-		return nil, fmt.Errorf("batch search_items: %w", err)
+		return nil, fmt.Errorf("batch dealers+disabled: %w", err)
 	}
-	log.Printf("⚡ Wialon BATCH: 4 search_items за %s (host=%s)", time.Since(t0), host)
+	log.Printf("⚡ Wialon BATCH: dealers+disabled за %s", time.Since(t2).Round(time.Millisecond))
 
-	// 0: users → []WialonAccount
-	var usersResp WialonSearchResponse
-	if err := json.Unmarshal(results[0], &usersResp); err != nil {
-		return nil, fmt.Errorf("парсинг users: %w", err)
-	}
-
-	accounts := make([]WialonAccount, 0, len(usersResp.Items))
-	for _, item := range usersResp.Items {
+	accounts := make([]WialonAccount, 0, len(usersItems))
+	for _, item := range usersItems {
 		account := WialonAccount{Type: "user", IsActive: true}
 		if id, ok := item["id"].(float64); ok {
 			account.ID = int64(id)
@@ -2456,14 +2534,10 @@ func (s *WialonService) GetAccountsBatchFromHost(host string, token string) ([]W
 		accounts = append(accounts, account)
 	}
 
-	// 1: все ресурсы → billingMap + resourceNamesMap
-	var allResResp WialonSearchResponse
-	if err := json.Unmarshal(results[1], &allResResp); err != nil {
-		return nil, fmt.Errorf("парсинг all resources: %w", err)
-	}
+	// 1: все ресурсы → billingMap + resourceNamesMap (paginated результат)
 	billingMap := make(map[int64]bool)
 	resourceNamesMap := make(map[int64]string)
-	for _, item := range allResResp.Items {
+	for _, item := range allResItems {
 		var resourceID, bactID int64
 		var resourceName string
 		if id, ok := item["id"].(float64); ok {
@@ -2485,11 +2559,11 @@ func (s *WialonService) GetAccountsBatchFromHost(host string, token string) ([]W
 			}
 		}
 	}
-	log.Printf("⚡ Wialon BATCH: %d ресурсов → %d биллинговых, %d имён", len(allResResp.Items), len(billingMap), len(resourceNamesMap))
+	log.Printf("⚡ Wialon BATCH: %d ресурсов → %d биллинговых, %d имён", len(allResItems), len(billingMap), len(resourceNamesMap))
 
-	// 2: дилеры → dealerMap
+	// 2: дилеры → dealerMap (из smallResults[0])
 	var dealersResp WialonSearchResponse
-	if err := json.Unmarshal(results[2], &dealersResp); err != nil {
+	if err := json.Unmarshal(smallResults[0], &dealersResp); err != nil {
 		return nil, fmt.Errorf("парсинг dealers: %w", err)
 	}
 	dealerMap := make(map[int64]bool)
@@ -2517,9 +2591,9 @@ func (s *WialonService) GetAccountsBatchFromHost(host string, token string) ([]W
 	}
 	log.Printf("⚡ Wialon BATCH: %d дилеров", len(dealerMap))
 
-	// 3: заблокированные → disabledMap
+	// 3: заблокированные → disabledMap (из smallResults[1])
 	var disabledResp WialonSearchResponse
-	if err := json.Unmarshal(results[3], &disabledResp); err != nil {
+	if err := json.Unmarshal(smallResults[1], &disabledResp); err != nil {
 		return nil, fmt.Errorf("парсинг disabled: %w", err)
 	}
 	disabledMap := make(map[int64]bool)
