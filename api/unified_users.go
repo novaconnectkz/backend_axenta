@@ -22,27 +22,79 @@ import (
 	"gorm.io/gorm"
 )
 
-// UnifiedUser представляет единую структуру пользователя из любого источника
+// UnifiedUser представляет единую структуру пользователя из любого источника.
+//
+// Унификация с UnifiedObject (camelCase): помимо исторических snake_case полей
+// дублируются camelCase алиасы для creator/source/connection/account/etc.
+// Frontend читает в первую очередь camelCase, snake_case остаётся для backward
+// compatibility — будет удалён через 1-2 итерации.
 type UnifiedUser struct {
-	ID               int64  `json:"id"`
-	Username         string `json:"username"`
-	Name             string `json:"name"`
-	Email            string `json:"email"`
-	Role             string `json:"role"`
-	IsActive         bool   `json:"is_active"`
-	CreationDatetime string `json:"creation_datetime,omitempty"`
+	ID       int64  `json:"id"`
+	Username string `json:"username"`
+	Name     string `json:"name"`
+	Email    string `json:"email"`
+	Role     string `json:"role"`
+	IsActive bool   `json:"is_active"`
+
+	// Дата создания. snake_case + camelCase.
+	CreationDatetime      string `json:"creation_datetime,omitempty"`
+	CreationDatetimeAlias string `json:"creationDatetime,omitempty"`
+
+	// Creator. snake_case + camelCase.
 	CreatorName      string `json:"creator_name,omitempty"`
-	Source           string `json:"source"` // "axenta" или "wialon"
+	CreatorNameAlias string `json:"creatorName,omitempty"`
+
+	// Источник.
+	Source           string `json:"source"`
 	SourceLabel      string `json:"source_label,omitempty"`
-	Hierarchy        string `json:"hierarchy,omitempty"`
-	ConnectionID     *uint  `json:"connection_id,omitempty"`
+	SourceLabelAlias string `json:"sourceLabel,omitempty"`
+
+	Hierarchy string `json:"hierarchy,omitempty"`
+
+	// ConnectionID. snake_case + camelCase.
+	ConnectionID      *uint `json:"connection_id,omitempty"`
+	ConnectionIDAlias *uint `json:"connectionId,omitempty"`
+
+	// Account-привязка (для UI cross-section: User → Objects этого аккаунта).
+	// Заполняется по AdminAccountID (Axenta) или BillingAccount (Wialon).
+	AccountID        int64  `json:"accountId,omitempty"`
+	AccountName      string `json:"accountName,omitempty"`
+
 	AccountType      string `json:"account_type,omitempty"`
-	DealerRights     bool   `json:"dealer_rights,omitempty"`
-	ObjectsTotal     int    `json:"objects_total,omitempty"`
-	ObjectsActive    int    `json:"objects_active,omitempty"`
-	Phone            string `json:"phone,omitempty"`
-	TelegramID       string `json:"telegram_id,omitempty"`
-	LastLogin        string `json:"last_login,omitempty"`
+	AccountTypeAlias string `json:"accountType,omitempty"`
+
+	DealerRights      bool `json:"dealer_rights,omitempty"`
+	DealerRightsAlias bool `json:"dealerRights,omitempty"`
+
+	ObjectsTotal       int `json:"objects_total,omitempty"`
+	ObjectsTotalAlias  int `json:"objectsTotal,omitempty"`
+	ObjectsActive      int `json:"objects_active,omitempty"`
+	ObjectsActiveAlias int `json:"objectsActive,omitempty"`
+
+	Phone string `json:"phone,omitempty"`
+
+	TelegramID      string `json:"telegram_id,omitempty"`
+	TelegramIDAlias string `json:"telegramId,omitempty"`
+
+	LastLogin      string `json:"last_login,omitempty"`
+	LastLoginAlias string `json:"lastLogin,omitempty"`
+}
+
+// fillUnifiedUserAliases копирует snake_case поля в camelCase-алиасы.
+// Вызывается ПОСЛЕ заполнения основных полей. Гарантирует что обе формы
+// json-выхода всегда синхронизированы — UI получает одинаковое значение
+// независимо от того какой вариант он читает.
+func fillUnifiedUserAliases(u *UnifiedUser) {
+	u.CreationDatetimeAlias = u.CreationDatetime
+	u.CreatorNameAlias = u.CreatorName
+	u.SourceLabelAlias = u.SourceLabel
+	u.ConnectionIDAlias = u.ConnectionID
+	u.AccountTypeAlias = u.AccountType
+	u.DealerRightsAlias = u.DealerRights
+	u.ObjectsTotalAlias = u.ObjectsTotal
+	u.ObjectsActiveAlias = u.ObjectsActive
+	u.TelegramIDAlias = u.TelegramID
+	u.LastLoginAlias = u.LastLogin
 }
 
 // UnifiedUsersResponse структура ответа для унифицированного API
@@ -176,6 +228,12 @@ func GetUnifiedUsers(c *gin.Context) {
 	paginatedUsers := allUsers[startIndex:endIndex]
 	totalPages := (total + limit - 1) / limit
 
+	// Заполняем camelCase алиасы (унификация с UnifiedObject DTO).
+	// Делаем для пагинированной страницы — лишних копий не нужно.
+	for i := range paginatedUsers {
+		fillUnifiedUserAliases(&paginatedUsers[i])
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
 		"data": UnifiedUsersResponse{
@@ -298,6 +356,7 @@ func tryServeUnifiedUsersFromSnapshot(db *gorm.DB, search, active, role string) 
 			Source:           "axenta",
 			SourceLabel:      "Axenta Cloud",
 			AccountType:      r.AccountType,
+			AccountID:        int64(r.AdminAccountID),
 		})
 	}
 
