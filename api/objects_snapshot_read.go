@@ -157,11 +157,11 @@ func tryServeObjectsFromSnapshot(c *gin.Context, page, perPage int) bool {
 		}
 		var createdAt string
 		if r.AxentaCreatedAt != nil {
-			createdAt = r.AxentaCreatedAt.Format(time.RFC3339)
+			createdAt = r.AxentaCreatedAt.UTC().Format(time.RFC3339)
 		}
 		var lastMsg string
 		if r.LastCommunicationAt != nil {
-			lastMsg = r.LastCommunicationAt.Format(time.RFC3339)
+			lastMsg = r.LastCommunicationAt.UTC().Format(time.RFC3339)
 		}
 		statusStr := "inactive"
 		if r.IsActive {
