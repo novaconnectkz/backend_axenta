@@ -88,6 +88,7 @@ func GetUnifiedAccounts(c *gin.Context) {
 	accountType := c.Query("type")
 	activeStr := c.Query("is_active")
 	ordering := c.DefaultQuery("ordering", "-creationDatetime")
+	parent := strings.TrimSpace(c.Query("parent"))
 
 	if page < 1 {
 		page = 1
@@ -110,7 +111,7 @@ func GetUnifiedAccounts(c *gin.Context) {
 			defer wg.Done()
 			tenantDB := middleware.GetTenantDB(c)
 			t0 := time.Now()
-			items, total, active, clients, partners := fetchAxentaAccountsForUnified(tenantDB, search, accountType, activeStr)
+			items, total, active, clients, partners := fetchAxentaAccountsForUnified(tenantDB, search, accountType, activeStr, parent)
 			log.Printf("🔍 unified/accounts axenta: %d items за %s", len(items), time.Since(t0).Round(time.Millisecond))
 			mu.Lock()
 			allAccounts = append(allAccounts, items...)
@@ -131,7 +132,7 @@ func GetUnifiedAccounts(c *gin.Context) {
 				return
 			}
 			t0 := time.Now()
-			items, wTotal, wActive, whTotal, whActive, wlTotal, wlActive := fetchWialonAccountsForUnified(companyID.(uint), search, accountType, activeStr, source)
+			items, wTotal, wActive, whTotal, whActive, wlTotal, wlActive := fetchWialonAccountsForUnified(companyID.(uint), search, accountType, activeStr, source, parent)
 			log.Printf("🔍 unified/accounts wialon: %d items за %s", len(items), time.Since(t0).Round(time.Millisecond))
 			mu.Lock()
 			allAccounts = append(allAccounts, items...)
@@ -176,7 +177,7 @@ func GetUnifiedAccounts(c *gin.Context) {
 
 // fetchAxentaAccountsForUnified читает axenta_account_snapshots с фильтрами.
 // Возвращает: items, total, active, clients, partners.
-func fetchAxentaAccountsForUnified(db *gorm.DB, search, accountType, activeStr string) ([]UnifiedAccount, int, int, int, int) {
+func fetchAxentaAccountsForUnified(db *gorm.DB, search, accountType, activeStr, parent string) ([]UnifiedAccount, int, int, int, int) {
 	if db == nil {
 		return nil, 0, 0, 0, 0
 	}
@@ -220,7 +221,6 @@ func fetchAxentaAccountsForUnified(db *gorm.DB, search, accountType, activeStr s
 	case "false", "0":
 		q = q.Where("is_active = ?", false)
 	}
-
 	var rows []models.AxentaAccountSnapshot
 	if err := q.Find(&rows).Error; err != nil {
 		log.Printf("⚠️ unified/accounts axenta find: %v", err)
@@ -230,6 +230,9 @@ func fetchAxentaAccountsForUnified(db *gorm.DB, search, accountType, activeStr s
 	items := make([]UnifiedAccount, 0, len(rows))
 	total, active, clients, partners := 0, 0, 0, 0
 	for _, r := range rows {
+		if parent != "" && !isDirectParent(r.ParentAccountName, r.Hierarchy, parent) {
+			continue
+		}
 		total++
 		if r.IsActive {
 			active++
@@ -270,6 +273,22 @@ func fetchAxentaAccountsForUnified(db *gorm.DB, search, accountType, activeStr s
 	return items, total, active, clients, partners
 }
 
+// isDirectParent проверяет что `target` — прямой родитель (parent_account_name либо
+// предпоследний элемент hierarchy "A > B > Self").
+func isDirectParent(parentName, hierarchy, target string) bool {
+	if parentName == target {
+		return true
+	}
+	if hierarchy == "" {
+		return false
+	}
+	parts := strings.Split(hierarchy, " > ")
+	if len(parts) < 2 {
+		return false
+	}
+	return parts[len(parts)-2] == target
+}
+
 func strPtrIfNotEmpty(s string) *string {
 	if s == "" {
 		return nil
@@ -279,7 +298,7 @@ func strPtrIfNotEmpty(s string) *string {
 
 // fetchWialonAccountsForUnified читает Redis-cache wialon:all-accounts:<companyID>
 // с фильтрами. Возвращает: items, total, active, whTotal, whActive, wlTotal, wlActive.
-func fetchWialonAccountsForUnified(companyID uint, search, accountType, activeStr, sourceFilter string) ([]UnifiedAccount, int, int, int, int, int, int) {
+func fetchWialonAccountsForUnified(companyID uint, search, accountType, activeStr, sourceFilter, parent string) ([]UnifiedAccount, int, int, int, int, int, int) {
 	if database.RedisClient == nil {
 		return nil, 0, 0, 0, 0, 0, 0
 	}
@@ -326,6 +345,9 @@ func fetchWialonAccountsForUnified(companyID uint, search, accountType, activeSt
 			if !strings.Contains(strings.ToLower(a.Name), pattern) {
 				continue
 			}
+		}
+		if parent != "" && !isDirectParent("", a.Hierarchy, parent) {
+			continue
 		}
 
 		total++
