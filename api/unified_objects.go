@@ -295,6 +295,7 @@ func fetchWialonObjectsFast(companyID uint, search, active, source string) ([]Un
 	connections, _ := connService.GetActiveByCompany(companyID)
 	connType := make(map[uint]string, len(connections))
 	connLabel := make(map[uint]string, len(connections))
+	connOwner := make(map[uint]string, len(connections)) // имя пользователя подключения (fallback для creator)
 	for _, conn := range connections {
 		if conn.ConnectionType == models.WialonConnectionTypeHosting {
 			connType[conn.ID] = "wh"
@@ -303,6 +304,7 @@ func fetchWialonObjectsFast(companyID uint, search, active, source string) ([]Un
 			connType[conn.ID] = "wl"
 			connLabel[conn.ID] = "WL(" + conn.UserName + ")"
 		}
+		connOwner[conn.ID] = conn.UserName
 	}
 
 	// Собираем units из cache или live (через тот же путь, что /wialon/all-units)
@@ -407,6 +409,7 @@ func fetchWialonObjectsFast(companyID uint, search, active, source string) ([]Un
 			IMEI:                u.UniqueID,
 			IsActive:            true,
 			AccountName:         u.ConnectionName,
+			CreatorName:         connOwner[u.ConnectionID], // имя владельца подключения как fallback
 			DeviceTypeName:      u.HardwareTypeName,
 			PhoneNumbers:        phones,
 			CreatedAt:           createdAt,
