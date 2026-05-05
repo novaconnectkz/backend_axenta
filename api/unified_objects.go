@@ -404,11 +404,17 @@ func fetchWialonObjectsFast(companyID uint, search, active, source string) ([]Un
 
 		if pattern != "" {
 			idStr := strconv.FormatInt(u.ID, 10)
+			// Имена аккаунта-владельца (биллинг ресурс) и creator-юзера —
+			// нужны для cross-section поиска "объекты аккаунта X".
+			billingAccName := strings.ToLower(userIDToName[u.BillingAccountId])
+			crtName := strings.ToLower(userIDToName[u.CreatorId])
 			if !strings.Contains(strings.ToLower(u.Name), pattern) &&
 				!strings.Contains(strings.ToLower(u.UniqueID), pattern) &&
 				!strings.Contains(strings.ToLower(u.HardwareTypeName), pattern) &&
 				!strings.Contains(strings.ToLower(u.ConnectionName), pattern) &&
 				!strings.Contains(strings.ToLower(connOwner[u.ConnectionID]), pattern) &&
+				!strings.Contains(billingAccName, pattern) &&
+				!strings.Contains(crtName, pattern) &&
 				!strings.Contains(u.PhoneNumber, pattern) &&
 				!strings.Contains(u.PhoneNumber2, pattern) &&
 				!strings.Contains(idStr, pattern) {
