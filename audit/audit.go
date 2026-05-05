@@ -56,22 +56,22 @@ type Logger struct {
 	encoder     *json.Encoder
 	config      *Config
 
-	ch       chan *AuditEntry // буфер для async-записи
-	wg       sync.WaitGroup
-	closeMu  sync.Mutex
-	closed   bool
-	dropped  uint64 // счётчик потерянных записей при переполнении канала
+	ch      chan *AuditEntry // буфер для async-записи
+	wg      sync.WaitGroup
+	closeMu sync.Mutex
+	closed  bool
+	dropped uint64 // счётчик потерянных записей при переполнении канала
 }
 
 // Config конфигурация аудит-логгера
 type Config struct {
-	LogFilePath  string
-	LogToStdout  bool
-	LogToFile    bool
-	MaxFileSize  int64 // В байтах
-	MaxBackups   int
-	FlushPeriod  time.Duration
-	Enabled      bool
+	LogFilePath string
+	LogToStdout bool
+	LogToFile   bool
+	MaxFileSize int64 // В байтах
+	MaxBackups  int
+	FlushPeriod time.Duration
+	Enabled     bool
 }
 
 var (
@@ -516,4 +516,3 @@ func Middleware() gin.HandlerFunc {
 		}
 	}
 }
-

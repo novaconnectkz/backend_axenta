@@ -22,17 +22,17 @@ func NewAuditAPI(db *gorm.DB) *AuditAPI {
 
 // GetAuditLogsRequest запрос для получения аудит-логов
 type GetAuditLogsRequest struct {
-	Page       int       `form:"page" json:"page"`
-	PerPage    int       `form:"per_page" json:"per_page"`
-	UserID     string    `form:"user_id" json:"user_id"`
-	Action     string    `form:"action" json:"action"`
-	Level      string    `form:"level" json:"level"`
-	Success    *bool     `form:"success" json:"success"`
-	StartDate  time.Time `form:"start_date" json:"start_date"`
-	EndDate    time.Time `form:"end_date" json:"end_date"`
-	Search     string    `form:"search" json:"search"`
-	SortBy     string    `form:"sort_by" json:"sort_by"`
-	SortOrder  string    `form:"sort_order" json:"sort_order"`
+	Page      int       `form:"page" json:"page"`
+	PerPage   int       `form:"per_page" json:"per_page"`
+	UserID    string    `form:"user_id" json:"user_id"`
+	Action    string    `form:"action" json:"action"`
+	Level     string    `form:"level" json:"level"`
+	Success   *bool     `form:"success" json:"success"`
+	StartDate time.Time `form:"start_date" json:"start_date"`
+	EndDate   time.Time `form:"end_date" json:"end_date"`
+	Search    string    `form:"search" json:"search"`
+	SortBy    string    `form:"sort_by" json:"sort_by"`
+	SortOrder string    `form:"sort_order" json:"sort_order"`
 }
 
 // GetAuditLogs возвращает список аудит-логов с фильтрацией и пагинацией
@@ -327,8 +327,8 @@ func (api *AuditAPI) ExportAuditLogs(c *gin.Context) {
 	// Возвращаем как JSON для скачивания
 	c.Header("Content-Disposition", "attachment; filename=audit_logs_"+time.Now().Format("2006-01-02")+".json")
 	c.JSON(http.StatusOK, gin.H{
-		"status": "success",
-		"data":   logs,
+		"status":      "success",
+		"data":        logs,
 		"exported_at": time.Now(),
 	})
 }
@@ -343,4 +343,3 @@ func (api *AuditAPI) RegisterRoutes(r *gin.RouterGroup) {
 		audit.GET("/export", api.ExportAuditLogs)
 	}
 }
-

@@ -411,7 +411,7 @@ func DeleteRole(c *gin.Context) {
 	var deletedBy uint
 	var deletedByName string
 	var companyIDUint uint
-	
+
 	if userIDExists {
 		deletedBy = userID.(uint)
 		var user models.User
@@ -423,15 +423,15 @@ func DeleteRole(c *gin.Context) {
 			}
 		}
 	}
-	
+
 	if companyIDExists {
 		companyIDUint = companyID.(uint)
 	}
-	
+
 	// Формируем название и описание для корзины
 	entityName := role.Name
 	entityDescription := fmt.Sprintf("Описание: %s", role.Description)
-	
+
 	// Записываем в корзину
 	if err := RecordDeletion(
 		db,

@@ -13,7 +13,7 @@ import (
 func GetSwaggerUI(c *gin.Context) {
 	// Определяем какой файл показывать
 	specFile := c.DefaultQuery("spec", "billing")
-	
+
 	// Определяем URL для спецификации
 	var specURL string
 	switch specFile {
@@ -84,7 +84,7 @@ func GetSwaggerUI(c *gin.Context) {
 // GetOpenAPISpec возвращает основную OpenAPI спецификацию
 func GetOpenAPISpec(c *gin.Context) {
 	specPath := filepath.Join(".", "openapi.yaml")
-	
+
 	data, err := os.ReadFile(specPath)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
@@ -100,7 +100,7 @@ func GetOpenAPISpec(c *gin.Context) {
 // GetBillingOpenAPISpec возвращает биллинговую OpenAPI спецификацию
 func GetBillingOpenAPISpec(c *gin.Context) {
 	specPath := filepath.Join(".", "configs", "billing-openapi.yaml")
-	
+
 	data, err := os.ReadFile(specPath)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
@@ -121,23 +121,23 @@ func GetTelegramIntegrationDocs(c *gin.Context) {
 		filepath.Join("docs", "TELEGRAM_INTEGRATION.md"),
 		filepath.Join("backend_axenta", "docs", "TELEGRAM_INTEGRATION.md"),
 	}
-	
+
 	var data []byte
 	var err error
-	
+
 	for _, path := range possiblePaths {
 		data, err = os.ReadFile(path)
 		if err == nil {
 			break
 		}
 	}
-	
+
 	if err != nil {
 		// Логируем ошибку для отладки
 		c.JSON(http.StatusNotFound, gin.H{
-			"status": "error",
-			"error":  "Документация не найдена",
-			"details": "Проверенные пути: " + fmt.Sprintf("%v", possiblePaths),
+			"status":    "error",
+			"error":     "Документация не найдена",
+			"details":   "Проверенные пути: " + fmt.Sprintf("%v", possiblePaths),
 			"error_msg": err.Error(),
 		})
 		return
@@ -247,4 +247,3 @@ func GetTelegramIntegrationDocs(c *gin.Context) {
 
 	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(html))
 }
-

@@ -68,7 +68,7 @@ type NovaConnectIntegrationConfig struct {
 // SetupIntegration настраивает интеграцию с NovaConnect
 func (api *NovaConnectIntegrationAPI) SetupIntegration(c *gin.Context) {
 	companyID := middleware.GetCompanyID(c)
-	
+
 	// Проверяем, что компания определена (обязательно для безопасности)
 	if companyID == 0 {
 		log.Printf("❌ ОШИБКА БЕЗОПАСНОСТИ: GetCompanyID вернул 0 для запроса настройки NovaConnect интеграции")
@@ -172,7 +172,7 @@ func (api *NovaConnectIntegrationAPI) SetupIntegration(c *gin.Context) {
 // UpdateIntegration обновляет настройки интеграции с NovaConnect
 func (api *NovaConnectIntegrationAPI) UpdateIntegration(c *gin.Context) {
 	companyID := middleware.GetCompanyID(c)
-	
+
 	// Проверяем, что компания определена (обязательно для безопасности)
 	if companyID == 0 {
 		log.Printf("❌ ОШИБКА БЕЗОПАСНОСТИ: GetCompanyID вернул 0 для запроса обновления NovaConnect интеграции")
@@ -247,7 +247,7 @@ func (api *NovaConnectIntegrationAPI) UpdateIntegration(c *gin.Context) {
 // GetIntegrationConfig получает конфигурацию интеграции
 func (api *NovaConnectIntegrationAPI) GetIntegrationConfig(c *gin.Context) {
 	companyID := middleware.GetCompanyID(c)
-	
+
 	// Проверяем, что компания определена (обязательно для безопасности)
 	if companyID == 0 {
 		log.Printf("❌ ОШИБКА БЕЗОПАСНОСТИ: GetCompanyID вернул 0 для запроса конфигурации NovaConnect интеграции")
@@ -273,16 +273,16 @@ func (api *NovaConnectIntegrationAPI) GetIntegrationConfig(c *gin.Context) {
 
 	// Возвращаем конфигурацию с токеном (доступ только для авторизованных пользователей компании)
 	configResponse := map[string]interface{}{
-		"api_url":          config.APIURL,
-		"token":            config.Token, // Возвращаем токен для работы сервиса
-		"language":         config.Language,
-		"webhook_url":      config.WebhookURL,
-		"webhook_enabled":  config.WebhookEnabled,
-		"sync_interval":    config.SyncInterval,
+		"api_url":           config.APIURL,
+		"token":             config.Token, // Возвращаем токен для работы сервиса
+		"language":          config.Language,
+		"webhook_url":       config.WebhookURL,
+		"webhook_enabled":   config.WebhookEnabled,
+		"sync_interval":     config.SyncInterval,
 		"auto_sync_enabled": config.AutoSyncEnabled,
-		"enabled":          config.Enabled,
-		"has_token":        config.Token != "",
-		"is_active":        integration.IsActive,
+		"enabled":           config.Enabled,
+		"has_token":         config.Token != "",
+		"is_active":         integration.IsActive,
 	}
 
 	c.JSON(http.StatusOK, configResponse)
@@ -328,4 +328,3 @@ func (api *NovaConnectIntegrationAPI) TestConnection(c *gin.Context) {
 		"message": "Подключение к API NovaConnect успешно установлено",
 	})
 }
-

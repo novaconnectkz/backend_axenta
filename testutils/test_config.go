@@ -16,7 +16,7 @@ func SetupTestDBWithTempFile(t *testing.T) *gorm.DB {
 	// Создаем временный файл для тестовой БД
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
-	
+
 	// Настраиваем подключение к SQLite
 	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent), // Отключаем логи в тестах
@@ -42,9 +42,7 @@ func SetupTestConfig() {
 	os.Setenv("REDIS_ENABLED", "false")
 	os.Setenv("JWT_SECRET", "test-secret-key-for-testing-only")
 	os.Setenv("ENVIRONMENT", "test")
-	
+
 	// Загружаем конфигурацию
 	config.LoadConfig()
 }
-
-

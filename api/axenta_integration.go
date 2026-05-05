@@ -69,7 +69,7 @@ type AxentaSetupIntegrationRequest struct {
 // SetupIntegration настраивает интеграцию с Axenta Cloud
 func (api *AxentaIntegrationAPI) SetupIntegration(c *gin.Context) {
 	companyID := middleware.GetCompanyID(c)
-	
+
 	// Проверяем, что компания определена (обязательно для безопасности)
 	if companyID == 0 {
 		log.Printf("❌ ОШИБКА БЕЗОПАСНОСТИ: GetCompanyID вернул 0 для запроса настройки Axenta интеграции")
@@ -150,7 +150,7 @@ func (api *AxentaIntegrationAPI) SetupIntegration(c *gin.Context) {
 // UpdateIntegration обновляет настройки интеграции с Axenta Cloud
 func (api *AxentaIntegrationAPI) UpdateIntegration(c *gin.Context) {
 	companyID := middleware.GetCompanyID(c)
-	
+
 	// Проверяем, что компания определена (обязательно для безопасности)
 	if companyID == 0 {
 		log.Printf("❌ ОШИБКА БЕЗОПАСНОСТИ: GetCompanyID вернул 0 для запроса обновления Axenta интеграции")
@@ -205,7 +205,7 @@ func (api *AxentaIntegrationAPI) UpdateIntegration(c *gin.Context) {
 func (api *AxentaIntegrationAPI) GetIntegrationConfig(c *gin.Context) {
 	log.Printf("🚀 GetIntegrationConfig вызвана!")
 	companyID := middleware.GetCompanyID(c)
-	
+
 	// Проверяем, что компания определена (обязательно для безопасности)
 	if companyID == 0 {
 		log.Printf("❌ ОШИБКА БЕЗОПАСНОСТИ: GetCompanyID вернул 0 для запроса конфигурации Axenta интеграции")
@@ -250,7 +250,7 @@ func (api *AxentaIntegrationAPI) GetIntegrationConfig(c *gin.Context) {
 // DeleteIntegration удаляет интеграцию с Axenta Cloud
 func (api *AxentaIntegrationAPI) DeleteIntegration(c *gin.Context) {
 	companyID := middleware.GetCompanyID(c)
-	
+
 	// Проверяем, что компания определена (обязательно для безопасности)
 	if companyID == 0 {
 		log.Printf("❌ ОШИБКА БЕЗОПАСНОСТИ: GetCompanyID вернул 0 для запроса удаления Axenta интеграции")
@@ -269,7 +269,7 @@ func (api *AxentaIntegrationAPI) DeleteIntegration(c *gin.Context) {
 // TestConnection тестирует подключение к Axenta Cloud
 func (api *AxentaIntegrationAPI) TestConnection(c *gin.Context) {
 	companyID := middleware.GetCompanyID(c)
-	
+
 	// Проверяем, что компания определена (обязательно для безопасности)
 	if companyID == 0 {
 		log.Printf("❌ ОШИБКА БЕЗОПАСНОСТИ: GetCompanyID вернул 0 для запроса тестирования Axenta интеграции")
@@ -295,7 +295,7 @@ func (api *AxentaIntegrationAPI) TestConnection(c *gin.Context) {
 // SyncObjects синхронизирует объекты с Axenta Cloud
 func (api *AxentaIntegrationAPI) SyncObjects(c *gin.Context) {
 	companyID := middleware.GetCompanyID(c)
-	
+
 	// Проверяем, что компания определена (обязательно для безопасности)
 	if companyID == 0 {
 		log.Printf("❌ ОШИБКА БЕЗОПАСНОСТИ: GetCompanyID вернул 0 для запроса синхронизации Axenta")
@@ -319,7 +319,7 @@ func (api *AxentaIntegrationAPI) SyncObjects(c *gin.Context) {
 // ScheduleAutoSync планирует автоматическую синхронизацию
 func (api *AxentaIntegrationAPI) ScheduleAutoSync(c *gin.Context) {
 	companyID := middleware.GetCompanyID(c)
-	
+
 	// Проверяем, что компания определена (обязательно для безопасности)
 	if companyID == 0 {
 		log.Printf("❌ ОШИБКА БЕЗОПАСНОСТИ: GetCompanyID вернул 0 для запроса планирования синхронизации Axenta")
@@ -343,7 +343,7 @@ func (api *AxentaIntegrationAPI) ScheduleAutoSync(c *gin.Context) {
 // GetIntegrationErrors получает список ошибок интеграции
 func (api *AxentaIntegrationAPI) GetIntegrationErrors(c *gin.Context) {
 	companyID := middleware.GetCompanyID(c)
-	
+
 	// Проверяем, что компания определена (обязательно для безопасности)
 	if companyID == 0 {
 		log.Printf("❌ ОШИБКА БЕЗОПАСНОСТИ: GetCompanyID вернул 0 для запроса ошибок Axenta интеграции")
@@ -365,7 +365,7 @@ func (api *AxentaIntegrationAPI) GetIntegrationErrors(c *gin.Context) {
 // ResolveError отмечает ошибку как решенную
 func (api *AxentaIntegrationAPI) ResolveError(c *gin.Context) {
 	companyID := middleware.GetCompanyID(c)
-	
+
 	// Проверяем, что компания определена (обязательно для безопасности)
 	if companyID == 0 {
 		log.Printf("❌ ОШИБКА БЕЗОПАСНОСТИ: GetCompanyID вернул 0 для запроса решения ошибки Axenta интеграции")
@@ -390,7 +390,7 @@ func (api *AxentaIntegrationAPI) ResolveError(c *gin.Context) {
 // GetIntegrationStatus получает статус интеграции
 func (api *AxentaIntegrationAPI) GetIntegrationStatus(c *gin.Context) {
 	companyID := middleware.GetCompanyID(c)
-	
+
 	// Проверяем, что компания определена (обязательно для безопасности)
 	if companyID == 0 {
 		log.Printf("❌ ОШИБКА БЕЗОПАСНОСТИ: GetCompanyID вернул 0 для запроса статуса Axenta интеграции")

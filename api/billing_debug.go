@@ -120,14 +120,14 @@ func GetContractBillingAnalysis(c *gin.Context) {
 				"end_date":      contract.EndDate,
 			},
 			"statistics": gin.H{
-				"total_invoiced":   totalInvoiced,
-				"total_paid":       totalPaid,
+				"total_invoiced":    totalInvoiced,
+				"total_paid":        totalPaid,
 				"total_outstanding": totalOutstanding,
-				"invoices_count":   len(invoices),
-				"paid_invoices":    countByStatus(invoices, "paid"),
-				"unpaid_invoices":  countUnpaid(invoices),
+				"invoices_count":    len(invoices),
+				"paid_invoices":     countByStatus(invoices, "paid"),
+				"unpaid_invoices":   countUnpaid(invoices),
 			},
-			"invoices": formatInvoices(invoices),
+			"invoices":        formatInvoices(invoices),
 			"payment_history": formatBillingHistory(billingHistory),
 		},
 	}
@@ -167,14 +167,14 @@ func formatInvoices(invoices []models.Invoice) []gin.H {
 		totalAmount := parseDecimal(inv.TotalAmount)
 		paidAmount := parseDecimal(inv.PaidAmount)
 		result = append(result, gin.H{
-			"id":              inv.ID,
-			"number":          inv.Number,
-			"invoice_date":    inv.InvoiceDate,
-			"due_date":        inv.DueDate,
-			"total_amount":    totalAmount,
-			"paid_amount":     paidAmount,
-			"outstanding":     totalAmount - paidAmount,
-			"status":          inv.Status,
+			"id":                   inv.ID,
+			"number":               inv.Number,
+			"invoice_date":         inv.InvoiceDate,
+			"due_date":             inv.DueDate,
+			"total_amount":         totalAmount,
+			"paid_amount":          paidAmount,
+			"outstanding":          totalAmount - paidAmount,
+			"status":               inv.Status,
 			"billing_period_start": inv.BillingPeriodStart,
 			"billing_period_end":   inv.BillingPeriodEnd,
 		})
@@ -198,4 +198,3 @@ func formatBillingHistory(history []models.BillingHistory) []gin.H {
 	}
 	return result
 }
-

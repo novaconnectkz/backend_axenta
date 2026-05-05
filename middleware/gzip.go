@@ -65,4 +65,3 @@ func GzipMiddleware() gin.HandlerFunc {
 		c.Next()
 	}
 }
-

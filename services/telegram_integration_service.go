@@ -23,13 +23,13 @@ type TelegramIntegrationService struct {
 // TelegramIntegrationConfig конфигурация интеграции с Telegram
 type TelegramIntegrationConfig struct {
 	CompanyID            uint   `json:"company_id"`
-	BotToken             string `json:"bot_token"`              // Токен бота от BotFather
-	DefaultChatID        string `json:"default_chat_id"`         // ID чата по умолчанию (опционально)
-	ParseMode            string `json:"parse_mode"`              // HTML, Markdown, MarkdownV2
-	DisableNotifications bool   `json:"disable_notifications"`  // Отключить уведомления
-	QuietHoursStart      string `json:"quiet_hours_start"`       // Начало тихих часов (HH:mm)
-	QuietHoursEnd        string `json:"quiet_hours_end"`         // Конец тихих часов (HH:mm)
-	QuietHoursEnabled    bool   `json:"quiet_hours_enabled"`     // Включены ли тихие часы
+	BotToken             string `json:"bot_token"`             // Токен бота от BotFather
+	DefaultChatID        string `json:"default_chat_id"`       // ID чата по умолчанию (опционально)
+	ParseMode            string `json:"parse_mode"`            // HTML, Markdown, MarkdownV2
+	DisableNotifications bool   `json:"disable_notifications"` // Отключить уведомления
+	QuietHoursStart      string `json:"quiet_hours_start"`     // Начало тихих часов (HH:mm)
+	QuietHoursEnd        string `json:"quiet_hours_end"`       // Конец тихих часов (HH:mm)
+	QuietHoursEnabled    bool   `json:"quiet_hours_enabled"`   // Включены ли тихие часы
 }
 
 // TelegramMessage структура для отправки сообщения
@@ -93,7 +93,7 @@ func (s *TelegramIntegrationService) SaveConfig(ctx context.Context, config *Tel
 			Name:            "Telegram Bot",
 			Description:     "Интеграция с Telegram для отправки уведомлений пользователям",
 			Settings:        string(configJSON),
-			IsActive:         true,
+			IsActive:        true,
 			CreatedAt:       time.Now(),
 			UpdatedAt:       time.Now(),
 		}
@@ -226,7 +226,7 @@ func (s *TelegramIntegrationService) TestConnection(ctx context.Context, company
 	startTime := time.Now()
 	resp, err := client.Do(req)
 	duration := time.Since(startTime)
-	
+
 	if err != nil {
 		s.logger.Printf("Ошибка подключения к Telegram API (компания: %d, время: %v): %v", companyID, duration, err)
 		return fmt.Errorf("ошибка отправки запроса к Telegram API: %w. Возможно, api.telegram.org заблокирован или требуется VPN/прокси", err)
@@ -242,12 +242,12 @@ func (s *TelegramIntegrationService) TestConnection(ctx context.Context, company
 
 	if !apiResp.OK {
 		s.logger.Printf("Telegram API вернул ошибку (компания: %d): %s (код: %d)", companyID, apiResp.Description, apiResp.ErrorCode)
-		
+
 		// Специальное сообщение для ошибки 404
 		if apiResp.ErrorCode == 404 {
 			return fmt.Errorf("неверный токен бота. Проверьте:\n1. Токен скопирован полностью из @BotFather\n2. Нет лишних пробелов в начале/конце\n3. Бот не был удален в Telegram")
 		}
-		
+
 		return fmt.Errorf("ошибка Telegram API: %s (код: %d)", apiResp.Description, apiResp.ErrorCode)
 	}
 
@@ -315,4 +315,3 @@ func (s *TelegramIntegrationService) GetIntegrationStatus(ctx context.Context, c
 		"updated_at":    integration.UpdatedAt,
 	}, nil
 }
-

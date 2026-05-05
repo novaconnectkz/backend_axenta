@@ -399,7 +399,7 @@ func DeleteObject(c *gin.Context) {
 	var deletedBy uint
 	var deletedByName string
 	var companyIDUint uint
-	
+
 	if userIDExists {
 		deletedBy = userID.(uint)
 		var user models.User
@@ -411,11 +411,11 @@ func DeleteObject(c *gin.Context) {
 			}
 		}
 	}
-	
+
 	if companyIDExists {
 		companyIDUint = companyID.(uint)
 	}
-	
+
 	// Формируем название и описание для корзины
 	entityName := object.Name
 	entityDescription := fmt.Sprintf("Тип: %s", object.Type)
@@ -425,7 +425,7 @@ func DeleteObject(c *gin.Context) {
 	if object.Address != "" {
 		entityDescription += fmt.Sprintf(", Адрес: %s", object.Address)
 	}
-	
+
 	// Записываем в корзину
 	if err := RecordDeletion(
 		tenantDB,
@@ -1112,7 +1112,7 @@ func DeleteObjectTemplate(c *gin.Context) {
 	var deletedBy uint
 	var deletedByName string
 	var companyIDUint uint
-	
+
 	if userIDExists {
 		deletedBy = userID.(uint)
 		var user models.User
@@ -1124,15 +1124,15 @@ func DeleteObjectTemplate(c *gin.Context) {
 			}
 		}
 	}
-	
+
 	if companyIDExists {
 		companyIDUint = companyID.(uint)
 	}
-	
+
 	// Формируем название и описание для корзины
 	entityName := template.Name
 	entityDescription := fmt.Sprintf("Описание: %s, Категория: %s", template.Description, template.Category)
-	
+
 	// Записываем в корзину
 	if err := RecordDeletion(
 		tenantDB,

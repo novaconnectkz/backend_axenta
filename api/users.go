@@ -847,7 +847,7 @@ func DeleteUser(c *gin.Context) {
 	var deletedBy uint
 	var deletedByName string
 	var companyIDUint uint
-	
+
 	if userIDExists {
 		deletedBy = currentUserID.(uint)
 		var currentUser models.User
@@ -859,11 +859,11 @@ func DeleteUser(c *gin.Context) {
 			}
 		}
 	}
-	
+
 	if companyIDExists {
 		companyIDUint = companyID.(uint)
 	}
-	
+
 	// Формируем название и описание для корзины
 	entityName := user.Username
 	if user.FirstName != "" || user.LastName != "" {
@@ -873,7 +873,7 @@ func DeleteUser(c *gin.Context) {
 	if user.Phone != "" {
 		entityDescription += fmt.Sprintf(", Телефон: %s", user.Phone)
 	}
-	
+
 	// Записываем в корзину
 	if err := RecordDeletion(
 		db,

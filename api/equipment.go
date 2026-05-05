@@ -260,7 +260,7 @@ func (api *EquipmentAPI) DeleteEquipment(c *gin.Context) {
 	var deletedBy uint
 	var deletedByName string
 	var companyIDUint uint
-	
+
 	if userIDExists {
 		deletedBy = userID.(uint)
 		var user models.User
@@ -272,11 +272,11 @@ func (api *EquipmentAPI) DeleteEquipment(c *gin.Context) {
 			}
 		}
 	}
-	
+
 	if companyIDExists {
 		companyIDUint = companyID.(uint)
 	}
-	
+
 	// Формируем название и описание для корзины
 	entityName := fmt.Sprintf("%s %s", equipment.Brand, equipment.Model)
 	if entityName == " " {
@@ -286,7 +286,7 @@ func (api *EquipmentAPI) DeleteEquipment(c *gin.Context) {
 	if equipment.IMEI != "" {
 		entityDescription += fmt.Sprintf(", IMEI: %s", equipment.IMEI)
 	}
-	
+
 	// Записываем в корзину
 	if err := RecordDeletion(
 		api.DB,

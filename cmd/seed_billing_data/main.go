@@ -196,16 +196,15 @@ func main() {
 
 	log.Println("")
 	log.Println("🎉 Seed данные успешно созданы!")
-	
+
 	// Выводим статистику
 	var countryCount, taxRateCount, taxRuleCount int64
 	db.Model(&models.Country{}).Count(&countryCount)
 	db.Model(&models.TaxRate{}).Count(&taxRateCount)
 	db.Model(&models.TaxRule{}).Count(&taxRuleCount)
-	
+
 	log.Println("📊 Статистика:")
 	log.Printf("   Страны: %d", countryCount)
 	log.Printf("   Ставки НДС: %d", taxRateCount)
 	log.Printf("   Правила НДС: %d", taxRuleCount)
 }
-

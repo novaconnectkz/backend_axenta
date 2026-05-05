@@ -17,16 +17,16 @@ import (
 // =====================================================================
 
 type TodayInstallationItem struct {
-	ID          uint      `json:"id"`
-	ScheduledAt time.Time `json:"scheduled_at"`
-	TimeLabel   string    `json:"time_label"` // "09:00" — для UI
-	Status      string    `json:"status"`     // planned, in_progress, completed
-	Type        string    `json:"type"`
-	Address     string    `json:"address"`
-	InstallerID uint      `json:"installer_id"`
-	InstallerName string  `json:"installer_name"`
-	ObjectID    uint      `json:"object_id"`
-	ObjectName  string    `json:"object_name"`
+	ID            uint      `json:"id"`
+	ScheduledAt   time.Time `json:"scheduled_at"`
+	TimeLabel     string    `json:"time_label"` // "09:00" — для UI
+	Status        string    `json:"status"`     // planned, in_progress, completed
+	Type          string    `json:"type"`
+	Address       string    `json:"address"`
+	InstallerID   uint      `json:"installer_id"`
+	InstallerName string    `json:"installer_name"`
+	ObjectID      uint      `json:"object_id"`
+	ObjectName    string    `json:"object_name"`
 }
 
 // GetTodayInstallations возвращает монтажи на сегодня, отсортированные по
@@ -100,15 +100,15 @@ func installerDisplayName(i *models.Installer) string {
 // =====================================================================
 
 type RecentInvoiceItem struct {
-	ID            uint            `json:"id"`
-	Number        string          `json:"number"`
-	Status        string          `json:"status"`
-	TotalAmount   decimal.Decimal `json:"total_amount"`
-	PaidAmount    decimal.Decimal `json:"paid_amount"`
-	DueDate       time.Time       `json:"due_date"`
-	CreatedAt     time.Time       `json:"created_at"`
-	ClientName    string          `json:"client_name"` // best-effort из Contract
-	IsOverdue     bool            `json:"is_overdue"`
+	ID          uint            `json:"id"`
+	Number      string          `json:"number"`
+	Status      string          `json:"status"`
+	TotalAmount decimal.Decimal `json:"total_amount"`
+	PaidAmount  decimal.Decimal `json:"paid_amount"`
+	DueDate     time.Time       `json:"due_date"`
+	CreatedAt   time.Time       `json:"created_at"`
+	ClientName  string          `json:"client_name"` // best-effort из Contract
+	IsOverdue   bool            `json:"is_overdue"`
 }
 
 // GetRecentInvoices возвращает последние 10 счетов компании (по created_at DESC).

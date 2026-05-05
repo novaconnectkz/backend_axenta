@@ -111,4 +111,3 @@ func (api *IntegrationsAPI) GetIntegrations(c *gin.Context) {
 		"integrations": allIntegrations,
 	})
 }
-

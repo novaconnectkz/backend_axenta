@@ -29,10 +29,10 @@ type SystemSettings struct {
 	Theme      string `json:"theme" gorm:"type:varchar(10);default:'light'"` // light, dark, auto
 
 	// Настройки безопасности
-	SessionTimeout         int  `json:"session_timeout" gorm:"default:480"`          // в минутах
-	PasswordMinLength      int  `json:"password_min_length" gorm:"default:8"`        // минимальная длина пароля
+	SessionTimeout         int  `json:"session_timeout" gorm:"default:480"`           // в минутах
+	PasswordMinLength      int  `json:"password_min_length" gorm:"default:8"`         // минимальная длина пароля
 	PasswordRequireSpecial bool `json:"password_require_special" gorm:"default:true"` // требовать спецсимволы
-	MaxLoginAttempts       int  `json:"max_login_attempts" gorm:"default:5"`         // макс попыток входа
+	MaxLoginAttempts       int  `json:"max_login_attempts" gorm:"default:5"`          // макс попыток входа
 
 	// Настройки уведомлений
 	EmailNotificationsEnabled    bool `json:"email_notifications_enabled" gorm:"default:true"`
@@ -40,18 +40,17 @@ type SystemSettings struct {
 
 	// Налоговые настройки
 	VATRatePreset  string  `json:"vat_rate_preset" gorm:"type:varchar(20);default:'russia'"` // russia, kazakhstan, none, custom
-	VATRateCustom  float64 `json:"vat_rate_custom" gorm:"type:decimal(5,2);default:20.00"`      // своя ставка НДС
-	DefaultTaxRate float64 `json:"default_tax_rate" gorm:"type:decimal(5,2);default:20.00"`     // ставка НДС по умолчанию
+	VATRateCustom  float64 `json:"vat_rate_custom" gorm:"type:decimal(5,2);default:20.00"`   // своя ставка НДС
+	DefaultTaxRate float64 `json:"default_tax_rate" gorm:"type:decimal(5,2);default:20.00"`  // ставка НДС по умолчанию
 	TaxIncluded    bool    `json:"tax_included" gorm:"default:false"`                        // НДС включен в цену
 
 	// Настройки резервного копирования
-	BackupEnabled        bool   `json:"backup_enabled" gorm:"default:true"`
-	BackupSchedule       string `json:"backup_schedule" gorm:"type:varchar(50);default:'0 2 * * *'"` // cron expression
-	BackupRetentionDays  int    `json:"backup_retention_days" gorm:"default:30"`
+	BackupEnabled       bool   `json:"backup_enabled" gorm:"default:true"`
+	BackupSchedule      string `json:"backup_schedule" gorm:"type:varchar(50);default:'0 2 * * *'"` // cron expression
+	BackupRetentionDays int    `json:"backup_retention_days" gorm:"default:30"`
 }
 
 // TableName задает имя таблицы для модели SystemSettings
 func (SystemSettings) TableName() string {
 	return "system_settings"
 }
-

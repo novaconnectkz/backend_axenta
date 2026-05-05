@@ -440,7 +440,7 @@ type CreateReportTemplateRequest struct {
 func (ra *ReportsAPI) GetReportTemplates(c *gin.Context) {
 	companyID := getCompanyID(c)
 	userID := getUserID(c)
-	
+
 	fmt.Printf("GetReportTemplates: companyID=%d, userID=%d\n", companyID, userID)
 
 	// Используем tenant DB из контекста
@@ -515,13 +515,13 @@ func (ra *ReportsAPI) CreateReportTemplate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request data: " + err.Error()})
 		return
 	}
-	
+
 	// Логируем запрос для отладки
 	fmt.Printf("CreateReportTemplate: Name=%s, Type=%s, System=%s\n", req.Name, req.Type, req.System)
 
 	companyID := getCompanyID(c)
 	userID := getUserID(c)
-	
+
 	// Проверяем, что companyID и userID установлены
 	if companyID == 0 {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Company ID not found in context"})
@@ -531,7 +531,7 @@ func (ra *ReportsAPI) CreateReportTemplate(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User ID not found in context"})
 		return
 	}
-	
+
 	fmt.Printf("CreateReportTemplate: companyID=%d, userID=%d\n", companyID, userID)
 
 	// Используем tenant DB из контекста
@@ -595,7 +595,7 @@ func (ra *ReportsAPI) CreateReportTemplate(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to marshal config: " + err.Error()})
 		return
 	}
-	
+
 	parameters := req.Parameters
 	if parameters == nil {
 		parameters = make(map[string]interface{})
@@ -605,7 +605,7 @@ func (ra *ReportsAPI) CreateReportTemplate(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to marshal parameters: " + err.Error()})
 		return
 	}
-	
+
 	headers := req.Headers
 	if headers == nil {
 		headers = []string{}
@@ -615,7 +615,7 @@ func (ra *ReportsAPI) CreateReportTemplate(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to marshal headers: " + err.Error()})
 		return
 	}
-	
+
 	formatting := req.Formatting
 	if formatting == nil {
 		formatting = make(map[string]interface{})
@@ -646,7 +646,7 @@ func (ra *ReportsAPI) CreateReportTemplate(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create template: " + err.Error()})
 		return
 	}
-	
+
 	fmt.Printf("Template created successfully: ID=%d, Name=%s\n", template.ID, template.Name)
 
 	c.JSON(http.StatusCreated, template)

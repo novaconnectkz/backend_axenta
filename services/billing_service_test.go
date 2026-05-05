@@ -650,13 +650,13 @@ func TestBillingService_MinCommit(t *testing.T) {
 
 	// Создаем тарифный компонент с минимальной оплатой
 	tariffComponent := &models.TariffComponent{
-		TariffPlanID: tariffPlan.ID,
-		Type:         "recurring",
-		Name:         "Минимальная подписка",
-		Price:        decimal.NewFromFloat(1000.0), // Минимальная оплата
-		MinCommit:    decimal.NewFromFloat(1000.0),
+		TariffPlanID:  tariffPlan.ID,
+		Type:          "recurring",
+		Name:          "Минимальная подписка",
+		Price:         decimal.NewFromFloat(1000.0), // Минимальная оплата
+		MinCommit:     decimal.NewFromFloat(1000.0),
 		BillingPeriod: "monthly",
-		IsActive:     true,
+		IsActive:      true,
 	}
 	db.Create(tariffComponent)
 
@@ -780,13 +780,13 @@ func TestBillingService_MinCommit_NotApplied(t *testing.T) {
 	require.NoError(t, err)
 
 	tariffComponent := &models.TariffComponent{
-		TariffPlanID: tariffPlan.ID,
-		Type:         "recurring",
-		Name:         "Минимальная подписка",
-		Price:        decimal.NewFromFloat(1000.0),
-		MinCommit:    decimal.NewFromFloat(1000.0),
+		TariffPlanID:  tariffPlan.ID,
+		Type:          "recurring",
+		Name:          "Минимальная подписка",
+		Price:         decimal.NewFromFloat(1000.0),
+		MinCommit:     decimal.NewFromFloat(1000.0),
 		BillingPeriod: "monthly",
-		IsActive:     true,
+		IsActive:      true,
 	}
 	db.Create(tariffComponent)
 

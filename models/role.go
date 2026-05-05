@@ -132,4 +132,3 @@ type UserTemplate struct {
 func (UserTemplate) TableName() string {
 	return "user_templates"
 }
-

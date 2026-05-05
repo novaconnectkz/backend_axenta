@@ -15,7 +15,7 @@ import (
 func CreateMaterializedViews(db *gorm.DB) error {
 	// Путь к файлу миграции
 	migrationPath := filepath.Join("migrations", "0001_create_materialized_views.up.sql")
-	
+
 	// Проверяем существование файла
 	if _, err := os.Stat(migrationPath); os.IsNotExist(err) {
 		log.Printf("⚠️ Файл миграции не найден: %s", migrationPath)
@@ -47,13 +47,13 @@ func CreateMaterializedViews(db *gorm.DB) error {
 
 	// Разбиваем SQL на отдельные операторы
 	statements := splitSQLStatements(string(sqlContent))
-	
+
 	for _, stmt := range statements {
 		stmt = strings.TrimSpace(stmt)
 		if stmt == "" || strings.HasPrefix(stmt, "--") {
 			continue // Пропускаем пустые строки и комментарии
 		}
-		
+
 		if _, err := tx.Exec(stmt); err != nil {
 			return fmt.Errorf("ошибка выполнения SQL: %w\nSQL: %s", err, stmt[:min(100, len(stmt))])
 		}
@@ -168,4 +168,3 @@ func DropMaterializedViews(db *gorm.DB) error {
 	log.Println("✅ Материализованные представления удалены")
 	return nil
 }
-

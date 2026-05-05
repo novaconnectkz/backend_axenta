@@ -19,10 +19,10 @@ type DeletedItem struct {
 	EntityData string `json:"entity_data" gorm:"type:jsonb"`                      // Сохраненные данные удаленного элемента в JSON
 
 	// Информация об удалении
-	DeletedBy       uint      `json:"deleted_by" gorm:"not null;index"`         // ID пользователя, который удалил
-	DeletedByName   string    `json:"deleted_by_name" gorm:"type:varchar(200)"` // Имя пользователя, который удалил
+	DeletedBy       uint      `json:"deleted_by" gorm:"not null;index"`                                 // ID пользователя, который удалил
+	DeletedByName   string    `json:"deleted_by_name" gorm:"type:varchar(200)"`                         // Имя пользователя, который удалил
 	DeletedAtCustom time.Time `json:"deleted_at_custom" gorm:"not null;index;column:deleted_at_custom"` // Время удаления оригинального элемента
-	DeleteReason    string    `json:"delete_reason" gorm:"type:text"`           // Причина удаления (опционально)
+	DeleteReason    string    `json:"delete_reason" gorm:"type:text"`                                   // Причина удаления (опционально)
 
 	// Для мультитенантности
 	CompanyID uint `json:"company_id" gorm:"not null;index"`
@@ -33,10 +33,10 @@ type DeletedItem struct {
 	EntityPreview     string `json:"entity_preview" gorm:"type:text"`      // Краткое превью данных
 
 	// Статус восстановления
-	IsRestored    bool       `json:"is_restored" gorm:"default:false"`
-	RestoredAt    *time.Time `json:"restored_at"`
-	RestoredBy    *uint      `json:"restored_by" gorm:"index"`
-	RestoredByName string    `json:"restored_by_name" gorm:"type:varchar(200)"`
+	IsRestored     bool       `json:"is_restored" gorm:"default:false"`
+	RestoredAt     *time.Time `json:"restored_at"`
+	RestoredBy     *uint      `json:"restored_by" gorm:"index"`
+	RestoredByName string     `json:"restored_by_name" gorm:"type:varchar(200)"`
 
 	// Окончательное удаление
 	IsPermanentlyDeleted bool       `json:"is_permanently_deleted" gorm:"default:false"`
@@ -58,4 +58,3 @@ func (d *DeletedItem) CanBeRestored() bool {
 func (d *DeletedItem) CanBePermanentlyDeleted() bool {
 	return !d.IsPermanentlyDeleted
 }
-

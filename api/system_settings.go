@@ -206,7 +206,7 @@ func UpdateSystemSettings(c *gin.Context) {
 
 		// Обновляем default_tax_rate в самих настройках для консистентности
 		settings.DefaultTaxRate = taxRate
-		
+
 		// Сохраняем обновленный default_tax_rate обратно в system_settings
 		if err := db.Model(&settings).Update("default_tax_rate", taxRate).Error; err != nil {
 			fmt.Printf("⚠️ Ошибка обновления default_tax_rate в system_settings: %v\n", err)
@@ -246,4 +246,3 @@ func UpdateSystemSettings(c *gin.Context) {
 		"data":   settings,
 	})
 }
-

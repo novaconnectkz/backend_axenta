@@ -22,11 +22,11 @@ type MaxIntegrationService struct {
 
 // MaxIntegrationConfig конфигурация интеграции с MAX
 type MaxIntegrationConfig struct {
-	CompanyID   uint   `json:"company_id"`
-	BotToken    string `json:"bot_token"`    // Токен бота от @MasterBot в MAX
-	ParseMode   string `json:"parse_mode"`   // HTML или Markdown
-	WebhookURL  string `json:"webhook_url"`  // URL для webhook
-	UsePolling  bool   `json:"use_polling"`  // Использовать polling вместо webhook
+	CompanyID  uint   `json:"company_id"`
+	BotToken   string `json:"bot_token"`   // Токен бота от @MasterBot в MAX
+	ParseMode  string `json:"parse_mode"`  // HTML или Markdown
+	WebhookURL string `json:"webhook_url"` // URL для webhook
+	UsePolling bool   `json:"use_polling"` // Использовать polling вместо webhook
 }
 
 // MaxMessage структура для отправки сообщения через MAX
@@ -246,4 +246,3 @@ func (s *MaxIntegrationService) GetIntegrationStatus(ctx context.Context, compan
 		"updated_at":    integration.UpdatedAt,
 	}, nil
 }
-

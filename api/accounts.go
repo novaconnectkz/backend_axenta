@@ -556,7 +556,6 @@ func (h *AccountsHandler) MoveAccount(c *gin.Context) {
 	})
 }
 
-
 // tryServeAccountsFromSnapshot читает учётные записи из локального snapshot (axenta_account_snapshots).
 // Возвращает (response, true) если snapshot непуст и достаточно свежий, иначе (nil, false) — caller сделает fallback на Axenta proxy.
 //
@@ -740,9 +739,15 @@ func (h *AccountsHandler) GetAccountsStats(c *gin.Context) {
 	}
 	out := make(chan result, 4)
 	go func() { out <- result{"total", proxyAccountsCount(authHeader, c.GetHeader("X-Tenant-ID"), "")} }()
-	go func() { out <- result{"active", proxyAccountsCount(authHeader, c.GetHeader("X-Tenant-ID"), "is_active=true&active=true&status=active")} }()
-	go func() { out <- result{"clients", proxyAccountsCount(authHeader, c.GetHeader("X-Tenant-ID"), "type=client")} }()
-	go func() { out <- result{"partners", proxyAccountsCount(authHeader, c.GetHeader("X-Tenant-ID"), "type=partner")} }()
+	go func() {
+		out <- result{"active", proxyAccountsCount(authHeader, c.GetHeader("X-Tenant-ID"), "is_active=true&active=true&status=active")}
+	}()
+	go func() {
+		out <- result{"clients", proxyAccountsCount(authHeader, c.GetHeader("X-Tenant-ID"), "type=client")}
+	}()
+	go func() {
+		out <- result{"partners", proxyAccountsCount(authHeader, c.GetHeader("X-Tenant-ID"), "type=partner")}
+	}()
 
 	stats := gin.H{}
 	for i := 0; i < 4; i++ {

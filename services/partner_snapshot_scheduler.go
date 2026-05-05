@@ -771,8 +771,6 @@ func (s *PartnerSnapshotScheduler) getHostname() string {
 	return hostname
 }
 
-
-
 // getAnyActiveToken получает любой активный токен для доступа к Axenta API
 func (s *PartnerSnapshotScheduler) getAnyActiveToken(db *gorm.DB, companyID uint) (string, error) {
 	// ПРИОРИТЕТ 1: Пробуем токен из настроек снимков
@@ -877,7 +875,3 @@ func (s *PartnerSnapshotScheduler) RunManualSnapshotForPeriod(dateFrom time.Time
 
 	log.Printf("✅ Создание снимков за период завершено")
 }
-
-
-
-

@@ -27,12 +27,12 @@ type PartnerDailySnapshot struct {
 	PartnerCompanyID uint `json:"partner_company_id" gorm:"not null;index:idx_partner_snapshots_partner"`
 
 	// Тарифный план на момент снимка
-	TariffPlanID uint            `json:"tariff_plan_id" gorm:"not null"`
-	TariffPlan   BillingPlan     `json:"tariff_plan,omitempty" gorm:"foreignKey:TariffPlanID;references:ID;constraint:-"`
-	
+	TariffPlanID uint        `json:"tariff_plan_id" gorm:"not null"`
+	TariffPlan   BillingPlan `json:"tariff_plan,omitempty" gorm:"foreignKey:TariffPlanID;references:ID;constraint:-"`
+
 	// Месячная цена тарифа (сохраняем для истории)
 	MonthlyPrice decimal.Decimal `json:"monthly_price" gorm:"type:decimal(10,2);not null"`
-	
+
 	// Дневная цена = monthly_price / 30 (храним с высокой точностью для расчетов)
 	DailyPrice decimal.Decimal `json:"daily_price" gorm:"type:decimal(12,6);not null"`
 
@@ -42,15 +42,15 @@ type PartnerDailySnapshot struct {
 
 	// Скидки (используется только один тип: либо процент, либо фиксированная сумма)
 	DiscountType    string          `json:"discount_type" gorm:"type:varchar(20);default:'none'"` // none, manual, auto
-	DiscountPercent decimal.Decimal `json:"discount_percent" gorm:"type:decimal(5,2);default:0"` // Процент скидки (0-100)
-	DiscountFixed   decimal.Decimal `json:"discount_fixed" gorm:"type:decimal(12,2);default:0"`  // Фиксированная скидка в рублях
-	
+	DiscountPercent decimal.Decimal `json:"discount_percent" gorm:"type:decimal(5,2);default:0"`  // Процент скидки (0-100)
+	DiscountFixed   decimal.Decimal `json:"discount_fixed" gorm:"type:decimal(12,2);default:0"`   // Фиксированная скидка в рублях
+
 	// Стоимость до скидки = daily_price * active_objects_count
 	CostBeforeDiscount decimal.Decimal `json:"cost_before_discount" gorm:"type:decimal(12,4);not null;default:0"`
-	
+
 	// Сумма скидки
 	DiscountAmount decimal.Decimal `json:"discount_amount" gorm:"type:decimal(12,4);not null;default:0"`
-	
+
 	// Стоимость за день после применения скидки
 	DailyCost decimal.Decimal `json:"daily_cost" gorm:"type:decimal(12,4);not null"`
 
@@ -70,9 +70,9 @@ func (PartnerDailySnapshot) TableName() string {
 func (s *PartnerDailySnapshot) BeforeCreate(tx *gorm.DB) error {
 	// Для фиксированной скидки: применяем скидку к месячному тарифу, затем рассчитываем дневную цену
 	// Для процентной скидки: рассчитываем дневную цену из базового тарифа, затем применяем скидку к стоимости
-	
+
 	var effectiveDailyPrice decimal.Decimal
-	
+
 	if s.DiscountFixed.GreaterThan(decimal.Zero) {
 		// Фиксированная скидка применяется к МЕСЯЧНОМУ тарифу
 		effectiveMonthlyPrice := s.MonthlyPrice.Sub(s.DiscountFixed)
@@ -83,7 +83,7 @@ func (s *PartnerDailySnapshot) BeforeCreate(tx *gorm.DB) error {
 		// Рассчитываем эффективную дневную цену
 		effectiveDailyPrice = effectiveMonthlyPrice.Div(decimal.NewFromInt(30)).Round(4)
 		s.DailyPrice = effectiveDailyPrice
-		
+
 		// Стоимость = эффективная дневная цена * количество объектов
 		s.CostBeforeDiscount = s.MonthlyPrice.Div(decimal.NewFromInt(30)).Mul(decimal.NewFromInt(int64(s.ActiveObjectsCount))).Round(2)
 		s.DiscountAmount = s.DiscountFixed.Div(decimal.NewFromInt(30)).Mul(decimal.NewFromInt(int64(s.ActiveObjectsCount))).Round(2)
@@ -92,10 +92,10 @@ func (s *PartnerDailySnapshot) BeforeCreate(tx *gorm.DB) error {
 		// Базовая дневная цена (без скидки)
 		baseDailyPrice := s.MonthlyPrice.Div(decimal.NewFromInt(30)).Round(4)
 		s.DailyPrice = baseDailyPrice
-		
+
 		// Стоимость до скидки
 		s.CostBeforeDiscount = baseDailyPrice.Mul(decimal.NewFromInt(int64(s.ActiveObjectsCount))).Round(2)
-		
+
 		// Процентная скидка применяется к стоимости
 		if s.DiscountPercent.GreaterThan(decimal.Zero) {
 			discountMultiplier := s.DiscountPercent.Div(decimal.NewFromInt(100))
@@ -103,11 +103,10 @@ func (s *PartnerDailySnapshot) BeforeCreate(tx *gorm.DB) error {
 		} else {
 			s.DiscountAmount = decimal.Zero
 		}
-		
+
 		// Итоговая стоимость
 		s.DailyCost = s.CostBeforeDiscount.Sub(s.DiscountAmount).Round(2)
 	}
-	
+
 	return nil
 }
-

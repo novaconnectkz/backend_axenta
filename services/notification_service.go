@@ -533,4 +533,3 @@ func (s *NotificationService) GetNotificationStatistics(companyID uint) (map[str
 func (s *NotificationService) CreateDefaultTemplates(companyID uint) error {
 	return s.seedBuiltinTemplates(companyID)
 }
-

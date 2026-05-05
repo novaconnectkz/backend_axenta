@@ -36,14 +36,14 @@ type Invoice struct {
 
 	// Финансовая информация
 	SubtotalAmount decimal.Decimal `json:"subtotal_amount" gorm:"type:decimal(15,2);not null"`
-	TaxRate        decimal.Decimal `json:"tax_rate" gorm:"type:decimal(5,2);default:0.00"`     // НДС в процентах
-	TaxAmount      decimal.Decimal `json:"tax_amount" gorm:"type:decimal(15,2);default:0.00"`  // Сумма НДС
-	TotalAmount    decimal.Decimal `json:"total_amount" gorm:"type:decimal(15,2);not null"` // Итоговая сумма
+	TaxRate        decimal.Decimal `json:"tax_rate" gorm:"type:decimal(5,2);default:0.00"`    // НДС в процентах
+	TaxAmount      decimal.Decimal `json:"tax_amount" gorm:"type:decimal(15,2);default:0.00"` // Сумма НДС
+	TotalAmount    decimal.Decimal `json:"total_amount" gorm:"type:decimal(15,2);not null"`   // Итоговая сумма
 	Currency       string          `json:"currency" gorm:"default:'RUB';type:varchar(3)"`
 
 	// Статус счета
-	Status     string          `json:"status" gorm:"default:'draft';type:varchar(20)"`  // draft, sent, paid, overdue, cancelled
-	PaidAt     *time.Time      `json:"paid_at"`                                         // Дата оплаты
+	Status     string          `json:"status" gorm:"default:'draft';type:varchar(20)"`     // draft, sent, paid, overdue, cancelled
+	PaidAt     *time.Time      `json:"paid_at"`                                            // Дата оплаты
 	PaidAmount decimal.Decimal `json:"paid_amount" gorm:"type:decimal(15,2);default:0.00"` // Оплаченная сумма
 
 	// Дополнительная информация
@@ -51,12 +51,12 @@ type Invoice struct {
 	ExternalID string `json:"external_id" gorm:"type:varchar(100)"` // ID во внешних системах
 
 	// Настройки отправки счета клиенту
-	SendChannels      string     `json:"send_channels" gorm:"type:varchar(100)"` // Каналы отправки (email,telegram,max) через запятую
-	SendToEmail       string     `json:"send_to_email" gorm:"type:varchar(100)"` // Email для отправки
-	SendToTelegram    string     `json:"send_to_telegram" gorm:"type:varchar(50)"` // Telegram ID для отправки
-	SendToMax         string     `json:"send_to_max" gorm:"type:varchar(50)"`    // MAX ID для отправки
-	LastSentAt        *time.Time `json:"last_sent_at"`                           // Дата последней отправки
-	LastSentChannels  string     `json:"last_sent_channels" gorm:"type:varchar(100)"` // Каналы последней отправки
+	SendChannels     string     `json:"send_channels" gorm:"type:varchar(100)"`      // Каналы отправки (email,telegram,max) через запятую
+	SendToEmail      string     `json:"send_to_email" gorm:"type:varchar(100)"`      // Email для отправки
+	SendToTelegram   string     `json:"send_to_telegram" gorm:"type:varchar(50)"`    // Telegram ID для отправки
+	SendToMax        string     `json:"send_to_max" gorm:"type:varchar(50)"`         // MAX ID для отправки
+	LastSentAt       *time.Time `json:"last_sent_at"`                                // Дата последней отправки
+	LastSentChannels string     `json:"last_sent_channels" gorm:"type:varchar(100)"` // Каналы последней отправки
 
 	// Связанные позиции счета
 	Items []InvoiceItem `json:"items,omitempty" gorm:"foreignKey:InvoiceID;constraint:-"`
@@ -174,10 +174,10 @@ type BillingSettings struct {
 	InvoicePaymentTermDays int  `json:"invoice_payment_term_days" gorm:"default:14"` // Срок оплаты в днях
 
 	// Настройки налогов
-	DefaultTaxRate decimal.Decimal `json:"default_tax_rate" gorm:"type:decimal(5,2);default:20.00"` // НДС по умолчанию
-	TaxIncluded    bool            `json:"tax_included" gorm:"default:false"`                    // НДС включен в цену
+	DefaultTaxRate decimal.Decimal `json:"default_tax_rate" gorm:"type:decimal(5,2);default:20.00"`  // НДС по умолчанию
+	TaxIncluded    bool            `json:"tax_included" gorm:"default:false"`                        // НДС включен в цену
 	VATRatePreset  string          `json:"vat_rate_preset" gorm:"type:varchar(20);default:'russia'"` // Пресет ставки НДС: russia, kazakhstan, none, custom
-	VATRateCustom  decimal.Decimal `json:"vat_rate_custom" gorm:"type:decimal(5,2);default:20.00"` // Своя ставка НДС (используется при VATRatePreset = custom)
+	VATRateCustom  decimal.Decimal `json:"vat_rate_custom" gorm:"type:decimal(5,2);default:20.00"`   // Своя ставка НДС (используется при VATRatePreset = custom)
 
 	// Настройки уведомлений
 	NotifyBeforeInvoice int `json:"notify_before_invoice" gorm:"default:3"` // За сколько дней уведомлять о выставлении счета

@@ -53,7 +53,7 @@ func CustomCORS(config CustomCORSConfig) gin.HandlerFunc {
 		// Handle preflight requests
 		if c.Request.Method == "OPTIONS" {
 			log.Printf("🔍 CORS: Handling OPTIONS preflight - Origin: %s, Path: %s", origin, path)
-			
+
 			// Get requested headers from Access-Control-Request-Headers
 			requestedHeaders := c.Request.Header.Get("Access-Control-Request-Headers")
 

@@ -265,26 +265,26 @@ func (s *WialonAccountService) getCurrentPlanFallback(host, eid string, userID i
 
 // CreateAccountRequest — тело запроса на создание аккаунта в Wialon
 type CreateWialonAccountRequest struct {
-	Name         string `json:"name" binding:"required"`         // имя аккаунта (= имя ресурса)
-	Username     string `json:"username" binding:"required"`     // логин юзера (admin)
-	Password     string `json:"password" binding:"required,min=4"` // пароль
-	Email        string `json:"email" binding:"required,email"`  // email юзера
-	Type         string `json:"type" binding:"required,oneof=client partner"` // partner = dealer rights
-	BillingPlan  string `json:"billingPlan"`                     // имя тарифа из get_billing_plans (опц.: пусто для WL без билинга)
+	Name        string `json:"name" binding:"required"`                      // имя аккаунта (= имя ресурса)
+	Username    string `json:"username" binding:"required"`                  // логин юзера (admin)
+	Password    string `json:"password" binding:"required,min=4"`            // пароль
+	Email       string `json:"email" binding:"required,email"`               // email юзера
+	Type        string `json:"type" binding:"required,oneof=client partner"` // partner = dealer rights
+	BillingPlan string `json:"billingPlan"`                                  // имя тарифа из get_billing_plans (опц.: пусто для WL без билинга)
 }
 
 // CreateAccountResult — данные созданного аккаунта (для возврата фронту)
 type CreateWialonAccountResult struct {
-	UserID        int64  `json:"userId"`
-	ResourceID    int64  `json:"resourceId"`
-	Name          string `json:"name"`
-	Username      string `json:"username"`
-	Type          string `json:"type"`
-	BillingPlan   string `json:"billingPlan"`
-	DealerRights  bool   `json:"dealerRights"`
-	ConnectionID  uint   `json:"connectionId"`
-	SourceLabel   string `json:"sourceLabel"`
-	Hierarchy     string `json:"hierarchy"`
+	UserID       int64  `json:"userId"`
+	ResourceID   int64  `json:"resourceId"`
+	Name         string `json:"name"`
+	Username     string `json:"username"`
+	Type         string `json:"type"`
+	BillingPlan  string `json:"billingPlan"`
+	DealerRights bool   `json:"dealerRights"`
+	ConnectionID uint   `json:"connectionId"`
+	SourceLabel  string `json:"sourceLabel"`
+	Hierarchy    string `json:"hierarchy"`
 }
 
 // CreateAccount — создание Wialon-аккаунта. 5-step flow:
@@ -874,10 +874,10 @@ func (s *WialonAccountService) resolveResourceID(connectionID uint, userID int64
 
 	body, err := s.callRaw(conn.Host, loginResp.Eid, "core/search_items", map[string]interface{}{
 		"spec": map[string]interface{}{
-			"itemsType":    "avl_resource",
-			"propName":     "sys_user_creator",
+			"itemsType":     "avl_resource",
+			"propName":      "sys_user_creator",
 			"propValueMask": fmt.Sprintf("%d", userID),
-			"sortType":     "sys_name",
+			"sortType":      "sys_name",
 		},
 		"force": 1, "flags": 1, "from": 0, "to": 0,
 	})
@@ -991,7 +991,9 @@ func extractItemID(body []byte) (int64, error) {
 }
 
 // readAllBytes — обёртка для io.ReadAll. Lim=0 → без лимита.
-func readAllBytes(r interface{ Read(p []byte) (n int, err error) }, lim int) ([]byte, error) {
+func readAllBytes(r interface {
+	Read(p []byte) (n int, err error)
+}, lim int) ([]byte, error) {
 	buf := make([]byte, 0, 4096)
 	tmp := make([]byte, 4096)
 	for {

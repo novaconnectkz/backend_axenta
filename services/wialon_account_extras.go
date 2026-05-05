@@ -19,8 +19,8 @@ import (
 
 type WialonServiceItem struct {
 	Name     string `json:"name"`
-	Type     int    `json:"type"`     // 1 = по требованию, 2 = периодическая
-	Usage    int    `json:"usage"`    // текущее использование
+	Type     int    `json:"type"`  // 1 = по требованию, 2 = периодическая
+	Usage    int    `json:"usage"` // текущее использование
 	MaxUsage int    `json:"max_usage"`
 	Cost     string `json:"cost"`     // costTable string
 	Interval int    `json:"interval"` // 0 нет, 1 час, 2 день, 3 нед, 4 мес
@@ -196,10 +196,10 @@ func (s *WialonAccountService) resolveUserNames(host, eid string, ids []int64) m
 	out := map[int64]string{}
 	body, err := s.callRaw(host, eid, "core/search_items", map[string]interface{}{
 		"spec": map[string]interface{}{
-			"itemsType":    "user",
-			"propName":     "sys_id",
+			"itemsType":     "user",
+			"propName":      "sys_id",
 			"propValueMask": "*",
-			"sortType":     "sys_id",
+			"sortType":      "sys_id",
 		},
 		"force": 1, "flags": 1, "from": 0, "to": 0,
 	})
@@ -286,9 +286,9 @@ func (s *WialonAccountService) GetAccountCustomFields(connectionID uint, userID 
 	var resp struct {
 		Item struct {
 			Flds map[string]struct {
-				ID   int64  `json:"id"`
-				N    string `json:"n"`
-				V    string `json:"v"`
+				ID int64  `json:"id"`
+				N  string `json:"n"`
+				V  string `json:"v"`
 			} `json:"flds"`
 		} `json:"item"`
 	}

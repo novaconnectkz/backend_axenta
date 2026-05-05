@@ -143,7 +143,7 @@ func (am *AuthMiddleware) RequireAuth() gin.HandlerFunc {
 		} else {
 			fmt.Printf("⚠️ AuthMiddleware: поле 'id' не найдено в объекте user. Доступные ключи: %v\n", getMapKeys(user))
 		}
-		
+
 		if userID > 0 {
 			c.Set("user_id", userID)
 			fmt.Printf("✅ AuthMiddleware: user_id установлен в контекст: %d\n", userID)

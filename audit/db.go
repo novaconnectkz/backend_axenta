@@ -10,28 +10,28 @@ import (
 
 // AuditLog модель для хранения аудит-логов в базе данных
 type AuditLog struct {
-	ID         uint           `gorm:"primaryKey" json:"id"`
-	Timestamp  time.Time      `gorm:"index;not null" json:"timestamp"`
-	UserID     string         `gorm:"index;size:50" json:"user_id"`
-	Username   string         `gorm:"size:255" json:"username"`
-	Role       string         `gorm:"size:100" json:"role"`
-	TenantID   string         `gorm:"index;size:50" json:"tenant_id"`
-	IP         string         `gorm:"size:45" json:"ip"`
-	UserAgent  string         `gorm:"size:512" json:"user_agent"`
-	Action     string         `gorm:"index;size:255;not null" json:"action"`
-	Resource   string         `gorm:"size:255" json:"resource"`
-	Method     string         `gorm:"size:10" json:"method"`
-	Path       string         `gorm:"size:512" json:"path"`
-	StatusCode int            `json:"status_code"`
-	Details    string         `gorm:"type:jsonb" json:"-"` // Храним как JSONB в PostgreSQL
+	ID         uint                   `gorm:"primaryKey" json:"id"`
+	Timestamp  time.Time              `gorm:"index;not null" json:"timestamp"`
+	UserID     string                 `gorm:"index;size:50" json:"user_id"`
+	Username   string                 `gorm:"size:255" json:"username"`
+	Role       string                 `gorm:"size:100" json:"role"`
+	TenantID   string                 `gorm:"index;size:50" json:"tenant_id"`
+	IP         string                 `gorm:"size:45" json:"ip"`
+	UserAgent  string                 `gorm:"size:512" json:"user_agent"`
+	Action     string                 `gorm:"index;size:255;not null" json:"action"`
+	Resource   string                 `gorm:"size:255" json:"resource"`
+	Method     string                 `gorm:"size:10" json:"method"`
+	Path       string                 `gorm:"size:512" json:"path"`
+	StatusCode int                    `json:"status_code"`
+	Details    string                 `gorm:"type:jsonb" json:"-"` // Храним как JSONB в PostgreSQL
 	DetailsMap map[string]interface{} `gorm:"-" json:"details,omitempty"`
-	Success    bool           `gorm:"index" json:"success"`
-	Level      string         `gorm:"size:20;index" json:"level"`
-	Error      string         `gorm:"type:text" json:"error,omitempty"`
-	Duration   int64          `json:"duration_ms"`
-	CreatedAt  time.Time      `json:"created_at"`
-	UpdatedAt  time.Time      `json:"updated_at"`
-	DeletedAt  gorm.DeletedAt `gorm:"index" json:"-"`
+	Success    bool                   `gorm:"index" json:"success"`
+	Level      string                 `gorm:"size:20;index" json:"level"`
+	Error      string                 `gorm:"type:text" json:"error,omitempty"`
+	Duration   int64                  `json:"duration_ms"`
+	CreatedAt  time.Time              `json:"created_at"`
+	UpdatedAt  time.Time              `json:"updated_at"`
+	DeletedAt  gorm.DeletedAt         `gorm:"index" json:"-"`
 }
 
 // TableName указывает имя таблицы для модели
@@ -135,4 +135,3 @@ func (l *DBLogger) Log(entry *AuditEntry) {
 func SetGlobalDBLogger(logger *DBLogger) {
 	globalLogger = logger.Logger
 }
-

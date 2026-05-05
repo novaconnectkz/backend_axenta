@@ -30,14 +30,14 @@ func GetTelegramService() *services.TelegramIntegrationService {
 
 // TelegramIntegrationAPI API для работы с интеграцией Telegram
 type TelegramIntegrationAPI struct {
-	db                        *gorm.DB
+	db                         *gorm.DB
 	telegramIntegrationService *services.TelegramIntegrationService
 }
 
 // NewTelegramIntegrationAPI создает новый API для интеграции с Telegram
 func NewTelegramIntegrationAPI() *TelegramIntegrationAPI {
 	return &TelegramIntegrationAPI{
-		db:                        database.DB,
+		db:                         database.DB,
 		telegramIntegrationService: telegramIntegrationService,
 	}
 }
@@ -67,10 +67,10 @@ func (api *TelegramIntegrationAPI) RegisterRoutes(r *gin.RouterGroup) {
 type TelegramSetupIntegrationRequest struct {
 	BotToken             string `json:"bot_token" binding:"required"`
 	DefaultChatID        string `json:"default_chat_id"`
-	ParseMode            string `json:"parse_mode"`              // HTML, Markdown, MarkdownV2
+	ParseMode            string `json:"parse_mode"` // HTML, Markdown, MarkdownV2
 	DisableNotifications bool   `json:"disable_notifications"`
-	QuietHoursStart      string `json:"quiet_hours_start"`       // HH:mm
-	QuietHoursEnd        string `json:"quiet_hours_end"`         // HH:mm
+	QuietHoursStart      string `json:"quiet_hours_start"` // HH:mm
+	QuietHoursEnd        string `json:"quiet_hours_end"`   // HH:mm
 	QuietHoursEnabled    bool   `json:"quiet_hours_enabled"`
 }
 
@@ -221,8 +221,8 @@ type SendMessageRequest struct {
 	ChatID                string                 `json:"chat_id"`
 	Text                  string                 `json:"text" binding:"required"`
 	ParseMode             string                 `json:"parse_mode"`
-	DisableNotification  bool                  `json:"disable_notification"`
-	DisableWebPagePreview bool                  `json:"disable_web_page_preview"`
+	DisableNotification   bool                   `json:"disable_notification"`
+	DisableWebPagePreview bool                   `json:"disable_web_page_preview"`
 	Options               map[string]interface{} `json:"options"`
 }
 
@@ -282,4 +282,3 @@ func (api *TelegramIntegrationAPI) GetIntegrationStatus(c *gin.Context) {
 
 	c.JSON(http.StatusOK, status)
 }
-

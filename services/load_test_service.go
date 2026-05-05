@@ -14,31 +14,31 @@ import (
 
 // LoadTestConfig конфигурация нагрузочного тестирования
 type LoadTestConfig struct {
-	ConcurrentUsers  int           `json:"concurrent_users"`
-	DurationSeconds  int           `json:"duration_seconds"`
-	RampUpSeconds    int           `json:"ramp_up_seconds"`
-	Endpoints        []string      `json:"endpoints"`
-	RequestsPerUser  int           `json:"requests_per_user"`
-	ThinkTimeMs      int           `json:"think_time_ms"`
-	Timeout          time.Duration `json:"timeout"`
+	ConcurrentUsers int           `json:"concurrent_users"`
+	DurationSeconds int           `json:"duration_seconds"`
+	RampUpSeconds   int           `json:"ramp_up_seconds"`
+	Endpoints       []string      `json:"endpoints"`
+	RequestsPerUser int           `json:"requests_per_user"`
+	ThinkTimeMs     int           `json:"think_time_ms"`
+	Timeout         time.Duration `json:"timeout"`
 }
 
 // LoadTestResult результат нагрузочного тестирования
 type LoadTestResult struct {
-	Config                LoadTestConfig                    `json:"config"`
-	StartTime             time.Time                         `json:"start_time"`
-	EndTime               time.Time                         `json:"end_time"`
-	TotalRequests         int64                             `json:"total_requests"`
-	SuccessfulRequests    int64                             `json:"successful_requests"`
-	FailedRequests        int64                             `json:"failed_requests"`
-	AverageResponseTime   float64                           `json:"average_response_time"`
-	MaxResponseTime       float64                           `json:"max_response_time"`
-	MinResponseTime       float64                           `json:"min_response_time"`
-	RequestsPerSecond     float64                           `json:"requests_per_second"`
-	ErrorRate             float64                           `json:"error_rate"`
-	ResultsByEndpoint     map[string]*EndpointResult        `json:"results_by_endpoint"`
-	ResponseTimeHistogram map[string]int64                  `json:"response_time_histogram"`
-	ErrorsByType          map[string]int64                  `json:"errors_by_type"`
+	Config                LoadTestConfig             `json:"config"`
+	StartTime             time.Time                  `json:"start_time"`
+	EndTime               time.Time                  `json:"end_time"`
+	TotalRequests         int64                      `json:"total_requests"`
+	SuccessfulRequests    int64                      `json:"successful_requests"`
+	FailedRequests        int64                      `json:"failed_requests"`
+	AverageResponseTime   float64                    `json:"average_response_time"`
+	MaxResponseTime       float64                    `json:"max_response_time"`
+	MinResponseTime       float64                    `json:"min_response_time"`
+	RequestsPerSecond     float64                    `json:"requests_per_second"`
+	ErrorRate             float64                    `json:"error_rate"`
+	ResultsByEndpoint     map[string]*EndpointResult `json:"results_by_endpoint"`
+	ResponseTimeHistogram map[string]int64           `json:"response_time_histogram"`
+	ErrorsByType          map[string]int64           `json:"errors_by_type"`
 }
 
 // EndpointResult результат для конкретного endpoint
@@ -82,7 +82,7 @@ type RequestMetrics struct {
 // RunLoadTest выполняет нагрузочное тестирование
 func (lts *LoadTestService) RunLoadTest(ctx context.Context, config LoadTestConfig) (*LoadTestResult, error) {
 	if lts.logger != nil {
-		lts.logger.Printf("Starting load test with %d concurrent users for %d seconds", 
+		lts.logger.Printf("Starting load test with %d concurrent users for %d seconds",
 			config.ConcurrentUsers, config.DurationSeconds)
 	}
 
@@ -112,7 +112,7 @@ func (lts *LoadTestService) RunLoadTest(ctx context.Context, config LoadTestConf
 
 	// Канал для сбора метрик
 	metricsChan := make(chan RequestMetrics, config.ConcurrentUsers*100)
-	
+
 	// Контекст с таймаутом
 	testCtx, cancel := context.WithTimeout(ctx, time.Duration(config.DurationSeconds)*time.Second)
 	defer cancel()
@@ -125,10 +125,10 @@ func (lts *LoadTestService) RunLoadTest(ctx context.Context, config LoadTestConf
 		wg.Add(1)
 		go func(userID int) {
 			defer wg.Done()
-			
+
 			// Постепенное увеличение нагрузки
 			time.Sleep(time.Duration(userID) * userStartInterval)
-			
+
 			lts.simulateUser(testCtx, userID, config, metricsChan)
 		}(i)
 	}
@@ -156,7 +156,7 @@ func (lts *LoadTestService) RunLoadTest(ctx context.Context, config LoadTestConf
 // simulateUser симулирует поведение одного пользователя
 func (lts *LoadTestService) simulateUser(ctx context.Context, userID int, config LoadTestConfig, metricsChan chan<- RequestMetrics) {
 	thinkTime := time.Duration(config.ThinkTimeMs) * time.Millisecond
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -164,16 +164,16 @@ func (lts *LoadTestService) simulateUser(ctx context.Context, userID int, config
 		default:
 			// Выбираем случайный endpoint
 			endpoint := config.Endpoints[userID%len(config.Endpoints)]
-			
+
 			// Выполняем запрос
 			metrics := lts.makeRequest(endpoint)
-			
+
 			select {
 			case metricsChan <- metrics:
 			case <-ctx.Done():
 				return
 			}
-			
+
 			// Пауза между запросами
 			if thinkTime > 0 {
 				select {
@@ -189,7 +189,7 @@ func (lts *LoadTestService) simulateUser(ctx context.Context, userID int, config
 // makeRequest выполняет HTTP запрос и возвращает метрики
 func (lts *LoadTestService) makeRequest(endpoint string) RequestMetrics {
 	start := time.Now()
-	
+
 	url := lts.baseURL + endpoint
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -207,7 +207,7 @@ func (lts *LoadTestService) makeRequest(endpoint string) RequestMetrics {
 
 	resp, err := lts.httpClient.Do(req)
 	responseTime := time.Since(start)
-	
+
 	if err != nil {
 		return RequestMetrics{
 			Endpoint:     endpoint,
@@ -239,17 +239,17 @@ func (lts *LoadTestService) makeRequest(endpoint string) RequestMetrics {
 // processMetrics обрабатывает метрики запросов
 func (lts *LoadTestService) processMetrics(metricsChan <-chan RequestMetrics, result *LoadTestResult) {
 	var totalResponseTime float64
-	
+
 	for metrics := range metricsChan {
 		atomic.AddInt64(&result.TotalRequests, 1)
-		
+
 		responseTimeMs := float64(metrics.ResponseTime.Nanoseconds()) / 1e6
 		totalResponseTime += responseTimeMs
-		
+
 		// Обновляем статистику по endpoint
 		endpointResult := result.ResultsByEndpoint[metrics.Endpoint]
 		endpointResult.Requests++
-		
+
 		if metrics.Success {
 			atomic.AddInt64(&result.SuccessfulRequests, 1)
 			endpointResult.SuccessfulRequests++
@@ -258,7 +258,7 @@ func (lts *LoadTestService) processMetrics(metricsChan <-chan RequestMetrics, re
 			endpointResult.FailedRequests++
 			result.ErrorsByType[metrics.ErrorType]++
 		}
-		
+
 		// Обновляем времена ответа
 		if responseTimeMs > result.MaxResponseTime {
 			result.MaxResponseTime = responseTimeMs
@@ -266,18 +266,18 @@ func (lts *LoadTestService) processMetrics(metricsChan <-chan RequestMetrics, re
 		if responseTimeMs < result.MinResponseTime || result.MinResponseTime == 0 {
 			result.MinResponseTime = responseTimeMs
 		}
-		
+
 		if responseTimeMs > endpointResult.MaxResponseTime {
 			endpointResult.MaxResponseTime = responseTimeMs
 		}
 		if responseTimeMs < endpointResult.MinResponseTime {
 			endpointResult.MinResponseTime = responseTimeMs
 		}
-		
+
 		// Гистограмма времени ответа
 		lts.updateResponseTimeHistogram(result, responseTimeMs)
 	}
-	
+
 	if result.TotalRequests > 0 {
 		result.AverageResponseTime = totalResponseTime / float64(result.TotalRequests)
 	}
@@ -306,21 +306,21 @@ func (lts *LoadTestService) updateResponseTimeHistogram(result *LoadTestResult, 
 // calculateFinalStats вычисляет финальную статистику
 func (lts *LoadTestService) calculateFinalStats(result *LoadTestResult) {
 	duration := result.EndTime.Sub(result.StartTime).Seconds()
-	
+
 	if duration > 0 {
 		result.RequestsPerSecond = float64(result.TotalRequests) / duration
 	}
-	
+
 	if result.TotalRequests > 0 {
 		result.ErrorRate = float64(result.FailedRequests) / float64(result.TotalRequests) * 100
 	}
-	
+
 	// Вычисляем статистику для каждого endpoint
 	for _, endpointResult := range result.ResultsByEndpoint {
 		if endpointResult.Requests > 0 {
 			endpointResult.ErrorRate = float64(endpointResult.FailedRequests) / float64(endpointResult.Requests) * 100
 		}
-		
+
 		// Средние времена ответа нужно пересчитать на основе всех запросов
 		// Для простоты используем общее среднее время
 		endpointResult.AverageResponseTime = result.AverageResponseTime

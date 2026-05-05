@@ -30,14 +30,14 @@ func GetMaxService() *services.MaxIntegrationService {
 
 // MaxIntegrationAPI API для работы с интеграцией MAX
 type MaxIntegrationAPI struct {
-	db                   *gorm.DB
+	db                    *gorm.DB
 	maxIntegrationService *services.MaxIntegrationService
 }
 
 // NewMaxIntegrationAPI создает новый API для интеграции с MAX
 func NewMaxIntegrationAPI() *MaxIntegrationAPI {
 	return &MaxIntegrationAPI{
-		db:                   database.DB,
+		db:                    database.DB,
 		maxIntegrationService: maxIntegrationService,
 	}
 }
@@ -263,4 +263,3 @@ func (api *MaxIntegrationAPI) GetIntegrationStatus(c *gin.Context) {
 
 	c.JSON(http.StatusOK, status)
 }
-

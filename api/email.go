@@ -27,7 +27,7 @@ func SetupEmailIntegration(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// КРИТИЧНО: Получаем company_id из контекста через middleware
 	companyID := middleware.GetCompanyID(c)
 	if companyID == 0 {
@@ -70,13 +70,13 @@ func SetupEmailIntegration(c *gin.Context) {
 	settings.SMTPHost = req.SMTPHost
 	settings.SMTPPort = req.SMTPPort
 	settings.SMTPUsername = req.SMTPUsername
-	
+
 	// Обновляем пароль только если он не замаскирован (не состоит только из звездочек)
 	if req.SMTPPassword != "" && req.SMTPPassword != "*********************" && req.SMTPPassword != "******" {
 		settings.SMTPPassword = req.SMTPPassword
 	}
 	// Если пароль замаскирован, оставляем существующий
-	
+
 	settings.SMTPFromEmail = req.SMTPFromEmail
 	settings.SMTPFromName = req.SMTPFromName
 	if req.SMTPFromName == "" {
@@ -126,7 +126,7 @@ func GetEmailConfig(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// КРИТИЧНО: Получаем company_id из контекста через middleware
 	companyID := middleware.GetCompanyID(c)
 	if companyID == 0 {
@@ -150,7 +150,7 @@ func GetEmailConfig(c *gin.Context) {
 
 	// Проверяем параметр show_password для отображения реального пароля
 	showPassword := c.Query("show_password") == "true"
-	
+
 	password := settings.SMTPPassword
 	if !showPassword && password != "" {
 		// Скрываем пароль в ответе по умолчанию
@@ -176,7 +176,7 @@ func GetEmailConfig(c *gin.Context) {
 // TestEmailConnection тестирует подключение к SMTP серверу (POST /api/email/test-connection)
 func TestEmailConnection(c *gin.Context) {
 	log.Printf("🔔 TestEmailConnection вызвана! Path: %s, Method: %s", c.Request.URL.Path, c.Request.Method)
-	
+
 	// Получаем данные пользователя из контекста
 	log.Printf("📥 Получаем user из контекста...")
 	userInterface, exists := c.Get("user")
@@ -189,7 +189,7 @@ func TestEmailConnection(c *gin.Context) {
 		return
 	}
 	log.Printf("✅ User найден в контексте")
-	
+
 	userData, ok := userInterface.(map[string]interface{})
 	if !ok {
 		log.Printf("❌ Не удалось преобразовать user к map[string]interface{}")
@@ -200,7 +200,7 @@ func TestEmailConnection(c *gin.Context) {
 		return
 	}
 	log.Printf("✅ User data преобразован успешно")
-	
+
 	// КРИТИЧНО: Получаем company_id из контекста через middleware
 	companyID := middleware.GetCompanyID(c)
 	log.Printf("✅ Company ID получен: %d", companyID)
@@ -212,7 +212,7 @@ func TestEmailConnection(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// Получаем настройки Email
 	log.Printf("📥 Запрашиваем настройки Email для company_id=%d", companyID)
 	var settings models.NotificationSettings
@@ -240,7 +240,7 @@ func TestEmailConnection(c *gin.Context) {
 	if testEmail == "" {
 		testEmail = settings.SMTPFromEmail
 	}
-	
+
 	// Получаем имя пользователя для приветствия (необязательно)
 	userName, _ := userData["username"].(string)
 	if userName == "" {
@@ -259,7 +259,7 @@ func TestEmailConnection(c *gin.Context) {
 	}
 	to := []string{testEmail}
 	subject := "Тест Email SMTP - Axenta CRM"
-	
+
 	// Формируем HTML письмо
 	htmlBody := fmt.Sprintf(`<!DOCTYPE html>
 <html>
@@ -309,7 +309,7 @@ func TestEmailConnection(c *gin.Context) {
 
 	// Отправляем тестовое письмо
 	log.Printf("📤 Отправляем тестовое письмо на %s через %s (TLS: %t)", testEmail, addr, settings.SMTPUseTLS)
-	
+
 	var err error
 	if settings.SMTPPort == 465 && settings.SMTPUseTLS {
 		// Для порта 465 используем прямое SSL/TLS соединение
@@ -318,7 +318,7 @@ func TestEmailConnection(c *gin.Context) {
 		// Для других портов используем стандартный STARTTLS
 		err = smtp.SendMail(addr, auth, from, to, msg)
 	}
-	
+
 	if err != nil {
 		log.Printf("❌ Ошибка отправки: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -426,4 +426,3 @@ func GetEmailIntegrationDocs(c *gin.Context) {
 	c.Header("Content-Disposition", "inline; filename=EMAIL_INTEGRATION.md")
 	_, _ = io.Copy(c.Writer, file) // Ошибка игнорируется, HTTP ответ уже инициирован
 }
-

@@ -853,7 +853,7 @@ func CreateCmsUserWithCurrentToken(c *gin.Context) {
 
 	// Получаем account_id из токена для фильтрации
 	accountID := getAccountIDFromToken(requestToken)
-	
+
 	// Создаем сервис для работы с токенами пользователей
 	userTokenService := services.NewUserTokenService(db)
 

@@ -158,10 +158,10 @@ func getAllAxentaUsers(token string) ([]AxentaUserFromAPI, error) {
 		}
 		defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("axenta API returned status %d: %s", resp.StatusCode, string(body))
-	}
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			return nil, fmt.Errorf("axenta API returned status %d: %s", resp.StatusCode, string(body))
+		}
 
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {

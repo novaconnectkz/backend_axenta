@@ -91,11 +91,11 @@ type NotificationSettings struct {
 	EmailEnabled  bool   `json:"email_enabled" gorm:"default:false"` // Включен ли Email
 
 	// MAX настройки (российский мессенджер)
-	MaxBotToken    string `json:"max_bot_token" gorm:"type:varchar(500)"` // Токен бота MAX
-	MaxWebhookURL  string `json:"max_webhook_url"`                        // URL для вебхуков
-	MaxEnabled     bool   `json:"max_enabled" gorm:"default:false"`       // Включен ли MAX
-	MaxUsePolling  bool   `json:"max_use_polling" gorm:"default:false"`   // Использовать Long Polling вместо Webhook
-	MaxParseMode   string `json:"max_parse_mode" gorm:"default:'HTML'"`   // Режим парсинга (HTML/Markdown)
+	MaxBotToken   string `json:"max_bot_token" gorm:"type:varchar(500)"` // Токен бота MAX
+	MaxWebhookURL string `json:"max_webhook_url"`                        // URL для вебхуков
+	MaxEnabled    bool   `json:"max_enabled" gorm:"default:false"`       // Включен ли MAX
+	MaxUsePolling bool   `json:"max_use_polling" gorm:"default:false"`   // Использовать Long Polling вместо Webhook
+	MaxParseMode  string `json:"max_parse_mode" gorm:"default:'HTML'"`   // Режим парсинга (HTML/Markdown)
 
 	// Общие настройки
 	DefaultLanguage   string `json:"default_language" gorm:"default:'ru'"` // Язык по умолчанию

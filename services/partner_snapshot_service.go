@@ -575,8 +575,6 @@ func fetchPartnerObjects(token string, partnerCompanyID int) ([]axentaObject, er
 	return allObjects, nil
 }
 
-
-
 // getPartnerObjectsWithCountForDate получает объекты партнера на определенную дату и их количество
 // Возвращает: количество, активное количество, список объектов, ошибка
 func (s *PartnerSnapshotService) getPartnerObjectsWithCountForDate(partnerCompanyID uint, token string, snapshotDate time.Time) (total int, active int, objects []axentaObject, err error) {
@@ -730,8 +728,6 @@ func (s *PartnerSnapshotService) getPartnerObjectsWithCountForDate(partnerCompan
 
 	return total, active, filteredObjects, nil
 }
-
-
 
 // CreateVirtualOthersSnapshot создает снимок для виртуального партнера "Прочие объекты"
 // Используется для учета прямых клиентов GLOMOS или разницы

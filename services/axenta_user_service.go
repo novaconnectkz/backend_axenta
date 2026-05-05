@@ -243,13 +243,13 @@ func (s *AxentaUserService) CreateLocalUser(username, email, password string, ro
 func (s *AxentaUserService) CreateUserInAxenta(token string, userData *models.User, visibleTabs []string, accesses map[string][]string) (*AxentaUserResponse, error) {
 	// Подготавливаем данные для отправки в Axenta
 	axentaUserData := map[string]interface{}{
-		"username":           userData.Username,
-		"email":              userData.Email,
-		"name":               userData.Name,
-		"password":           userData.Password, // Пароль уже захеширован
-		"hasAdminAccess":     false,             // По умолчанию false
-		"visibleTabsNames":   visibleTabs,
-		"accesses":           accesses,
+		"username":         userData.Username,
+		"email":            userData.Email,
+		"name":             userData.Name,
+		"password":         userData.Password, // Пароль уже захеширован
+		"hasAdminAccess":   false,             // По умолчанию false
+		"visibleTabsNames": visibleTabs,
+		"accesses":         accesses,
 	}
 
 	jsonData, err := json.Marshal(axentaUserData)

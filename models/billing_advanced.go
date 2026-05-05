@@ -106,9 +106,9 @@ type TariffComponent struct {
 	Type string `json:"type" gorm:"not null;type:varchar(50)"` // recurring, per_usage, one_time
 
 	// Параметры компонента
-	Name      string          `json:"name" gorm:"not null;type:varchar(200)"`         // Название компонента
-	Unit      string          `json:"unit" gorm:"type:varchar(50)"`                   // Единица измерения
-	Price     decimal.Decimal `json:"price" gorm:"not null;type:decimal(15,2)"`       // Цена за единицу
+	Name      string          `json:"name" gorm:"not null;type:varchar(200)"`            // Название компонента
+	Unit      string          `json:"unit" gorm:"type:varchar(50)"`                      // Единица измерения
+	Price     decimal.Decimal `json:"price" gorm:"not null;type:decimal(15,2)"`          // Цена за единицу
 	MinCommit decimal.Decimal `json:"min_commit" gorm:"type:decimal(15,2);default:0.00"` // Минимальная оплата
 
 	// Для recurring

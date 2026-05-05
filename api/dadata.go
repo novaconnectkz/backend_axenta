@@ -42,17 +42,17 @@ type DaDataSuggestion struct {
 
 // DaDataOrganization данные организации
 type DaDataOrganization struct {
-	INN         string            `json:"inn"`
-	KPP         string            `json:"kpp"`
-	OGRN        string            `json:"ogrn"`
-	Name        *DaDataName       `json:"name,omitempty"` // Объект с полями full_with_opf, short_with_opf, full, short
-	Management  *DaDataManagement `json:"management,omitempty"`
-	Address     *DaDataAddress    `json:"address,omitempty"`
-	Phones      []*DaDataPhone    `json:"phones,omitempty"` // Массив телефонов (может быть null)
-	Emails      []*DaDataEmail    `json:"emails,omitempty"` // Массив email (может быть null)
-	Type        string            `json:"type,omitempty"`
-	BranchType  string            `json:"branch_type,omitempty"`
-	State       *DaDataState      `json:"state,omitempty"`
+	INN        string            `json:"inn"`
+	KPP        string            `json:"kpp"`
+	OGRN       string            `json:"ogrn"`
+	Name       *DaDataName       `json:"name,omitempty"` // Объект с полями full_with_opf, short_with_opf, full, short
+	Management *DaDataManagement `json:"management,omitempty"`
+	Address    *DaDataAddress    `json:"address,omitempty"`
+	Phones     []*DaDataPhone    `json:"phones,omitempty"` // Массив телефонов (может быть null)
+	Emails     []*DaDataEmail    `json:"emails,omitempty"` // Массив email (может быть null)
+	Type       string            `json:"type,omitempty"`
+	BranchType string            `json:"branch_type,omitempty"`
+	State      *DaDataState      `json:"state,omitempty"`
 	// Игнорируем остальные поля
 }
 
@@ -89,10 +89,10 @@ type DaDataAddress struct {
 
 // DaDataState статус организации
 type DaDataState struct {
-	Status           string  `json:"status"`
-	ActualityDate    *int64  `json:"actuality_date,omitempty"`    // Timestamp в миллисекундах
-	RegistrationDate *int64  `json:"registration_date,omitempty"` // Timestamp в миллисекундах
-	LiquidationDate  *int64  `json:"liquidation_date,omitempty"` // Timestamp в миллисекундах
+	Status           string `json:"status"`
+	ActualityDate    *int64 `json:"actuality_date,omitempty"`    // Timestamp в миллисекундах
+	RegistrationDate *int64 `json:"registration_date,omitempty"` // Timestamp в миллисекундах
+	LiquidationDate  *int64 `json:"liquidation_date,omitempty"`  // Timestamp в миллисекундах
 }
 
 // FindOrganizationByINN находит организацию по ИНН или ОГРН
@@ -303,14 +303,14 @@ type DaDataBankName struct {
 
 // DaDataBankData данные банка
 type DaDataBankData struct {
-	Bik                  string          `json:"bic"`
-	Name                 DaDataBankName  `json:"name"`
-	CorrespondentAccount string          `json:"correspondent_account,omitempty"`
-	Okpo                 string          `json:"okpo,omitempty"`
-	RegNumber            string          `json:"registration_number,omitempty"`
-	Swift                string          `json:"swift,omitempty"`
-	Inn                  string          `json:"inn,omitempty"`
-	Kpp                  string          `json:"kpp,omitempty"`
+	Bik                  string         `json:"bic"`
+	Name                 DaDataBankName `json:"name"`
+	CorrespondentAccount string         `json:"correspondent_account,omitempty"`
+	Okpo                 string         `json:"okpo,omitempty"`
+	RegNumber            string         `json:"registration_number,omitempty"`
+	Swift                string         `json:"swift,omitempty"`
+	Inn                  string         `json:"inn,omitempty"`
+	Kpp                  string         `json:"kpp,omitempty"`
 }
 
 // FindBankByBIK находит банк по БИК

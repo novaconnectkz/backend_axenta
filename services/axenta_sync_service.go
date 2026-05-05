@@ -291,8 +291,6 @@ func (s *AxentaSyncService) syncAdminWithTokenAndDBAndProgress(adminAccountID ui
 	return nil
 }
 
-
-
 func (s *AxentaSyncService) getActiveTokenForAdmin(adminAccountID uint) (string, error) {
 	var token models.UserToken
 	err := s.db.Where("account_id = ? AND is_active = ? AND expires_at > ?", adminAccountID, true, time.Now()).
@@ -435,10 +433,6 @@ type axentaObject struct {
 	CreatedAt       string   `json:"createdAt"`
 	DeletedAt       string   `json:"deletedAt"`
 }
-
-
-
-
 
 // fetchAllObjectsWithProgress получает ВСЕ объекты с отслеживанием прогресса
 func (s *AxentaSyncService) fetchAllObjectsWithProgress(token string, progressCallback ProgressCallback) ([]axentaObject, error) {
@@ -598,8 +592,6 @@ func (s *AxentaSyncService) resolveURL(raw string) string {
 	return base.ResolveReference(u).String()
 }
 
-
-
 func (s *AxentaSyncService) storeAccountsWithDB(adminAccountID uint, accounts []axentaAccount, syncedAt time.Time, db *gorm.DB) error {
 	log.Printf("💾 Начинаем сохранение %d аккаунтов в базу данных...", len(accounts))
 
@@ -694,10 +686,6 @@ func (s *AxentaSyncService) storeAccountsWithDB(adminAccountID uint, accounts []
 
 	return nil
 }
-
-
-
-
 
 // syncAllObjectsWithDBAndProgress синхронизирует ВСЕ объекты с отслеживанием прогресса
 func (s *AxentaSyncService) syncAllObjectsWithDBAndProgress(adminAccountID uint, token string, syncedAt time.Time, db *gorm.DB, progressCallback ProgressCallback) error {
@@ -884,8 +872,6 @@ func (s *AxentaSyncService) syncAllObjectsWithDBAndProgress(adminAccountID uint,
 
 	return nil
 }
-
-
 
 // axentaUser представляет пользователя в ответе Axenta /api/cms/users/
 // Поля camelCase согласно реальному API.
