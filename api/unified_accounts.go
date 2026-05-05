@@ -197,22 +197,32 @@ func fetchAxentaAccountsForUnified(db *gorm.DB, search, accountType, activeStr, 
 	q := db.Model(&models.AxentaAccountSnapshot{})
 
 	if search != "" {
-		// ILIKE вместо LOWER(x) LIKE LOWER(?) — postgres LOWER() без ICU collate
-		// не downcase'ит кириллицу, из-за чего "Служе" не находил "Служебные авто".
-		// ILIKE использует collate-aware case-folding и работает с UTF-8 искаропки.
+		// Case-insensitive поиск с поддержкой кириллицы:
+		// LOWER(col COLLATE "und-x-icu") LIKE LOWER(?). Без COLLATE LOWER() в БД
+		// с lc_ctype=C не downcase'ит кириллицу (PostgreSQL libc локализация).
+		// Inline COLLATE "und-x-icu" даёт ICU case-folding без миграций схемы
+		// (nondeterministic collation на колонке ломает LIKE — см. PG docs).
 		terms := splitSearchTerms(search)
 		if len(terms) > 1 {
 			args := make([]any, 0, len(terms)*3)
 			parts := make([]string, 0, len(terms)*3)
 			for _, t := range terms {
-				p := "%" + t + "%"
+				p := "%" + strings.ToLower(t) + "%"
 				args = append(args, p, p, p)
-				parts = append(parts, "account_name ILIKE ?", "admin_fullname ILIKE ?", "parent_account_name ILIKE ?")
+				parts = append(parts,
+					`LOWER(account_name COLLATE "und-x-icu") LIKE ?`,
+					`LOWER(admin_fullname COLLATE "und-x-icu") LIKE ?`,
+					`LOWER(parent_account_name COLLATE "und-x-icu") LIKE ?`,
+				)
 			}
 			q = q.Where(strings.Join(parts, " OR "), args...)
 		} else {
-			pattern := "%" + search + "%"
-			q = q.Where("account_name ILIKE ? OR admin_fullname ILIKE ? OR parent_account_name ILIKE ?", pattern, pattern, pattern)
+			pattern := "%" + strings.ToLower(search) + "%"
+			q = q.Where(
+				`LOWER(account_name COLLATE "und-x-icu") LIKE ? OR `+
+					`LOWER(admin_fullname COLLATE "und-x-icu") LIKE ? OR `+
+					`LOWER(parent_account_name COLLATE "und-x-icu") LIKE ?`,
+				pattern, pattern, pattern)
 		}
 	}
 	if accountType != "" {
