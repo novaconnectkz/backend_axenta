@@ -444,8 +444,6 @@ func main() {
 		api.GetObjectsFromAxentaCloud(c)
 	}
 	r.GET("/api/objects", getObjectsHandler)
-	r.GET("/api/objects/", getObjectsHandler)
-
 	// УДАЛЕНО: Публичные CMS эндпоинты для безопасности
 	// Теперь все запросы объектов требуют аутентификации
 	// r.GET("/api/cms/objects", getObjectsHandler)
@@ -476,8 +474,6 @@ func main() {
 		c.JSON(404, gin.H{"status": "error", "error": "Объект не найден"})
 	}
 	r.GET("/api/objects/:id", getObjectHandler)
-	r.GET("/api/objects/:id/", getObjectHandler)
-
 	getObjectsStatsHandler := func(c *gin.Context) {
 		// Добавляем заголовки для предотвращения кеширования
 		c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
@@ -488,8 +484,6 @@ func main() {
 		api.GetObjectsStatsFromAxentaCloud(c)
 	}
 	r.GET("/api/objects/stats", getObjectsStatsHandler)
-	r.GET("/api/objects/stats/", getObjectsStatsHandler)
-
 	// УДАЛЕНО: Публичные CMS эндпоинты статистики для безопасности
 	// Теперь вся статистика объектов требует аутентификации
 	// r.GET("/api/cms/objects/stats", getObjectsStatsHandler)
@@ -511,8 +505,6 @@ func main() {
 		})
 	}
 	r.GET("/api/object-templates", getObjectTemplatesHandler)
-	r.GET("/api/object-templates/", getObjectTemplatesHandler)
-
 	// Временный публичный маршрут для создания объектов (для тестирования фронтенда)
 	createObjectHandler := func(c *gin.Context) {
 		// Парсим данные из запроса
@@ -542,8 +534,6 @@ func main() {
 		})
 	}
 	r.POST("/api/objects", createObjectHandler)
-	r.POST("/api/objects/", createObjectHandler)
-
 	// Временный публичный маршрут для создания шаблона из объекта
 	createTemplateHandler := func(c *gin.Context) {
 		// Получаем ID объекта
@@ -593,8 +583,6 @@ func main() {
 		})
 	}
 	r.POST("/api/objects/:id/create-template", createTemplateHandler)
-	r.POST("/api/objects/:id/create-template/", createTemplateHandler)
-
 	// Временный публичный маршрут для обновления объектов (для тестирования фронтенда)
 	updateObjectHandler := func(c *gin.Context) {
 		// Получаем ID объекта
@@ -637,8 +625,6 @@ func main() {
 		})
 	}
 	r.PUT("/api/objects/:id", updateObjectHandler)
-	r.PUT("/api/objects/:id/", updateObjectHandler)
-
 	// Dashboard endpoints (перемещены в apiGroup для поддержки мультитенантности)
 	// Dashboard для биллинга согласно roadmap (Этап 4.2) - остается публичным
 	r.GET("/api/dashboard", api.GetBillingDashboard)
@@ -707,19 +693,13 @@ func main() {
 	cmsGroup := r.Group("/api/cms")
 	// Не используем authMiddleware.RequireAuth() для CMS endpoints
 	cmsGroup.POST("/users", api.CreateCmsUserWithCurrentToken)
-	cmsGroup.POST("/users/", api.CreateCmsUserWithCurrentToken)
 	cmsGroup.POST("/users/create", api.CreateCmsUserWithAdminToken)
-	cmsGroup.POST("/users/create/", api.CreateCmsUserWithAdminToken)
 	cmsGroup.POST("/users/login_as", api.LoginAs)
-	cmsGroup.POST("/users/login_as/", api.LoginAs)
-	cmsGroup.POST("/users/:id/activate/", api.ActivateUser)
 	cmsGroup.GET("/test", api.TestEndpoint)
 
 	// Добавляем обработчик для перемещения учетных записей
 	accountsHandler := api.NewAccountsHandler()
 	cmsGroup.POST("/accounts/change_account", accountsHandler.MoveAccount)
-	cmsGroup.POST("/accounts/change_account/", accountsHandler.MoveAccount)
-
 	log.Println("✅ CMS endpoints registered without Axenta authentication")
 
 	// Notification admin API (templates, test send, logs, stats)
@@ -730,50 +710,28 @@ func main() {
 	// Объекты (с аутентификацией) - проксирование к Axenta Cloud
 	log.Println("🔧 Registering Axenta Cloud proxy endpoints...")
 	apiGroup.GET("/objects", api.GetObjectsFromAxentaCloud)
-	apiGroup.GET("/objects/", api.GetObjectsFromAxentaCloud)
 	apiGroup.GET("/objects/export", api.ExportObjectsToXLSX)
 	log.Printf("✅ Зарегистрирован GET /api/auth/objects/export -> ExportObjectsToXLSX")
-	apiGroup.GET("/objects/export/", api.ExportObjectsToXLSX)
 	apiGroup.GET("/objects/stats", api.GetObjectsStatsFromAxentaCloud)
-	apiGroup.GET("/objects/stats/", api.GetObjectsStatsFromAxentaCloud)
 	apiGroup.GET("/objects/stats/optimized", api.GetObjectsStatsOptimizedFromAxentaCloud)
-	apiGroup.GET("/objects/stats/optimized/", api.GetObjectsStatsOptimizedFromAxentaCloud)
-
 	// Добавляем поддержку CMS эндпоинтов для совместимости с фронтендом
 	apiGroup.GET("/cms/objects", api.GetObjectsFromAxentaCloud)
-	apiGroup.GET("/cms/objects/", api.GetObjectsFromAxentaCloud)
 	apiGroup.GET("/cms/objects/export", api.ExportObjectsToXLSX)
 	log.Printf("✅ Зарегистрирован GET /api/auth/cms/objects/export -> ExportObjectsToXLSX")
-	apiGroup.GET("/cms/objects/export/", api.ExportObjectsToXLSX)
 	apiGroup.GET("/cms/objects/stats", api.GetObjectsStatsFromAxentaCloud)
-	apiGroup.GET("/cms/objects/stats/", api.GetObjectsStatsFromAxentaCloud)
 	apiGroup.GET("/objects/:id", api.GetObject)
-	apiGroup.GET("/objects/:id/", api.GetObject)
 	apiGroup.POST("/objects", api.CreateObject)
-	apiGroup.POST("/objects/", api.CreateObject)
 	apiGroup.PUT("/objects/:id", api.UpdateObject)
-	apiGroup.PUT("/objects/:id/", api.UpdateObject)
 	apiGroup.DELETE("/objects/:id", api.DeleteObject)
-	apiGroup.DELETE("/objects/:id/", api.DeleteObject)
-
 	// Плановое удаление объектов
 	apiGroup.PUT("/objects/:id/schedule-delete", api.ScheduleObjectDelete)
-	apiGroup.PUT("/objects/:id/schedule-delete/", api.ScheduleObjectDelete)
 	apiGroup.PUT("/objects/:id/cancel-delete", api.CancelScheduledDelete)
-	apiGroup.PUT("/objects/:id/cancel-delete/", api.CancelScheduledDelete)
-
 	// Корзина для объектов
 	apiGroup.GET("/objects-trash", api.GetDeletedObjects)
-	apiGroup.GET("/objects-trash/", api.GetDeletedObjects)
 	apiGroup.PUT("/objects/:id/restore", api.RestoreObject)
-	apiGroup.PUT("/objects/:id/restore/", api.RestoreObject)
 	apiGroup.DELETE("/objects/:id/permanent", api.PermanentDeleteObject)
-	apiGroup.DELETE("/objects/:id/permanent/", api.PermanentDeleteObject)
-
 	// CMS эндпоинты для корзины (совместимость с фронтендом) - проксирование к Axenta Cloud
 	apiGroup.GET("/cms/trash", api.GetDeletedObjectsFromAxentaCloud)
-	apiGroup.GET("/cms/trash/", api.GetDeletedObjectsFromAxentaCloud)
-
 	// Шаблоны объектов - временно отключено
 	// apiGroup.GET("/object-templates", api.GetObjectTemplates)
 	// apiGroup.GET("/object-templates/:id", api.GetObjectTemplate)
@@ -811,19 +769,12 @@ func main() {
 	// Пользователи (прокси к Axenta Cloud API)
 	log.Println("🔧 Registering users proxy endpoints...")
 	apiGroup.GET("/users", api.GetUsersFromAxentaCloud)
-	apiGroup.GET("/users/", api.GetUsersFromAxentaCloud)
 	apiGroup.POST("/users", api.CreateUserInAxentaCloud)
-	apiGroup.POST("/users/", api.CreateUserInAxentaCloud)
-
 	// Публичные маршруты для создания пользователей (без проверки auth)
 	log.Println("🔧 Registering public users endpoints...")
 	r.POST("/api/users", api.CreateUserInAxentaCloud)
-	r.POST("/api/users/", api.CreateUserInAxentaCloud)
 	apiGroup.GET("/users/stats", api.GetUsersStatsFromAxentaCloud)
-	apiGroup.GET("/users/stats/", api.GetUsersStatsFromAxentaCloud)
 	apiGroup.GET("/users/stats/optimized", api.GetUsersStatsOptimizedFromAxentaCloud)
-	apiGroup.GET("/users/stats/optimized/", api.GetUsersStatsOptimizedFromAxentaCloud)
-
 	// Унифицированный API для пользователей (объединяет Axenta + Wialon)
 	api.RegisterUnifiedUsersRoutes(apiGroup)
 
@@ -832,13 +783,8 @@ func main() {
 
 	// CMS endpoints для пользователей
 	apiGroup.GET("/cms/users", api.GetUsersFromAxentaCloud)
-	apiGroup.GET("/cms/users/", api.GetUsersFromAxentaCloud)
 	apiGroup.GET("/cms/users/stats", api.GetUsersStatsFromAxentaCloud)
-	apiGroup.GET("/cms/users/stats/", api.GetUsersStatsFromAxentaCloud)
 	apiGroup.GET("/cms/users/:id", api.GetUser)
-	apiGroup.GET("/cms/users/:id/", api.GetUser)
-	apiGroup.POST("/cms/update_user_password/", api.UpdateUserPassword)
-
 	// CMS endpoints для создания пользователей (закомментированы, используем публичные)
 	// apiGroup.POST("/cms/users", api.CreateCmsUserWithCurrentToken)
 	// apiGroup.POST("/cms/users/", api.CreateCmsUserWithCurrentToken)
@@ -852,15 +798,10 @@ func main() {
 	log.Println("🔧 Registering accounts proxy endpoints...")
 	accountsHandler = api.NewAccountsHandler()
 	apiGroup.GET("/accounts", accountsHandler.GetAccounts)
-	apiGroup.GET("/accounts/", accountsHandler.GetAccounts)
 	// stats: total/active/blocked/clients/partners одним запросом из snapshot
 	apiGroup.GET("/accounts/stats", accountsHandler.GetAccountsStats)
-	apiGroup.GET("/accounts/stats/", accountsHandler.GetAccountsStats)
 	apiGroup.POST("/accounts", accountsHandler.CreateAccount)
-	apiGroup.POST("/accounts/", accountsHandler.CreateAccount)
 	apiGroup.GET("/accounts/:id", accountsHandler.GetAccount)
-	apiGroup.GET("/accounts/:id/", accountsHandler.GetAccount)
-
 	// Административные эндпоинты для аккаунтов (совместимость с фронтендом)
 	apiGroup.GET("/admin/accounts/list", func(c *gin.Context) {
 		c.JSON(200, gin.H{
@@ -921,12 +862,8 @@ func main() {
 	// DaData API для поиска организаций по ИНН/ОГРН
 	log.Println("🔧 Registering DaData API endpoints...")
 	apiGroup.POST("/dadata/organization", api.FindOrganizationByINN)
-	apiGroup.POST("/dadata/organization/", api.FindOrganizationByINN)
-
 	// DaData API для поиска банков по БИК
 	apiGroup.POST("/dadata/bank", api.FindBankByBIK)
-	apiGroup.POST("/dadata/bank/", api.FindBankByBIK)
-
 	// Договоры
 	// Важно: более специфичные роуты (с дополнительными параметрами) должны быть зарегистрированы ПЕРЕД общими
 	// Например: /contracts/:id/objects должен быть ПЕРЕД /contracts/:id
@@ -1017,12 +954,10 @@ func main() {
 
 	// Эндпоинт для ручного запуска синхронизации Axenta
 	apiGroup.POST("/axenta-sync/trigger", api.TriggerAxentaSync)
-	apiGroup.POST("/axenta-sync/trigger/", api.TriggerAxentaSync)
 	log.Println("✅ Зарегистрирован POST /api/auth/axenta-sync/trigger -> TriggerAxentaSync")
 
 	// Тестовый endpoint без авторизации
 	r.POST("/api/test/axenta-sync/trigger", api.TriggerAxentaSync)
-	r.POST("/api/test/axenta-sync/trigger/", api.TriggerAxentaSync)
 	log.Println("⚠️ Зарегистрирован ТЕСТОВЫЙ endpoint /api/test/axenta-sync/trigger (без авторизации)")
 
 	// Тестовый endpoint для Wialon (без авторизации, для отладки)
@@ -1106,17 +1041,11 @@ func main() {
 	apiGroup.GET("/dashboard/layouts", api.GetDashboardLayouts)
 	apiGroup.GET("/dashboard/layouts/default", api.GetDefaultDashboardLayout)
 	apiGroup.GET("/dashboard/alerts", api.GetDashboardAlerts)
-	apiGroup.GET("/dashboard/alerts/", api.GetDashboardAlerts)
 	apiGroup.GET("/dashboard/kpi", api.GetDashboardKPI)
-	apiGroup.GET("/dashboard/kpi/", api.GetDashboardKPI)
 	apiGroup.GET("/dashboard/today-installations", api.GetTodayInstallations)
-	apiGroup.GET("/dashboard/today-installations/", api.GetTodayInstallations)
 	apiGroup.GET("/dashboard/sources-stats", api.GetDashboardSourcesStats)
-	apiGroup.GET("/dashboard/sources-stats/", api.GetDashboardSourcesStats)
 	apiGroup.GET("/dashboard/recent-invoices", api.GetRecentInvoices)
-	apiGroup.GET("/dashboard/recent-invoices/", api.GetRecentInvoices)
 	apiGroup.GET("/search", api.GetGlobalSearch)
-	apiGroup.GET("/search/", api.GetGlobalSearch)
 	apiGroup.GET("/notifications", api.GetDashboardNotificationsSimple)
 
 	// Системные настройки
@@ -1211,12 +1140,9 @@ func main() {
 	// tenantMiddleware), с fallback на api.DB для тестов / dev.
 	installationAPI := api.NewInstallationAPI(database.DB, notificationService)
 	apiGroup.GET("/installations", installationAPI.GetInstallations)
-	apiGroup.GET("/installations/", installationAPI.GetInstallations)
 	apiGroup.GET("/installations/statistics", installationAPI.GetInstallationStatistics)
-	apiGroup.GET("/installations/statistics/", installationAPI.GetInstallationStatistics)
 	apiGroup.GET("/installations/:id", installationAPI.GetInstallation)
 	apiGroup.POST("/installations", installationAPI.CreateInstallation)
-	apiGroup.POST("/installations/", installationAPI.CreateInstallation)
 	apiGroup.PUT("/installations/:id", installationAPI.UpdateInstallation)
 	apiGroup.DELETE("/installations/:id", installationAPI.DeleteInstallation)
 	apiGroup.PUT("/installations/:id/start", installationAPI.StartInstallation)
