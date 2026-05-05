@@ -392,13 +392,44 @@ func (s *AxentaSyncService) RefreshAccount(token string, adminAccountID uint, ac
 		return nil, fmt.Errorf("decode: %w", err)
 	}
 
-	// UPSERT в snapshot — переиспользуем storeAccountsWithDB на одной записи.
+	// UPDATE существующей записи с тем же external_account_id (любой adminAccountID).
+	// НЕ используем UPSERT через storeAccountsWithDB — он бы создал дубликат, потому что
+	// в snapshot одна и та же Axenta-account может быть привязана к разным admin'ам
+	// (multi-tenant), а у вызывающего юзера может быть свой adminID.
 	if db != nil {
-		now := time.Now().UTC()
-		if err := s.storeAccountsWithDB(adminAccountID, []axentaAccount{acc}, now, db); err != nil {
-			log.Printf("⚠️ RefreshAccount upsert: %v", err)
+		updates := map[string]interface{}{
+			"account_name":         acc.Name,
+			"account_type":         acc.Type,
+			"admin_fullname":       acc.AdminFullname,
+			"parent_account_name":  acc.ParentAccountName,
+			"hierarchy":            acc.Hierarchy,
+			"is_active":            acc.IsActive,
+			"objects_active":       acc.ObjectsActive,
+			"objects_total":        acc.ObjectsTotal,
+			"days_before_blocking": acc.DaysBeforeBlocking,
+			"last_synced_at":       time.Now().UTC(),
+		}
+		if acc.AdminID != nil {
+			updates["admin_external_id"] = *acc.AdminID
+		}
+		if acc.Comment != nil {
+			updates["comment"] = *acc.Comment
+		}
+		if acc.BlockingDatetime != nil {
+			if parsed := parseAxentaTime(*acc.BlockingDatetime); parsed != nil {
+				updates["blocking_datetime"] = parsed
+			}
 		} else {
-			log.Printf("✅ RefreshAccount: account=%d обновлён (isActive=%v)", accountID, acc.IsActive)
+			updates["blocking_datetime"] = nil
+		}
+
+		res := db.Model(&models.AxentaAccountSnapshot{}).
+			Where("external_account_id = ?", accountID).
+			Updates(updates)
+		if res.Error != nil {
+			log.Printf("⚠️ RefreshAccount update: %v", res.Error)
+		} else {
+			log.Printf("✅ RefreshAccount: account=%d обновлено %d записей (isActive=%v)", accountID, res.RowsAffected, acc.IsActive)
 		}
 	}
 
