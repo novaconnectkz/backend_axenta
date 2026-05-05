@@ -197,19 +197,22 @@ func fetchAxentaAccountsForUnified(db *gorm.DB, search, accountType, activeStr, 
 	q := db.Model(&models.AxentaAccountSnapshot{})
 
 	if search != "" {
+		// ILIKE вместо LOWER(x) LIKE LOWER(?) — postgres LOWER() без ICU collate
+		// не downcase'ит кириллицу, из-за чего "Служе" не находил "Служебные авто".
+		// ILIKE использует collate-aware case-folding и работает с UTF-8 искаропки.
 		terms := splitSearchTerms(search)
 		if len(terms) > 1 {
 			args := make([]any, 0, len(terms)*3)
 			parts := make([]string, 0, len(terms)*3)
 			for _, t := range terms {
-				p := "%" + strings.ToLower(t) + "%"
+				p := "%" + t + "%"
 				args = append(args, p, p, p)
-				parts = append(parts, "LOWER(account_name) LIKE ?", "LOWER(admin_fullname) LIKE ?", "LOWER(parent_account_name) LIKE ?")
+				parts = append(parts, "account_name ILIKE ?", "admin_fullname ILIKE ?", "parent_account_name ILIKE ?")
 			}
 			q = q.Where(strings.Join(parts, " OR "), args...)
 		} else {
-			pattern := "%" + strings.ToLower(search) + "%"
-			q = q.Where("LOWER(account_name) LIKE ? OR LOWER(admin_fullname) LIKE ? OR LOWER(parent_account_name) LIKE ?", pattern, pattern, pattern)
+			pattern := "%" + search + "%"
+			q = q.Where("account_name ILIKE ? OR admin_fullname ILIKE ? OR parent_account_name ILIKE ?", pattern, pattern, pattern)
 		}
 	}
 	if accountType != "" {
