@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -624,20 +625,103 @@ func (h *AccountsHandler) ToggleAccountStatus(c *gin.Context) {
 		return
 	}
 
-	// Триггерим резинк snapshot'ов чтобы статус (is_active) обновился в /accounts.
-	// CMS endpoints без auth-middleware → GetAdminAccountID может вернуть 0.
-	// Fallback: вытаскиваем accountId через Axenta /current_user/ по токену.
+	// Точечный re-fetch конкретного аккаунта — намного быстрее SyncAdmin (~200ms vs ~30s).
+	// СИНХРОННО до ответа, чтобы frontend сразу после 201 видел обновлённый snapshot.
+	// При ошибке refresh — fallback на async SnapshotInvalidator.
+	token := strings.TrimPrefix(authHeader, "Token ")
+	token = strings.TrimPrefix(token, "Bearer ")
+
 	adminID, _ := middleware.GetAdminAccountID(c)
 	if adminID == 0 {
-		token := strings.TrimPrefix(authHeader, "Token ")
-		token = strings.TrimPrefix(token, "Bearer ")
 		adminID = getAccountIDFromToken(token)
 	}
-	if adminID > 0 {
-		services.GetSnapshotInvalidator().Invalidate(adminID, "account.toggle_status")
+
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB == nil {
+		tenantDB = database.GetDB()
+	}
+
+	accIDInt, _ := strconv.Atoi(id)
+	refreshed := false
+	if adminID > 0 && accIDInt > 0 {
+		if syncSvc := services.GetAxentaSyncService(); syncSvc != nil {
+			if _, rErr := syncSvc.RefreshAccount(token, adminID, accIDInt, tenantDB); rErr == nil {
+				refreshed = true
+			} else {
+				log.Printf("⚠️ RefreshAccount fail (account=%d): %v — fallback на async SyncAdmin", accIDInt, rErr)
+			}
+		}
+		if !refreshed {
+			services.GetSnapshotInvalidator().Invalidate(adminID, "account.toggle_status.fallback")
+		}
 	}
 
 	c.Data(resp.StatusCode, "application/json", respBody)
+}
+
+// RefreshSingleAccount — manual точечный refresh учётки по ID. Полезно когда
+// пользователь поменял статус в Axenta CMS снаружи и хочет увидеть актуальные
+// данные в ACRM не дожидаясь cron (10 мин).
+//
+// POST /api/auth/accounts/:id/refresh
+// Возвращает обновлённую запись из snapshot или 404 если не найдена.
+func (h *AccountsHandler) RefreshSingleAccount(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "ID не указан"})
+		return
+	}
+	accIDInt, err := strconv.Atoi(id)
+	if err != nil || accIDInt <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Некорректный ID"})
+		return
+	}
+
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		authHeader = c.GetHeader("authorization")
+	}
+	if authHeader == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": "Authorization header is required"})
+		return
+	}
+	token := strings.TrimPrefix(authHeader, "Token ")
+	token = strings.TrimPrefix(token, "Bearer ")
+
+	adminID, _ := middleware.GetAdminAccountID(c)
+	if adminID == 0 {
+		adminID = getAccountIDFromToken(token)
+	}
+	if adminID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Не удалось определить admin account"})
+		return
+	}
+
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB == nil {
+		tenantDB = database.GetDB()
+	}
+
+	syncSvc := services.GetAxentaSyncService()
+	if syncSvc == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "AxentaSyncService недоступен"})
+		return
+	}
+
+	acc, err := syncSvc.RefreshAccount(token, adminID, accIDInt, tenantDB)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": "Refresh failed: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data": gin.H{
+			"id":       acc.ID,
+			"name":     acc.Name,
+			"isActive": acc.IsActive,
+		},
+	})
 }
 
 // tryServeAccountsFromSnapshot читает учётные записи из локального snapshot (axenta_account_snapshots).

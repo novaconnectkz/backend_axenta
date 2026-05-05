@@ -26,12 +26,25 @@ type AxentaSyncService struct {
 
 // NewAxentaSyncService создает новый сервис синхронизации Axenta
 func NewAxentaSyncService(db *gorm.DB) *AxentaSyncService {
-	return &AxentaSyncService{
+	svc := &AxentaSyncService{
 		db: db,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
 	}
+	if globalAxentaSyncService == nil {
+		globalAxentaSyncService = svc
+	}
+	return svc
+}
+
+// globalAxentaSyncService — для доступа из API-handlers без injection.
+// Регистрируется в первом NewAxentaSyncService (main.go).
+var globalAxentaSyncService *AxentaSyncService
+
+// GetAxentaSyncService возвращает глобальный экземпляр (может быть nil).
+func GetAxentaSyncService() *AxentaSyncService {
+	return globalAxentaSyncService
 }
 
 // SyncAllAdmins выполняет синхронизацию для всех компаний
@@ -326,6 +339,70 @@ type axentaAccount struct {
 	Hierarchy          string  `json:"hierarchy"`
 	DaysBeforeBlocking *int    `json:"daysBeforeBlocking"`
 	CreationDatetime   string  `json:"creationDatetime"`
+}
+
+// RefreshAccount — точечный re-fetch одной учётки + UPSERT в snapshot.
+// Используется когда мы знаем что один account изменился (например после нашего
+// toggle или явного refresh-запроса от UI), и не хотим запускать тяжёлый
+// SyncAdmin (700+ accounts, ~30s).
+//
+// adminAccountID — нужен чтобы знать в какой tenant.axenta_account_snapshots
+// писать. db — tenant DB или public.
+//
+// Возвращает обновлённую axenta-структуру или error если Axenta вернул not found
+// (= аккаунт удалён → удаляем из snapshot).
+func (s *AxentaSyncService) RefreshAccount(token string, adminAccountID uint, accountID int, db *gorm.DB) (*axentaAccount, error) {
+	if token == "" {
+		return nil, fmt.Errorf("token пустой")
+	}
+	if accountID <= 0 {
+		return nil, fmt.Errorf("accountID невалидный")
+	}
+
+	url := fmt.Sprintf("%s/api/cms/accounts/%d/", axentaAPIBase, accountID)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Token "+token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("axenta http: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		// Аккаунт удалён в Axenta — убираем из snapshot
+		if db != nil {
+			db.Where("admin_account_id = ? AND external_account_id = ?", adminAccountID, accountID).
+				Delete(&models.AxentaAccountSnapshot{})
+			log.Printf("🗑️ RefreshAccount: account=%d удалён в Axenta, snapshot очищен", accountID)
+		}
+		return nil, fmt.Errorf("account %d not found in axenta", accountID)
+	}
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("axenta status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	var acc axentaAccount
+	if err := json.NewDecoder(resp.Body).Decode(&acc); err != nil {
+		return nil, fmt.Errorf("decode: %w", err)
+	}
+
+	// UPSERT в snapshot — переиспользуем storeAccountsWithDB на одной записи.
+	if db != nil {
+		now := time.Now().UTC()
+		if err := s.storeAccountsWithDB(adminAccountID, []axentaAccount{acc}, now, db); err != nil {
+			log.Printf("⚠️ RefreshAccount upsert: %v", err)
+		} else {
+			log.Printf("✅ RefreshAccount: account=%d обновлён (isActive=%v)", accountID, acc.IsActive)
+		}
+	}
+
+	return &acc, nil
 }
 
 func (s *AxentaSyncService) fetchAccounts(token string) ([]axentaAccount, error) {

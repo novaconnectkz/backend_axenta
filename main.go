@@ -804,6 +804,8 @@ func main() {
 	log.Println("🔧 Registering accounts proxy endpoints...")
 	accountsHandler = api.NewAccountsHandler()
 	apiGroup.GET("/accounts", accountsHandler.GetAccounts)
+	// Manual точечный refresh учётки (для случая "user изменил в Axenta CMS снаружи")
+	apiGroup.POST("/accounts/:id/refresh", accountsHandler.RefreshSingleAccount)
 	// stats: total/active/blocked/clients/partners одним запросом из snapshot
 	apiGroup.GET("/accounts/stats", accountsHandler.GetAccountsStats)
 	apiGroup.POST("/accounts", accountsHandler.CreateAccount)
