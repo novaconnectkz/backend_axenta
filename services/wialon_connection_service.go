@@ -286,21 +286,30 @@ type WialonUnitWithConnection struct {
 	SourceHost     string `json:"source_host"`
 }
 
-// GetAllUnitsFromActiveConnections получает объекты из всех активных подключений компании
+// GetAllUnitsFromActiveConnections получает объекты из всех активных подключений компании.
+// Возвращает (units, partial). partial=true если хотя бы одно подключение упало —
+// caller должен НЕ кэшировать неполный результат.
 func (s *WialonConnectionService) GetAllUnitsFromActiveConnections(companyID uint) ([]WialonUnitWithConnection, error) {
+	units, _, err := s.GetAllUnitsFromActiveConnectionsDetailed(companyID)
+	return units, err
+}
+
+// GetAllUnitsFromActiveConnectionsDetailed — расширенная версия: возвращает (units, partial, err).
+// partial=true когда хотя бы один connection отдал ошибку (timeout WH и т.п.).
+func (s *WialonConnectionService) GetAllUnitsFromActiveConnectionsDetailed(companyID uint) ([]WialonUnitWithConnection, bool, error) {
 	connections, err := s.GetActiveByCompany(companyID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	if len(connections) == 0 {
-		return []WialonUnitWithConnection{}, nil
+		return []WialonUnitWithConnection{}, false, nil
 	}
 
 	var allUnits []WialonUnitWithConnection
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	errors := make([]error, 0)
+	errs := make([]error, 0)
 
 	for _, conn := range connections {
 		wg.Add(1)
@@ -311,7 +320,7 @@ func (s *WialonConnectionService) GetAllUnitsFromActiveConnections(companyID uin
 			if err != nil {
 				log.Printf("Ошибка получения объектов из подключения %s: %v", connection.Name, err)
 				mu.Lock()
-				errors = append(errors, fmt.Errorf("%s: %w", connection.Name, err))
+				errs = append(errs, fmt.Errorf("%s: %w", connection.Name, err))
 				mu.Unlock()
 				return
 			}
@@ -324,12 +333,12 @@ func (s *WialonConnectionService) GetAllUnitsFromActiveConnections(companyID uin
 
 	wg.Wait()
 
-	// Если есть ошибки, логируем их, но возвращаем то, что получилось
-	if len(errors) > 0 {
-		log.Printf("Предупреждение: ошибки при получении объектов из %d подключений", len(errors))
+	partial := len(errs) > 0
+	if partial {
+		log.Printf("⚠️ wialon all-units partial (errors=%d/%d connections)", len(errs), len(connections))
 	}
 
-	return allUnits, nil
+	return allUnits, partial, nil
 }
 
 // GetConnectionStats возвращает статистику подключений

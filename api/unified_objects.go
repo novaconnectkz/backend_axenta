@@ -348,10 +348,42 @@ func fetchWialonObjectsFast(companyID uint, search, active, source string) ([]Un
 		}
 	}
 
-	// Фильтруем + считаем breakdown WH/WL
+	// KPI breakdown WH/WL — точные числа из wialon_connection_summary (тот же SQL что /sources-stats).
+	// Это даёт согласованность с дашбордом: live-fetch /wialon/all-units может прыгать при timeout WH,
+	// а connection_summary стабильно (заполняется WialonStatsScheduler из top-level resource).
+	whTotal, whActive, wlTotal, wlActive := 0, 0, 0, 0
+	type kpiRow struct {
+		ConnType string
+		Total    int64
+		Active   int64
+	}
+	var kpiRows []kpiRow
+	if err := database.DB.Raw(`
+		SELECT
+			wc.connection_type                     AS conn_type,
+			COALESCE(SUM(wcs.objects_total), 0)    AS total,
+			COALESCE(SUM(wcs.objects_active), 0)   AS active
+		FROM wialon_connections wc
+		LEFT JOIN wialon_connection_summary wcs ON wcs.connection_id = wc.id
+		WHERE wc.company_id = ? AND wc.deleted_at IS NULL AND wc.is_active = true
+		GROUP BY wc.connection_type
+	`, companyID).Scan(&kpiRows).Error; err != nil {
+		log.Printf("⚠️ unified/objects wialon kpi: %v", err)
+	}
+	for _, r := range kpiRows {
+		switch r.ConnType {
+		case "hosting":
+			whTotal = int(r.Total)
+			whActive = int(r.Active)
+		case "local":
+			wlTotal = int(r.Total)
+			wlActive = int(r.Active)
+		}
+	}
+
+	// Items — отдельным проходом (для отображения нужны телефоны/hw/last_message).
 	pattern := strings.ToLower(search)
 	out := make([]UnifiedObject, 0, len(units))
-	whTotal, whActive, wlTotal, wlActive := 0, 0, 0, 0
 
 	for _, u := range units {
 		t := connType[u.ConnectionID]
@@ -360,17 +392,6 @@ func fetchWialonObjectsFast(companyID uint, search, active, source string) ([]Un
 		}
 		if source == "wl" && t != "wl" {
 			continue
-		}
-
-		// services.WialonUnit не имеет IsActive — все объекты Wialon считаем активными
-		// (статус определяется на уровне billing-resource, не объекта)
-		switch t {
-		case "wh":
-			whTotal++
-			whActive++
-		case "wl":
-			wlTotal++
-			wlActive++
 		}
 
 		if pattern != "" {
