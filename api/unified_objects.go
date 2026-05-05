@@ -469,8 +469,10 @@ func fetchWialonObjectsFast(companyID uint, search, active, source string) ([]Un
 }
 
 // buildWialonUserIDToNameMap читает Redis cache /wialon/all-accounts и строит
-// map user_id (avl_user.id или avl_resource.id) → name. Используется для
-// подмены creator/accountName в /unified/objects реальными именами аккаунтов.
+// map user_id (avl_user.id) → name. Также добавляет map resource_id → user.name
+// через таблицу wialon_object_stats (resource_id, user_id) — нужно для подмены
+// accountName когда avl_unit.bact = resource.id (биллинг-ресурс), а cache
+// хранит avl_user'ов.
 func buildWialonUserIDToNameMap(companyID uint) map[int64]string {
 	out := make(map[int64]string)
 	if database.RedisClient == nil {
@@ -482,7 +484,7 @@ func buildWialonUserIDToNameMap(companyID uint) map[int64]string {
 	if err != nil || len(cached) == 0 {
 		return out
 	}
-	// Cache wrap: { "data": { "items": [...] } } или { "items": [...] } — пробуем оба
+	// Cache wrap: { "data": { "items": [...] } } или { "items": [...] }
 	type accountItem struct {
 		ID       int64  `json:"id"`
 		Name     string `json:"name"`
@@ -511,6 +513,28 @@ func buildWialonUserIDToNameMap(companyID uint) map[int64]string {
 		for _, s := range a.SubUsers {
 			if s.ID > 0 && s.Name != "" {
 				out[s.ID] = s.Name
+			}
+		}
+	}
+
+	// Добавляем resource_id → user.name через wialon_object_stats.
+	// avl_unit.bact = resource_id; resource.user_id = avl_user.id.
+	type resRow struct {
+		ResourceID int64
+		UserID     int64
+	}
+	var resRows []resRow
+	if err := database.DB.Raw(`
+		SELECT DISTINCT wos.resource_id, wos.user_id
+		FROM wialon_object_stats wos
+		JOIN wialon_connections wc ON wc.id = wos.connection_id
+		WHERE wc.company_id = ? AND wc.deleted_at IS NULL
+	`, companyID).Scan(&resRows).Error; err == nil {
+		for _, r := range resRows {
+			if r.ResourceID > 0 && r.UserID > 0 {
+				if name, ok := out[r.UserID]; ok && out[r.ResourceID] == "" {
+					out[r.ResourceID] = name
+				}
 			}
 		}
 	}
