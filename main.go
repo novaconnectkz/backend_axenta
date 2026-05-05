@@ -781,6 +781,10 @@ func main() {
 	// Унифицированный API для объектов (объединяет Axenta + Wialon)
 	api.RegisterUnifiedObjectsRoutes(apiGroup)
 
+	// Унифицированный API для учётных записей (объединяет Axenta + Wialon)
+	// Решает костыль double-pagination: сервер сам merge'ит и пагинирует.
+	api.RegisterUnifiedAccountsRoutes(apiGroup)
+
 	// CMS endpoints для пользователей
 	apiGroup.GET("/cms/users", api.GetUsersFromAxentaCloud)
 	apiGroup.GET("/cms/users/stats", api.GetUsersStatsFromAxentaCloud)
