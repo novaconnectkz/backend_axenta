@@ -1117,11 +1117,24 @@ func (s *AxentaSyncService) storeUsersWithDB(adminAccountID uint, users []axenta
 		isUpdate := db.Where("admin_account_id = ? AND external_user_id = ?", adminAccountID, u.ID).First(&existing).Error == nil
 
 		isFresh := u.ID > maxExistingID
-		result := db.Clauses(clause.OnConflict{
+		// Используем Unscoped, чтобы UPSERT работал и с soft-deleted записями.
+		// Без этого: soft-deleted юзер (от cleanup) не восстанавливается ни через
+		// First() (default scope скрывает), ни через UPSERT (DoUpdates не трогает
+		// deleted_at). В DoUpdates явно сбрасываем deleted_at в NULL.
+		result := db.Unscoped().Clauses(clause.OnConflict{
 			Columns: []clause.Column{{Name: "admin_account_id"}, {Name: "external_user_id"}},
-			DoUpdates: clause.AssignmentColumns([]string{
-				"username", "name", "email", "account_type", "is_active",
-				"creator_name", "creation_datetime", "last_login", "last_synced_at", "raw_payload",
+			DoUpdates: clause.Assignments(map[string]any{
+				"username":          snapshot.Username,
+				"name":              snapshot.Name,
+				"email":             snapshot.Email,
+				"account_type":      snapshot.AccountType,
+				"is_active":         snapshot.IsActive,
+				"creator_name":      snapshot.CreatorName,
+				"creation_datetime": snapshot.CreationDatetime,
+				"last_login":        snapshot.LastLogin,
+				"last_synced_at":    snapshot.LastSyncedAt,
+				"raw_payload":       snapshot.RawPayload,
+				"deleted_at":        nil,
 			}),
 		}).Create(&snapshot)
 		if result.Error != nil {
