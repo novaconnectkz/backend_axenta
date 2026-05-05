@@ -6,20 +6,42 @@ import (
 	"time"
 )
 
-// SnapshotInvalidator — асинхронный re-sync менеджер snapshot'ов Axenta.
+// targetSystem — тип системы, snapshot которой нужно резинкнуть.
+// Каждая система имеет собственный sync-механизм:
+//   - axenta:  AxentaSyncService.SyncAdmin(adminAccountID)
+//   - wialon:  WialonStatsService.CollectForConnectionID(connectionID)
 //
-// Зачем: при создании/обновлении/удалении user/account/object в Axenta Cloud
-// локальные snapshot-таблицы (axenta_account_snapshots, axenta_user_snapshots,
-// wialon_object_stats) не успевают обновиться до следующего scheduled cron
-// (10 мин). Cross-section flow ломается: создал юзера — объекты не видят
-// его как creator до next sync.
+// Wialon Hosting и Wialon Local оба попадают в "wialon" — разница только в host'е
+// у конкретного WialonConnection, sync-логика одна и та же.
+type targetSystem string
+
+const (
+	systemAxenta targetSystem = "axenta"
+	systemWialon targetSystem = "wialon"
+)
+
+type targetKey struct {
+	system targetSystem
+	id     uint
+}
+
+// SnapshotInvalidator — асинхронный re-sync менеджер snapshot'ов всех 3 систем
+// (Axenta, Wialon Hosting, Wialon Local).
 //
-// Решение: API-handler после успешной mutation вызывает Invalidate(adminID).
-// Воркер с debounce собирает несколько мутаций в один resync (если 5 юзеров
-// создали подряд — один SyncAdmin, не пять).
+// Зачем: при создании/обновлении/удалении user/account/object snapshot-таблицы
+// (axenta_account_snapshots, axenta_user_snapshots, wialon_object_stats,
+// wialon_users, wialon_units) не успевают обновиться до следующего cron.
+// Cross-section flow ломается: создал юзера в Wialon — на /unified/users
+// он появится только через 10 минут.
+//
+// Решение: API-handler после успешной mutation вызывает InvalidateAxenta
+// или InvalidateWialon. Воркер с debounce собирает несколько мутаций в один
+// resync (если 5 юзеров создали подряд — один CollectForConnection, не пять).
 type SnapshotInvalidator struct {
-	syncSvc  *AxentaSyncService
-	pending  map[uint]time.Time
+	axentaSvc *AxentaSyncService
+	wialonSvc *WialonStatsService
+
+	pending  map[targetKey]time.Time
 	mu       sync.Mutex
 	debounce time.Duration
 	tickRate time.Duration
@@ -29,21 +51,22 @@ type SnapshotInvalidator struct {
 var globalSnapshotInvalidator *SnapshotInvalidator
 
 // InitSnapshotInvalidator создаёт глобальный экземпляр и запускает воркер.
-// Вызывается один раз из main.go после инициализации AxentaSyncService.
-func InitSnapshotInvalidator(syncSvc *AxentaSyncService) *SnapshotInvalidator {
+// Вызывается один раз из main.go после инициализации Axenta + Wialon sync сервисов.
+func InitSnapshotInvalidator(axentaSvc *AxentaSyncService, wialonSvc *WialonStatsService) *SnapshotInvalidator {
 	if globalSnapshotInvalidator != nil {
 		return globalSnapshotInvalidator
 	}
 	inv := &SnapshotInvalidator{
-		syncSvc:  syncSvc,
-		pending:  make(map[uint]time.Time),
-		debounce: 5 * time.Second,
-		tickRate: 2 * time.Second,
-		quit:     make(chan struct{}),
+		axentaSvc: axentaSvc,
+		wialonSvc: wialonSvc,
+		pending:   make(map[targetKey]time.Time),
+		debounce:  5 * time.Second,
+		tickRate:  2 * time.Second,
+		quit:      make(chan struct{}),
 	}
 	go inv.worker()
 	globalSnapshotInvalidator = inv
-	log.Printf("🔧 SnapshotInvalidator: запущен (debounce=%v)", inv.debounce)
+	log.Printf("🔧 SnapshotInvalidator: запущен для всех систем (axenta+wialon, debounce=%v)", inv.debounce)
 	return inv
 }
 
@@ -52,16 +75,35 @@ func GetSnapshotInvalidator() *SnapshotInvalidator {
 	return globalSnapshotInvalidator
 }
 
-// Invalidate помечает admin'а как требующего re-sync. Безопасно вызывать на nil-инстансе.
-// reason — для логов: "user.create", "object.delete" и т.п.
-func (s *SnapshotInvalidator) Invalidate(adminAccountID uint, reason string) {
+// InvalidateAxenta помечает Axenta-admin'а как требующего re-sync.
+// Триггер: CreateUserInAxentaCloud, CreateAccount, MoveAccount, etc.
+func (s *SnapshotInvalidator) InvalidateAxenta(adminAccountID uint, reason string) {
 	if s == nil || adminAccountID == 0 {
 		return
 	}
+	s.queue(targetKey{system: systemAxenta, id: adminAccountID}, reason)
+}
+
+// InvalidateWialon помечает Wialon-connection как требующее re-collect stats.
+// Триггер: CreateWialonAccount, CreateWialonUser, UpdateWialonAccount, etc.
+// Один connectionID покрывает оба варианта (WH/WL) — разница в host'е.
+func (s *SnapshotInvalidator) InvalidateWialon(connectionID uint, reason string) {
+	if s == nil || connectionID == 0 {
+		return
+	}
+	s.queue(targetKey{system: systemWialon, id: connectionID}, reason)
+}
+
+// Invalidate (legacy) — синоним InvalidateAxenta для обратной совместимости.
+func (s *SnapshotInvalidator) Invalidate(adminAccountID uint, reason string) {
+	s.InvalidateAxenta(adminAccountID, reason)
+}
+
+func (s *SnapshotInvalidator) queue(key targetKey, reason string) {
 	s.mu.Lock()
-	s.pending[adminAccountID] = time.Now()
+	s.pending[key] = time.Now()
 	s.mu.Unlock()
-	log.Printf("📥 SnapshotInvalidator: admin=%d reason=%s queued", adminAccountID, reason)
+	log.Printf("📥 SnapshotInvalidator: %s=%d reason=%s queued", key.system, key.id, reason)
 }
 
 func (s *SnapshotInvalidator) worker() {
@@ -79,26 +121,45 @@ func (s *SnapshotInvalidator) worker() {
 
 func (s *SnapshotInvalidator) flush(now time.Time) {
 	s.mu.Lock()
-	var ready []uint
-	for id, ts := range s.pending {
+	var ready []targetKey
+	for k, ts := range s.pending {
 		if now.Sub(ts) >= s.debounce {
-			ready = append(ready, id)
-			delete(s.pending, id)
+			ready = append(ready, k)
+			delete(s.pending, k)
 		}
 	}
 	s.mu.Unlock()
 
-	for _, id := range ready {
-		if s.syncSvc == nil {
-			log.Printf("⚠️ SnapshotInvalidator: admin=%d пропущен (syncSvc=nil)", id)
-			continue
+	for _, k := range ready {
+		s.runResync(k)
+	}
+}
+
+func (s *SnapshotInvalidator) runResync(k targetKey) {
+	start := time.Now()
+	switch k.system {
+	case systemAxenta:
+		if s.axentaSvc == nil {
+			log.Printf("⚠️ SnapshotInvalidator: axenta admin=%d пропущен (syncSvc=nil)", k.id)
+			return
 		}
-		log.Printf("🔄 SnapshotInvalidator: resync admin=%d", id)
-		start := time.Now()
-		if err := s.syncSvc.SyncAdmin(id); err != nil {
-			log.Printf("❌ SnapshotInvalidator: admin=%d failed (%v): %v", id, time.Since(start), err)
+		log.Printf("🔄 SnapshotInvalidator: axenta resync admin=%d", k.id)
+		if err := s.axentaSvc.SyncAdmin(k.id); err != nil {
+			log.Printf("❌ SnapshotInvalidator: axenta admin=%d failed (%v): %v", k.id, time.Since(start), err)
 		} else {
-			log.Printf("✅ SnapshotInvalidator: admin=%d done за %v", id, time.Since(start).Round(time.Second))
+			log.Printf("✅ SnapshotInvalidator: axenta admin=%d done за %v", k.id, time.Since(start).Round(time.Second))
+		}
+	case systemWialon:
+		if s.wialonSvc == nil {
+			log.Printf("⚠️ SnapshotInvalidator: wialon conn=%d пропущен (wialonSvc=nil)", k.id)
+			return
+		}
+		log.Printf("🔄 SnapshotInvalidator: wialon collect conn=%d", k.id)
+		count, err := s.wialonSvc.CollectForConnectionID(k.id)
+		if err != nil {
+			log.Printf("❌ SnapshotInvalidator: wialon conn=%d failed (%v): %v", k.id, time.Since(start), err)
+		} else {
+			log.Printf("✅ SnapshotInvalidator: wialon conn=%d done за %v (%d ресурсов)", k.id, time.Since(start).Round(time.Second), count)
 		}
 	}
 }

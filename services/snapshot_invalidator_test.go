@@ -7,21 +7,18 @@ import (
 )
 
 // TestSnapshotInvalidator_Debounce проверяет, что несколько последовательных
-// Invalidate для одного admin'а схлопываются в один resync.
+// invalidate для одного admin'а схлопываются в один resync.
 func TestSnapshotInvalidator_Debounce(t *testing.T) {
 	inv := &SnapshotInvalidator{
-		syncSvc:  nil,
-		pending:  make(map[uint]time.Time),
+		pending:  make(map[targetKey]time.Time),
 		debounce: 50 * time.Millisecond,
 		tickRate: 10 * time.Millisecond,
 		quit:     make(chan struct{}),
 	}
 
-	// Симулируем 5 быстрых invalidations
+	// Симулируем 5 быстрых invalidations для одного axenta-admin
 	for i := 0; i < 5; i++ {
-		inv.mu.Lock()
-		inv.pending[42] = time.Now()
-		inv.mu.Unlock()
+		inv.InvalidateAxenta(42, "test")
 		time.Sleep(5 * time.Millisecond)
 	}
 
@@ -45,26 +42,49 @@ func TestSnapshotInvalidator_Debounce(t *testing.T) {
 	}
 }
 
-// TestSnapshotInvalidator_NilSafe проверяет, что Invalidate на nil-инстансе не паникует.
+// TestSnapshotInvalidator_DifferentSystems проверяет, что Axenta и Wialon
+// с одинаковым ID — это разные ключи, не схлопываются.
+func TestSnapshotInvalidator_DifferentSystems(t *testing.T) {
+	inv := &SnapshotInvalidator{
+		pending:  make(map[targetKey]time.Time),
+		debounce: 50 * time.Millisecond,
+		tickRate: 10 * time.Millisecond,
+		quit:     make(chan struct{}),
+	}
+
+	inv.InvalidateAxenta(7, "a")
+	inv.InvalidateWialon(7, "w")
+
+	inv.mu.Lock()
+	count := len(inv.pending)
+	inv.mu.Unlock()
+	if count != 2 {
+		t.Fatalf("ожидали 2 записи (axenta+wialon), получили %d", count)
+	}
+}
+
+// TestSnapshotInvalidator_NilSafe проверяет, что invalidate на nil-инстансе не паникует.
 func TestSnapshotInvalidator_NilSafe(t *testing.T) {
 	var inv *SnapshotInvalidator
 	defer func() {
 		if r := recover(); r != nil {
-			t.Fatalf("Invalidate на nil вызвал панику: %v", r)
+			t.Fatalf("invalidate на nil вызвал панику: %v", r)
 		}
 	}()
-	inv.Invalidate(1, "test")
+	inv.InvalidateAxenta(1, "test")
+	inv.InvalidateWialon(1, "test")
 	inv.Stop()
 }
 
-// TestSnapshotInvalidator_ZeroAdminID проверяет, что adminID=0 игнорируется.
-func TestSnapshotInvalidator_ZeroAdminID(t *testing.T) {
+// TestSnapshotInvalidator_ZeroID проверяет, что ID=0 игнорируется.
+func TestSnapshotInvalidator_ZeroID(t *testing.T) {
 	inv := &SnapshotInvalidator{
-		pending: make(map[uint]time.Time),
+		pending: make(map[targetKey]time.Time),
 		mu:      sync.Mutex{},
 	}
-	inv.Invalidate(0, "noop")
+	inv.InvalidateAxenta(0, "noop")
+	inv.InvalidateWialon(0, "noop")
 	if len(inv.pending) != 0 {
-		t.Fatalf("adminID=0 не должен попадать в pending")
+		t.Fatalf("ID=0 не должен попадать в pending")
 	}
 }

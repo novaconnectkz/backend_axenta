@@ -134,9 +134,11 @@ func main() {
 	axentaSyncScheduler := services.NewAxentaSyncScheduler(axentaSyncService, axentaSyncIntervalMin)
 	services.SetAxentaSyncScheduler(axentaSyncScheduler)
 
-	// Инвалидатор snapshot'ов: после mutation user/account/object
-	// API-handler вызывает Invalidate(adminID), воркер с debounce делает SyncAdmin.
-	snapshotInvalidator := services.InitSnapshotInvalidator(axentaSyncService)
+	// Инвалидатор snapshot'ов для всех 3 систем (Axenta, Wialon Hosting, Wialon Local).
+	// После mutation API-handler вызывает InvalidateAxenta(adminID) или InvalidateWialon(connID),
+	// воркер с debounce делает SyncAdmin / CollectForConnectionID.
+	wialonStatsService := services.NewWialonStatsService()
+	snapshotInvalidator := services.InitSnapshotInvalidator(axentaSyncService, wialonStatsService)
 	defer snapshotInvalidator.Stop()
 
 	disableAxentaSync := os.Getenv("DISABLE_AXENTA_SYNC_SCHEDULER") == "true"

@@ -1246,6 +1246,10 @@ func (api *WialonConnectionAPI) DeleteWialonUser(c *gin.Context) {
 		invalidateAllAccountsCache(companyID.(uint))
 	}
 
+	// Триггерим резинк wialon_object_stats — удалённый юзер не должен висеть
+	// в /unified/users / в creator-полях /unified/objects.
+	services.GetSnapshotInvalidator().InvalidateWialon(uint(connectionID), "wialon.user.delete")
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "Пользователь успешно удалён",
@@ -1438,6 +1442,10 @@ func (api *WialonConnectionAPI) CreateWialonUser(c *gin.Context) {
 	// чтобы новый юзер сразу появился в /users без ожидания scheduler-цикла (5 мин).
 	invalidateAllAccountsCache(companyID.(uint))
 
+	// Триггерим резинк wialon_users/wialon_object_stats — новый юзер должен
+	// появиться в /unified/users и в creator-полях /unified/objects без ожидания cron.
+	services.GetSnapshotInvalidator().InvalidateWialon(uint(connectionID), "wialon.user.create")
+
 	c.JSON(http.StatusCreated, result)
 }
 
@@ -1488,6 +1496,7 @@ func (api *WialonConnectionAPI) UpdateWialonUser(c *gin.Context) {
 	}
 
 	invalidateAllAccountsCache(companyID.(uint))
+	services.GetSnapshotInvalidator().InvalidateWialon(uint(connectionID), "wialon.user.update")
 	c.JSON(http.StatusOK, result)
 }
 
@@ -1554,6 +1563,7 @@ func (api *WialonConnectionAPI) UpdateWialonAccount(c *gin.Context) {
 		return
 	}
 	invalidateAllAccountsCache(companyID)
+	services.GetSnapshotInvalidator().InvalidateWialon(connectionID, "wialon.account.update")
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
@@ -1616,6 +1626,10 @@ func (api *WialonConnectionAPI) CreateWialonAccount(c *gin.Context) {
 
 	// Инвалидация cache /all-accounts чтобы новый аккаунт сразу появился в списке
 	invalidateAllAccountsCache(companyID.(uint))
+
+	// Триггерим резинк wialon_object_stats для этого connection — новый аккаунт
+	// должен появиться в /unified/accounts и в KPI без ожидания scheduled cron.
+	services.GetSnapshotInvalidator().InvalidateWialon(uint(connectionID), "wialon.account.create")
 
 	c.JSON(http.StatusCreated, result)
 }
