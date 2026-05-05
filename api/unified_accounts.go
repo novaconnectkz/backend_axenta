@@ -311,6 +311,12 @@ func strPtrIfNotEmpty(s string) *string {
 
 // fetchWialonAccountsForUnified читает Redis-cache wialon:all-accounts:<companyID>
 // с фильтрами. Возвращает: items, total, active, whTotal, whActive, wlTotal, wlActive.
+//
+// objectsTotal/Active обогащаются из wialon_object_stats (per-resource БД-кэш,
+// заполняется WialonStatsScheduler) одним SELECT по всем connection_ids компании.
+// Это убирает sentinel objectsTotal=-1 в Redis-кэше — frontend получает готовые
+// цифры сразу, без второго round-trip к /wialon/connections/{id}/objects-stats
+// (который делал live-fetch на 5-15 сек при холодном Redis).
 func fetchWialonAccountsForUnified(companyID uint, search, accountType, activeStr, sourceFilter, parent string) ([]UnifiedAccount, int, int, int, int, int, int) {
 	if database.RedisClient == nil {
 		return nil, 0, 0, 0, 0, 0, 0
@@ -330,6 +336,8 @@ func fetchWialonAccountsForUnified(companyID uint, search, accountType, activeSt
 		log.Printf("⚠️ unified/accounts wialon parse: %v", err)
 		return nil, 0, 0, 0, 0, 0, 0
 	}
+
+	statsByUserID := loadWialonStatsForCompany(companyID)
 
 	pattern := strings.ToLower(search)
 	items := make([]UnifiedAccount, 0, len(resp.Data.Items))
@@ -380,12 +388,21 @@ func fetchWialonAccountsForUnified(companyID uint, search, accountType, activeSt
 		}
 
 		connID := a.ConnectionID
+		objectsActive := a.ObjectsActive
+		objectsTotal := a.ObjectsTotal
+		// Обогащаем из БД-кэша wialon_object_stats. Redis хранит -1 (sentinel),
+		// БД-кэш заполняется WialonStatsScheduler. Если БД-stats нет — оставляем
+		// значение из Redis (frontend сам решает что показать).
+		if st, ok := statsByUserID[int64(a.ID)]; ok {
+			objectsTotal = st.ObjectsTotal
+			objectsActive = st.ObjectsActive
+		}
 		ua := UnifiedAccount{
 			ID:               a.ID,
 			Name:             a.Name,
 			Type:             a.Type,
-			ObjectsActive:    a.ObjectsActive,
-			ObjectsTotal:     a.ObjectsTotal,
+			ObjectsActive:    objectsActive,
+			ObjectsTotal:     objectsTotal,
 			IsActive:         a.IsActive,
 			Hierarchy:        a.Hierarchy,
 			Source:           a.SourceLabel,
@@ -398,6 +415,36 @@ func fetchWialonAccountsForUnified(companyID uint, search, accountType, activeSt
 	}
 
 	return items, total, active, whTotal, whActive, wlTotal, wlActive
+}
+
+// loadWialonStatsForCompany читает wialon_object_stats для всех wialon-подключений
+// компании одним SELECT. Возвращает map[user_id] → stat (тот же ключ что использует
+// frontend и /wialon/connections/:id/objects-stats endpoint).
+//
+// Без этого WH/WL items в /unified/accounts приходят с objectsTotal=-1 (Redis-sentinel)
+// и frontend вынужден делать второй round-trip per-connection — холодный live-fetch
+// занимал 5-15 сек. БД-кэш заполняется WialonStatsScheduler фоном, чтение мгновенное.
+func loadWialonStatsForCompany(companyID uint) map[int64]models.WialonObjectStat {
+	result := make(map[int64]models.WialonObjectStat)
+	if database.DB == nil {
+		return result
+	}
+	// JOIN по wialon_connections.company_id — wialon_object_stats глобальная.
+	var rows []models.WialonObjectStat
+	err := database.DB.
+		Joins("JOIN wialon_connections ON wialon_connections.id = wialon_object_stats.connection_id").
+		Where("wialon_connections.company_id = ?", companyID).
+		Find(&rows).Error
+	if err != nil {
+		log.Printf("⚠️ unified/accounts: load wialon_object_stats: %v", err)
+		return result
+	}
+	for _, r := range rows {
+		if r.UserID > 0 {
+			result[r.UserID] = r
+		}
+	}
+	return result
 }
 
 // RegisterUnifiedAccountsRoutes регистрирует /api/unified/accounts.
