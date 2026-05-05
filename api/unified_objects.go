@@ -230,8 +230,9 @@ func fetchAxentaObjectsFast(db *gorm.DB, search, active string) ([]UnifiedObject
 
 	if search != "" {
 		pattern := "%" + strings.ToLower(search) + "%"
+		// phone_numbers — jsonb, для LIKE приводим к ::text
 		q = q.Where(
-			"LOWER(object_name) LIKE ? OR LOWER(unique_id) LIKE ? OR LOWER(account_name) LIKE ? OR LOWER(device_type_name) LIKE ? OR LOWER(creator_name) LIKE ? OR phone_numbers ILIKE ? OR CAST(external_object_id AS TEXT) LIKE ?",
+			"LOWER(object_name) LIKE ? OR LOWER(unique_id) LIKE ? OR LOWER(account_name) LIKE ? OR LOWER(device_type_name) LIKE ? OR LOWER(creator_name) LIKE ? OR phone_numbers::text ILIKE ? OR CAST(external_object_id AS TEXT) LIKE ?",
 			pattern, pattern, pattern, pattern, pattern, pattern, "%"+search+"%",
 		)
 	}

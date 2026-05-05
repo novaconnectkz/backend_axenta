@@ -64,7 +64,7 @@ func tryServeObjectsFromSnapshot(c *gin.Context, page, perPage int) bool {
 	if search != "" {
 		pattern := "%" + strings.ToLower(search) + "%"
 		q = q.Where(
-			"LOWER(object_name) LIKE ? OR LOWER(unique_id) LIKE ? OR LOWER(account_name) LIKE ? OR phone_numbers ILIKE ?",
+			"LOWER(object_name) LIKE ? OR LOWER(unique_id) LIKE ? OR LOWER(account_name) LIKE ? OR phone_numbers::text ILIKE ?",
 			pattern, pattern, pattern, pattern,
 		)
 	}
