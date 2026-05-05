@@ -1061,6 +1061,21 @@ func (s *AxentaSyncService) fetchUsers(token string) ([]axentaUser, error) {
 func (s *AxentaSyncService) storeUsersWithDB(adminAccountID uint, users []axentaUser, syncedAt time.Time, db *gorm.DB) error {
 	log.Printf("💾 Сохранение %d пользователей в БД...", len(users))
 
+	// Diagnostic: какое максимальное external_user_id уже в БД? Чтобы понять
+	// сколько свежих юзеров (id > maxExisting) — ожидаемое количество INSERT'ов.
+	var maxExistingID int64
+	db.Model(&models.AxentaUserSnapshot{}).
+		Where("admin_account_id = ?", adminAccountID).
+		Select("COALESCE(MAX(external_user_id), 0)").
+		Scan(&maxExistingID)
+	freshCount := 0
+	for _, u := range users {
+		if u.ID > maxExistingID {
+			freshCount++
+		}
+	}
+	log.Printf("🔍 storeUsersWithDB diag: в БД max external_user_id=%d, в Axenta-batch %d юзеров с id > max (ожидаем INSERT)", maxExistingID, freshCount)
+
 	saved, updated, errs := 0, 0, 0
 
 	for _, u := range users {
@@ -1097,16 +1112,24 @@ func (s *AxentaSyncService) storeUsersWithDB(adminAccountID uint, users []axenta
 		var existing models.AxentaUserSnapshot
 		isUpdate := db.Where("admin_account_id = ? AND external_user_id = ?", adminAccountID, u.ID).First(&existing).Error == nil
 
-		if err := db.Clauses(clause.OnConflict{
+		isFresh := u.ID > maxExistingID
+		result := db.Clauses(clause.OnConflict{
 			Columns: []clause.Column{{Name: "admin_account_id"}, {Name: "external_user_id"}},
 			DoUpdates: clause.AssignmentColumns([]string{
 				"username", "name", "email", "account_type", "is_active",
 				"creator_name", "creation_datetime", "last_login", "last_synced_at", "raw_payload",
 			}),
-		}).Create(&snapshot).Error; err != nil {
+		}).Create(&snapshot)
+		if result.Error != nil {
 			errs++
-			log.Printf("   ❌ Ошибка сохранения пользователя %d: %v", u.ID, err)
+			log.Printf("   ❌ Ошибка сохранения пользователя %d: %v", u.ID, result.Error)
 			continue
+		}
+
+		// Diagnostic per-user (только для свежих, чтобы не засорять логи)
+		if isFresh {
+			log.Printf("   🆕 fresh user id=%d username=%s rowsAffected=%d snapshot.ID=%d isUpdate=%v",
+				u.ID, u.Username, result.RowsAffected, snapshot.ID, isUpdate)
 		}
 
 		if isUpdate {

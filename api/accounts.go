@@ -18,6 +18,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // AccountsHandler обрабатывает запросы к API учетных записей Axenta
@@ -425,10 +426,65 @@ func (h *AccountsHandler) CreateAccount(c *gin.Context) {
 	// и в KPI dashboard без ожидания scheduled cron.
 	if adminID, err := middleware.GetAdminAccountID(c); err == nil {
 		services.GetSnapshotInvalidator().Invalidate(adminID, "account.create")
+
+		// Точечный upsert AxentaUserSnapshot для admin'а нового аккаунта.
+		// Без этого hook'а свежий admin не появится в /users до следующего полного
+		// AxentaSync (а sync пишет в логах "обновлено=N", но реально INSERT'ом
+		// свежие composite (admin_account_id, external_user_id) не добавляются —
+		// см. project_acrm_unified_accounts. Этот hook гарантирует моментальное
+		// появление admin'а в /users сразу после создания аккаунта).
+		if account.AdminID > 0 {
+			tenantDB := middleware.GetTenantDB(c)
+			if tenantDB != nil {
+				upsertAdminUserSnapshot(tenantDB, adminID, account)
+			}
+		}
 	}
 
 	// Возвращаем данные
 	c.JSON(http.StatusCreated, account)
+}
+
+// upsertAdminUserSnapshot записывает admin-юзера созданного аккаунта в
+// axenta_user_snapshots, чтобы /users показал его сразу без ожидания AxentaSync.
+// raw_payload содержит JSON с полями account-info, чтобы downstream-логика
+// (которая может ожидать конкретные поля) не падала на пустом payload.
+func upsertAdminUserSnapshot(db *gorm.DB, adminAccountID uint, account Account) {
+	rawPayload, _ := json.Marshal(map[string]any{
+		"id":                account.AdminID,
+		"username":          account.AdminFullname,
+		"name":              account.AdminFullname,
+		"is_active":         account.AdminIsActive,
+		"creation_datetime": account.CreationDatetime,
+		"account_id":        account.ID,
+		"account_name":      account.Name,
+		"source":            "create_account_hook",
+	})
+
+	snapshot := models.AxentaUserSnapshot{
+		AdminAccountID:   adminAccountID,
+		ExternalUserID:   int64(account.AdminID),
+		Username:         account.AdminFullname,
+		Name:             account.AdminFullname,
+		AccountType:      account.Type,
+		IsActive:         account.AdminIsActive,
+		CreationDatetime: account.CreationDatetime,
+		LastSyncedAt:     time.Now().UTC(),
+		RawPayload:       string(rawPayload),
+	}
+
+	if err := db.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "admin_account_id"}, {Name: "external_user_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"username", "name", "account_type", "is_active",
+			"creation_datetime", "last_synced_at", "raw_payload",
+		}),
+	}).Create(&snapshot).Error; err != nil {
+		log.Printf("⚠️ upsertAdminUserSnapshot account=%d admin=%d: %v", account.ID, account.AdminID, err)
+		return
+	}
+	log.Printf("✅ upsertAdminUserSnapshot: admin %d (%s) аккаунта %d записан в /users snapshot",
+		account.AdminID, account.AdminFullname, account.ID)
 }
 
 // AccountMoveRequest представляет запрос на перемещение учетной записи
