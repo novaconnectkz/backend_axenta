@@ -177,6 +177,17 @@ func CreateObject(c *gin.Context) {
 		return
 	}
 
+	// Cross-section consistency: договор должен принадлежать той же компании
+	// что и объект. Иначе можно создать объект компании X с контрактом компании Y —
+	// биллинг приедет не туда.
+	if contract.CompanyID != object.CompanyID {
+		c.JSON(400, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("Договор %d принадлежит компании %d, а не %d", contract.ID, contract.CompanyID, object.CompanyID),
+		})
+		return
+	}
+
 	// Проверяем существование шаблона, если указан
 	if object.TemplateID != nil {
 		var template models.ObjectTemplate
@@ -306,6 +317,14 @@ func UpdateObject(c *gin.Context) {
 			} else {
 				c.JSON(500, gin.H{"status": "error", "error": "Ошибка проверки договора: " + err.Error()})
 			}
+			return
+		}
+		// Cross-section consistency: договор должен принадлежать той же компании.
+		if contract.CompanyID != existingObject.CompanyID {
+			c.JSON(400, gin.H{
+				"status": "error",
+				"error":  fmt.Sprintf("Договор %d принадлежит компании %d, а не %d", contract.ID, contract.CompanyID, existingObject.CompanyID),
+			})
 			return
 		}
 		existingObject.ContractID = updates.ContractID
