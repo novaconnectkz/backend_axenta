@@ -231,8 +231,8 @@ func fetchAxentaObjectsFast(db *gorm.DB, search, active string) ([]UnifiedObject
 	if search != "" {
 		pattern := "%" + strings.ToLower(search) + "%"
 		q = q.Where(
-			"LOWER(object_name) LIKE ? OR LOWER(unique_id) LIKE ? OR LOWER(account_name) LIKE ? OR phone_numbers ILIKE ?",
-			pattern, pattern, pattern, pattern,
+			"LOWER(object_name) LIKE ? OR LOWER(unique_id) LIKE ? OR LOWER(account_name) LIKE ? OR LOWER(device_type_name) LIKE ? OR LOWER(creator_name) LIKE ? OR phone_numbers ILIKE ? OR CAST(external_object_id AS TEXT) LIKE ?",
+			pattern, pattern, pattern, pattern, pattern, pattern, "%"+search+"%",
 		)
 	}
 	switch active {
@@ -326,15 +326,17 @@ func fetchWialonObjectsFast(companyID uint, search, active, source string) ([]Un
 		}
 	}
 	if !fromCache {
-		liveUnits, err := connService.GetAllUnitsFromActiveConnections(companyID)
+		liveUnits, partial, err := connService.GetAllUnitsFromActiveConnectionsDetailed(companyID)
 		if err != nil {
 			log.Printf("⚠️ unified/objects wialon: %v", err)
 			return nil, 0, 0, 0, 0, false
 		}
 		units = liveUnits
 
-		// Сохраняем в кэш по тому же ключу что использует /wialon/all-units
-		if database.RedisClient != nil {
+		// Сохраняем в кэш только если результат полный (нет упавших подключений).
+		// При partial=true (например WH timeout) кэшировать не нужно — следующий
+		// запрос попробует live ещё раз и может получить полный список.
+		if !partial && database.RedisClient != nil {
 			payload := gin.H{
 				"items":             liveUnits,
 				"total":             len(liveUnits),
@@ -395,10 +397,15 @@ func fetchWialonObjectsFast(companyID uint, search, active, source string) ([]Un
 		}
 
 		if pattern != "" {
+			idStr := strconv.FormatInt(u.ID, 10)
 			if !strings.Contains(strings.ToLower(u.Name), pattern) &&
 				!strings.Contains(strings.ToLower(u.UniqueID), pattern) &&
+				!strings.Contains(strings.ToLower(u.HardwareTypeName), pattern) &&
+				!strings.Contains(strings.ToLower(u.ConnectionName), pattern) &&
+				!strings.Contains(strings.ToLower(connOwner[u.ConnectionID]), pattern) &&
 				!strings.Contains(u.PhoneNumber, pattern) &&
-				!strings.Contains(u.PhoneNumber2, pattern) {
+				!strings.Contains(u.PhoneNumber2, pattern) &&
+				!strings.Contains(idStr, pattern) {
 				continue
 			}
 		}
