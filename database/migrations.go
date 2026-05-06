@@ -123,6 +123,18 @@ func GetAllMigrations() []MigrationInfo {
 			IsGlobal:    true,
 		},
 		{
+			TableName:   "wialon_daily_snapshots",
+			Model:       &models.WialonDailySnapshot{},
+			Description: "Точная история Wialon-юнитов per day (on-demand backfill через core/get_statistics)",
+			IsGlobal:    true,
+		},
+		{
+			TableName:   "wialon_history_settings",
+			Model:       &models.WialonHistorySettings{},
+			Description: "Настройки on-demand backfill истории Wialon (per-company)",
+			IsGlobal:    true,
+		},
+		{
 			TableName:   "local_users",
 			Model:       &models.LocalUser{},
 			Description: "Локальные пользователи для альтернативной авторизации",

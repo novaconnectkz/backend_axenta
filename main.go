@@ -138,6 +138,12 @@ func main() {
 	// После mutation API-handler вызывает InvalidateAxenta(adminID) или InvalidateWialon(connID),
 	// воркер с debounce делает SyncAdmin / CollectForConnectionID.
 	wialonStatsService := services.NewWialonStatsService()
+
+	// On-demand backfill истории Wialon (для точных графиков /dashboard/chart)
+	wialonService := services.NewWialonService()
+	wialonHistoryService := services.NewWialonHistoryService(database.DB, wialonService)
+	api.SetWialonHistoryService(wialonHistoryService)
+
 	snapshotInvalidator := services.InitSnapshotInvalidator(axentaSyncService, wialonStatsService)
 	defer snapshotInvalidator.Stop()
 
@@ -1052,6 +1058,15 @@ func main() {
 	apiGroup.GET("/dashboard/kpi", api.GetDashboardKPI)
 	apiGroup.GET("/dashboard/today-installations", api.GetTodayInstallations)
 	apiGroup.GET("/dashboard/sources-stats", api.GetDashboardSourcesStats)
+	apiGroup.GET("/dashboard/chart", api.GetDashboardChart)
+	apiGroup.GET("/dashboard/chart/", api.GetDashboardChart)
+
+	// Wialon History (on-demand backfill точной истории через core/get_statistics)
+	apiGroup.GET("/wialon-history/settings", api.GetWialonHistorySettings)
+	apiGroup.PUT("/wialon-history/settings", api.UpdateWialonHistorySettings)
+	apiGroup.POST("/wialon-history/backfill", api.StartWialonHistoryBackfill)
+	apiGroup.GET("/wialon-history/progress", api.GetWialonHistoryProgress)
+	apiGroup.DELETE("/wialon-history/snapshots", api.DeleteWialonHistorySnapshots)
 	apiGroup.GET("/dashboard/recent-invoices", api.GetRecentInvoices)
 	apiGroup.GET("/search", api.GetGlobalSearch)
 	apiGroup.GET("/notifications", api.GetDashboardNotificationsSimple)
