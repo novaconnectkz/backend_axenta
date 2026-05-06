@@ -227,39 +227,54 @@ func (s *WialonHistoryService) backfillConnection(conn models.WialonConnection, 
 	// conn.Host уже содержит схему (например "https://hst-api.regwialon.com")
 	apiURL := conn.Host + "/wialon/ajax.html"
 
-	// 1. Top-level avl_resource.id (биллинг-resource с max usage в иерархии).
-	//    Wialon core/get_statistics с recursive=1 + этим resource'ом возвращает
-	//    avl_unit_total per day по всей иерархии — точная история без reverse walk.
+	// 1. Кандидаты: avl_resource.id по убыванию objects_total.
+	//    Пробуем top-resource — если error 7 (access denied для нашего токена)
+	//    идём к следующему. Так покрываем кейс когда max-resource в иерархии
+	//    принадлежит чужому юзеру и API запрещает get_statistics.
 	type topRow struct {
 		ResourceID   int64
 		ObjectsTotal int64
 	}
-	var top topRow
+	var candidates []topRow
 	s.db.Table("wialon_object_stats").
 		Select("resource_id, objects_total").
-		Where("connection_id = ?", conn.ID).
+		Where("connection_id = ? AND objects_total > 0", conn.ID).
 		Order("objects_total DESC").
-		Limit(1).
-		Scan(&top)
+		Limit(20).
+		Scan(&candidates)
 
-	if top.ResourceID == 0 {
+	if len(candidates) == 0 {
 		return 0, fmt.Errorf("нет resource_id в wialon_object_stats для conn=%d", conn.ID)
 	}
 
-	resourceIDs := []int64{top.ResourceID}
-	progress.TotalResources += len(resourceIDs)
+	progress.TotalResources += 1
 	publishProgress(*progress)
 
-	// 2. Для каждого resource — get_statistics → прямой avl_unit_total per day
-	totalRows := 0
-	for _, resID := range resourceIDs {
-		stats, err := s.GetStatisticsRecursive(apiURL, loginResp.Eid, resID, from, to)
+	// Пробуем кандидатов по убыванию objects_total. При error 7 (access denied)
+	// идём к следующему, пока не найдём resource с правами на get_statistics.
+	var workingResID int64
+	var workingStats []WialonDailyStat
+	for _, cand := range candidates {
+		got, err := s.GetStatisticsRecursive(apiURL, loginResp.Eid, cand.ResourceID, from, to)
 		if err != nil {
-			log.Printf("WialonHistory: get_statistics для resource=%d: %v (skip)", resID, err)
-			progress.ProcessedResources++
-			publishProgress(*progress)
+			log.Printf("WialonHistory: get_statistics для resource=%d: %v (next candidate)", cand.ResourceID, err)
 			continue
 		}
+		workingResID = cand.ResourceID
+		workingStats = got
+		log.Printf("WialonHistory: conn=%d использует resource=%d (objects_total=%d)", conn.ID, cand.ResourceID, cand.ObjectsTotal)
+		break
+	}
+
+	if workingResID == 0 {
+		return 0, fmt.Errorf("нет доступного resource для conn=%d (все 20 кандидатов вернули error)", conn.ID)
+	}
+
+	// 2. Записываем результат рабочего resource
+	totalRows := 0
+	{
+		resID := workingResID
+		stats := workingStats
 
 		// Wialon API возвращает avl_unit_total напрямую для каждого дня → не нужен reverse walk.
 		// Берём прямые значения. created/deleted тоже из API (если есть).
