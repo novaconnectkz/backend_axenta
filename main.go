@@ -144,6 +144,16 @@ func main() {
 	wialonHistoryService := services.NewWialonHistoryService(database.DB, wialonService)
 	api.SetWialonHistoryService(wialonHistoryService)
 
+	// Ночной cron — backfill вчерашнего дня для всех companies с enabled=true.
+	// Включается через ENABLE_WIALON_HISTORY_SCHEDULER=true.
+	if os.Getenv("ENABLE_WIALON_HISTORY_SCHEDULER") == "true" {
+		wialonHistoryScheduler := services.NewWialonHistoryScheduler(wialonHistoryService)
+		wialonHistoryScheduler.Start()
+		defer wialonHistoryScheduler.Stop()
+	} else {
+		log.Printf("🔧 WialonHistoryScheduler: отключён (для включения ENABLE_WIALON_HISTORY_SCHEDULER=true)")
+	}
+
 	snapshotInvalidator := services.InitSnapshotInvalidator(axentaSyncService, wialonStatsService)
 	defer snapshotInvalidator.Stop()
 
