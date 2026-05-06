@@ -281,6 +281,25 @@ func (s *AxentaSyncService) syncAdminWithTokenAndDBAndProgress(adminAccountID ui
 		log.Printf("   ✅ Удалено устаревших пользователей: %d", deletedUsers)
 	}
 
+	// Global cleanup: orphan-snapshots от старых admin_account_id (другой axetna_login
+	// раньше → 2 admin'а в БД, sync новый только под одним → старые orphan не очищаются
+	// per-admin фильтром выше). Удаляем всё что не sync'ились >7 дней.
+	orphanCutoff := now.Add(-7 * 24 * time.Hour)
+	var orphanObjects, orphanAccounts, orphanUsers int64
+	db.Model(&models.AxentaObjectSnapshot{}).
+		Where("last_synced_at < ?", orphanCutoff).Count(&orphanObjects)
+	db.Model(&models.AxentaAccountSnapshot{}).
+		Where("last_synced_at < ?", orphanCutoff).Count(&orphanAccounts)
+	db.Model(&models.AxentaUserSnapshot{}).
+		Where("last_synced_at < ?", orphanCutoff).Count(&orphanUsers)
+	if orphanObjects+orphanAccounts+orphanUsers > 0 {
+		log.Printf("   🧹 Global orphan cleanup (>7 дней без sync): объектов=%d, аккаунтов=%d, юзеров=%d",
+			orphanObjects, orphanAccounts, orphanUsers)
+		db.Where("last_synced_at < ?", orphanCutoff).Delete(&models.AxentaObjectSnapshot{})
+		db.Where("last_synced_at < ?", orphanCutoff).Delete(&models.AxentaAccountSnapshot{})
+		db.Where("last_synced_at < ?", orphanCutoff).Delete(&models.AxentaUserSnapshot{})
+	}
+
 	cleanupDuration := time.Since(cleanupStartTime)
 	log.Printf("✅ Шаг 3 завершен за %v", cleanupDuration.Round(time.Second))
 	log.Println(strings.Repeat("-", 60))
