@@ -270,6 +270,12 @@ func (s *WialonHistoryService) backfillConnection(conn models.WialonConnection, 
 		return 0, fmt.Errorf("нет доступного resource для conn=%d (все 20 кандидатов вернули error)", conn.ID)
 	}
 
+	// Идемпотентность: удаляем existing snapshots за период по этому connection
+	// (могут быть от прошлого backfill с другим выбранным resource'ом).
+	s.db.Where("connection_id = ? AND snapshot_date >= ? AND snapshot_date <= ?",
+		conn.ID, from, to).
+		Delete(&models.WialonDailySnapshot{})
+
 	// 2. Записываем результат рабочего resource
 	totalRows := 0
 	{
