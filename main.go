@@ -223,6 +223,23 @@ func main() {
 		log.Println("⚠️ WialonStatsScheduler отключён (DISABLE_WIALON_STATS_SCHEDULER=true)")
 	}
 
+	// SKIF sync scheduler — тикает каждые N минут, для каждого enabled подключения
+	// проверяет per-connection sync_interval и вызывает SyncUnits.
+	skifTickInterval := 5
+	if v := os.Getenv("SKIF_SYNC_TICK_MIN"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			skifTickInterval = n
+		}
+	}
+	if os.Getenv("DISABLE_SKIF_SYNC_SCHEDULER") != "true" {
+		skifSyncScheduler := services.NewSkifSyncScheduler(skifTickInterval)
+		if err := skifSyncScheduler.Start(); err != nil {
+			log.Printf("⚠️ SkifSyncScheduler failed to start: %v", err)
+		}
+	} else {
+		log.Println("⚠️ SkifSyncScheduler отключён (DISABLE_SKIF_SYNC_SCHEDULER=true)")
+	}
+
 	// Wialon billing plans scheduler — раз в час обходит connections и обновляет тарифы.
 	// Раньше тарифы дёргались с Wialon на каждое открытие формы создания (1-2с overhead),
 	// теперь — мгновенный SELECT из public.wialon_billing_plans.
