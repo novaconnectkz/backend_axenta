@@ -176,16 +176,33 @@ func buildWialonLifecycle(db *gorm.DB, from time.Time, days int, loc *time.Locat
 
 	to := from.AddDate(0, 0, days)
 
+	// Wialon API не возвращает avl_unit_created/deleted для большинства
+	// аккаунтов — эти поля в wialon_daily_snapshots обычно 0. Поэтому
+	// derive created/deleted из дельты total_units день-к-дню через LAG.
+	// Net positive = created, net negative = deleted. Не различает одновременные
+	// create+delete в один день (показывает только net), но лучше чем нули.
+	// Берём previous_day сразу за окно (snapshot_date >= from-1) чтобы первый
+	// день периода имел корректную дельту.
 	var rows []dayRow
 	db.Raw(`
-		SELECT snapshot_date::timestamp AS day,
-		       COALESCE(SUM(units_created), 0) AS created,
-		       COALESCE(SUM(units_deleted), 0) AS deleted
-		FROM `+publicTable(db, "wialon_daily_snapshots")+`
-		WHERE snapshot_date >= ?
-		  AND snapshot_date < ?
-		GROUP BY snapshot_date
-	`, from, to).Scan(&rows)
+		WITH daily AS (
+			SELECT snapshot_date::date AS day,
+			       SUM(total_units) AS total
+			FROM `+publicTable(db, "wialon_daily_snapshots")+`
+			WHERE snapshot_date >= ? AND snapshot_date < ?
+			GROUP BY snapshot_date
+		),
+		lagged AS (
+			SELECT day, total,
+			       total - LAG(total) OVER (ORDER BY day) AS delta
+			FROM daily
+		)
+		SELECT day::timestamp AS day,
+		       GREATEST(COALESCE(delta, 0), 0)::int AS created,
+		       GREATEST(-COALESCE(delta, 0), 0)::int AS deleted
+		FROM lagged
+		WHERE day >= ? AND day < ?
+	`, from.AddDate(0, 0, -1), to, from, to).Scan(&rows)
 
 	for _, r := range rows {
 		if i := dateIndex(from, r.Day, days); i >= 0 {
