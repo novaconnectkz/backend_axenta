@@ -86,6 +86,17 @@ func lifecycleDays(period string) int {
 	switch period {
 	case "7d":
 		return 7
+	case "1m":
+		return 30
+	case "3m":
+		return 90
+	case "6m":
+		return 180
+	case "1y":
+		return 365
+	// legacy aliases
+	case "30d":
+		return 30
 	case "90d":
 		return 90
 	default:
