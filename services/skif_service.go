@@ -156,72 +156,101 @@ func (s *SkifService) TestConnection(conn *models.SkifConnection) (map[string]in
 	return me, nil
 }
 
-// SkifUnitDTO — минимальный набор полей юнита из /api_v1/units.
-// Реальная схема в Postman: см. wiki/sources/skif-api/obekty.md.
+// SkifUnitDTO — минимальный набор полей юнита из POST /api_v1/units/list.
+// id — UUID. См. wiki/sources/skif-api/obekty.md (POST /units/list).
 type SkifUnitDTO struct {
-	ID           int64  `json:"id"`
-	Name         string `json:"name"`
-	IMEI         string `json:"imei"`
-	Phone        string `json:"phoneNumber"`
-	Model        string `json:"model"`
-	IsActive     bool   `json:"isActive"`
-	CompanyName  string `json:"companyName"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	IMEI        string `json:"imei"`
+	Phone       string `json:"phoneNumber"`
+	Model       string `json:"model"`
+	IsActive    bool   `json:"isActive"`
+	CompanyName string `json:"companyName"`
 }
 
-// SyncUnits загружает все объекты из SKIF и upsert'ит в skif_units.
-// Возвращает количество upsert'нутых записей.
+type skifUnitsListResponse struct {
+	Max  int           `json:"max"`
+	List []SkifUnitDTO `json:"list"`
+}
+
+// SyncUnits загружает все объекты из SKIF через POST /api_v1/units/list
+// с pagination (from+count). Upsert в skif_units по (connection_id, skif_unit_id).
+//
+// GET /api_v1/units без ids возвращает 403 — по SKIF API список получается
+// только через POST /units/list с условиями (пустой conditions = все).
 func (s *SkifService) SyncUnits(conn *models.SkifConnection) (int, error) {
-	rawBody, status, err := s.authedRequest(conn, "GET", "/api_v1/units", nil)
-	if err != nil {
-		s.recordError(conn, fmt.Sprintf("sync units: %v", err))
-		return 0, err
-	}
-	if status != 200 {
-		err := fmt.Errorf("/units status=%d body=%s", status, truncate(string(rawBody), 300))
-		s.recordError(conn, err.Error())
-		return 0, err
-	}
-
-	// SKIF возвращает массив или объект с полем data — попробуем оба варианта.
-	var units []SkifUnitDTO
-	if err := json.Unmarshal(rawBody, &units); err != nil {
-		var wrapper struct {
-			Data []SkifUnitDTO `json:"data"`
-		}
-		if err2 := json.Unmarshal(rawBody, &wrapper); err2 == nil {
-			units = wrapper.Data
-		} else {
-			s.recordError(conn, fmt.Sprintf("parse units: %v", err))
-			return 0, fmt.Errorf("parse units: %w", err)
-		}
-	}
-
+	const pageSize = 500
 	now := time.Now()
 	saved := 0
-	for _, u := range units {
-		row := models.SkifUnit{
-			ConnectionID:    conn.ID,
-			SkifUnitID:      u.ID,
-			Name:            u.Name,
-			IMEI:            u.IMEI,
-			Phone:           u.Phone,
-			Model:           u.Model,
-			IsActive:        u.IsActive,
-			CompanyID:       conn.CompanyID,
-			SkifCompany:     u.CompanyName,
-			LastCollectedAt: now,
+	from := 0
+	totalSeen := 0
+
+	for {
+		body, _ := json.Marshal(map[string]interface{}{
+			"from":       from,
+			"count":      pageSize,
+			"sortField":  "name",
+			"sortDesc":   "false",
+			"conditions": []interface{}{},
+			"fields":     []string{"name", "imei", "phoneNumber", "model", "isActive", "companyName"},
+		})
+		rawBody, status, err := s.authedRequest(conn, "POST", "/api_v1/units/list", bytes.NewReader(body))
+		if err != nil {
+			s.recordError(conn, fmt.Sprintf("sync units: %v", err))
+			return saved, err
 		}
-		if err := s.db.Clauses(clause.OnConflict{
-			Columns: []clause.Column{{Name: "connection_id"}, {Name: "skif_unit_id"}},
-			DoUpdates: clause.AssignmentColumns([]string{
-				"name", "imei", "phone", "model", "is_active",
-				"company_id", "skif_company", "last_collected_at", "updated_at",
-			}),
-		}).Create(&row).Error; err != nil {
-			log.Printf("⚠️ SKIF upsert unit %d: %v", u.ID, err)
-			continue
+		if status != 200 {
+			errMsg := fmt.Sprintf("/units/list status=%d body=%s", status, truncate(string(rawBody), 300))
+			s.recordError(conn, errMsg)
+			return saved, fmt.Errorf("%s", errMsg)
 		}
-		saved++
+
+		var page skifUnitsListResponse
+		if err := json.Unmarshal(rawBody, &page); err != nil {
+			s.recordError(conn, fmt.Sprintf("parse /units/list: %v", err))
+			return saved, fmt.Errorf("parse: %w", err)
+		}
+
+		if len(page.List) == 0 {
+			break
+		}
+
+		for _, u := range page.List {
+			row := models.SkifUnit{
+				ConnectionID:    conn.ID,
+				SkifUnitID:      u.ID,
+				Name:            u.Name,
+				IMEI:            u.IMEI,
+				Phone:           u.Phone,
+				Model:           u.Model,
+				IsActive:        u.IsActive,
+				CompanyID:       conn.CompanyID,
+				SkifCompany:     u.CompanyName,
+				LastCollectedAt: now,
+			}
+			if err := s.db.Clauses(clause.OnConflict{
+				Columns: []clause.Column{{Name: "connection_id"}, {Name: "skif_unit_id"}},
+				DoUpdates: clause.AssignmentColumns([]string{
+					"name", "imei", "phone", "model", "is_active",
+					"company_id", "skif_company", "last_collected_at", "updated_at",
+				}),
+			}).Create(&row).Error; err != nil {
+				log.Printf("⚠️ SKIF upsert unit %s: %v", u.ID, err)
+				continue
+			}
+			saved++
+		}
+
+		totalSeen += len(page.List)
+		from += pageSize
+		// Защита от зависания: если max меньше чем уже видели — прерываем.
+		if page.Max > 0 && from >= page.Max {
+			break
+		}
+		// Жёсткий лимит на всякий случай (50k объектов = 100 страниц)
+		if from >= 50000 {
+			break
+		}
 	}
 
 	// Обновляем счётчики в connection
@@ -233,7 +262,7 @@ func (s *SkifService) SyncUnits(conn *models.SkifConnection) (int, error) {
 		"last_error_at": nil,
 	})
 
-	log.Printf("✅ SKIF sync units: conn=%d upserted=%d (raw=%d)", conn.ID, saved, len(units))
+	log.Printf("✅ SKIF sync units: conn=%d upserted=%d (raw=%d)", conn.ID, saved, totalSeen)
 	return saved, nil
 }
 

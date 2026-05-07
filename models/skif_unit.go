@@ -10,8 +10,8 @@ import "time"
 type SkifUnit struct {
 	ID uint `json:"id" gorm:"primarykey"`
 
-	ConnectionID uint  `json:"connection_id" gorm:"not null;index;uniqueIndex:uq_skif_units_conn_unit"`
-	SkifUnitID   int64 `json:"skif_unit_id"  gorm:"not null;uniqueIndex:uq_skif_units_conn_unit"`
+	ConnectionID uint   `json:"connection_id" gorm:"not null;index;uniqueIndex:uq_skif_units_conn_unit"`
+	SkifUnitID   string `json:"skif_unit_id"  gorm:"not null;type:varchar(100);uniqueIndex:uq_skif_units_conn_unit"` // UUID из SKIF
 
 	Name        string `json:"name"        gorm:"type:varchar(255)"`
 	IMEI        string `json:"imei"        gorm:"type:varchar(50);index"`
