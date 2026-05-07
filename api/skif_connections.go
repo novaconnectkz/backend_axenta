@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -199,6 +200,41 @@ func SyncSkifConnection(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{"upserted": count}})
 }
 
+// BackfillSkifHistory запускает синхронный backfill истории units (POST /company/updates/query).
+// POST /api/auth/skif/connections/:id/history/backfill?from=2025-05-01&to=2026-05-07
+func BackfillSkifHistory(c *gin.Context) {
+	companyID := middleware.GetCompanyID(c)
+	conn, err := loadOwnedSkifConn(c, companyID)
+	if err != nil {
+		return
+	}
+	fromStr := c.Query("from")
+	toStr := c.Query("to")
+	if fromStr == "" || toStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "from и to обязательны (YYYY-MM-DD)"})
+		return
+	}
+	from, err1 := parseHistoryDate(fromStr)
+	to, err2 := parseHistoryDate(toStr)
+	if err1 != nil || err2 != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "from/to должны быть YYYY-MM-DD"})
+		return
+	}
+	if !from.Before(to) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "from должно быть раньше to"})
+		return
+	}
+	events, upserted, err := skifService().BackfillHistory(conn, from, to)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data":   gin.H{"events": events, "upserted_days": upserted},
+	})
+}
+
 // GetSkifUnits возвращает юниты подключения из локального реестра.
 // GET /api/auth/skif/connections/:id/units
 func GetSkifUnits(c *gin.Context) {
@@ -214,6 +250,12 @@ func GetSkifUnits(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": units, "count": len(units)})
+}
+
+// parseHistoryDate парсит YYYY-MM-DD в начало дня UTC.
+func parseHistoryDate(s string) (t time.Time, err error) {
+	t, err = time.Parse("2006-01-02", s)
+	return
 }
 
 // loadOwnedSkifConn загружает connection и проверяет company_id.

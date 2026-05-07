@@ -67,14 +67,15 @@ func GetDashboardLifecycle(c *gin.Context) {
 	companyID := middleware.GetCompanyID(c)
 
 	axenta := buildAxentaLifecycle(tenantDB, from, days, loc)
-	wialon := buildWialonLifecycle(publicDB, from, days, loc)
+	wh := buildWialonLifecycleByType(publicDB, "hosting", "wh", "Wialon Hosting", from, days, loc)
+	wl := buildWialonLifecycleByType(publicDB, "local", "wl", "Wialon Local", from, days, loc)
 	skif := buildSkifLifecycle(publicDB, companyID, from, days, loc)
-	total := combineLifecycle(from, days, loc, axenta, wialon, skif)
+	total := combineLifecycle(from, days, loc, axenta, wh, wl, skif)
 
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
 		"data": LifecycleResponse{
-			Sources:     []LifecycleSource{axenta, wialon, skif},
+			Sources:     []LifecycleSource{axenta, wh, wl, skif},
 			Total:       total,
 			Period:      period,
 			From:        from,
@@ -99,12 +100,44 @@ func buildSkifLifecycle(db *gorm.DB, companyID uint, from time.Time, days int, l
 	}
 
 	type dayRow struct {
-		Day   time.Time
-		Count int
+		Day     time.Time
+		Created int
+		Deleted int
 	}
 	to := from.AddDate(0, 0, days)
 
-	var created []dayRow
+	// Prefer skif_daily_snapshots если есть данные за период (точная история
+	// из POST /company/updates/query, заполняется backfill'ом).
+	var snapshots []dayRow
+	db.Raw(`
+		SELECT snapshot_date::timestamp AS day,
+		       COALESCE(SUM(units_created), 0) AS created,
+		       COALESCE(SUM(units_deleted), 0) AS deleted
+		FROM `+publicTable(db, "skif_daily_snapshots")+` sds
+		JOIN `+publicTable(db, "skif_connections")+` sc ON sc.id = sds.connection_id
+		WHERE sc.company_id = ?
+		  AND sds.snapshot_date >= ? AND sds.snapshot_date < ?
+		GROUP BY snapshot_date
+	`, companyID, from, to).Scan(&snapshots)
+
+	if len(snapshots) > 0 {
+		for _, r := range snapshots {
+			if i := dateIndex(from, r.Day, days); i >= 0 {
+				src.Points[i].Created = r.Created
+				src.Points[i].Deleted = r.Deleted
+				src.TotalCreated += r.Created
+				src.TotalDeleted += r.Deleted
+			}
+		}
+		return src
+	}
+
+	// Fallback: skif_units.created_at + skif_deleted_at (proxy без backfill).
+	type cntRow struct {
+		Day   time.Time
+		Count int
+	}
+	var created []cntRow
 	db.Raw(`
 		SELECT date_trunc('day', created_at AT TIME ZONE 'UTC') AS day,
 		       COUNT(*) AS count
@@ -115,10 +148,28 @@ func buildSkifLifecycle(db *gorm.DB, companyID uint, from time.Time, days int, l
 		GROUP BY 1
 	`, companyID, from, to).Scan(&created)
 
+	var deleted []cntRow
+	db.Raw(`
+		SELECT date_trunc('day', skif_deleted_at AT TIME ZONE 'UTC') AS day,
+		       COUNT(*) AS count
+		FROM `+publicTable(db, "skif_units")+`
+		WHERE company_id = ?
+		  AND skif_deleted_at IS NOT NULL
+		  AND skif_deleted_at >= ?
+		  AND skif_deleted_at < ?
+		GROUP BY 1
+	`, companyID, from, to).Scan(&deleted)
+
 	for _, r := range created {
 		if i := dateIndex(from, r.Day, days); i >= 0 {
 			src.Points[i].Created = r.Count
 			src.TotalCreated += r.Count
+		}
+	}
+	for _, r := range deleted {
+		if i := dateIndex(from, r.Day, days); i >= 0 {
+			src.Points[i].Deleted = r.Count
+			src.TotalDeleted += r.Count
 		}
 	}
 	return src
@@ -212,12 +263,20 @@ func buildAxentaLifecycle(db *gorm.DB, from time.Time, days int, loc *time.Locat
 	return src
 }
 
-// buildWialonLifecycle — SUM(units_created/units_deleted) per day из
-// wialon_daily_snapshots (глобальная public-таблица).
-func buildWialonLifecycle(db *gorm.DB, from time.Time, days int, loc *time.Location) LifecycleSource {
+// buildWialonLifecycleByType — derive created/deleted per-type.
+//
+// Стратегия:
+//  1. Если есть строки в wialon_daily_snapshots за период → LAG total_units
+//     (точная динамика +/- net change).
+//  2. Иначе fallback на wialon_units.created_at COUNT per day (proxy
+//     «когда впервые увидели юнит», deleted=0).
+//
+// WL обычно попадает в fallback: backfill пропускается для shared-connections
+// (recursive=1 от top-resource считает всю иерархию, см. CLAUDE.md).
+func buildWialonLifecycleByType(db *gorm.DB, connType, key, label string, from time.Time, days int, loc *time.Location) LifecycleSource {
 	src := LifecycleSource{
-		Key:    "wialon",
-		Label:  "Wialon",
+		Key:    key,
+		Label:  label,
 		Points: initLifecyclePoints(from, days, loc),
 	}
 
@@ -226,23 +285,17 @@ func buildWialonLifecycle(db *gorm.DB, from time.Time, days int, loc *time.Locat
 		Created int
 		Deleted int
 	}
-
 	to := from.AddDate(0, 0, days)
 
-	// Wialon API не возвращает avl_unit_created/deleted для большинства
-	// аккаунтов — эти поля в wialon_daily_snapshots обычно 0. Поэтому
-	// derive created/deleted из дельты total_units день-к-дню через LAG.
-	// Net positive = created, net negative = deleted. Не различает одновременные
-	// create+delete в один день (показывает только net), но лучше чем нули.
-	// Берём previous_day сразу за окно (snapshot_date >= from-1) чтобы первый
-	// день периода имел корректную дельту.
 	var rows []dayRow
 	db.Raw(`
 		WITH daily AS (
 			SELECT snapshot_date::date AS day,
-			       SUM(total_units) AS total
-			FROM `+publicTable(db, "wialon_daily_snapshots")+`
-			WHERE snapshot_date >= ? AND snapshot_date < ?
+			       SUM(wds.total_units) AS total
+			FROM `+publicTable(db, "wialon_daily_snapshots")+` wds
+			JOIN `+publicTable(db, "wialon_connections")+` wc ON wc.id = wds.connection_id
+			WHERE wc.connection_type = ?
+			  AND wds.snapshot_date >= ? AND wds.snapshot_date < ?
 			GROUP BY snapshot_date
 		),
 		lagged AS (
@@ -255,7 +308,43 @@ func buildWialonLifecycle(db *gorm.DB, from time.Time, days int, loc *time.Locat
 		       GREATEST(-COALESCE(delta, 0), 0)::int AS deleted
 		FROM lagged
 		WHERE day >= ? AND day < ?
-	`, from.AddDate(0, 0, -1), to, from, to).Scan(&rows)
+	`, connType, from.AddDate(0, 0, -1), to, from, to).Scan(&rows)
+
+	hasSnapshotData := false
+	for _, r := range rows {
+		if r.Created > 0 || r.Deleted > 0 {
+			hasSnapshotData = true
+			break
+		}
+	}
+
+	// Fallback: COUNT wialon_units по created_at per day (когда впервые увидели юнит).
+	// Используется когда нет данных в wialon_daily_snapshots за период (типичный
+	// случай для WL where backfill пропущен).
+	if !hasSnapshotData {
+		type proxyRow struct {
+			Day   time.Time
+			Count int
+		}
+		var proxy []proxyRow
+		db.Raw(`
+			SELECT date_trunc('day', wu.created_at AT TIME ZONE 'UTC') AS day,
+			       COUNT(*) AS count
+			FROM `+publicTable(db, "wialon_units")+` wu
+			JOIN `+publicTable(db, "wialon_connections")+` wc ON wc.id = wu.connection_id
+			WHERE wc.connection_type = ?
+			  AND wu.created_at >= ?
+			  AND wu.created_at < ?
+			GROUP BY 1
+		`, connType, from, to).Scan(&proxy)
+		for _, r := range proxy {
+			if i := dateIndex(from, r.Day, days); i >= 0 {
+				src.Points[i].Created = r.Count
+				src.TotalCreated += r.Count
+			}
+		}
+		return src
+	}
 
 	for _, r := range rows {
 		if i := dateIndex(from, r.Day, days); i >= 0 {

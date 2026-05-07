@@ -1098,6 +1098,7 @@ func main() {
 	apiGroup.POST("/skif/connections/:id/test", api.TestSkifConnection)
 	apiGroup.POST("/skif/connections/:id/sync", api.SyncSkifConnection)
 	apiGroup.GET("/skif/connections/:id/units", api.GetSkifUnits)
+	apiGroup.POST("/skif/connections/:id/history/backfill", api.BackfillSkifHistory)
 
 	// Wialon History (on-demand backfill точной истории через core/get_statistics)
 	apiGroup.GET("/wialon-history/settings", api.GetWialonHistorySettings)
