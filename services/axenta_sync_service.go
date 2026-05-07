@@ -906,14 +906,31 @@ func (s *AxentaSyncService) syncAllObjectsWithDBAndProgress(adminAccountID uint,
 		// ВАЖНО: Уникальный индекс в БД только по external_object_id (idx_axenta_object_external)
 		// Поэтому используем только external_object_id в OnConflict
 		// Это означает, что объект с одинаковым external_object_id будет обновляться, а не создаваться заново
+		// Сбрасываем gorm soft-delete (deleted_at = NULL) при возврате объекта,
+		// иначе он навсегда останется скрыт от scoped запросов даже когда
+		// снова появился в Axenta Cloud.
 		result := db.Clauses(clause.OnConflict{
 			Columns: []clause.Column{{Name: "external_object_id"}},
-			DoUpdates: clause.AssignmentColumns([]string{
-				"admin_account_id", "account_external_id", "object_name", "unique_id", "device_type_name", "account_name",
-				"status", "is_active", "last_synced_at", "raw_payload", "last_communication_at",
-				// Новые поля
-				"creator_name", "creator_id", "creator_is_active", "account_is_active",
-				"phone_numbers", "axenta_created_at", "axenta_deleted_at",
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"admin_account_id":    snapshot.AdminAccountID,
+				"account_external_id": snapshot.AccountExternalID,
+				"object_name":         snapshot.ObjectName,
+				"unique_id":           snapshot.UniqueID,
+				"device_type_name":    snapshot.DeviceTypeName,
+				"account_name":        snapshot.AccountName,
+				"status":              snapshot.Status,
+				"is_active":           snapshot.IsActive,
+				"last_synced_at":      snapshot.LastSyncedAt,
+				"raw_payload":         snapshot.RawPayload,
+				"last_communication_at": snapshot.LastCommunicationAt,
+				"creator_name":        snapshot.CreatorName,
+				"creator_id":          snapshot.CreatorID,
+				"creator_is_active":   snapshot.CreatorIsActive,
+				"account_is_active":   snapshot.AccountIsActive,
+				"phone_numbers":       snapshot.PhoneNumbers,
+				"axenta_created_at":   snapshot.AxentaCreatedAt,
+				"axenta_deleted_at":   snapshot.AxentaDeletedAt,
+				"deleted_at":          gorm.DeletedAt{},
 			}),
 		}).Create(&snapshot)
 

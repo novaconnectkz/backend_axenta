@@ -215,10 +215,12 @@ func GetDashboardChart(c *gin.Context) {
 		// Axenta: используем axenta_created_at (реальная дата создания в Axenta Cloud)
 		// с COALESCE на наш created_at для записей где axenta_created_at NULL.
 		// Это даёт точную историю объектов, а не "когда scheduler впервые увидел".
+		// Источник истины — axenta_deleted_at (реальное состояние в Axenta Cloud).
+		// gorm soft-delete (deleted_at) — внутренний cleanup, в chart не учитываем:
+		// возвращённые после soft-delete объекты иначе теряются.
 		var axentaCount int64
-		tenantDB.Table("axenta_object_snapshots").
+		tenantDB.Unscoped().Table("axenta_object_snapshots").
 			Where("COALESCE(axenta_created_at, created_at) <= ?", eom).
-			Where("deleted_at IS NULL").
 			Where("(axenta_deleted_at IS NULL OR axenta_deleted_at > ?)", eom).
 			Count(&axentaCount)
 
