@@ -157,15 +157,25 @@ func (s *SkifService) TestConnection(conn *models.SkifConnection) (map[string]in
 }
 
 // SkifUnitDTO — минимальный набор полей юнита из POST /api_v1/units/list.
-// id — UUID. См. wiki/sources/skif-api/obekty.md (POST /units/list).
+// id — UUID.
+// SKIF /units/list НЕ возвращает поле `created` (даже при явном запросе в fields).
+// Дату создания берём из states[0].date_from (первое состояние = когда юнит появился),
+// фильтруя epoch zero "1970-01-01" как невалидное значение.
+// См. wiki/sources/skif-api/obekty.md.
 type SkifUnitDTO struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	IMEI        string `json:"imei"`
-	Phone       string `json:"phoneNumber"`
-	Model       string `json:"model"`
-	IsActive    bool   `json:"isActive"`
-	CompanyName string `json:"companyName"`
+	ID          string          `json:"id"`
+	Name        string          `json:"name"`
+	IMEI        string          `json:"imei"`
+	Phone       string          `json:"phoneNumber"`
+	Model       string          `json:"model"`
+	IsActive    bool            `json:"isActive"`
+	CompanyName string          `json:"companyName"`
+	States      []skifUnitState `json:"states"`
+}
+
+type skifUnitState struct {
+	Name     string `json:"name"`
+	DateFrom string `json:"date_from"`
 }
 
 type skifUnitsListResponse struct {
@@ -399,7 +409,8 @@ func (s *SkifService) fetchUnitsForCompany(conn *models.SkifConnection, client *
 			"sortField":  "name",
 			"sortDesc":   "false",
 			"conditions": []interface{}{},
-			"fields":     []string{"name", "imei", "phoneNumber", "model", "isActive", "companyName"},
+			// "created" SKIF не отдаёт. Берём states[0].date_from как proxy.
+			"fields": []string{"name", "imei", "phoneNumber", "model", "isActive", "companyName", "states"},
 		})
 		req, err := http.NewRequest("POST", strings.TrimRight(conn.BaseURL, "/")+"/api_v1/units/list", bytes.NewReader(body))
 		if err != nil {
@@ -436,6 +447,7 @@ func (s *SkifService) fetchUnitsForCompany(conn *models.SkifConnection, client *
 				SkifCompanyID:   comp.ID,
 				SkifCompany:     comp.Name,
 				LastCollectedAt: now,
+				SkifCreatedAt:   extractSkifCreatedAt(u.States),
 			}
 			if err := s.db.Clauses(clause.OnConflict{
 				Columns: []clause.Column{{Name: "connection_id"}, {Name: "skif_unit_id"}},
@@ -448,6 +460,7 @@ func (s *SkifService) fetchUnitsForCompany(conn *models.SkifConnection, client *
 					"company_id":        row.CompanyID,
 					"skif_company_id":   row.SkifCompanyID,
 					"skif_company":      row.SkifCompany,
+					"skif_created_at":   row.SkifCreatedAt,
 					"last_collected_at": row.LastCollectedAt,
 					"skif_deleted_at":   nil, // юнит вернулся → сброс mark
 					"updated_at":        time.Now(),
@@ -734,4 +747,38 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// extractSkifCreatedAt — берёт дату создания юнита из массива states.
+// Логика: первое состояние («Начальное состояние») с date_from != "1970-01-01..."
+// = когда юнит реально появился в SKIF. Эпоху отфильтровываем.
+func extractSkifCreatedAt(states []skifUnitState) *time.Time {
+	for _, st := range states {
+		if strings.HasPrefix(st.DateFrom, "1970-01-01") {
+			continue
+		}
+		if t := parseSkifTime(st.DateFrom); t != nil {
+			return t
+		}
+	}
+	return nil
+}
+
+// parseSkifTime парсит SKIF timestamp "2024-03-14 10:00:00" в time.Time.
+// Возвращает nil если parse fail или строка пустая.
+func parseSkifTime(s string) *time.Time {
+	if s == "" {
+		return nil
+	}
+	layouts := []string{
+		"2006-01-02 15:04:05",
+		"2006-01-02T15:04:05",
+		time.RFC3339,
+	}
+	for _, l := range layouts {
+		if t, err := time.Parse(l, s); err == nil {
+			return &t
+		}
+	}
+	return nil
 }

@@ -289,13 +289,17 @@ func GetDashboardChart(c *gin.Context) {
 		whCount := pickType("hosting")
 		wlCount := pickType("local")
 
-		// SKIF: proxy через skif_units.created_at, фильтр по company_id.
+		// SKIF: COUNT по реальной дате создания в SKIF (skif_created_at).
+		// Fallback на наш created_at для записей где skif_created_at NULL.
+		// Также игнорируем юниты помеченные deleted после eom (они существовали тогда).
 		var skifCount int64
 		if companyID > 0 {
 			publicDB.Raw(`
 				SELECT COUNT(*) FROM `+publicTable(publicDB, "skif_units")+`
-				WHERE company_id = ? AND created_at <= ?
-			`, companyID, eom).Scan(&skifCount)
+				WHERE company_id = ?
+				  AND COALESCE(skif_created_at, created_at) <= ?
+				  AND (skif_deleted_at IS NULL OR skif_deleted_at > ?)
+			`, companyID, eom, eom).Scan(&skifCount)
 		}
 
 		objectsCount := axentaCount + whCount + wlCount + skifCount

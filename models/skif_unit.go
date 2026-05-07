@@ -23,6 +23,7 @@ type SkifUnit struct {
 	SkifCompany   string `json:"skif_company"   gorm:"type:varchar(255)"` // Название компании в SKIF
 
 	LastCollectedAt time.Time  `json:"last_collected_at" gorm:"not null;index"`
+	SkifCreatedAt   *time.Time `json:"skif_created_at" gorm:"index"` // Реальная дата создания юнита в SKIF (поле created в API)
 	SkifDeletedAt   *time.Time `json:"skif_deleted_at" gorm:"index"` // Когда юнит исчез из выгрузки SKIF (бизнес-метка)
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
