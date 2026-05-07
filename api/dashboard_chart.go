@@ -29,6 +29,7 @@ type ChartPoint struct {
 	Axenta     int64             `json:"axenta"`      // Axenta — точная история
 	WH         int64             `json:"wh"`          // Wialon Hosting — proxy через wialon_units.created_at
 	WL         int64             `json:"wl"`          // Wialon Local — proxy
+	Skif       int64             `json:"skif"`        // SKIF.PRO — proxy через skif_units.created_at
 	Revenues   []CurrencyRevenue `json:"revenues"`    // Выручки по валютам
 }
 
@@ -287,7 +288,17 @@ func GetDashboardChart(c *gin.Context) {
 		}
 		whCount := pickType("hosting")
 		wlCount := pickType("local")
-		objectsCount := axentaCount + whCount + wlCount
+
+		// SKIF: proxy через skif_units.created_at, фильтр по company_id.
+		var skifCount int64
+		if companyID > 0 {
+			publicDB.Raw(`
+				SELECT COUNT(*) FROM `+publicTable(publicDB, "skif_units")+`
+				WHERE company_id = ? AND created_at <= ?
+			`, companyID, eom).Scan(&skifCount)
+		}
+
+		objectsCount := axentaCount + whCount + wlCount + skifCount
 
 		revenues := sumPaidByCurrency(publicDB, companyID, b.start, b.end)
 		for _, r := range revenues {
@@ -301,6 +312,7 @@ func GetDashboardChart(c *gin.Context) {
 			Axenta:     axentaCount,
 			WH:         whCount,
 			WL:         wlCount,
+			Skif:       skifCount,
 			Revenues:   revenues,
 		})
 	}

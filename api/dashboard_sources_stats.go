@@ -67,9 +67,10 @@ func GetDashboardSourcesStats(c *gin.Context) {
 
 	axenta := buildAxentaSourceStats(tenantDB)
 	wh, wl := buildWialonSourceStats(companyID)
+	skif := buildSkifSourceStats(companyID)
 
 	total := SourceStats{Key: "all", Label: "Все"}
-	for _, s := range []SourceStats{axenta, wh, wl} {
+	for _, s := range []SourceStats{axenta, wh, wl, skif} {
 		total.Objects.Total += s.Objects.Total
 		total.Objects.Active += s.Objects.Active
 		total.Objects.Inactive += s.Objects.Inactive
@@ -84,10 +85,61 @@ func GetDashboardSourcesStats(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
 		"data": SourcesStatsResponse{
-			Sources: []SourceStats{axenta, wh, wl},
+			Sources: []SourceStats{axenta, wh, wl, skif},
 			Total:   total,
 		},
 	})
+}
+
+// buildSkifSourceStats — агрегаты по SKIF.PRO юнитам и подключениям (current company).
+// Объекты: COUNT skif_units по company_id. Аккаунты: 1 на каждый skif_connection.
+func buildSkifSourceStats(companyID uint) SourceStats {
+	s := SourceStats{Key: "skif", Label: "SKIF"}
+	if database.DB == nil {
+		return s
+	}
+
+	type objCounts struct {
+		Total    int64
+		Active   int64
+		Inactive int64
+	}
+	var oc objCounts
+	if err := database.DB.Raw(`
+		SELECT
+			COUNT(*) AS total,
+			COUNT(*) FILTER (WHERE is_active = true) AS active,
+			COUNT(*) FILTER (WHERE is_active = false) AS inactive
+		FROM skif_units
+		WHERE company_id = ?
+	`, companyID).Scan(&oc).Error; err != nil {
+		log.Printf("⚠️ sources-stats skif objects: %v", err)
+	}
+	s.Objects.Total = int(oc.Total)
+	s.Objects.Active = int(oc.Active)
+	s.Objects.Inactive = int(oc.Inactive)
+
+	type connCounts struct {
+		Total   int64
+		Active  int64
+		Blocked int64
+	}
+	var cc connCounts
+	if err := database.DB.Raw(`
+		SELECT
+			COUNT(*) AS total,
+			COUNT(*) FILTER (WHERE is_active = true) AS active,
+			COUNT(*) FILTER (WHERE is_active = false) AS blocked
+		FROM skif_connections
+		WHERE company_id = ? AND deleted_at IS NULL
+	`, companyID).Scan(&cc).Error; err != nil {
+		log.Printf("⚠️ sources-stats skif connections: %v", err)
+	}
+	s.Accounts.Total = int(cc.Total)
+	s.Accounts.Active = int(cc.Active)
+	s.Accounts.Blocked = int(cc.Blocked)
+	s.Accounts.Clients = int(cc.Total) // SKIF подключение = клиентский аккаунт
+	return s
 }
 
 // buildAxentaSourceStats — агрегирует объекты и аккаунты из локальных snapshot-таблиц Axenta.

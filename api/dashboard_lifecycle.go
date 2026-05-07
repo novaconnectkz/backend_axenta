@@ -64,15 +64,17 @@ func GetDashboardLifecycle(c *gin.Context) {
 	loc := now.Location()
 	to := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc).AddDate(0, 0, 1)
 	from := to.AddDate(0, 0, -days)
+	companyID := middleware.GetCompanyID(c)
 
 	axenta := buildAxentaLifecycle(tenantDB, from, days, loc)
 	wialon := buildWialonLifecycle(publicDB, from, days, loc)
-	total := combineLifecycle(from, days, loc, axenta, wialon)
+	skif := buildSkifLifecycle(publicDB, companyID, from, days, loc)
+	total := combineLifecycle(from, days, loc, axenta, wialon, skif)
 
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
 		"data": LifecycleResponse{
-			Sources:     []LifecycleSource{axenta, wialon},
+			Sources:     []LifecycleSource{axenta, wialon, skif},
 			Total:       total,
 			Period:      period,
 			From:        from,
@@ -80,6 +82,46 @@ func GetDashboardLifecycle(c *gin.Context) {
 			GeneratedAt: now,
 		},
 	})
+}
+
+// buildSkifLifecycle — created proxy через skif_units.created_at per day.
+// SKIF API не возвращает per-day creation history, поэтому используем
+// "когда впервые увидели юнит" (как у Wialon fallback).
+// Deleted = 0 пока не введём soft-delete для skif_units (TODO).
+func buildSkifLifecycle(db *gorm.DB, companyID uint, from time.Time, days int, loc *time.Location) LifecycleSource {
+	src := LifecycleSource{
+		Key:    "skif",
+		Label:  "SKIF",
+		Points: initLifecyclePoints(from, days, loc),
+	}
+	if companyID == 0 {
+		return src
+	}
+
+	type dayRow struct {
+		Day   time.Time
+		Count int
+	}
+	to := from.AddDate(0, 0, days)
+
+	var created []dayRow
+	db.Raw(`
+		SELECT date_trunc('day', created_at AT TIME ZONE 'UTC') AS day,
+		       COUNT(*) AS count
+		FROM `+publicTable(db, "skif_units")+`
+		WHERE company_id = ?
+		  AND created_at >= ?
+		  AND created_at < ?
+		GROUP BY 1
+	`, companyID, from, to).Scan(&created)
+
+	for _, r := range created {
+		if i := dateIndex(from, r.Day, days); i >= 0 {
+			src.Points[i].Created = r.Count
+			src.TotalCreated += r.Count
+		}
+	}
+	return src
 }
 
 func lifecycleDays(period string) int {
