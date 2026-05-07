@@ -978,7 +978,10 @@ func (s *AxentaSyncService) syncAllObjectsWithDBAndProgress(adminAccountID uint,
 		for _, obj := range objects {
 			seen = append(seen, int64(obj.ID))
 		}
-		res := db.Model(&models.AxentaObjectSnapshot{}).
+		// Unscoped() — захватываем и soft-deleted записи (Шаг 3 cleanup ниже
+		// soft-deletes исчезнувшие; для бизнес-метки axenta_deleted_at это
+		// не должно быть препятствием).
+		res := db.Unscoped().Model(&models.AxentaObjectSnapshot{}).
 			Where("admin_account_id = ? AND axenta_deleted_at IS NULL AND external_object_id NOT IN ?", adminAccountID, seen).
 			Update("axenta_deleted_at", syncedAt)
 		if res.Error != nil {

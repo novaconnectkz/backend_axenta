@@ -118,14 +118,15 @@ func buildAxentaLifecycle(db *gorm.DB, from time.Time, days int, loc *time.Locat
 
 	to := from.AddDate(0, 0, days)
 
-	// Created
+	// Created — не фильтруем по GORM soft-delete (Шаг 3 cleanup
+	// в sync soft-удаляет исчезнувшие, но lifecycle событие creation
+	// произошло реально и должно учитываться).
 	var created []dayRow
 	db.Raw(`
 		SELECT date_trunc('day', axenta_created_at AT TIME ZONE 'UTC') AS day,
 		       COUNT(*) AS count
 		FROM axenta_object_snapshots
-		WHERE deleted_at IS NULL
-		  AND axenta_created_at IS NOT NULL
+		WHERE axenta_created_at IS NOT NULL
 		  AND axenta_created_at >= ?
 		  AND axenta_created_at < ?
 		GROUP BY 1
@@ -137,8 +138,7 @@ func buildAxentaLifecycle(db *gorm.DB, from time.Time, days int, loc *time.Locat
 		SELECT date_trunc('day', axenta_deleted_at AT TIME ZONE 'UTC') AS day,
 		       COUNT(*) AS count
 		FROM axenta_object_snapshots
-		WHERE deleted_at IS NULL
-		  AND axenta_deleted_at IS NOT NULL
+		WHERE axenta_deleted_at IS NOT NULL
 		  AND axenta_deleted_at >= ?
 		  AND axenta_deleted_at < ?
 		GROUP BY 1
