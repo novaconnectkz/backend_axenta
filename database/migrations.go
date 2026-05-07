@@ -135,6 +135,18 @@ func GetAllMigrations() []MigrationInfo {
 			IsGlobal:    true,
 		},
 		{
+			TableName:   "skif_connections",
+			Model:       &models.SkifConnection{},
+			Description: "Подключения к SKIF.PRO (cookie-session auth, multi-tenant)",
+			IsGlobal:    true,
+		},
+		{
+			TableName:   "skif_units",
+			Model:       &models.SkifUnit{},
+			Description: "Реестр SKIF юнитов (per connection_id+skif_unit_id) — для unified objects",
+			IsGlobal:    true,
+		},
+		{
 			TableName:   "local_users",
 			Model:       &models.LocalUser{},
 			Description: "Локальные пользователи для альтернативной авторизации",

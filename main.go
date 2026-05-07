@@ -1073,6 +1073,15 @@ func main() {
 	apiGroup.GET("/dashboard/lifecycle", api.GetDashboardLifecycle)
 	apiGroup.GET("/dashboard/lifecycle/", api.GetDashboardLifecycle)
 
+	// SKIF.PRO интеграция
+	apiGroup.GET("/skif/connections", api.GetSkifConnections)
+	apiGroup.POST("/skif/connections", api.CreateSkifConnection)
+	apiGroup.PUT("/skif/connections/:id", api.UpdateSkifConnection)
+	apiGroup.DELETE("/skif/connections/:id", api.DeleteSkifConnection)
+	apiGroup.POST("/skif/connections/:id/test", api.TestSkifConnection)
+	apiGroup.POST("/skif/connections/:id/sync", api.SyncSkifConnection)
+	apiGroup.GET("/skif/connections/:id/units", api.GetSkifUnits)
+
 	// Wialon History (on-demand backfill точной истории через core/get_statistics)
 	apiGroup.GET("/wialon-history/settings", api.GetWialonHistorySettings)
 	apiGroup.PUT("/wialon-history/settings", api.UpdateWialonHistorySettings)
