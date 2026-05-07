@@ -347,11 +347,15 @@ func triggerPartnerSnapshotsForAllContracts(c *gin.Context, body TriggerManualSn
 			}
 		}()
 
-		// Получаем все активные партнёрские договоры
+		// Получаем все активные партнёрские договоры.
+		// Фильтр должен совпадать с auto-cron (partner_snapshot_scheduler.go) —
+		// иначе manual backfill захватит draft-контракты, которых scheduler
+		// не видит, и упрётся в unique-constraint (partner_company_id, snapshot_date),
+		// потому что слот уже занят per-partner агрегатом (contract_id=0).
 		var contracts []models.Contract
 		if err := tenantDB.
+			Where("contract_type = ? AND status = ?", "partner", "active").
 			Where("partner_company_id IS NOT NULL").
-			Where("is_active = ?", true).
 			Find(&contracts).Error; err != nil {
 			job.AddError(models.JobError{
 				Message: fmt.Sprintf("ошибка получения договоров: %v", err),
@@ -385,6 +389,7 @@ func triggerPartnerSnapshotsForAllContracts(c *gin.Context, body TriggerManualSn
 			dataSource = "db" // Если неверное значение, используем БД
 		}
 
+		skipped := 0
 		for _, contract := range contracts {
 			// На всякий случай пропускаем без партнёра
 			if contract.PartnerCompanyID == nil {
@@ -393,6 +398,13 @@ func triggerPartnerSnapshotsForAllContracts(c *gin.Context, body TriggerManualSn
 			for d := dateFrom; !d.After(dateTo); d = d.AddDate(0, 0, 1) {
 				totalDays++
 				if err := snapshotService.CreateSnapshotForContractWithTokenAndDBAndSource(&contract, d, userToken, tenantDB, dataSource); err != nil {
+					// "snapshot already exists" — исторический снимок не пересоздаётся
+					// (защита в CreateSnapshotForContractWithTokenAndDBAndSource).
+					// Это нормальный исход backfill, а не ошибка → skipped.
+					if err.Error() == "snapshot already exists" {
+						skipped++
+						continue
+					}
 					errorsCount++
 					job.AddError(models.JobError{
 						ContractID: contract.ID,
@@ -409,6 +421,7 @@ func triggerPartnerSnapshotsForAllContracts(c *gin.Context, body TriggerManualSn
 		job.TotalDaysProcessed = totalDays
 		job.SuccessCount = success
 		job.ErrorCount = errorsCount
+		job.SkippedCount = skipped
 
 		status := models.SnapshotJobStatusCompleted
 		errMsg := ""
