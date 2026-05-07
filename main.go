@@ -1070,6 +1070,8 @@ func main() {
 	apiGroup.GET("/dashboard/sources-stats", api.GetDashboardSourcesStats)
 	apiGroup.GET("/dashboard/chart", api.GetDashboardChart)
 	apiGroup.GET("/dashboard/chart/", api.GetDashboardChart)
+	apiGroup.GET("/dashboard/top-contracts", api.GetDashboardTopContracts)
+	apiGroup.GET("/dashboard/top-contracts/", api.GetDashboardTopContracts)
 
 	// Wialon History (on-demand backfill точной истории через core/get_statistics)
 	apiGroup.GET("/wialon-history/settings", api.GetWialonHistorySettings)
