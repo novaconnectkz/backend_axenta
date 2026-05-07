@@ -969,6 +969,25 @@ func (s *AxentaSyncService) syncAllObjectsWithDBAndProgress(adminAccountID uint,
 
 	totalDuration := time.Since(startTime)
 
+	// Помечаем как удалённые объекты, которых нет в новой выгрузке.
+	// Axenta API не возвращает удалённые объекты — diff между БД и API
+	// единственный способ выставить axenta_deleted_at.
+	// Только при errorCount == 0, чтобы частичная выгрузка не false-positive'ила.
+	if errorCount == 0 && len(objects) > 0 {
+		seen := make([]int64, 0, len(objects))
+		for _, obj := range objects {
+			seen = append(seen, int64(obj.ID))
+		}
+		res := db.Model(&models.AxentaObjectSnapshot{}).
+			Where("admin_account_id = ? AND axenta_deleted_at IS NULL AND external_object_id NOT IN ?", adminAccountID, seen).
+			Update("axenta_deleted_at", syncedAt)
+		if res.Error != nil {
+			log.Printf("   ⚠️ Не удалось пометить удалённые объекты: %v", res.Error)
+		} else if res.RowsAffected > 0 {
+			log.Printf("   🗑 Помечено как удалённые: %d объектов (отсутствуют в новой выгрузке)", res.RowsAffected)
+		}
+	}
+
 	// Проверяем, сколько объектов реально сохранено в БД
 	var actualCount int64
 	db.Model(&models.AxentaObjectSnapshot{}).Count(&actualCount)
