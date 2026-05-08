@@ -159,6 +159,12 @@ func GetAllMigrations() []MigrationInfo {
 			IsGlobal:    true,
 		},
 		{
+			TableName:   "skif_company_statuses",
+			Model:       &models.SkifCompanyStatus{},
+			Description: "Локальный кэш billing.company_status SKIF-компаний (заполняется SkifSyncScheduler)",
+			IsGlobal:    true,
+		},
+		{
 			TableName:   "local_users",
 			Model:       &models.LocalUser{},
 			Description: "Локальные пользователи для альтернативной авторизации",

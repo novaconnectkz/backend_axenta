@@ -1128,6 +1128,92 @@ func (s *SkifService) adminDELETE(conn *models.SkifConnection, cookieStr, path s
 	return rawBody, resp.StatusCode, nil
 }
 
+// SyncCompanyStatuses тянет список компаний через admin auth_admin_query
+// и обновляет локальную таблицу skif_company_statuses.
+//
+// Запрашивает поля id/name/users_count/dealer_id/billing/units. Игнорирует pending
+// "blocked" companies — billing.company_status содержит "ACTIVE" / "BLOCKED" / "DELETING".
+//
+// Возвращает количество upsert'ов и ошибку.
+func (s *SkifService) SyncCompanyStatuses(conn *models.SkifConnection) (int, error) {
+	cookieStr, err := s.adminLogin(conn)
+	if err != nil {
+		return 0, fmt.Errorf("admin login: %w", err)
+	}
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"model":        "companies",
+		"fields":       []string{"id", "name", "timezone_key", "users_count", "creator", "amount", "tariff.units", "dealer_id", "billing", "units"},
+		"from":         0,
+		"count":        1000,
+		"value":        "",
+		"field":        "",
+		"conditions":   []map[string]interface{}{},
+		"companies":    []interface{}{},
+		"timezone_key": "UTC+3",
+	})
+
+	rawBody, status, err := s.adminPOST(conn, cookieStr, "/api_v1/auth_admin_query", body)
+	if err != nil {
+		return 0, fmt.Errorf("auth_admin_query http: %w", err)
+	}
+	if status != 200 {
+		return 0, fmt.Errorf("auth_admin_query status=%d body=%s", status, truncate(string(rawBody), 300))
+	}
+
+	var resp struct {
+		List []struct {
+			ID         string `json:"id"`
+			Name       string `json:"name"`
+			Units      int    `json:"units"`
+			UsersCount int    `json:"users_count"`
+			Billing    struct {
+				CompanyStatus     string `json:"company_status"`
+				TerminalBlockType string `json:"terminal_block_type"`
+			} `json:"billing"`
+		} `json:"list"`
+	}
+	if err := json.Unmarshal(rawBody, &resp); err != nil {
+		return 0, fmt.Errorf("auth_admin_query parse: %w", err)
+	}
+
+	now := time.Now()
+	upserted := 0
+	for _, c := range resp.List {
+		if c.ID == "" {
+			continue
+		}
+		row := models.SkifCompanyStatus{
+			ConnectionID:      conn.ID,
+			SkifCompanyID:     c.ID,
+			CompanyName:       c.Name,
+			CompanyStatus:     c.Billing.CompanyStatus,
+			TerminalBlockType: c.Billing.TerminalBlockType,
+			UnitsCount:        c.Units,
+			UsersCount:        c.UsersCount,
+			LastSyncedAt:      now,
+		}
+		if err := s.db.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "connection_id"}, {Name: "skif_company_id"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"company_name":        c.Name,
+				"company_status":      c.Billing.CompanyStatus,
+				"terminal_block_type": c.Billing.TerminalBlockType,
+				"units_count":         c.Units,
+				"users_count":         c.UsersCount,
+				"last_synced_at":      now,
+				"updated_at":          now,
+			}),
+		}).Create(&row).Error; err != nil {
+			log.Printf("⚠️ SKIF SyncCompanyStatuses upsert %s: %v", c.ID, err)
+			continue
+		}
+		upserted++
+	}
+	log.Printf("🔁 SKIF SyncCompanyStatuses: conn=%d upserted=%d из %d", conn.ID, upserted, len(resp.List))
+	return upserted, nil
+}
+
 // BlockCompany блокирует компанию через POST admin/api_v1/company/block.
 //
 // blockType: "terminals_not_block" (обычная — юзеры не входят, терминалы шлют) или
@@ -1179,6 +1265,13 @@ func (s *SkifService) toggleBlock(conn *models.SkifConnection, skifCompanyID, bl
 		action = "unblock"
 	}
 	log.Printf("✅ SKIF %s OK: conn=%d company=%s type=%s pending=%v", action, conn.ID, skifCompanyID, blockType, pending)
+
+	// Refresh статусов после действия чтобы UI получил актуальное состояние.
+	go func() {
+		if _, err := s.SyncCompanyStatuses(conn); err != nil {
+			log.Printf("⚠️ SKIF post-%s status sync: %v", action, err)
+		}
+	}()
 	return nil
 }
 

@@ -504,8 +504,10 @@ func sortUnifiedAccounts(items []UnifiedAccount, ordering string) {
 	})
 }
 
-// fetchSkifAccountsForUnified — учётки SKIF = дилерские компании (DISTINCT skif_company_id).
-// SkifCompany не имеет своей таблицы, агрегируем из skif_units одним SQL.
+// fetchSkifAccountsForUnified — учётки SKIF = дилерские компании.
+//
+// Primary source: skif_company_statuses (kepа billing-статуса от SkifSyncScheduler).
+// Fallback: GROUP BY skif_units если таблица statuses пуста (cold start, до первого sync).
 //
 // Возвращает: items, total, active. Для KPI карточки SKIF на /accounts.
 func fetchSkifAccountsForUnified(companyID uint, search, accountType, activeStr, parent string) ([]UnifiedAccount, int, int) {
@@ -524,6 +526,22 @@ func fetchSkifAccountsForUnified(companyID uint, search, accountType, activeStr,
 			pendingMap[p.SkifCompanyID] = p.ScheduledFor
 		}
 	}
+
+	// Statuses map: skif_company_id → CompanyStatus (ACTIVE/BLOCKED/...)
+	type statusInfo struct {
+		Status            string
+		TerminalBlockType string
+	}
+	statusMap := make(map[string]statusInfo)
+	var statuses []models.SkifCompanyStatus
+	if err := database.DB.
+		Joins("JOIN skif_connections sc ON sc.id = skif_company_statuses.connection_id").
+		Where("sc.company_id = ?", companyID).
+		Find(&statuses).Error; err == nil {
+		for _, st := range statuses {
+			statusMap[st.SkifCompanyID] = statusInfo{Status: st.CompanyStatus, TerminalBlockType: st.TerminalBlockType}
+		}
+	}
 	// SkifCompany считается активной если у неё есть хотя бы один активный юнит.
 	// Источник created_at — MIN(skif_created_at) по юнитам компании.
 	type row struct {
@@ -536,15 +554,17 @@ func fetchSkifAccountsForUnified(companyID uint, search, accountType, activeStr,
 		CreatedAt      *time.Time
 	}
 	var rows []row
+	// COALESCE: skif_created_at часто NULL (SKIF API не всегда отдаёт states[0].date_from)
+	// → fallback на created_at (когда юнит впервые попал в наш snapshot).
 	q := `
 		SELECT
-			u.skif_company_id                                             AS skif_company_id,
-			MAX(u.skif_company)                                           AS name,
-			MAX(u.connection_id)                                          AS connection_id,
-			MAX(c.name)                                                   AS connection_name,
-			COUNT(*)                                                      AS objects_total,
-			COUNT(*) FILTER (WHERE u.is_active AND u.skif_deleted_at IS NULL) AS objects_active,
-			MIN(u.skif_created_at)                                        AS created_at
+			u.skif_company_id                                                  AS skif_company_id,
+			MAX(u.skif_company)                                                AS name,
+			MAX(u.connection_id)                                               AS connection_id,
+			MAX(c.name)                                                        AS connection_name,
+			COUNT(*)                                                           AS objects_total,
+			COUNT(*) FILTER (WHERE u.is_active AND u.skif_deleted_at IS NULL)  AS objects_active,
+			COALESCE(MIN(u.skif_created_at), MIN(u.created_at))                AS created_at
 		FROM skif_units u
 		LEFT JOIN skif_connections c ON c.id = u.connection_id
 		WHERE u.company_id = ?
@@ -561,11 +581,13 @@ func fetchSkifAccountsForUnified(companyID uint, search, accountType, activeStr,
 	items := make([]UnifiedAccount, 0, len(rows))
 	total, active := 0, 0
 	for _, r := range rows {
-		// Активность SkifCompany определяется фактом её существования в snapshot,
-		// а НЕ количеством is_active юнитов. SKIF.skif_units.is_active означает
-		// "юнит сейчас онлайн" (получает данные), а не "не заблокирован".
-		// Удалённые/заблокированные компании выпадают из sync и здесь не появляются.
+		// Активность определяется реальным billing.company_status из SKIF
+		// (sync через auth_admin_query → skif_company_statuses).
+		// Если status в кэше отсутствует (первый запуск до sync) — считаем активной.
 		isActive := true
+		if st, ok := statusMap[r.SkifCompanyID]; ok && st.Status != "" {
+			isActive = st.Status == "ACTIVE"
+		}
 		// SKIF не делит на client/partner — все дилерские компании = client.
 		if accountType != "" && accountType != "client" {
 			continue

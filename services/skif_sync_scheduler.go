@@ -126,6 +126,11 @@ func (s *SkifSyncScheduler) tick() {
 			failed++
 			continue
 		}
+		// Sync billing-статусов компаний (для UI Активна/Заблокирована).
+		// Не критично — ошибки не валят основной sync_units цикл.
+		if _, err := svc.SyncCompanyStatuses(conn); err != nil {
+			log.Printf("⚠️ SkifSyncScheduler: conn=%d statuses sync error: %v", conn.ID, err)
+		}
 		synced++
 	}
 

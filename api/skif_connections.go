@@ -291,6 +291,11 @@ func CreateSkifCompany(c *gin.Context) {
 		} else {
 			log.Printf("🔁 SKIF post-create sync conn=%d: upserted=%d", conn.ID, count)
 		}
+		// Свежая компания должна сразу попасть в skif_company_statuses
+		// чтобы /unified/accounts отдал её даже без юнитов.
+		if _, err := svc.SyncCompanyStatuses(conn); err != nil {
+			log.Printf("⚠️ SKIF post-create statuses: %v", err)
+		}
 	}()
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": resp})
 }
@@ -333,6 +338,22 @@ func CancelDeleteSkifCompany(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "success"})
+}
+
+// SyncSkifStatuses триггерит ручной sync billing.company_status для всех компаний.
+// POST /api/auth/skif/connections/:id/sync-statuses
+func SyncSkifStatuses(c *gin.Context) {
+	companyID := middleware.GetCompanyID(c)
+	conn, err := loadOwnedSkifConn(c, companyID)
+	if err != nil {
+		return
+	}
+	count, err := skifService().SyncCompanyStatuses(conn)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{"upserted": count}})
 }
 
 // BlockSkifCompany блокирует компанию SKIF.

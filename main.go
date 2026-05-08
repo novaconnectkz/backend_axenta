@@ -1107,6 +1107,7 @@ func main() {
 	apiGroup.POST("/skif/connections/:id/companies/:companyId/cancel-delete", api.CancelDeleteSkifCompany)
 	apiGroup.POST("/skif/connections/:id/companies/:companyId/block", api.BlockSkifCompany)
 	apiGroup.POST("/skif/connections/:id/companies/:companyId/unblock", api.UnblockSkifCompany)
+	apiGroup.POST("/skif/connections/:id/sync-statuses", api.SyncSkifStatuses)
 
 	// Wialon History (on-demand backfill точной истории через core/get_statistics)
 	apiGroup.GET("/wialon-history/settings", api.GetWialonHistorySettings)
