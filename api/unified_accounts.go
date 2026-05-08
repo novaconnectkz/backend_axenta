@@ -663,7 +663,7 @@ func fetchSkifAccountsForUnified(companyID uint, search, accountType, activeStr,
 		var dealers []models.SkifDealer
 		if err := database.DB.
 			Joins("JOIN skif_connections sc ON sc.id = skif_dealers.connection_id").
-			Where("sc.company_id = ?", companyID).
+			Where("sc.company_id = ? AND skif_dealers.hidden = ?", companyID, false).
 			Find(&dealers).Error; err == nil {
 			for _, d := range dealers {
 				dealerActive := !d.Blocked

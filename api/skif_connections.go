@@ -374,6 +374,53 @@ func BackfillSkifObjectCreated(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{"events": events, "upserted": upserted}})
 }
 
+// HideSkifSubdealer помечает subdealer как скрытый (не показывать в /accounts).
+// Используется для тестовых/мусорных subdealers (SKIF не позволяет удалять dealer entity).
+// POST /api/auth/skif/connections/:id/subdealers/:dealerId/hide
+func HideSkifSubdealer(c *gin.Context) {
+	companyID := middleware.GetCompanyID(c)
+	conn, err := loadOwnedSkifConn(c, companyID)
+	if err != nil {
+		return
+	}
+	dealerID := c.Param("dealerId")
+	if dealerID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "dealerId обязателен"})
+		return
+	}
+	res := database.DB.Model(&models.SkifDealer{}).
+		Where("connection_id = ? AND skif_dealer_id = ?", conn.ID, dealerID).
+		Update("hidden", true)
+	if res.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": res.Error.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{"updated": res.RowsAffected}})
+}
+
+// UnhideSkifSubdealer показывает ранее скрытого subdealer'а.
+// POST /api/auth/skif/connections/:id/subdealers/:dealerId/unhide
+func UnhideSkifSubdealer(c *gin.Context) {
+	companyID := middleware.GetCompanyID(c)
+	conn, err := loadOwnedSkifConn(c, companyID)
+	if err != nil {
+		return
+	}
+	dealerID := c.Param("dealerId")
+	if dealerID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "dealerId обязателен"})
+		return
+	}
+	res := database.DB.Model(&models.SkifDealer{}).
+		Where("connection_id = ? AND skif_dealer_id = ?", conn.ID, dealerID).
+		Update("hidden", false)
+	if res.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": res.Error.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{"updated": res.RowsAffected}})
+}
+
 // CreateSkifSubdealer регистрирует нового субинтегратора через app/api_v1/registrate_dealer.
 // POST /api/auth/skif/connections/:id/subdealers
 // body: { type_key, name, email, inn, phone, contact_person, password, address }

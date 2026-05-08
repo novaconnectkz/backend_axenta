@@ -30,6 +30,11 @@ type SkifDealer struct {
 	Blocked    bool `json:"blocked" gorm:"default:false"`
 	IsDefault  bool `json:"is_default" gorm:"default:false"`
 
+	// Hidden — скрыть subdealer локально в /unified/accounts.
+	// Sync не перезаписывает это поле. Используется для тестовых/мусорных subdealers
+	// поскольку SKIF не позволяет удалять dealer entity.
+	Hidden bool `json:"hidden" gorm:"default:false;index"`
+
 	SkifSupportTypeKey string `json:"skif_support_type_key" gorm:"type:varchar(64)"` // telegram / helpdeskeddy
 
 	LastSyncedAt time.Time `json:"last_synced_at" gorm:"index"`
