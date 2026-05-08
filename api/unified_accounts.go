@@ -527,6 +527,20 @@ func fetchSkifAccountsForUnified(companyID uint, search, accountType, activeStr,
 		}
 	}
 
+	// Created-at кеш из skif_object_created (object_type=company)
+	createdAtMap := make(map[string]time.Time)
+	var createdRows []models.SkifObjectCreated
+	if err := database.DB.
+		Joins("JOIN skif_connections sc ON sc.id = skif_object_created.connection_id").
+		Where("sc.company_id = ? AND skif_object_created.object_type = ?", companyID, "company").
+		Find(&createdRows).Error; err == nil {
+		for _, r := range createdRows {
+			if !r.CreatedSkifAt.IsZero() {
+				createdAtMap[r.ObjectID] = r.CreatedSkifAt
+			}
+		}
+	}
+
 	// Statuses map: skif_company_id → CompanyStatus (ACTIVE/BLOCKED/...)
 	type statusInfo struct {
 		Status            string
@@ -629,7 +643,11 @@ func fetchSkifAccountsForUnified(companyID uint, search, accountType, activeStr,
 			ConnectionID:      &connID,
 			SkifCompanyID:     r.SkifCompanyID,
 		}
-		if r.CreatedAt != nil && !r.CreatedAt.IsZero() {
+		// Приоритет: skif_object_created (точная дата из /updates/query)
+		// > skif_units.skif_created_at > skif_units.created_at (наш sync).
+		if exact, ok := createdAtMap[r.SkifCompanyID]; ok && !exact.IsZero() {
+			ua.CreationDatetime = exact.Format(time.RFC3339)
+		} else if r.CreatedAt != nil && !r.CreatedAt.IsZero() {
 			ua.CreationDatetime = r.CreatedAt.Format(time.RFC3339)
 		}
 		if scheduledFor, ok := pendingMap[r.SkifCompanyID]; ok && !scheduledFor.IsZero() {

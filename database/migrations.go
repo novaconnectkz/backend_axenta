@@ -171,6 +171,12 @@ func GetAllMigrations() []MigrationInfo {
 			IsGlobal:    true,
 		},
 		{
+			TableName:   "skif_object_created",
+			Model:       &models.SkifObjectCreated{},
+			Description: "Кеш дат создания SKIF-сущностей (units/company/users/etc) из /company/updates/query — поскольку created нет в API responses",
+			IsGlobal:    true,
+		},
+		{
 			TableName:   "local_users",
 			Model:       &models.LocalUser{},
 			Description: "Локальные пользователи для альтернативной авторизации",

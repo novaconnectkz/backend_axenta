@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -338,6 +339,39 @@ func CancelDeleteSkifCompany(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "success"})
+}
+
+// BackfillSkifObjectCreated триггерит backfill дат создания сущностей SKIF.
+// POST /api/auth/skif/connections/:id/backfill-created?from=2024-01-01&to=2026-12-31&types=units,company,users
+func BackfillSkifObjectCreated(c *gin.Context) {
+	companyID := middleware.GetCompanyID(c)
+	conn, err := loadOwnedSkifConn(c, companyID)
+	if err != nil {
+		return
+	}
+	fromStr := c.Query("from")
+	toStr := c.Query("to")
+	if fromStr == "" || toStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "from и to обязательны (YYYY-MM-DD)"})
+		return
+	}
+	from, err1 := parseHistoryDate(fromStr)
+	to, err2 := parseHistoryDate(toStr)
+	if err1 != nil || err2 != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "from/to должны быть YYYY-MM-DD"})
+		return
+	}
+	typesParam := c.DefaultQuery("types", "units,company,users")
+	types := strings.Split(typesParam, ",")
+	for i := range types {
+		types[i] = strings.TrimSpace(types[i])
+	}
+	events, upserted, err := skifService().BackfillObjectCreated(conn, types, from, to)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{"events": events, "upserted": upserted}})
 }
 
 // CreateSkifSubdealer регистрирует нового субинтегратора через app/api_v1/registrate_dealer.

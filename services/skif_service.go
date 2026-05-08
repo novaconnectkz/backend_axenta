@@ -1128,6 +1128,164 @@ func (s *SkifService) adminDELETE(conn *models.SkifConnection, cookieStr, path s
 	return rawBody, resp.StatusCode, nil
 }
 
+// BackfillObjectCreated тянет POST events из /company/updates/query для указанных
+// objectTypes и сохраняет точные даты создания в skif_object_created.
+//
+// SKIF не отдаёт `created` в response объектов, поэтому это единственный способ
+// получить дату создания (через operation log). Окно макс 1 год — для старых
+// сущностей нужен повторный запуск с разными from/to.
+//
+// objectTypes: ["units", "company", "users", "geozones", "unitsgroup", ...]
+// Возвращает: total events, total upserted, ошибка.
+func (s *SkifService) BackfillObjectCreated(conn *models.SkifConnection, objectTypes []string, from, to time.Time) (int, int, error) {
+	const pageSize = 1000
+	const throttle = 2200 * time.Millisecond
+	const skifMaxPeriod = 365 * 24 * time.Hour
+
+	if len(objectTypes) == 0 {
+		objectTypes = []string{"units", "company", "users"}
+	}
+	if to.Sub(from) > skifMaxPeriod {
+		return 0, 0, fmt.Errorf("окно > 1 года не поддерживается, разбейте на куски")
+	}
+
+	now := time.Now()
+	client, jar := s.httpClient(conn)
+	defer s.saveSessionFromJar(conn, jar)
+
+	if conn.SessionCookie == "" {
+		if err := s.loginWithClient(conn, client); err != nil {
+			return 0, 0, err
+		}
+	}
+
+	me, status, err := s.fetchMe(conn, client)
+	if err != nil || status != 200 {
+		if status == 401 || status == 422 {
+			if err := s.loginWithClient(conn, client); err != nil {
+				return 0, 0, err
+			}
+			me, status, err = s.fetchMe(conn, client)
+		}
+		if err != nil || status != 200 {
+			return 0, 0, fmt.Errorf("/me status=%d err=%v", status, err)
+		}
+	}
+	companies := me.Companies
+	if len(companies) == 0 {
+		companies = []skifCompanyBrief{me.ActiveCompany}
+	}
+
+	totalEvents := 0
+	totalUpserted := 0
+
+	processOne := func(comp skifCompanyBrief, objType string) error {
+		if err := s.switchWithRetry(conn, client, comp.ID); err != nil {
+			return fmt.Errorf("switch: %w", err)
+		}
+		firstRow := 0
+		reloggedIn := false
+		for {
+			body, _ := json.Marshal(map[string]interface{}{
+				"objects":   objType,
+				"from":      from.Format("2006-01-02 15:04:05"),
+				"to":        to.Format("2006-01-02 15:04:05"),
+				"first_row": firstRow,
+				"max_rows":  pageSize,
+				"sortField": "created",
+				"sortDesc":  false,
+			})
+			rawBody, code, err := s.postJSON(conn, client, "/api_v1/company/updates/query", body)
+			if err != nil {
+				return err
+			}
+			if code == 429 {
+				time.Sleep(6 * time.Second)
+				continue
+			}
+			if code == 401 && !reloggedIn {
+				if relErr := s.loginWithClient(conn, client); relErr != nil {
+					return relErr
+				}
+				if swErr := s.switchCompany(conn, client, comp.ID); swErr != nil {
+					return swErr
+				}
+				reloggedIn = true
+				continue
+			}
+			if code != 200 {
+				return fmt.Errorf("status=%d body=%s", code, truncate(string(rawBody), 200))
+			}
+			var resp skifUpdatesQueryResp
+			if err := json.Unmarshal(rawBody, &resp); err != nil {
+				return err
+			}
+			if len(resp.List) == 0 {
+				return nil
+			}
+			for _, ev := range resp.List {
+				if ev.Objects != objType {
+					continue
+				}
+				if !strings.EqualFold(ev.Operation, "POST") {
+					continue
+				}
+				totalEvents++
+				createdAt, perr := time.Parse("2006-01-02 15:04:05", ev.Created)
+				if perr != nil {
+					createdAt, perr = time.Parse(time.RFC3339, ev.Created)
+				}
+				if perr != nil || createdAt.IsZero() {
+					continue
+				}
+				row := models.SkifObjectCreated{
+					ConnectionID:     conn.ID,
+					ObjectType:       objType,
+					ObjectID:         ev.ObjectID,
+					CompanyContextID: comp.ID,
+					CreatedSkifAt:    createdAt,
+				}
+				if err := s.db.Clauses(clause.OnConflict{
+					Columns: []clause.Column{{Name: "connection_id"}, {Name: "object_type"}, {Name: "object_id"}},
+					DoUpdates: clause.Assignments(map[string]interface{}{
+						"company_context_id": comp.ID,
+						"created_skif_at":    createdAt,
+						"updated_at":         time.Now(),
+					}),
+				}).Create(&row).Error; err != nil {
+					log.Printf("⚠️ SKIF skif_object_created upsert %s/%s: %v", objType, ev.ObjectID, err)
+					continue
+				}
+				totalUpserted++
+			}
+			firstRow += pageSize
+			if len(resp.List) < pageSize {
+				return nil
+			}
+			if firstRow >= 50000 {
+				return nil
+			}
+			time.Sleep(throttle)
+		}
+	}
+
+	for ci, comp := range companies {
+		if ci > 0 {
+			time.Sleep(throttle)
+		}
+		for _, ot := range objectTypes {
+			if err := processOne(comp, ot); err != nil {
+				log.Printf("⚠️ SKIF backfill_created company=%s type=%s: %v", comp.Name, ot, err)
+			}
+			time.Sleep(throttle)
+		}
+	}
+
+	log.Printf("✅ SKIF backfill_created conn=%d types=%v companies=%d events=%d upserted=%d за %v",
+		conn.ID, objectTypes, len(companies), totalEvents, totalUpserted, time.Since(now).Round(time.Second))
+	return totalEvents, totalUpserted, nil
+}
+
 // SkifRegisterSubdealerParams — параметры регистрации субинтегратора через
 // POST app/api_v1/registrate_dealer.
 type SkifRegisterSubdealerParams struct {

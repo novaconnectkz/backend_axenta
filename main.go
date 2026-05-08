@@ -1110,6 +1110,7 @@ func main() {
 	apiGroup.POST("/skif/connections/:id/sync-statuses", api.SyncSkifStatuses)
 	apiGroup.POST("/skif/connections/:id/subdealers", api.CreateSkifSubdealer)
 	apiGroup.POST("/skif/connections/:id/sync-subdealers", api.SyncSkifSubdealers)
+	apiGroup.POST("/skif/connections/:id/backfill-created", api.BackfillSkifObjectCreated)
 
 	// Wialon History (on-demand backfill точной истории через core/get_statistics)
 	apiGroup.GET("/wialon-history/settings", api.GetWialonHistorySettings)
