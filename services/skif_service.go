@@ -1128,6 +1128,60 @@ func (s *SkifService) adminDELETE(conn *models.SkifConnection, cookieStr, path s
 	return rawBody, resp.StatusCode, nil
 }
 
+// BlockCompany блокирует компанию через POST admin/api_v1/company/block.
+//
+// blockType: "terminals_not_block" (обычная — юзеры не входят, терминалы шлют) или
+//            "terminals_block" (полная — терминалы тоже блокируются).
+// pending=true для запланированной блокировки.
+func (s *SkifService) BlockCompany(conn *models.SkifConnection, skifCompanyID, blockType string, pending bool) error {
+	return s.toggleBlock(conn, skifCompanyID, blockType, true, pending)
+}
+
+// UnblockCompany снимает блокировку компании. Использует тот же endpoint /company/block.
+func (s *SkifService) UnblockCompany(conn *models.SkifConnection, skifCompanyID string) error {
+	return s.toggleBlock(conn, skifCompanyID, "terminals_not_block", false, false)
+}
+
+// toggleBlock — общая логика для block/unblock.
+func (s *SkifService) toggleBlock(conn *models.SkifConnection, skifCompanyID, blockType string, block, pending bool) error {
+	if skifCompanyID == "" {
+		return fmt.Errorf("skif_company_id обязателен")
+	}
+	if blockType == "" {
+		blockType = "terminals_not_block"
+	}
+	if blockType != "terminals_not_block" && blockType != "terminals_block" {
+		return fmt.Errorf("block_type должен быть terminals_not_block или terminals_block")
+	}
+
+	cookieStr, err := s.adminLogin(conn)
+	if err != nil {
+		return fmt.Errorf("admin login: %w", err)
+	}
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"companies":    []map[string]string{{"id": skifCompanyID}},
+		"block_type":   blockType,
+		"block":        block,
+		"pending":      pending,
+		"timezone_key": "UTC+3",
+	})
+
+	rawBody, status, err := s.adminPOST(conn, cookieStr, "/api_v1/company/block", body)
+	if err != nil {
+		return fmt.Errorf("/company/block http: %w", err)
+	}
+	if status != 200 && status != 204 {
+		return fmt.Errorf("/company/block status=%d body=%s", status, truncate(string(rawBody), 300))
+	}
+	action := "block"
+	if !block {
+		action = "unblock"
+	}
+	log.Printf("✅ SKIF %s OK: conn=%d company=%s type=%s pending=%v", action, conn.ID, skifCompanyID, blockType, pending)
+	return nil
+}
+
 // CancelDeleteCompany отменяет ранее запланированное удаление компании
 // (POST /api_v1/company/cancel_delete). Полезно если пользователь передумал в течение 14 дней.
 func (s *SkifService) CancelDeleteCompany(conn *models.SkifConnection, skifCompanyID string) error {

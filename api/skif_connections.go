@@ -335,6 +335,52 @@ func CancelDeleteSkifCompany(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "success"})
 }
 
+// BlockSkifCompany блокирует компанию SKIF.
+// POST /api/auth/skif/connections/:id/companies/:companyId/block
+// body: { block_type?: "terminals_not_block"|"terminals_block", pending?: bool }
+func BlockSkifCompany(c *gin.Context) {
+	companyID := middleware.GetCompanyID(c)
+	conn, err := loadOwnedSkifConn(c, companyID)
+	if err != nil {
+		return
+	}
+	skifCompanyID := c.Param("companyId")
+	if skifCompanyID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "companyId обязателен"})
+		return
+	}
+	var body struct {
+		BlockType string `json:"block_type"`
+		Pending   bool   `json:"pending"`
+	}
+	c.ShouldBindJSON(&body)
+	if err := skifService().BlockCompany(conn, skifCompanyID, body.BlockType, body.Pending); err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success"})
+}
+
+// UnblockSkifCompany снимает блокировку компании.
+// POST /api/auth/skif/connections/:id/companies/:companyId/unblock
+func UnblockSkifCompany(c *gin.Context) {
+	companyID := middleware.GetCompanyID(c)
+	conn, err := loadOwnedSkifConn(c, companyID)
+	if err != nil {
+		return
+	}
+	skifCompanyID := c.Param("companyId")
+	if skifCompanyID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "companyId обязателен"})
+		return
+	}
+	if err := skifService().UnblockCompany(conn, skifCompanyID); err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success"})
+}
+
 // GetSkifUnits возвращает юниты подключения из локального реестра.
 // GET /api/auth/skif/connections/:id/units
 func GetSkifUnits(c *gin.Context) {
