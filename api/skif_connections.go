@@ -1,6 +1,7 @@
 package api
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -233,6 +234,105 @@ func BackfillSkifHistory(c *gin.Context) {
 		"status": "success",
 		"data":   gin.H{"events": events, "upserted_days": upserted},
 	})
+}
+
+// CreateSkifCompany создаёт новую дилерскую компанию в SKIF через POST /api_v1/company/create.
+// POST /api/auth/skif/connections/:id/companies
+// body: { company_name, timezone, dateformat?, timeformat?, with_user?, user_email?, user_password?, user_name? }
+func CreateSkifCompany(c *gin.Context) {
+	companyID := middleware.GetCompanyID(c)
+	conn, err := loadOwnedSkifConn(c, companyID)
+	if err != nil {
+		return
+	}
+	var body struct {
+		CompanyName  string `json:"company_name" binding:"required"`
+		Timezone     string `json:"timezone" binding:"required"`
+		DateFormat   string `json:"dateformat"`
+		TimeFormat   string `json:"timeformat"`
+		WithUser     bool   `json:"with_user"`
+		UserEmail    string `json:"user_email"`
+		UserPassword string `json:"user_password"`
+		UserName     string `json:"user_name"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	params := services.SkifCreateCompanyParams{
+		CompanyName: body.CompanyName,
+		Timezone:    body.Timezone,
+		DateFormat:  body.DateFormat,
+		TimeFormat:  body.TimeFormat,
+	}
+	if body.WithUser {
+		if body.UserEmail == "" || body.UserPassword == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "with_user=true требует user_email и user_password"})
+			return
+		}
+		params.User = &services.SkifCreateCompanyUser{
+			Email:    body.UserEmail,
+			Type:     "EMAIL",
+			Password: body.UserPassword,
+			Name:     body.UserName,
+		}
+	}
+	svc := skifService()
+	resp, err := svc.CreateCompany(conn, params)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
+	// Триггерим sync чтобы новая компания + её юниты (если есть) попали в локальный реестр.
+	// Sync асинхронный — делаем в горутине, ответ юзеру не задерживаем.
+	go func() {
+		if count, err := svc.SyncUnits(conn); err != nil {
+			log.Printf("⚠️ SKIF post-create sync conn=%d: %v", conn.ID, err)
+		} else {
+			log.Printf("🔁 SKIF post-create sync conn=%d: upserted=%d", conn.ID, count)
+		}
+	}()
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": resp})
+}
+
+// DeleteSkifCompany планирует удаление SKIF-компании (schedule_delete).
+// DELETE /api/auth/skif/connections/:id/companies/:companyId
+func DeleteSkifCompany(c *gin.Context) {
+	companyID := middleware.GetCompanyID(c)
+	conn, err := loadOwnedSkifConn(c, companyID)
+	if err != nil {
+		return
+	}
+	skifCompanyID := c.Param("companyId")
+	if skifCompanyID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "companyId обязателен"})
+		return
+	}
+	if err := skifService().DeleteCompany(conn, skifCompanyID); err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success"})
+}
+
+// CancelDeleteSkifCompany отменяет запланированное удаление компании.
+// POST /api/auth/skif/connections/:id/companies/:companyId/cancel-delete
+func CancelDeleteSkifCompany(c *gin.Context) {
+	companyID := middleware.GetCompanyID(c)
+	conn, err := loadOwnedSkifConn(c, companyID)
+	if err != nil {
+		return
+	}
+	skifCompanyID := c.Param("companyId")
+	if skifCompanyID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "companyId обязателен"})
+		return
+	}
+	if err := skifService().CancelDeleteCompany(conn, skifCompanyID); err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success"})
 }
 
 // GetSkifUnits возвращает юниты подключения из локального реестра.

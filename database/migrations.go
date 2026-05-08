@@ -153,6 +153,12 @@ func GetAllMigrations() []MigrationInfo {
 			IsGlobal:    true,
 		},
 		{
+			TableName:   "skif_pending_deletes",
+			Model:       &models.SkifPendingDelete{},
+			Description: "Pending удаления SKIF-компаний для UI countdown (14 дней до фактического удаления)",
+			IsGlobal:    true,
+		},
+		{
 			TableName:   "local_users",
 			Model:       &models.LocalUser{},
 			Description: "Локальные пользователи для альтернативной авторизации",

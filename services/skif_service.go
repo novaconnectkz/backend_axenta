@@ -775,6 +775,394 @@ func (s *SkifService) saveSessionFromJar(conn *models.SkifConnection, jar *cooki
 	conn.LastLoginAt = &now
 }
 
+// SkifCreateCompanyParams — параметры для POST /api_v1/company/create.
+//
+// Без поля User создаётся только компания. С User — компания + первый admin-пользователь
+// (см. wiki/sources/skif-api/kompaniya.md).
+type SkifCreateCompanyParams struct {
+	CompanyName string                  `json:"company_name"`
+	Timezone    string                  `json:"timezone"`
+	DateFormat  string                  `json:"dateformat,omitempty"`
+	TimeFormat  string                  `json:"timeformat,omitempty"`
+	User        *SkifCreateCompanyUser  `json:"-"` // флатим в body вручную ниже
+}
+
+// SkifCreateCompanyUser — опциональные поля для создания первого пользователя компании.
+type SkifCreateCompanyUser struct {
+	Email    string `json:"userProviderId"`
+	Type     string `json:"type"` // "EMAIL"
+	Password string `json:"password"`
+	Name     string `json:"name"`
+}
+
+// adminBaseURL возвращает admin-host SKIF на основе app-host из conn.BaseURL.
+// app.skif.pro → admin.skif.pro. Если хост уже admin — возвращает его.
+func adminBaseURL(conn *models.SkifConnection) string {
+	base := strings.TrimRight(conn.BaseURL, "/")
+	// Замена app.skif.pro → admin.skif.pro
+	if strings.Contains(base, "://app.skif.pro") {
+		return strings.Replace(base, "://app.skif.pro", "://admin.skif.pro", 1)
+	}
+	if strings.Contains(base, "://admin.") {
+		return base
+	}
+	// Fallback: попробуем заменить app. → admin.
+	return strings.Replace(base, "://app.", "://admin.", 1)
+}
+
+// skifTimezoneMap — IANA → SKIF timezone-объект. SKIF использует свои ключи "UTC±N".
+// value — человекочитаемое описание (берётся из SKIF /api_v1/dictionaries).
+var skifTimezoneMap = map[string]struct {
+	Key   string
+	Value string
+}{
+	"Europe/Moscow":      {"UTC+3", "(GMT+03:00) Москва, Санкт-Петербург, Волгоград"},
+	"Europe/Kaliningrad": {"UTC+2", "(GMT+02:00) Хельсинки, Киев, Рига, Стамбул, Минск"},
+	"Europe/Kiev":        {"UTC+2", "(GMT+02:00) Хельсинки, Киев, Рига, Стамбул, Минск"},
+	"Europe/Samara":      {"UTC+4", "(GMT+04:00) Баку, Тбилиси, Ереван"},
+	"Asia/Yekaterinburg": {"UTC+5", "(GMT+05:00) Екатеринбург, Астана, Алматы, Ташкент"},
+	"Asia/Almaty":        {"UTC+5", "(GMT+05:00) Екатеринбург, Астана, Алматы, Ташкент"},
+	"Asia/Omsk":          {"UTC+6", "(GMT+06:00) Республика Саха (Якутия)"},
+	"Asia/Krasnoyarsk":   {"UTC+7", "(GMT+07:00) Новосибирск, Красноярск"},
+	"Asia/Irkutsk":       {"UTC+8", "(GMT+08:00) Иркутск, Улан-Батор"},
+	"Asia/Yakutsk":       {"UTC+9", "(GMT+09:00) Якутск, Осака, Саппоро, Токио, Сеул"},
+	"Asia/Vladivostok":   {"UTC+10", "(GMT+10:00) Владивосток"},
+	"UTC":                {"UTC", "(GMT) Дублин, Эдинбург, Лиссабон, Лондон"},
+}
+
+// resolveSkifTimezone преобразует IANA-id или SKIF-key в SKIF timezone-объект.
+// Принимает "Europe/Moscow", "UTC+3", "(GMT+03:00) ..." — возвращает {key, value}.
+func resolveSkifTimezone(tz string) (key, value string, ok bool) {
+	if v, found := skifTimezoneMap[tz]; found {
+		return v.Key, v.Value, true
+	}
+	// Если уже SKIF-key (UTC+3) — возвращаем как есть с пустым value (SKIF проставит).
+	if strings.HasPrefix(tz, "UTC") {
+		return tz, "", true
+	}
+	return "", "", false
+}
+
+// adminLogin делает POST admin/api_v1/login и возвращает PLAY_SESSION cookie-string.
+// Отличается от обычного Login: provider_key="EMAIL", is_admin_panel=true, host=admin.skif.pro.
+func (s *SkifService) adminLogin(conn *models.SkifConnection) (string, error) {
+	body, _ := json.Marshal(map[string]interface{}{
+		"userProviderId":  conn.Login,
+		"provider_key":    "EMAIL",
+		"password":        conn.Password,
+		"is_admin_panel":  true,
+		"timezone_key":    "UTC+3",
+	})
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar, Timeout: 30 * time.Second}
+	url := adminBaseURL(conn) + "/api_v1/login"
+	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("admin login build: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("admin login http: %w", err)
+	}
+	defer resp.Body.Close()
+	rawBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("admin login status=%d body=%s", resp.StatusCode, truncate(string(rawBody), 300))
+	}
+	u, _ := neturl(adminBaseURL(conn))
+	cookies := jar.Cookies(u)
+	if len(cookies) == 0 {
+		return "", fmt.Errorf("admin login: no cookie set")
+	}
+	return serializeCookies(cookies), nil
+}
+
+// neturl wraps url.Parse для вызова после строкового хоста — отдельная функция чтобы не путаться с переменной url.
+func neturl(s string) (*url.URL, error) {
+	return url.Parse(s)
+}
+
+// adminPOST делает POST на admin-host с указанным cookie-string, возвращает raw body + status.
+func (s *SkifService) adminPOST(conn *models.SkifConnection, cookieStr, path string, body []byte) ([]byte, int, error) {
+	u, _ := neturl(adminBaseURL(conn) + path)
+	jar, _ := cookiejar.New(nil)
+	if cookieStr != "" {
+		base, _ := neturl(adminBaseURL(conn))
+		jar.SetCookies(base, parseCookieString(cookieStr, base))
+	}
+	client := &http.Client{Jar: jar, Timeout: 30 * time.Second}
+	req, err := http.NewRequest("POST", u.String(), bytes.NewReader(body))
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+	rawBody, _ := io.ReadAll(resp.Body)
+	return rawBody, resp.StatusCode, nil
+}
+
+// resolveDealerForLogin находит dealer'а по email == conn.Login через POST /api_v1/dealers_admin_query.
+// SKIF возвращает list дилеров; нам нужен root-level (без parent_id) с совпадающим email.
+func (s *SkifService) resolveDealerForLogin(conn *models.SkifConnection, cookieStr string) (map[string]interface{}, error) {
+	body, _ := json.Marshal(map[string]interface{}{
+		"from":         0,
+		"count":        100,
+		"value":        "",
+		"timezone_key": "UTC+3",
+	})
+	rawBody, status, err := s.adminPOST(conn, cookieStr, "/api_v1/dealers_admin_query", body)
+	if err != nil {
+		return nil, err
+	}
+	if status != 200 {
+		return nil, fmt.Errorf("dealers_admin_query status=%d body=%s", status, truncate(string(rawBody), 300))
+	}
+	var resp struct {
+		List []map[string]interface{} `json:"list"`
+	}
+	if err := json.Unmarshal(rawBody, &resp); err != nil {
+		return nil, fmt.Errorf("dealers parse: %w", err)
+	}
+	// Сначала ищем root-dealer (без parent_id) с совпадающим email.
+	for _, d := range resp.List {
+		if email, _ := d["email"].(string); strings.EqualFold(email, conn.Login) {
+			if _, hasParent := d["parent_id"]; !hasParent {
+				return d, nil
+			}
+		}
+	}
+	// Fallback: любой dealer с совпадающим email.
+	for _, d := range resp.List {
+		if email, _ := d["email"].(string); strings.EqualFold(email, conn.Login) {
+			return d, nil
+		}
+	}
+	return nil, fmt.Errorf("dealer для login=%s не найден среди %d", conn.Login, len(resp.List))
+}
+
+// CreateCompany создаёт новую компанию-клиента в SKIF через admin API.
+//
+// Ходит на admin.skif.pro: login → dealers_admin_query (резолв dealer по email) → company/create.
+// Не использует app.skif.pro session (conn.SessionCookie не задействован).
+//
+// Возвращает body ответа SKIF (включая id новой компании).
+//
+// Примечание: создание admin-юзера вместе с компанией (params.User) пока не реализовано —
+// admin-API skif требует другую схему чем app-API. См. wiki/sources/skif-api/kompaniya.md.
+func (s *SkifService) CreateCompany(conn *models.SkifConnection, params SkifCreateCompanyParams) (map[string]interface{}, error) {
+	if params.CompanyName == "" {
+		return nil, fmt.Errorf("company_name обязателен")
+	}
+	if params.Timezone == "" {
+		return nil, fmt.Errorf("timezone обязателен")
+	}
+
+	tzKey, tzValue, ok := resolveSkifTimezone(params.Timezone)
+	if !ok {
+		return nil, fmt.Errorf("неизвестный timezone %q (поддерживаются IANA Europe/Moscow и т.п. либо UTC+N)", params.Timezone)
+	}
+
+	cookieStr, err := s.adminLogin(conn)
+	if err != nil {
+		s.recordError(conn, fmt.Sprintf("admin login: %v", err))
+		return nil, fmt.Errorf("admin login: %w", err)
+	}
+
+	dealer, err := s.resolveDealerForLogin(conn, cookieStr)
+	if err != nil {
+		return nil, fmt.Errorf("resolve dealer: %w", err)
+	}
+
+	// Чистим dealer от лишних полей (оставляем что нужно SKIF /company/create).
+	cleanDealer := map[string]interface{}{
+		"id":                dealer["id"],
+		"name":              dealer["name"],
+		"blocked":           dealer["blocked"],
+		"skif_support_type": dealer["skif_support_type"],
+		"is_default":        dealer["is_default"],
+	}
+
+	body := map[string]interface{}{
+		"company_name": params.CompanyName,
+		"imeis":        []string{""},
+		"timezone": map[string]interface{}{
+			"key":   tzKey,
+			"type":  "timezones",
+			"value": tzValue,
+		},
+		"timezone_key":     tzKey,
+		"dealer":           cleanDealer,
+		"notify_users_ids": []interface{}{},
+		"support_info":     nil,
+		"details":          nil,
+		"properties": map[string]interface{}{
+			"available_maps": []map[string]interface{}{
+				{"os": "web", "maps_keys": []string{"yandex", "google_satellite", "google_road", "google_hybrid", "google_traffic", "google_terrain", "osm_scheme", "here", "bing", "bing_satellite"}},
+				{"os": "ios", "maps_keys": []string{"yandex", "google_satellite", "google_road", "google_hybrid", "osm_scheme", "bing_satellite"}},
+				{"os": "android", "maps_keys": []string{"yandex", "google_satellite", "google_road", "google_hybrid", "osm_scheme", "bing", "bing_satellite", "usgs_topo", "usgs_sat", "wikimedia", "open_topo"}},
+			},
+		},
+	}
+
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal: %w", err)
+	}
+
+	rawBody, status, err := s.adminPOST(conn, cookieStr, "/api_v1/company/create", bodyBytes)
+	if err != nil {
+		return nil, fmt.Errorf("/company/create http: %w", err)
+	}
+	if status != 200 && status != 201 {
+		return nil, fmt.Errorf("/company/create status=%d body=%s", status, truncate(string(rawBody), 300))
+	}
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(rawBody, &resp); err != nil {
+		log.Printf("⚠️ SKIF create company: parse response: %v body=%s", err, truncate(string(rawBody), 200))
+		return map[string]interface{}{"raw": string(rawBody)}, nil
+	}
+	log.Printf("✅ SKIF создана компания (admin): conn=%d name=%q dealer=%v id=%v", conn.ID, params.CompanyName, dealer["name"], resp["id"])
+	return resp, nil
+}
+
+// DeleteCompany планирует удаление SKIF-компании через admin API.
+//
+// SKIF не удаляет сразу — schedule_delete ставит задачу на удаление с возможностью
+// отмены через POST /company/cancel_delete. По умолчанию задача исполняется через 14 дней.
+//
+// Принимает skifCompanyID (UUID компании в SKIF — поле SkifUnit.SkifCompanyID).
+//
+// Особенности admin endpoint:
+//   - метод DELETE
+//   - body {"ids":["<uuid>"],"timezone_key":"UTC+3"} — массив, но **только один id за запрос**
+//   - host admin.skif.pro, отдельная PLAY_SESSION
+func (s *SkifService) DeleteCompany(conn *models.SkifConnection, skifCompanyID string) error {
+	if skifCompanyID == "" {
+		return fmt.Errorf("skif_company_id обязателен")
+	}
+
+	cookieStr, err := s.adminLogin(conn)
+	if err != nil {
+		s.recordError(conn, fmt.Sprintf("admin login: %v", err))
+		return fmt.Errorf("admin login: %w", err)
+	}
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"ids":          []string{skifCompanyID},
+		"timezone_key": "UTC+3",
+	})
+
+	rawBody, status, err := s.adminDELETE(conn, cookieStr, "/api_v1/company/schedule_delete", body)
+	if err != nil {
+		return fmt.Errorf("/company/schedule_delete http: %w", err)
+	}
+	if status != 200 && status != 204 {
+		return fmt.Errorf("/company/schedule_delete status=%d body=%s", status, truncate(string(rawBody), 300))
+	}
+
+	// Локально фиксируем pending-delete для UI countdown.
+	// SKIF удаляет через 14 дней — до этого момента можно отменить через cancel_delete.
+	now := time.Now()
+	scheduledFor := now.Add(14 * 24 * time.Hour)
+	var companyName string
+	var nameRow struct{ Name string }
+	if err := s.db.Raw("SELECT MAX(skif_company) AS name FROM skif_units WHERE connection_id = ? AND skif_company_id = ?", conn.ID, skifCompanyID).Scan(&nameRow).Error; err == nil {
+		companyName = nameRow.Name
+	}
+	pending := models.SkifPendingDelete{
+		ConnectionID:  conn.ID,
+		SkifCompanyID: skifCompanyID,
+		CompanyName:   companyName,
+		ScheduledAt:   now,
+		ScheduledFor:  scheduledFor,
+	}
+	if err := s.db.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "connection_id"}, {Name: "skif_company_id"}},
+		DoUpdates: clause.Assignments(map[string]interface{}{
+			"company_name":  companyName,
+			"scheduled_at":  now,
+			"scheduled_for": scheduledFor,
+			"updated_at":    now,
+		}),
+	}).Create(&pending).Error; err != nil {
+		log.Printf("⚠️ SKIF DeleteCompany: failed to upsert pending_delete: %v", err)
+	}
+
+	log.Printf("✅ SKIF schedule_delete OK: conn=%d company=%s scheduled_for=%s", conn.ID, skifCompanyID, scheduledFor.Format(time.RFC3339))
+	return nil
+}
+
+// adminDELETE — DELETE на admin-host с указанным cookie-string.
+// Параллель к adminPOST, но DELETE с body (SKIF поддерживает body для DELETE).
+func (s *SkifService) adminDELETE(conn *models.SkifConnection, cookieStr, path string, body []byte) ([]byte, int, error) {
+	u, _ := neturl(adminBaseURL(conn) + path)
+	jar, _ := cookiejar.New(nil)
+	if cookieStr != "" {
+		base, _ := neturl(adminBaseURL(conn))
+		jar.SetCookies(base, parseCookieString(cookieStr, base))
+	}
+	client := &http.Client{Jar: jar, Timeout: 30 * time.Second}
+	req, err := http.NewRequest("DELETE", u.String(), bytes.NewReader(body))
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+	rawBody, _ := io.ReadAll(resp.Body)
+	return rawBody, resp.StatusCode, nil
+}
+
+// CancelDeleteCompany отменяет ранее запланированное удаление компании
+// (POST /api_v1/company/cancel_delete). Полезно если пользователь передумал в течение 14 дней.
+func (s *SkifService) CancelDeleteCompany(conn *models.SkifConnection, skifCompanyID string) error {
+	if skifCompanyID == "" {
+		return fmt.Errorf("skif_company_id обязателен")
+	}
+
+	cookieStr, err := s.adminLogin(conn)
+	if err != nil {
+		return fmt.Errorf("admin login: %w", err)
+	}
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"ids":          []string{skifCompanyID},
+		"timezone_key": "UTC+3",
+	})
+
+	rawBody, status, err := s.adminPOST(conn, cookieStr, "/api_v1/company/cancel_delete", body)
+	if err != nil {
+		return fmt.Errorf("/company/cancel_delete http: %w", err)
+	}
+	if status != 200 && status != 204 {
+		return fmt.Errorf("/company/cancel_delete status=%d body=%s", status, truncate(string(rawBody), 300))
+	}
+
+	// Удаляем локальную pending-запись.
+	if err := s.db.Where("connection_id = ? AND skif_company_id = ?", conn.ID, skifCompanyID).
+		Delete(&models.SkifPendingDelete{}).Error; err != nil {
+		log.Printf("⚠️ SKIF CancelDeleteCompany: failed to delete pending_delete: %v", err)
+	}
+
+	log.Printf("✅ SKIF cancel_delete OK: conn=%d company=%s", conn.ID, skifCompanyID)
+	return nil
+}
+
 func (s *SkifService) recordError(conn *models.SkifConnection, msg string) {
 	now := time.Now()
 	s.db.Model(conn).Updates(map[string]interface{}{

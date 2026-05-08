@@ -38,10 +38,12 @@ type UnifiedAccount struct {
 	Comment           *string `json:"comment,omitempty"`
 	BlockingDatetime  *string `json:"blockingDatetime,omitempty"`
 	DaysBeforeBlocking *int   `json:"daysBeforeBlocking,omitempty"`
-	Source            string  `json:"source"`                 // "axenta" | "WH(...)" | "WL(...)"
+	Source            string  `json:"source"`                 // "axenta" | "WH(...)" | "WL(...)" | "skif"
 	SourceLabel       string  `json:"sourceLabel,omitempty"`
-	ConnectionID      *uint   `json:"connectionId,omitempty"` // только для wialon
+	ConnectionID      *uint   `json:"connectionId,omitempty"` // wialon + skif
 	DealerRights      bool    `json:"dealerRights,omitempty"`
+	SkifCompanyID     string  `json:"skifCompanyId,omitempty"`     // UUID дилерской компании в SKIF
+	DeleteScheduledFor *string `json:"deleteScheduledFor,omitempty"` // ISO timestamp когда SKIF удалит компанию (RFC3339)
 }
 
 // UnifiedAccountsStats — KPI разбивка по источникам (как для users/objects).
@@ -56,6 +58,8 @@ type UnifiedAccountsStats struct {
 	WialonWHActive int `json:"wialon_wh_active"`
 	WialonWLTotal  int `json:"wialon_wl_total"`
 	WialonWLActive int `json:"wialon_wl_active"`
+	SkifTotal      int `json:"skif_total"`
+	SkifActive     int `json:"skif_active"`
 }
 
 // UnifiedAccountsResponse — формат ответа.
@@ -104,6 +108,7 @@ func GetUnifiedAccounts(c *gin.Context) {
 
 	loadAxenta := source == "all" || source == "axenta"
 	loadWialon := source == "all" || source == "wialon" || source == "wh" || source == "wl"
+	loadSkif := source == "all" || source == "skif"
 
 	if loadAxenta {
 		wg.Add(1)
@@ -142,6 +147,25 @@ func GetUnifiedAccounts(c *gin.Context) {
 			stats.WialonWHActive = whActive
 			stats.WialonWLTotal = wlTotal
 			stats.WialonWLActive = wlActive
+			mu.Unlock()
+		}()
+	}
+
+	if loadSkif {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			companyID, exists := c.Get("company_id")
+			if !exists {
+				return
+			}
+			t0 := time.Now()
+			items, sTotal, sActive := fetchSkifAccountsForUnified(companyID.(uint), search, accountType, activeStr, parent)
+			log.Printf("🔍 unified/accounts skif: %d items за %s", len(items), time.Since(t0).Round(time.Millisecond))
+			mu.Lock()
+			allAccounts = append(allAccounts, items...)
+			stats.SkifTotal = sTotal
+			stats.SkifActive = sActive
 			mu.Unlock()
 		}()
 	}
@@ -478,4 +502,128 @@ func sortUnifiedAccounts(items []UnifiedAccount, ordering string) {
 		}
 		return less
 	})
+}
+
+// fetchSkifAccountsForUnified — учётки SKIF = дилерские компании (DISTINCT skif_company_id).
+// SkifCompany не имеет своей таблицы, агрегируем из skif_units одним SQL.
+//
+// Возвращает: items, total, active. Для KPI карточки SKIF на /accounts.
+func fetchSkifAccountsForUnified(companyID uint, search, accountType, activeStr, parent string) ([]UnifiedAccount, int, int) {
+	if database.DB == nil {
+		return nil, 0, 0
+	}
+
+	// Pending-deletes для UI countdown (LEFT JOIN не делаем — отдельный map).
+	pendingMap := make(map[string]time.Time)
+	var pendings []models.SkifPendingDelete
+	if err := database.DB.
+		Joins("JOIN skif_connections sc ON sc.id = skif_pending_deletes.connection_id").
+		Where("sc.company_id = ?", companyID).
+		Find(&pendings).Error; err == nil {
+		for _, p := range pendings {
+			pendingMap[p.SkifCompanyID] = p.ScheduledFor
+		}
+	}
+	// SkifCompany считается активной если у неё есть хотя бы один активный юнит.
+	// Источник created_at — MIN(skif_created_at) по юнитам компании.
+	type row struct {
+		SkifCompanyID  string
+		Name           string
+		ConnectionID   uint
+		ConnectionName string
+		ObjectsTotal   int
+		ObjectsActive  int
+		CreatedAt      *time.Time
+	}
+	var rows []row
+	q := `
+		SELECT
+			u.skif_company_id                                             AS skif_company_id,
+			MAX(u.skif_company)                                           AS name,
+			MAX(u.connection_id)                                          AS connection_id,
+			MAX(c.name)                                                   AS connection_name,
+			COUNT(*)                                                      AS objects_total,
+			COUNT(*) FILTER (WHERE u.is_active AND u.skif_deleted_at IS NULL) AS objects_active,
+			MIN(u.skif_created_at)                                        AS created_at
+		FROM skif_units u
+		LEFT JOIN skif_connections c ON c.id = u.connection_id
+		WHERE u.company_id = ?
+		  AND u.skif_company_id <> ''
+		  AND u.skif_deleted_at IS NULL
+		GROUP BY u.skif_company_id
+	`
+	if err := database.DB.Raw(q, companyID).Scan(&rows).Error; err != nil {
+		log.Printf("⚠️ unified/accounts skif aggregate: %v", err)
+		return nil, 0, 0
+	}
+
+	pattern := strings.ToLower(search)
+	items := make([]UnifiedAccount, 0, len(rows))
+	total, active := 0, 0
+	for _, r := range rows {
+		isActive := r.ObjectsActive > 0
+		// SKIF не делит на client/partner — все дилерские компании = client.
+		if accountType != "" && accountType != "client" {
+			continue
+		}
+		switch activeStr {
+		case "true", "1":
+			if !isActive {
+				continue
+			}
+		case "false", "0":
+			if isActive {
+				continue
+			}
+		}
+		if pattern != "" && !strings.Contains(strings.ToLower(r.Name), pattern) {
+			continue
+		}
+		// parent для SKIF — имя SkifConnection (дилеры висят под connection как под "партнёром").
+		if parent != "" && r.ConnectionName != parent {
+			continue
+		}
+
+		total++
+		if isActive {
+			active++
+		}
+
+		connID := r.ConnectionID
+		ua := UnifiedAccount{
+			ID:                int(connID)*1000000 + hashSkifID(r.SkifCompanyID), // synthetic — UnifiedAccount.ID должен быть int
+			Name:              r.Name,
+			Type:              "client",
+			ParentAccountName: r.ConnectionName,
+			ObjectsTotal:      r.ObjectsTotal,
+			ObjectsActive:     r.ObjectsActive,
+			IsActive:          isActive,
+			Source:            "skif",
+			SourceLabel:       "SKIF",
+			ConnectionID:      &connID,
+			SkifCompanyID:     r.SkifCompanyID,
+		}
+		if r.CreatedAt != nil && !r.CreatedAt.IsZero() {
+			ua.CreationDatetime = r.CreatedAt.Format(time.RFC3339)
+		}
+		if scheduledFor, ok := pendingMap[r.SkifCompanyID]; ok && !scheduledFor.IsZero() {
+			s := scheduledFor.Format(time.RFC3339)
+			ua.DeleteScheduledFor = &s
+		}
+		items = append(items, ua)
+	}
+	return items, total, active
+}
+
+// hashSkifID — детерминированный int ID из UUID для UnifiedAccount.ID (frontend ключ).
+// Реальный SkifCompanyID лежит в SkifCompanyID поле.
+func hashSkifID(uuid string) int {
+	var h int
+	for i := 0; i < len(uuid) && i < 16; i++ {
+		h = h*31 + int(uuid[i])
+	}
+	if h < 0 {
+		h = -h
+	}
+	return h % 1000000
 }
