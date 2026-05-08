@@ -361,17 +361,25 @@ func (s *SkifService) fetchMe(conn *models.SkifConnection, client *http.Client) 
 	return &me, resp.StatusCode, nil
 }
 
-// switchWithRetry — switchCompany с retry на 429 rate limit.
-// При 429 — sleep 6s, повтор 1 раз. Если опять 429 — fail.
+// switchWithRetry — switchCompany с экспоненциальным retry на 429 rate limit.
+// 3 попытки: первая сразу, при 429 sleep 6s → 12s → 24s.
 func (s *SkifService) switchWithRetry(conn *models.SkifConnection, client *http.Client, companyID string) error {
-	if err := s.switchCompany(conn, client, companyID); err != nil {
-		if strings.Contains(err.Error(), "status=429") {
-			time.Sleep(6 * time.Second)
-			return s.switchCompany(conn, client, companyID)
+	backoffs := []time.Duration{6 * time.Second, 12 * time.Second, 24 * time.Second}
+	var lastErr error
+	for i := 0; i <= len(backoffs); i++ {
+		err := s.switchCompany(conn, client, companyID)
+		if err == nil {
+			return nil
 		}
-		return err
+		lastErr = err
+		if !strings.Contains(err.Error(), "status=429") {
+			return err
+		}
+		if i < len(backoffs) {
+			time.Sleep(backoffs[i])
+		}
 	}
-	return nil
+	return lastErr
 }
 
 // switchCompany — POST /api_v1/company/change/:id, обновляет cookie session client'а.
@@ -553,7 +561,8 @@ func (s *SkifService) BackfillHistory(conn *models.SkifConnection, from, to time
 	agg := make(map[aggKey]*counts, 4096)
 
 	totalEvents := 0
-	const throttle = 1100 * time.Millisecond
+	// Throttle 2.2s между компаниями: 2 запроса (switch+query) на компанию ≤ ~1 req/sec под лимит SKIF 60/min.
+	const throttle = 2200 * time.Millisecond
 
 	// Разбиваем большое окно на куски по году (SKIF limit).
 	type window struct{ from, to time.Time }
@@ -568,15 +577,12 @@ func (s *SkifService) BackfillHistory(conn *models.SkifConnection, from, to time
 		cursor = end
 	}
 
-	for ci, comp := range companies {
-		if ci > 0 {
-			time.Sleep(throttle)
-		}
+	// processCompany — обрабатывает одну компанию, возвращает true при успехе.
+	processCompany := func(comp skifCompanyBrief) bool {
 		if err := s.switchWithRetry(conn, client, comp.ID); err != nil {
 			log.Printf("⚠️ SKIF backfill switch %s: %v", comp.Name, err)
-			continue
+			return false
 		}
-
 		for _, w := range windows {
 			firstRow := 0
 			for {
@@ -592,7 +598,7 @@ func (s *SkifService) BackfillHistory(conn *models.SkifConnection, from, to time
 				rawBody, code, err := s.postJSON(conn, client, "/api_v1/company/updates/query", body)
 				if err != nil {
 					log.Printf("⚠️ SKIF backfill /updates/query company=%s: %v", comp.Name, err)
-					break
+					return false
 				}
 				if code == 429 {
 					time.Sleep(6 * time.Second)
@@ -600,12 +606,12 @@ func (s *SkifService) BackfillHistory(conn *models.SkifConnection, from, to time
 				}
 				if code != 200 {
 					log.Printf("⚠️ SKIF backfill /updates/query company=%s status=%d body=%s", comp.Name, code, truncate(string(rawBody), 200))
-					break
+					return false
 				}
 				var resp skifUpdatesQueryResp
 				if err := json.Unmarshal(rawBody, &resp); err != nil {
 					log.Printf("⚠️ SKIF backfill parse company=%s: %v", comp.Name, err)
-					break
+					return false
 				}
 				if len(resp.List) == 0 {
 					break
@@ -644,6 +650,33 @@ func (s *SkifService) BackfillHistory(conn *models.SkifConnection, from, to time
 				time.Sleep(throttle)
 			}
 		}
+		return true
+	}
+
+	// Pass 1: основной проход по всем компаниям.
+	var failed []skifCompanyBrief
+	for ci, comp := range companies {
+		if ci > 0 {
+			time.Sleep(throttle)
+		}
+		if !processCompany(comp) {
+			failed = append(failed, comp)
+		}
+	}
+
+	// Pass 2: retry для упавших компаний с увеличенной паузой 30s между ними.
+	var stillFailed []string
+	if len(failed) > 0 {
+		log.Printf("🔄 SKIF backfill retry pass: %d failed companies", len(failed))
+		time.Sleep(30 * time.Second)
+		for ri, comp := range failed {
+			if ri > 0 {
+				time.Sleep(30 * time.Second)
+			}
+			if !processCompany(comp) {
+				stillFailed = append(stillFailed, comp.Name)
+			}
+		}
 	}
 
 	// Upsert агрегатов в БД.
@@ -673,8 +706,12 @@ func (s *SkifService) BackfillHistory(conn *models.SkifConnection, from, to time
 		upserted++
 	}
 
-	log.Printf("✅ SKIF backfill conn=%d companies=%d windows=%d events=%d upserted=%d за %v",
-		conn.ID, len(companies), len(windows), totalEvents, upserted, time.Since(now).Round(time.Second))
+	skippedSummary := ""
+	if len(stillFailed) > 0 {
+		skippedSummary = fmt.Sprintf(" skipped=%d (%s)", len(stillFailed), strings.Join(stillFailed, ", "))
+	}
+	log.Printf("✅ SKIF backfill conn=%d companies=%d windows=%d events=%d upserted=%d за %v%s",
+		conn.ID, len(companies), len(windows), totalEvents, upserted, time.Since(now).Round(time.Second), skippedSummary)
 	return totalEvents, upserted, nil
 }
 
