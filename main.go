@@ -1087,6 +1087,8 @@ func main() {
 	apiGroup.GET("/dashboard/sources-stats", api.GetDashboardSourcesStats)
 	apiGroup.GET("/dashboard/chart", api.GetDashboardChart)
 	apiGroup.GET("/dashboard/chart/", api.GetDashboardChart)
+	apiGroup.GET("/dashboard/source-detail", api.GetDashboardSourceDetail)
+	apiGroup.GET("/dashboard/source-detail/", api.GetDashboardSourceDetail)
 	apiGroup.GET("/dashboard/lifecycle", api.GetDashboardLifecycle)
 	apiGroup.GET("/dashboard/lifecycle/", api.GetDashboardLifecycle)
 

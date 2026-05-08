@@ -31,6 +31,17 @@ type ChartPoint struct {
 	WL         int64             `json:"wl"`          // Wialon Local — proxy
 	Skif       int64             `json:"skif"`        // SKIF.PRO — proxy через skif_units.created_at
 	Revenues   []CurrencyRevenue `json:"revenues"`    // Выручки по валютам
+
+	// Per-bucket created/deleted (sum events за окно бакета).
+	// Источники: wialon_daily_snapshots / skif_daily_snapshots / axenta_object_snapshots.
+	AxentaCreated int64 `json:"axenta_created"`
+	AxentaDeleted int64 `json:"axenta_deleted"`
+	WHCreated     int64 `json:"wh_created"`
+	WHDeleted     int64 `json:"wh_deleted"`
+	WLCreated     int64 `json:"wl_created"`
+	WLDeleted     int64 `json:"wl_deleted"`
+	SkifCreated   int64 `json:"skif_created"`
+	SkifDeleted   int64 `json:"skif_deleted"`
 }
 
 // ChartResponse — payload ответа /api/auth/dashboard/chart.
@@ -304,20 +315,86 @@ func GetDashboardChart(c *gin.Context) {
 
 		objectsCount := axentaCount + whCount + wlCount + skifCount
 
+		// Per-bucket created/deleted events (окно [b.start, b.end))
+		startStr := b.start.Format("2006-01-02")
+		endStr := b.end.Format("2006-01-02")
+
+		// Axenta: count events по реальной дате создания / удаления
+		var axentaCreated, axentaDeleted int64
+		tenantDB.Unscoped().Table("axenta_object_snapshots").
+			Where("COALESCE(axenta_created_at, created_at) >= ? AND COALESCE(axenta_created_at, created_at) < ?", b.start, b.end).
+			Count(&axentaCreated)
+		tenantDB.Unscoped().Table("axenta_object_snapshots").
+			Where("axenta_deleted_at >= ? AND axenta_deleted_at < ?", b.start, b.end).
+			Count(&axentaDeleted)
+
+		// Wialon: SUM(units_created/deleted) GROUP BY connection_type
+		type whwlEvents struct {
+			ConnType string
+			Created  int64
+			Deleted  int64
+		}
+		var whwlEvRows []whwlEvents
+		var whCreated, whDeleted, wlCreated, wlDeleted int64
+		if companyID > 0 {
+			publicDB.Raw(`
+				SELECT wc.connection_type AS conn_type,
+				       COALESCE(SUM(wds.units_created), 0) AS created,
+				       COALESCE(SUM(wds.units_deleted), 0) AS deleted
+				FROM `+publicTable(publicDB, "wialon_daily_snapshots")+` wds
+				JOIN `+publicTable(publicDB, "wialon_connections")+` wc ON wc.id = wds.connection_id
+				WHERE wc.company_id = ? AND wds.snapshot_date >= ? AND wds.snapshot_date < ?
+				GROUP BY wc.connection_type
+			`, companyID, startStr, endStr).Scan(&whwlEvRows)
+			for _, r := range whwlEvRows {
+				switch r.ConnType {
+				case "hosting":
+					whCreated, whDeleted = r.Created, r.Deleted
+				case "local":
+					wlCreated, wlDeleted = r.Created, r.Deleted
+				}
+			}
+		}
+
+		// SKIF: SUM(units_created/deleted) из skif_daily_snapshots
+		var skifCreated, skifDeleted int64
+		if companyID > 0 {
+			var skifEv struct {
+				Created int64
+				Deleted int64
+			}
+			publicDB.Raw(`
+				SELECT COALESCE(SUM(sds.units_created), 0) AS created,
+				       COALESCE(SUM(sds.units_deleted), 0) AS deleted
+				FROM `+publicTable(publicDB, "skif_daily_snapshots")+` sds
+				JOIN `+publicTable(publicDB, "skif_connections")+` sc ON sc.id = sds.connection_id
+				WHERE sc.company_id = ? AND sds.snapshot_date >= ? AND sds.snapshot_date < ?
+			`, companyID, startStr, endStr).Scan(&skifEv)
+			skifCreated, skifDeleted = skifEv.Created, skifEv.Deleted
+		}
+
 		revenues := sumPaidByCurrency(publicDB, companyID, b.start, b.end)
 		for _, r := range revenues {
 			currencySet[r.Currency] = struct{}{}
 		}
 
 		points = append(points, ChartPoint{
-			Month:      b.key,
-			MonthLabel: b.label,
-			Objects:    objectsCount,
-			Axenta:     axentaCount,
-			WH:         whCount,
-			WL:         wlCount,
-			Skif:       skifCount,
-			Revenues:   revenues,
+			Month:         b.key,
+			MonthLabel:    b.label,
+			Objects:       objectsCount,
+			Axenta:        axentaCount,
+			WH:            whCount,
+			WL:            wlCount,
+			Skif:          skifCount,
+			Revenues:      revenues,
+			AxentaCreated: axentaCreated,
+			AxentaDeleted: axentaDeleted,
+			WHCreated:     whCreated,
+			WHDeleted:     whDeleted,
+			WLCreated:     wlCreated,
+			WLDeleted:     wlDeleted,
+			SkifCreated:   skifCreated,
+			SkifDeleted:   skifDeleted,
 		})
 	}
 
