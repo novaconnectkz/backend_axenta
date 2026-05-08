@@ -135,6 +135,10 @@ func (s *SkifSyncScheduler) tick() {
 		if _, err := svc.SyncSubdealers(conn); err != nil {
 			log.Printf("⚠️ SkifSyncScheduler: conn=%d subdealers sync error: %v", conn.ID, err)
 		}
+		// Sync пользователей SKIF для unified /users.
+		if _, err := svc.SyncUsers(conn); err != nil {
+			log.Printf("⚠️ SkifSyncScheduler: conn=%d users sync error: %v", conn.ID, err)
+		}
 		synced++
 	}
 

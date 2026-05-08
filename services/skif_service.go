@@ -500,6 +500,602 @@ func (s *SkifService) fetchUnitsForCompany(conn *models.SkifConnection, client *
 	return saved, seenIDs, nil
 }
 
+// SkifUserDTO — поля юзера из POST /api_v1/users/query (response = массив объектов /me).
+// "created" SKIF не возвращает в /users/query, аналогично unit'ам.
+type SkifUserDTO struct {
+	ID             string             `json:"id"`
+	Name           string             `json:"name"`
+	Email          string             `json:"email"`
+	Phone          string             `json:"phone"`
+	Role           skifUserRole       `json:"role"`
+	IsApproved     bool               `json:"is_approved"`
+	IsDriver       bool               `json:"is_driver"`
+	Code           interface{}        `json:"code"`             // в API может быть number или string (RFID id)
+	Language       skifUserLanguage   `json:"language"`
+	Details        string             `json:"details"`
+	TelegramChatID interface{}        `json:"telegram_chat_id"` // в API number, но безопаснее interface{}
+	Companies      []skifCompanyBrief `json:"companies"`
+}
+
+type skifUserRole struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+type skifUserLanguage struct {
+	Key string `json:"key"`
+}
+
+type skifUsersQueryResponse struct {
+	List []SkifUserDTO `json:"list"`
+	Max  int           `json:"max"`
+}
+
+// SyncUsers загружает всех пользователей SKIF через все доступные компании.
+//
+// Pattern идентичен SyncUnits:
+//  1. login (если cookie невалиден)
+//  2. GET /me → companies[]
+//  3. для каждой company: switch + POST /api_v1/users/query (paginated)
+//  4. upsert в skif_users (один email × N companies = N строк)
+//  5. mark deleted: записи которых нет в выгрузке
+//  6. сохранение cookie session
+//
+// Rate limit SKIF ~60/min: throttle 1.1s между companies.
+func (s *SkifService) SyncUsers(conn *models.SkifConnection) (int, error) {
+	now := time.Now()
+	client, jar := s.httpClient(conn)
+
+	if conn.SessionCookie == "" {
+		if err := s.loginWithClient(conn, client); err != nil {
+			return 0, err
+		}
+	}
+
+	me, status, err := s.fetchMe(conn, client)
+	if err != nil {
+		s.recordError(conn, fmt.Sprintf("/me users: %v", err))
+		return 0, err
+	}
+	if status == 401 || status == 422 {
+		if err := s.loginWithClient(conn, client); err != nil {
+			return 0, err
+		}
+		me, status, err = s.fetchMe(conn, client)
+		if err != nil || status != 200 {
+			s.recordError(conn, fmt.Sprintf("/me users retry status=%d err=%v", status, err))
+			return 0, fmt.Errorf("/me retry: %w", err)
+		}
+	}
+	if status != 200 {
+		s.recordError(conn, fmt.Sprintf("/me users status=%d", status))
+		return 0, fmt.Errorf("/me users status=%d", status)
+	}
+
+	companies := me.Companies
+	if len(companies) == 0 {
+		companies = []skifCompanyBrief{me.ActiveCompany}
+	}
+
+	log.Printf("🔄 SKIF SyncUsers conn=%d: %d companies", conn.ID, len(companies))
+
+	saved := 0
+	failedCompanies := 0
+	type seenKey struct {
+		userID    string
+		companyID string
+	}
+	seen := make([]seenKey, 0, 256)
+	const throttle = 1100 * time.Millisecond
+	for i, comp := range companies {
+		if i > 0 {
+			time.Sleep(throttle)
+		}
+		if err := s.switchWithRetry(conn, client, comp.ID); err != nil {
+			log.Printf("⚠️ SKIF SyncUsers conn=%d switch %s (%s): %v", conn.ID, comp.Name, comp.ID, err)
+			failedCompanies++
+			continue
+		}
+		n, ids, err := s.fetchUsersForCompany(conn, client, comp, now)
+		if err != nil {
+			log.Printf("⚠️ SKIF SyncUsers conn=%d company %s: %v", conn.ID, comp.Name, err)
+			failedCompanies++
+			continue
+		}
+		saved += n
+		for _, id := range ids {
+			seen = append(seen, seenKey{userID: id, companyID: comp.ID})
+		}
+		if (i+1)%10 == 0 || i == len(companies)-1 {
+			log.Printf("   👥 SKIF users: %d/%d компаний (saved=%d)", i+1, len(companies), saved)
+		}
+	}
+
+	// Mark deleted: записи которых нет в выгрузке. Делаем per-company чтобы не зацепить
+	// чужие записи если одна company упала.
+	if failedCompanies*2 < len(companies) {
+		seenByCompany := make(map[string][]string)
+		for _, k := range seen {
+			seenByCompany[k.companyID] = append(seenByCompany[k.companyID], k.userID)
+		}
+		for companyID, userIDs := range seenByCompany {
+			if len(userIDs) == 0 {
+				continue
+			}
+			res := s.db.Model(&models.SkifUser{}).
+				Where("connection_id = ? AND skif_company_id = ? AND skif_deleted_at IS NULL AND skif_user_id NOT IN ?",
+					conn.ID, companyID, userIDs).
+				Update("skif_deleted_at", now)
+			if res.Error != nil {
+				log.Printf("⚠️ SKIF mark deleted users: %v", res.Error)
+			} else if res.RowsAffected > 0 {
+				log.Printf("🗑 SKIF SyncUsers conn=%d company=%s: помечено %d юзеров", conn.ID, companyID, res.RowsAffected)
+			}
+		}
+	}
+
+	s.saveSessionFromJar(conn, jar)
+
+	if failedCompanies > 0 {
+		log.Printf("⚠️ SKIF SyncUsers conn=%d: %d/%d компаний упали", conn.ID, failedCompanies, len(companies))
+	}
+
+	s.db.Model(conn).Updates(map[string]interface{}{
+		"users_count": saved,
+		"updated_at":  time.Now(),
+	})
+
+	log.Printf("✅ SKIF SyncUsers: conn=%d upserted=%d (companies=%d, failed=%d)", conn.ID, saved, len(companies), failedCompanies)
+	return saved, nil
+}
+
+// fetchUsersForCompany — POST /api_v1/users/query для текущей (после switch) компании.
+// Пагинация from+limit. Sortfield=name. Возвращает кол-во upserted и список skif_user_id.
+func (s *SkifService) fetchUsersForCompany(conn *models.SkifConnection, client *http.Client, comp skifCompanyBrief, now time.Time) (int, []string, error) {
+	const pageSize = 500
+	from := 0
+	saved := 0
+	seenIDs := make([]string, 0, 64)
+	for {
+		body, _ := json.Marshal(map[string]interface{}{
+			"from":      from,
+			"limit":     pageSize,
+			"sortField": "name",
+			"sortDesc":  false,
+		})
+		req, err := http.NewRequest("POST", strings.TrimRight(conn.BaseURL, "/")+"/api_v1/users/query", bytes.NewReader(body))
+		if err != nil {
+			return saved, seenIDs, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			return saved, seenIDs, err
+		}
+		rawBody, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			return saved, seenIDs, fmt.Errorf("/users/query status=%d body=%s", resp.StatusCode, truncate(string(rawBody), 200))
+		}
+
+		// SKIF может вернуть либо {list:[], max} либо просто массив — пробуем оба.
+		var page skifUsersQueryResponse
+		if err := json.Unmarshal(rawBody, &page); err != nil || len(page.List) == 0 {
+			var arr []SkifUserDTO
+			if errArr := json.Unmarshal(rawBody, &arr); errArr == nil && len(arr) > 0 {
+				page.List = arr
+			} else if err != nil {
+				return saved, seenIDs, fmt.Errorf("parse: %w", err)
+			}
+		}
+
+		if len(page.List) == 0 {
+			break
+		}
+
+		for _, u := range page.List {
+			tgChatID := ""
+			if u.TelegramChatID != nil {
+				tgChatID = fmt.Sprintf("%v", u.TelegramChatID)
+			}
+			code := ""
+			if u.Code != nil {
+				code = fmt.Sprintf("%v", u.Code)
+			}
+			row := models.SkifUser{
+				ConnectionID:    conn.ID,
+				SkifUserID:      u.ID,
+				SkifCompanyID:   comp.ID,
+				Name:            u.Name,
+				Email:           u.Email,
+				Phone:           u.Phone,
+				RoleKey:         u.Role.Key,
+				RoleName:        u.Role.Value,
+				IsActive:        u.Role.Key != "" && u.Role.Key != "NoAccess",
+				IsApproved:      u.IsApproved,
+				IsDriver:        u.IsDriver,
+				Code:            code,
+				Language:        u.Language.Key,
+				Details:         u.Details,
+				TelegramChatID:  tgChatID,
+				CompanyID:       conn.CompanyID,
+				SkifCompany:     comp.Name,
+				LastCollectedAt: now,
+			}
+			if err := s.db.Clauses(clause.OnConflict{
+				Columns: []clause.Column{{Name: "connection_id"}, {Name: "skif_user_id"}, {Name: "skif_company_id"}},
+				DoUpdates: clause.Assignments(map[string]interface{}{
+					"name":              row.Name,
+					"email":             row.Email,
+					"phone":             row.Phone,
+					"role_key":          row.RoleKey,
+					"role_name":         row.RoleName,
+					"is_active":         row.IsActive,
+					"is_approved":       row.IsApproved,
+					"is_driver":         row.IsDriver,
+					"code":              row.Code,
+					"language":          row.Language,
+					"details":           row.Details,
+					"telegram_chat_id":  row.TelegramChatID,
+					"company_id":        row.CompanyID,
+					"skif_company":     row.SkifCompany,
+					"last_collected_at": row.LastCollectedAt,
+					"skif_deleted_at":   nil,
+					"updated_at":        time.Now(),
+				}),
+			}).Create(&row).Error; err != nil {
+				log.Printf("⚠️ SKIF upsert user %s: %v", u.ID, err)
+				continue
+			}
+			seenIDs = append(seenIDs, u.ID)
+			saved++
+		}
+
+		from += pageSize
+		if page.Max > 0 && from >= page.Max {
+			break
+		}
+		if len(page.List) < pageSize {
+			break
+		}
+		if from >= 50000 {
+			break
+		}
+	}
+	return saved, seenIDs, nil
+}
+
+// UpdateSkifUserRequest — поля юзера для PUT /api_v1/users/:id.
+// nil = поле не передаём (не меняем). Минимум одно поле обязательно.
+type UpdateSkifUserRequest struct {
+	Name     *string `json:"name,omitempty"`
+	Email    *string `json:"email,omitempty"`
+	Phone    *string `json:"phone,omitempty"`
+	Password *string `json:"password,omitempty"`
+	IsDriver *bool   `json:"is_driver,omitempty"`
+	Code     *string `json:"code,omitempty"`
+	Details  *string `json:"details,omitempty"`
+	Language *string `json:"language,omitempty"` // ключ языка ("ru" / "en")
+}
+
+// UpdateUser — точечное редактирование юзера SKIF в контексте конкретной company.
+// PUT /api_v1/users/:userId. Перед запросом делаем switchCompany(skifCompanyID),
+// потому что SKIF проверяет роль текущей активной компании.
+//
+// Возвращает обновлённый объект юзера (для UI обновления карточки).
+func (s *SkifService) UpdateUser(conn *models.SkifConnection, skifCompanyID, skifUserID string, req UpdateSkifUserRequest) (map[string]interface{}, error) {
+	client, jar := s.httpClient(conn)
+	defer s.saveSessionFromJar(conn, jar)
+
+	if conn.SessionCookie == "" {
+		if err := s.loginWithClient(conn, client); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := s.switchWithRetry(conn, client, skifCompanyID); err != nil {
+		return nil, fmt.Errorf("switch company: %w", err)
+	}
+
+	body := map[string]interface{}{}
+	if req.Name != nil {
+		body["name"] = *req.Name
+	}
+	if req.Email != nil {
+		body["email"] = *req.Email
+	}
+	if req.Phone != nil {
+		body["phone"] = *req.Phone
+	}
+	if req.Password != nil {
+		body["password"] = *req.Password
+	}
+	if req.IsDriver != nil {
+		body["is_driver"] = *req.IsDriver
+	}
+	if req.Code != nil {
+		body["code"] = *req.Code
+	}
+	if req.Details != nil {
+		body["details"] = *req.Details
+	}
+	if req.Language != nil {
+		body["language"] = map[string]string{"key": *req.Language}
+	}
+	if len(body) == 0 {
+		return nil, fmt.Errorf("no fields to update")
+	}
+
+	jsonBody, _ := json.Marshal(body)
+	req2, err := http.NewRequest("PUT", strings.TrimRight(conn.BaseURL, "/")+"/api_v1/users/"+skifUserID, bytes.NewReader(jsonBody))
+	if err != nil {
+		return nil, err
+	}
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("Accept", "application/json")
+	resp, err := client.Do(req2)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	rawBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("PUT /users/%s status=%d body=%s", skifUserID, resp.StatusCode, truncate(string(rawBody), 300))
+	}
+
+	var result map[string]interface{}
+	_ = json.Unmarshal(rawBody, &result)
+
+	// Обновляем skif_users-запись локально (минимум — те поля что отправляли)
+	updates := map[string]interface{}{"updated_at": time.Now()}
+	if req.Name != nil {
+		updates["name"] = *req.Name
+	}
+	if req.Email != nil {
+		updates["email"] = *req.Email
+	}
+	if req.Phone != nil {
+		updates["phone"] = *req.Phone
+	}
+	if req.Code != nil {
+		updates["code"] = *req.Code
+	}
+	if req.Details != nil {
+		updates["details"] = *req.Details
+	}
+	if req.Language != nil {
+		updates["language"] = *req.Language
+	}
+	if req.IsDriver != nil {
+		updates["is_driver"] = *req.IsDriver
+	}
+	s.db.Model(&models.SkifUser{}).
+		Where("connection_id = ? AND skif_user_id = ? AND skif_company_id = ?", conn.ID, skifUserID, skifCompanyID).
+		Updates(updates)
+
+	return result, nil
+}
+
+// CreateSkifUserRequest — поля для POST /api_v1/users.
+// Name+Password обязательны. RoleKey: EDITOR / ADMIN / READER / SUPERVISOR / NoAccess.
+type CreateSkifUserRequest struct {
+	Name     string `json:"name"`
+	Email    string `json:"email,omitempty"`
+	Password string `json:"password"`
+	Phone    string `json:"phone,omitempty"`
+	RoleKey  string `json:"role_key,omitempty"` // дефолт EDITOR если пусто
+	Code     string `json:"code,omitempty"`
+	Details  string `json:"details,omitempty"`
+	Language string `json:"language,omitempty"` // "ru" / "en", дефолт "ru"
+	IsDriver bool   `json:"is_driver,omitempty"`
+}
+
+// skifRoleResp — упрощённый ответ GET /api_v1/roles.
+type skifRoleResp struct {
+	ID    string `json:"id"`
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+// fetchRoleIDByKey — резолвит role.id по role.key через GET /api_v1/roles.
+// Кэширование не делаем — endpoint вызывается раз на create, ролей <10.
+func (s *SkifService) fetchRoleIDByKey(conn *models.SkifConnection, client *http.Client, roleKey string) (string, string, error) {
+	req, err := http.NewRequest("GET", strings.TrimRight(conn.BaseURL, "/")+"/api_v1/roles", nil)
+	if err != nil {
+		return "", "", err
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+	rawBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return "", "", fmt.Errorf("/roles status=%d body=%s", resp.StatusCode, truncate(string(rawBody), 200))
+	}
+	// SKIF может вернуть и массив, и {list: []}
+	var arr []skifRoleResp
+	if err := json.Unmarshal(rawBody, &arr); err != nil || len(arr) == 0 {
+		var wrap struct {
+			List []skifRoleResp `json:"list"`
+		}
+		if err := json.Unmarshal(rawBody, &wrap); err != nil {
+			return "", "", fmt.Errorf("parse /roles: %w", err)
+		}
+		arr = wrap.List
+	}
+	for _, r := range arr {
+		if strings.EqualFold(r.Key, roleKey) {
+			return r.ID, r.Value, nil
+		}
+	}
+	return "", "", fmt.Errorf("role with key=%s not found in /roles", roleKey)
+}
+
+// CreateUserInCompany — создание юзера в конкретной company SKIF.
+// Workflow: login → switch(skifCompanyID) → GET /roles → POST /api_v1/users.
+//
+// Возвращает (skifUserID, response, error). При успехе создаём локальную snapshot-row.
+func (s *SkifService) CreateUserInCompany(conn *models.SkifConnection, skifCompanyID, skifCompanyName string, req CreateSkifUserRequest) (string, map[string]interface{}, error) {
+	if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Password) == "" {
+		return "", nil, fmt.Errorf("name и password обязательны")
+	}
+
+	client, jar := s.httpClient(conn)
+	defer s.saveSessionFromJar(conn, jar)
+
+	if conn.SessionCookie == "" {
+		if err := s.loginWithClient(conn, client); err != nil {
+			return "", nil, err
+		}
+	}
+	if err := s.switchWithRetry(conn, client, skifCompanyID); err != nil {
+		return "", nil, fmt.Errorf("switch company: %w", err)
+	}
+
+	roleKey := strings.ToUpper(strings.TrimSpace(req.RoleKey))
+	if roleKey == "" {
+		roleKey = "EDITOR"
+	}
+	roleID, roleValue, err := s.fetchRoleIDByKey(conn, client, roleKey)
+	if err != nil {
+		return "", nil, fmt.Errorf("resolve role: %w", err)
+	}
+
+	lang := strings.TrimSpace(req.Language)
+	if lang == "" {
+		lang = "ru"
+	}
+
+	body := map[string]interface{}{
+		"role":     map[string]string{"key": roleKey, "value": roleValue, "id": roleID},
+		"name":     req.Name,
+		"password": req.Password,
+		"language": map[string]string{"key": lang},
+		"is_driver": req.IsDriver,
+	}
+	if req.Email != "" {
+		body["email"] = req.Email
+	}
+	if req.Phone != "" {
+		body["phone"] = req.Phone
+	}
+	if req.Code != "" {
+		body["code"] = req.Code
+	}
+	if req.Details != "" {
+		body["details"] = req.Details
+	}
+
+	jsonBody, _ := json.Marshal(body)
+	req2, err := http.NewRequest("POST", strings.TrimRight(conn.BaseURL, "/")+"/api_v1/users", bytes.NewReader(jsonBody))
+	if err != nil {
+		return "", nil, err
+	}
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("Accept", "application/json")
+	resp, err := client.Do(req2)
+	if err != nil {
+		return "", nil, err
+	}
+	defer resp.Body.Close()
+	rawBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 && resp.StatusCode != 201 {
+		return "", nil, fmt.Errorf("POST /users status=%d body=%s", resp.StatusCode, truncate(string(rawBody), 300))
+	}
+
+	var result map[string]interface{}
+	_ = json.Unmarshal(rawBody, &result)
+
+	skifUserID := ""
+	if v, ok := result["id"].(string); ok {
+		skifUserID = v
+	}
+
+	// Локальный upsert (чтобы юзер сразу появился в /unified/users без полного re-sync)
+	if skifUserID != "" {
+		now := time.Now()
+		row := models.SkifUser{
+			ConnectionID:    conn.ID,
+			SkifUserID:      skifUserID,
+			SkifCompanyID:   skifCompanyID,
+			Name:            req.Name,
+			Email:           req.Email,
+			Phone:           req.Phone,
+			RoleKey:         roleKey,
+			RoleName:        roleValue,
+			IsActive:        true,
+			IsDriver:        req.IsDriver,
+			Code:            req.Code,
+			Language:        lang,
+			Details:         req.Details,
+			CompanyID:       conn.CompanyID,
+			SkifCompany:     skifCompanyName,
+			LastCollectedAt: now,
+			SkifCreatedAt:   &now,
+		}
+		s.db.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "connection_id"}, {Name: "skif_user_id"}, {Name: "skif_company_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"name", "email", "phone", "role_key", "role_name", "is_active", "is_driver",
+				"code", "language", "details", "company_id", "skif_company",
+				"last_collected_at", "skif_deleted_at", "updated_at",
+			}),
+		}).Create(&row)
+	}
+
+	return skifUserID, result, nil
+}
+
+// DeleteUserFromCompany — снять юзера SKIF с конкретной компании.
+// DELETE /api_v1/users/:userId/companies, body {companies: [{id: skifCompanyID}]}.
+//
+// Полное удаление юзера (когда он остаётся без компаний) делается через
+// schedule_delete и здесь не реализовано — пусть админ сделает в SKIF UI.
+func (s *SkifService) DeleteUserFromCompany(conn *models.SkifConnection, skifCompanyID, skifUserID string) error {
+	client, jar := s.httpClient(conn)
+	defer s.saveSessionFromJar(conn, jar)
+
+	if conn.SessionCookie == "" {
+		if err := s.loginWithClient(conn, client); err != nil {
+			return err
+		}
+	}
+
+	if err := s.switchWithRetry(conn, client, skifCompanyID); err != nil {
+		return fmt.Errorf("switch company: %w", err)
+	}
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"companies": []map[string]string{{"id": skifCompanyID}},
+	})
+	req, err := http.NewRequest("DELETE", strings.TrimRight(conn.BaseURL, "/")+"/api_v1/users/"+skifUserID+"/companies", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	rawBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("DELETE /users/%s/companies status=%d body=%s", skifUserID, resp.StatusCode, truncate(string(rawBody), 300))
+	}
+
+	// Mark deleted локально (одна row на (user, company))
+	now := time.Now()
+	s.db.Model(&models.SkifUser{}).
+		Where("connection_id = ? AND skif_user_id = ? AND skif_company_id = ?", conn.ID, skifUserID, skifCompanyID).
+		Updates(map[string]interface{}{"skif_deleted_at": now, "updated_at": now})
+
+	return nil
+}
+
 // updateRow — одна запись из POST /api_v1/company/updates/query.
 type skifUpdateRow struct {
 	Created   string `json:"created"`   // "2020-11-11 15:55:33" (Asia/Moscow по факту, но для агрегации не критично)

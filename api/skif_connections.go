@@ -202,6 +202,153 @@ func SyncSkifConnection(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{"upserted": count}})
 }
 
+// SyncSkifUsers триггерит синхронизацию пользователей SKIF (per-company через /me + switch).
+// POST /api/auth/skif/connections/:id/sync-users
+func SyncSkifUsers(c *gin.Context) {
+	companyID := middleware.GetCompanyID(c)
+	conn, err := loadOwnedSkifConn(c, companyID)
+	if err != nil {
+		return
+	}
+	count, err := skifService().SyncUsers(conn)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{"upserted": count}})
+}
+
+// CreateSkifUser создаёт нового юзера в выбранной company SKIF.
+// POST /api/auth/skif/connections/:id/users?company=:skifCompanyId
+// body: CreateSkifUserRequest (name, password обязательны; email, phone, role_key, etc.)
+func CreateSkifUser(c *gin.Context) {
+	companyID := middleware.GetCompanyID(c)
+	conn, err := loadOwnedSkifConn(c, companyID)
+	if err != nil {
+		return
+	}
+	skifCompanyID := strings.TrimSpace(c.Query("company"))
+	if skifCompanyID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "query param 'company' (skif_company_id) required"})
+		return
+	}
+
+	var req services.CreateSkifUserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Неверный формат: " + err.Error()})
+		return
+	}
+
+	// Подтянем имя company из локального snapshot для skif_users.skif_company
+	var status models.SkifCompanyStatus
+	skifCompanyName := ""
+	if err := database.DB.
+		Where("connection_id = ? AND skif_company_id = ?", conn.ID, skifCompanyID).
+		First(&status).Error; err == nil {
+		skifCompanyName = status.CompanyName
+	}
+
+	userID, result, err := skifService().CreateUserInCompany(conn, skifCompanyID, skifCompanyName, req)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{
+		"status": "success",
+		"data": gin.H{
+			"id":   userID,
+			"user": result,
+		},
+	})
+}
+
+// GetSkifConnectionCompanies — список компаний SKIF для выбора при создании юзера.
+// GET /api/auth/skif/connections/:id/companies
+// Источник: skif_company_statuses (заполняется SkifSyncScheduler через auth_admin_query).
+func GetSkifConnectionCompanies(c *gin.Context) {
+	companyID := middleware.GetCompanyID(c)
+	conn, err := loadOwnedSkifConn(c, companyID)
+	if err != nil {
+		return
+	}
+
+	type companyOpt struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	var rows []models.SkifCompanyStatus
+	if err := database.DB.
+		Where("connection_id = ?", conn.ID).
+		Order("company_name ASC").Find(&rows).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	out := make([]companyOpt, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, companyOpt{ID: r.SkifCompanyID, Name: r.CompanyName})
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": out})
+}
+
+// UpdateSkifUser редактирует юзера SKIF в контексте конкретной company.
+// PUT /api/auth/skif/connections/:id/users/:userId?company=:skifCompanyId
+// body: UpdateSkifUserRequest (минимум одно поле)
+func UpdateSkifUser(c *gin.Context) {
+	companyID := middleware.GetCompanyID(c)
+	conn, err := loadOwnedSkifConn(c, companyID)
+	if err != nil {
+		return
+	}
+	skifUserID := strings.TrimSpace(c.Param("userId"))
+	if skifUserID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "userId required"})
+		return
+	}
+	skifCompanyID := strings.TrimSpace(c.Query("company"))
+	if skifCompanyID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "query param 'company' (skif_company_id) required"})
+		return
+	}
+
+	var req services.UpdateSkifUserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Неверный формат: " + err.Error()})
+		return
+	}
+
+	result, err := skifService().UpdateUser(conn, skifCompanyID, skifUserID, req)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": result})
+}
+
+// DeleteSkifUser снимает юзера с конкретной company SKIF.
+// DELETE /api/auth/skif/connections/:id/users/:userId?company=:skifCompanyId
+func DeleteSkifUser(c *gin.Context) {
+	companyID := middleware.GetCompanyID(c)
+	conn, err := loadOwnedSkifConn(c, companyID)
+	if err != nil {
+		return
+	}
+	skifUserID := strings.TrimSpace(c.Param("userId"))
+	if skifUserID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "userId required"})
+		return
+	}
+	skifCompanyID := strings.TrimSpace(c.Query("company"))
+	if skifCompanyID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "query param 'company' (skif_company_id) required"})
+		return
+	}
+	if err := skifService().DeleteUserFromCompany(conn, skifCompanyID, skifUserID); err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success"})
+}
+
 // BackfillSkifHistory запускает синхронный backfill истории units (POST /company/updates/query).
 // POST /api/auth/skif/connections/:id/history/backfill?from=2025-05-01&to=2026-05-07
 func BackfillSkifHistory(c *gin.Context) {

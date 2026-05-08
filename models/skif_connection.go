@@ -36,6 +36,7 @@ type SkifConnection struct {
 	IsActive   bool       `json:"is_active" gorm:"default:true"`
 	LastSyncAt *time.Time `json:"last_sync_at"`
 	UnitsCount int        `json:"units_count" gorm:"default:0"`
+	UsersCount int        `json:"users_count" gorm:"default:0"`
 
 	// Sync settings
 	SyncInterval    int  `json:"sync_interval" gorm:"default:15"`        // минуты

@@ -147,6 +147,12 @@ func GetAllMigrations() []MigrationInfo {
 			IsGlobal:    true,
 		},
 		{
+			TableName:   "skif_users",
+			Model:       &models.SkifUser{},
+			Description: "Реестр SKIF пользователей (per connection_id+skif_user_id+skif_company_id) — для unified users",
+			IsGlobal:    true,
+		},
+		{
 			TableName:   "skif_daily_snapshots",
 			Model:       &models.SkifDailySnapshot{},
 			Description: "Per-day агрегат created/deleted юнитов SKIF (заполняется backfill через /company/updates/query)",

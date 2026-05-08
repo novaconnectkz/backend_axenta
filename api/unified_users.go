@@ -78,6 +78,16 @@ type UnifiedUser struct {
 
 	LastLogin      string `json:"last_login,omitempty"`
 	LastLoginAlias string `json:"lastLogin,omitempty"`
+
+	// ExternalID — реальный ID в источнике для UUID-систем (SKIF). Для Axenta/Wialon
+	// совпадает с ID, для SKIF — UUID (skif_user_id), пока ID хранит local PK skif_users.id
+	// для уникальности int64 в merged-set.
+	ExternalID      string `json:"external_id,omitempty"`
+	ExternalIDAlias string `json:"externalId,omitempty"`
+
+	// SkifCompanyID — UUID компании в SKIF (нужен FE для PUT/DELETE в правильную company).
+	SkifCompanyID      string `json:"skif_company_id,omitempty"`
+	SkifCompanyIDAlias string `json:"skifCompanyId,omitempty"`
 }
 
 // fillUnifiedUserAliases копирует snake_case поля в camelCase-алиасы.
@@ -95,6 +105,8 @@ func fillUnifiedUserAliases(u *UnifiedUser) {
 	u.ObjectsActiveAlias = u.ObjectsActive
 	u.TelegramIDAlias = u.TelegramID
 	u.LastLoginAlias = u.LastLogin
+	u.ExternalIDAlias = u.ExternalID
+	u.SkifCompanyIDAlias = u.SkifCompanyID
 }
 
 // UnifiedUsersResponse структура ответа для унифицированного API
@@ -117,6 +129,8 @@ type UnifiedUsersStats struct {
 	WialonWHActive int `json:"wialon_wh_active"`
 	WialonWLTotal  int `json:"wialon_wl_total"`
 	WialonWLActive int `json:"wialon_wl_active"`
+	SkifTotal      int `json:"skif_total"`
+	SkifActive     int `json:"skif_active"`
 }
 
 // unifiedUsersSnapshotTTL — окно свежести snapshot Axenta для read-path.
@@ -171,6 +185,7 @@ func GetUnifiedUsers(c *gin.Context) {
 
 	loadAxenta := source == "all" || source == "axenta"
 	loadWialon := source == "all" || source == "wialon" || source == "wh" || source == "wl"
+	loadSkif := source == "all" || source == "skif"
 
 	if loadAxenta {
 		wg.Add(1)
@@ -204,6 +219,23 @@ func GetUnifiedUsers(c *gin.Context) {
 				stats.WialonWHActive = whActive
 				stats.WialonWLTotal = wlTotal
 				stats.WialonWLActive = wlActive
+				mu.Unlock()
+			}
+		}()
+	}
+
+	if loadSkif {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if companyID != nil {
+				t0 := time.Now()
+				skifUsers, sTotal, sActive := fetchSkifUsersFast(companyID.(uint), search, activeStr, role)
+				log.Printf("🔍 unified/users skif: %d users за %s", len(skifUsers), time.Since(t0).Round(time.Millisecond))
+				mu.Lock()
+				allUsers = append(allUsers, skifUsers...)
+				stats.SkifTotal = sTotal
+				stats.SkifActive = sActive
 				mu.Unlock()
 			}
 		}()
@@ -917,6 +949,141 @@ func fetchWialonUsersFiltered(companyID uint, search, activeStr, sourceFilter st
 
 	log.Printf("✅ fetchWialonUsersFiltered live (filter=%s): %d users (active=%d)", sourceFilter, len(users), activeUsers)
 	return users, totalUsers, activeUsers
+}
+
+// fetchSkifUsersFast — read-path SKIF users из БД (skif_users — сама snapshot-таблица).
+// SKIF не имеет отдельного snapshot уровня: сама БД заполняется SkifSyncScheduler.
+// Возвращает (users, total, active).
+//
+// Фильтры применяются на стороне БД: search по name/email/phone, active по is_active,
+// role mapping: "Партнёр"/"partner" → SUPERVISOR, "Клиент"/"client" → остальные роли.
+func fetchSkifUsersFast(companyID uint, search, activeStr, roleFilter string) ([]UnifiedUser, int, int) {
+	var connections []models.SkifConnection
+	if err := database.DB.Where("company_id = ? AND is_active = ?", companyID, true).
+		Find(&connections).Error; err != nil {
+		log.Printf("⚠️ fetchSkifUsersFast: загрузка connections: %v", err)
+		return nil, 0, 0
+	}
+	if len(connections) == 0 {
+		return nil, 0, 0
+	}
+
+	connByID := make(map[uint]string, len(connections))
+	connIDs := make([]uint, 0, len(connections))
+	for _, c := range connections {
+		connByID[c.ID] = c.Name
+		connIDs = append(connIDs, c.ID)
+	}
+
+	q := database.DB.Model(&models.SkifUser{}).
+		Where("connection_id IN ? AND skif_deleted_at IS NULL", connIDs)
+
+	if search != "" {
+		terms := splitSearchTerms(search)
+		if len(terms) > 1 {
+			placeholders := make([]string, 0, len(terms)*4)
+			args := make([]any, 0, len(terms)*4)
+			for _, t := range terms {
+				p := "%" + strings.ToLower(t) + "%"
+				placeholders = append(placeholders,
+					"LOWER(name) LIKE ?", "LOWER(email) LIKE ?", "LOWER(phone) LIKE ?", "LOWER(skif_company) LIKE ?")
+				args = append(args, p, p, p, p)
+			}
+			q = q.Where(strings.Join(placeholders, " OR "), args...)
+		} else {
+			pattern := "%" + strings.ToLower(search) + "%"
+			q = q.Where("LOWER(name) LIKE ? OR LOWER(email) LIKE ? OR LOWER(phone) LIKE ? OR LOWER(skif_company) LIKE ?",
+				pattern, pattern, pattern, pattern)
+		}
+	}
+
+	if activeStr != "" {
+		switch activeStr {
+		case "true", "1":
+			q = q.Where("is_active = ?", true)
+		case "false", "0":
+			q = q.Where("is_active = ?", false)
+		}
+	}
+
+	// Role mapping: SUPERVISOR = partner-уровень (интегратор), остальные = client.
+	if roleFilter != "" {
+		switch roleFilter {
+		case "Партнёр", "Партнер", "partner":
+			q = q.Where("role_key = ?", "SUPERVISOR")
+		case "Клиент", "client":
+			q = q.Where("role_key != ? AND role_key != ?", "SUPERVISOR", "")
+		}
+	}
+
+	var totalCount int64
+	if err := q.Count(&totalCount).Error; err != nil {
+		log.Printf("⚠️ fetchSkifUsersFast count: %v", err)
+		return nil, 0, 0
+	}
+
+	var activeCount int64
+	q.Session(&gorm.Session{}).Where("is_active = ?", true).Count(&activeCount)
+
+	var rows []models.SkifUser
+	if err := q.Order("name ASC").Limit(5000).Find(&rows).Error; err != nil {
+		log.Printf("⚠️ fetchSkifUsersFast find: %v", err)
+		return nil, 0, 0
+	}
+
+	users := make([]UnifiedUser, 0, len(rows))
+	for _, r := range rows {
+		role := mapSkifRoleToRole(r.RoleKey)
+		sourceLabel := "SKIF"
+		if r.SkifCompany != "" {
+			sourceLabel = "SKIF(" + r.SkifCompany + ")"
+		}
+		creationDT := ""
+		if r.SkifCreatedAt != nil {
+			creationDT = r.SkifCreatedAt.Format(time.RFC3339)
+		}
+		lastLogin := ""
+		if r.LastLoginAt != nil {
+			lastLogin = r.LastLoginAt.Format(time.RFC3339)
+		}
+		connID := r.ConnectionID
+		users = append(users, UnifiedUser{
+			ID:               int64(r.ID),
+			Username:         r.Email,
+			Name:             r.Name,
+			Email:            r.Email,
+			Role:             role,
+			IsActive:         r.IsActive,
+			CreationDatetime: creationDT,
+			CreatorName:      r.SkifCompany,
+			Source:           "skif",
+			SourceLabel:      sourceLabel,
+			Hierarchy:        sourceLabel,
+			ConnectionID:     &connID,
+			AccountType:      role,
+			DealerRights:     r.RoleKey == "SUPERVISOR",
+			Phone:            r.Phone,
+			TelegramID:       r.TelegramChatID,
+			LastLogin:        lastLogin,
+			ExternalID:       r.SkifUserID,
+			SkifCompanyID:    r.SkifCompanyID,
+		})
+	}
+
+	return users, int(totalCount), int(activeCount)
+}
+
+// mapSkifRoleToRole — роль SKIF (EDITOR/ADMIN/READER/SUPERVISOR/NoAccess) → внутренняя роль.
+// Семантика: SUPERVISOR = интегратор-уровень (partner); ADMIN/EDITOR/READER внутри company → client.
+func mapSkifRoleToRole(roleKey string) string {
+	switch roleKey {
+	case "SUPERVISOR":
+		return "partner"
+	case "ADMIN", "EDITOR", "READER", "NoAccess":
+		return "client"
+	default:
+		return "client"
+	}
 }
 
 // mapAxentaTypeToRole преобразует тип аккаунта Axenta в роль (для отображения)
