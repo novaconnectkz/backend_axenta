@@ -361,10 +361,12 @@ func (s *SkifService) fetchMe(conn *models.SkifConnection, client *http.Client) 
 	return &me, resp.StatusCode, nil
 }
 
-// switchWithRetry — switchCompany с экспоненциальным retry на 429 rate limit.
-// 3 попытки: первая сразу, при 429 sleep 6s → 12s → 24s.
+// switchWithRetry — switchCompany с retry на 429 (rate limit) и 401 (session expired).
+// 429: 3 попытки экспоненциально 6s → 12s → 24s.
+// 401: один re-login + повтор switch.
 func (s *SkifService) switchWithRetry(conn *models.SkifConnection, client *http.Client, companyID string) error {
 	backoffs := []time.Duration{6 * time.Second, 12 * time.Second, 24 * time.Second}
+	reloggedIn := false
 	var lastErr error
 	for i := 0; i <= len(backoffs); i++ {
 		err := s.switchCompany(conn, client, companyID)
@@ -372,6 +374,13 @@ func (s *SkifService) switchWithRetry(conn *models.SkifConnection, client *http.
 			return nil
 		}
 		lastErr = err
+		if strings.Contains(err.Error(), "status=401") && !reloggedIn {
+			if relErr := s.loginWithClient(conn, client); relErr != nil {
+				return fmt.Errorf("re-login on 401: %w", relErr)
+			}
+			reloggedIn = true
+			continue
+		}
 		if !strings.Contains(err.Error(), "status=429") {
 			return err
 		}
@@ -585,6 +594,7 @@ func (s *SkifService) BackfillHistory(conn *models.SkifConnection, from, to time
 		}
 		for _, w := range windows {
 			firstRow := 0
+			reloggedIn := false
 			for {
 				body, _ := json.Marshal(map[string]interface{}{
 					"objects":   "units",
@@ -602,6 +612,19 @@ func (s *SkifService) BackfillHistory(conn *models.SkifConnection, from, to time
 				}
 				if code == 429 {
 					time.Sleep(6 * time.Second)
+					continue
+				}
+				if code == 401 && !reloggedIn {
+					log.Printf("🔑 SKIF backfill 401 на /updates/query company=%s, re-login", comp.Name)
+					if relErr := s.loginWithClient(conn, client); relErr != nil {
+						log.Printf("⚠️ SKIF backfill re-login fail: %v", relErr)
+						return false
+					}
+					if swErr := s.switchCompany(conn, client, comp.ID); swErr != nil {
+						log.Printf("⚠️ SKIF backfill re-switch %s: %v", comp.Name, swErr)
+						return false
+					}
+					reloggedIn = true
 					continue
 				}
 				if code != 200 {
