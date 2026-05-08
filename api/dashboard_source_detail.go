@@ -93,23 +93,29 @@ func GetDashboardSourceDetail(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": resp})
 }
 
-// buildWialonDetails — per-connection из wialon_connections + wialon_daily_snapshots.
-// Total на бакет = SUM(total_units) на дату snapshot_date = bucket eom (или последний снимок ≤ eom).
-// Created/Deleted на бакет = SUM(units_created/deleted) WHERE snapshot_date IN [start, end).
+// buildWialonDetails — per-connection из wialon_connections.
+// Total = live из wialon_connection_summary.objects_total (то же число что показывает
+// карточка дашборда и Wialon CMS Manager — top-level user.bact).
+// Created/Deleted за period = SUM из wialon_daily_snapshots в окне.
+// History.Total per bucket = SUM(total_units) WHERE snapshot_date = bucket_eom_date —
+// это число get_statistics(recursive=1), оно может отличаться от live total.
 func buildWialonDetails(publicDB *gorm.DB, companyID uint, connType string, buckets []chartBucket) []ConnectionDetail {
 	if companyID == 0 {
 		return []ConnectionDetail{}
 	}
 
 	type connRow struct {
-		ID   uint
-		Name string
+		ID         uint
+		Name       string
+		LiveTotal  int64
 	}
 	var conns []connRow
 	publicDB.Raw(`
-		SELECT id, name FROM `+publicTable(publicDB, "wialon_connections")+`
-		WHERE company_id = ? AND connection_type = ?
-		ORDER BY name
+		SELECT wc.id, wc.name, COALESCE(wcs.objects_total, 0) AS live_total
+		FROM `+publicTable(publicDB, "wialon_connections")+` wc
+		LEFT JOIN `+publicTable(publicDB, "wialon_connection_summary")+` wcs ON wcs.connection_id = wc.id
+		WHERE wc.company_id = ? AND wc.connection_type = ? AND wc.is_active = true
+		ORDER BY wc.name
 	`, companyID, connType).Scan(&conns)
 
 	out := make([]ConnectionDetail, 0, len(conns))
@@ -118,6 +124,7 @@ func buildWialonDetails(publicDB *gorm.DB, companyID uint, connType string, buck
 			ID:      c.ID,
 			Name:    c.Name,
 			Type:    connType,
+			Total:   c.LiveTotal,
 			History: make([]ConnectionHistoryPoint, 0, len(buckets)),
 		}
 
@@ -126,16 +133,11 @@ func buildWialonDetails(publicDB *gorm.DB, companyID uint, connType string, buck
 			endStr := b.end.Format("2006-01-02")
 			eomDate := b.end.AddDate(0, 0, -1).Format("2006-01-02")
 
-			// total = SUM(total_units) по аккаунтам этой connection на eom-дату
-			// (если за eom нет снимка — берём последний доступный ≤ eom)
 			var total struct{ Cnt int64 }
 			publicDB.Raw(`
-				SELECT COALESCE(SUM(latest.total_units), 0) AS cnt FROM (
-					SELECT DISTINCT ON (account_wialon_id) total_units
-					FROM `+publicTable(publicDB, "wialon_daily_snapshots")+`
-					WHERE connection_id = ? AND snapshot_date <= ?
-					ORDER BY account_wialon_id, snapshot_date DESC
-				) latest
+				SELECT COALESCE(SUM(total_units), 0) AS cnt
+				FROM `+publicTable(publicDB, "wialon_daily_snapshots")+`
+				WHERE connection_id = ? AND snapshot_date = ?
 			`, c.ID, eomDate).Scan(&total)
 
 			var ev struct {
@@ -158,11 +160,6 @@ func buildWialonDetails(publicDB *gorm.DB, companyID uint, connType string, buck
 			})
 			detail.Created += ev.Created
 			detail.Deleted += ev.Deleted
-		}
-
-		// Total = последняя точка истории
-		if n := len(detail.History); n > 0 {
-			detail.Total = detail.History[n-1].Total
 		}
 
 		out = append(out, detail)
