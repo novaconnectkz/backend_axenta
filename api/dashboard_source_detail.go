@@ -240,14 +240,20 @@ func buildSkifDetails(publicDB *gorm.DB, companyID uint, buckets []chartBucket) 
 	}
 
 	type connRow struct {
-		ID   uint
-		Name string
+		ID        uint
+		Name      string
+		LiveTotal int64
 	}
 	var conns []connRow
+	// Live total per connection — то же число что sources-stats (COUNT skif_units
+	// без time-filters), чтобы breakdown sum совпадал с card "ТЕКУЩЕЕ".
 	publicDB.Raw(`
-		SELECT id, name FROM `+publicTable(publicDB, "skif_connections")+`
-		WHERE company_id = ?
-		ORDER BY name
+		SELECT sc.id, sc.name, COALESCE(COUNT(su.id), 0) AS live_total
+		FROM `+publicTable(publicDB, "skif_connections")+` sc
+		LEFT JOIN `+publicTable(publicDB, "skif_units")+` su ON su.connection_id = sc.id
+		WHERE sc.company_id = ?
+		GROUP BY sc.id, sc.name
+		ORDER BY sc.name
 	`, companyID).Scan(&conns)
 
 	out := make([]ConnectionDetail, 0, len(conns))
@@ -256,6 +262,7 @@ func buildSkifDetails(publicDB *gorm.DB, companyID uint, buckets []chartBucket) 
 			ID:      c.ID,
 			Name:    c.Name,
 			Type:    "skif",
+			Total:   c.LiveTotal,
 			History: make([]ConnectionHistoryPoint, 0, len(buckets)),
 		}
 
@@ -294,10 +301,8 @@ func buildSkifDetails(publicDB *gorm.DB, companyID uint, buckets []chartBucket) 
 			detail.Deleted += ev.Deleted
 		}
 
-		if n := len(detail.History); n > 0 {
-			detail.Total = detail.History[n-1].Total
-		}
-
+		reconstructCreatedDeleted(&detail)
+		alignHistoryWithLive(&detail)
 		out = append(out, detail)
 	}
 	return out
