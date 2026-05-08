@@ -61,6 +61,37 @@ func reconstructCreatedDeleted(d *ConnectionDetail) {
 	}
 }
 
+// alignHistoryWithLive — пересчитывает history[].Total backward из live d.Total
+// через события created/deleted. Гарантирует что последняя точка совпадает с live,
+// и весь график согласован с current. Решает проблему когда snapshot
+// (core/get_statistics recursive=1) даёт другие абсолютные числа чем live
+// (wialon_connection_summary, top-level user.bact non-recursive).
+func alignHistoryWithLive(d *ConnectionDetail) {
+	if len(d.History) == 0 {
+		return
+	}
+	// Если последняя точка истории уже совпадает с live (в пределах 5%) —
+	// snapshot data trustworthy, ничего не делаем.
+	last := d.History[len(d.History)-1].Total
+	if last > 0 && d.Total > 0 {
+		diff := last - d.Total
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff*20 < d.Total {
+			return
+		}
+	}
+	// Backward walk: total[i] = total[i+1] - (created[i+1] - deleted[i+1])
+	running := d.Total
+	for i := len(d.History) - 1; i >= 0; i-- {
+		d.History[i].Total = running
+		net := d.History[i].Created - d.History[i].Deleted
+		running = running - net
+	}
+	d.Estimated = true
+}
+
 // SourceDetailResponse — ответ /dashboard/source-detail.
 type SourceDetailResponse struct {
 	Key         string             `json:"key"`
@@ -194,6 +225,7 @@ func buildWialonDetails(publicDB *gorm.DB, companyID uint, connType string, buck
 		}
 
 		reconstructCreatedDeleted(&detail)
+		alignHistoryWithLive(&detail)
 		out = append(out, detail)
 	}
 	return out
