@@ -561,7 +561,11 @@ func fetchSkifAccountsForUnified(companyID uint, search, accountType, activeStr,
 	items := make([]UnifiedAccount, 0, len(rows))
 	total, active := 0, 0
 	for _, r := range rows {
-		isActive := r.ObjectsActive > 0
+		// Активность SkifCompany определяется фактом её существования в snapshot,
+		// а НЕ количеством is_active юнитов. SKIF.skif_units.is_active означает
+		// "юнит сейчас онлайн" (получает данные), а не "не заблокирован".
+		// Удалённые/заблокированные компании выпадают из sync и здесь не появляются.
+		isActive := true
 		// SKIF не делит на client/partner — все дилерские компании = client.
 		if accountType != "" && accountType != "client" {
 			continue
