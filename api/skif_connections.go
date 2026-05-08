@@ -340,6 +340,44 @@ func CancelDeleteSkifCompany(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "success"})
 }
 
+// CreateSkifSubdealer регистрирует нового субинтегратора через app/api_v1/registrate_dealer.
+// POST /api/auth/skif/connections/:id/subdealers
+// body: { type_key, name, email, inn, phone, contact_person, password, address }
+func CreateSkifSubdealer(c *gin.Context) {
+	companyID := middleware.GetCompanyID(c)
+	conn, err := loadOwnedSkifConn(c, companyID)
+	if err != nil {
+		return
+	}
+	var body services.SkifRegisterSubdealerParams
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	resp, err := skifService().RegisterSubdealer(conn, body)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": resp})
+}
+
+// SyncSkifSubdealers триггерит ручной sync субинтеграторов.
+// POST /api/auth/skif/connections/:id/sync-subdealers
+func SyncSkifSubdealers(c *gin.Context) {
+	companyID := middleware.GetCompanyID(c)
+	conn, err := loadOwnedSkifConn(c, companyID)
+	if err != nil {
+		return
+	}
+	count, err := skifService().SyncSubdealers(conn)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{"upserted": count}})
+}
+
 // SyncSkifStatuses триггерит ручной sync billing.company_status для всех компаний.
 // POST /api/auth/skif/connections/:id/sync-statuses
 func SyncSkifStatuses(c *gin.Context) {

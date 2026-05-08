@@ -638,6 +638,61 @@ func fetchSkifAccountsForUnified(companyID uint, search, accountType, activeStr,
 		}
 		items = append(items, ua)
 	}
+
+	// Subdealers (type=partner) — добавляем отдельными строками если accountType
+	// не равен "client" (для type=client фильтра показываем только компании).
+	if accountType != "partner" && accountType != "client" || accountType == "partner" {
+		var dealers []models.SkifDealer
+		if err := database.DB.
+			Joins("JOIN skif_connections sc ON sc.id = skif_dealers.connection_id").
+			Where("sc.company_id = ?", companyID).
+			Find(&dealers).Error; err == nil {
+			for _, d := range dealers {
+				dealerActive := !d.Blocked
+				if accountType == "client" {
+					continue
+				}
+				switch activeStr {
+				case "true", "1":
+					if !dealerActive {
+						continue
+					}
+				case "false", "0":
+					if dealerActive {
+						continue
+					}
+				}
+				if pattern != "" && !strings.Contains(strings.ToLower(d.Name), pattern) {
+					continue
+				}
+				if parent != "" && d.ParentName != parent {
+					continue
+				}
+				total++
+				if dealerActive {
+					active++
+				}
+				connID := d.ConnectionID
+				ua := UnifiedAccount{
+					ID:                int(connID)*1000000 + hashSkifID(d.SkifDealerID),
+					Name:              d.Name,
+					Type:              "partner",
+					ParentAccountName: d.ParentName,
+					ObjectsTotal:      d.UnitsCount,
+					ObjectsActive:     d.UnitsCount, // SKIF subdealer не имеет breakdown по активным юнитам
+					IsActive:          dealerActive,
+					Source:            "skif",
+					SourceLabel:       "SKIF",
+					ConnectionID:      &connID,
+					SkifCompanyID:     d.SkifDealerID, // synthetic — для UI идентификации
+					DealerRights:      true,
+					CreationDatetime:  d.CreatedAt.Format(time.RFC3339),
+				}
+				items = append(items, ua)
+			}
+		}
+	}
+
 	return items, total, active
 }
 

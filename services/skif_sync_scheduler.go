@@ -131,6 +131,10 @@ func (s *SkifSyncScheduler) tick() {
 		if _, err := svc.SyncCompanyStatuses(conn); err != nil {
 			log.Printf("⚠️ SkifSyncScheduler: conn=%d statuses sync error: %v", conn.ID, err)
 		}
+		// Sync субинтеграторов для отображения как partner-account на /accounts.
+		if _, err := svc.SyncSubdealers(conn); err != nil {
+			log.Printf("⚠️ SkifSyncScheduler: conn=%d subdealers sync error: %v", conn.ID, err)
+		}
 		synced++
 	}
 

@@ -1128,6 +1128,175 @@ func (s *SkifService) adminDELETE(conn *models.SkifConnection, cookieStr, path s
 	return rawBody, resp.StatusCode, nil
 }
 
+// SkifRegisterSubdealerParams — параметры регистрации субинтегратора через
+// POST app/api_v1/registrate_dealer.
+type SkifRegisterSubdealerParams struct {
+	TypeKey       string `json:"type_key"`       // legal_entity | individual_entrepreneur
+	Name          string `json:"name"`
+	Email         string `json:"email"`
+	INN           string `json:"inn"`
+	Phone         string `json:"phone"`
+	ContactPerson string `json:"contact_person"`
+	Password      string `json:"password"`
+	Address       string `json:"address"`
+}
+
+// RegisterSubdealer регистрирует нового субинтегратора через app-API.
+//
+// Использует app-host session (s.Login обычный, не admin). Создаёт сразу
+// и dealer entity, и auto-company с тем же именем (см. wiki/sources/skif-api/integratory.md).
+//
+// Возвращает {id, name, link} response от SKIF + ошибку.
+func (s *SkifService) RegisterSubdealer(conn *models.SkifConnection, params SkifRegisterSubdealerParams) (map[string]interface{}, error) {
+	if params.Name == "" || params.Email == "" || params.INN == "" || params.Phone == "" || params.ContactPerson == "" || params.Password == "" || params.Address == "" {
+		return nil, fmt.Errorf("name/email/inn/phone/contact_person/password/address обязательны")
+	}
+	if params.TypeKey == "" {
+		params.TypeKey = "legal_entity"
+	}
+	if params.TypeKey != "legal_entity" && params.TypeKey != "individual_entrepreneur" {
+		return nil, fmt.Errorf("type_key должен быть legal_entity или individual_entrepreneur")
+	}
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"type":           map[string]string{"key": params.TypeKey},
+		"name":           params.Name,
+		"email":          params.Email,
+		"inn":            params.INN,
+		"phone":          params.Phone,
+		"contact_person": params.ContactPerson,
+		"password":       params.Password,
+		"address":        params.Address,
+	})
+
+	rawBody, status, err := s.authedRequest(conn, "POST", "/api_v1/registrate_dealer", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("/registrate_dealer http: %w", err)
+	}
+	if status != 200 && status != 201 {
+		return nil, fmt.Errorf("/registrate_dealer status=%d body=%s", status, truncate(string(rawBody), 300))
+	}
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(rawBody, &resp); err != nil {
+		log.Printf("⚠️ SKIF RegisterSubdealer: parse response: %v body=%s", err, truncate(string(rawBody), 200))
+		return map[string]interface{}{"raw": string(rawBody)}, nil
+	}
+	log.Printf("✅ SKIF subdealer создан: conn=%d name=%q id=%v", conn.ID, params.Name, resp["id"])
+
+	// Async sync чтобы новый dealer попал в локальный реестр.
+	go func() {
+		if _, err := s.SyncSubdealers(conn); err != nil {
+			log.Printf("⚠️ SKIF post-register subdealers sync: %v", err)
+		}
+	}()
+	return resp, nil
+}
+
+// SyncSubdealers тянет список dealers через admin dealers_admin_query
+// и upsert'ит subdealers (только тех у кого parent_id != "") в локальную таблицу.
+//
+// Root-dealer (текущий интегратор без parent_id) — игнорируется.
+func (s *SkifService) SyncSubdealers(conn *models.SkifConnection) (int, error) {
+	cookieStr, err := s.adminLogin(conn)
+	if err != nil {
+		return 0, fmt.Errorf("admin login: %w", err)
+	}
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"from":         0,
+		"count":        500,
+		"value":        "",
+		"timezone_key": "UTC+3",
+	})
+
+	rawBody, status, err := s.adminPOST(conn, cookieStr, "/api_v1/dealers_admin_query", body)
+	if err != nil {
+		return 0, fmt.Errorf("dealers_admin_query http: %w", err)
+	}
+	if status != 200 {
+		return 0, fmt.Errorf("dealers_admin_query status=%d body=%s", status, truncate(string(rawBody), 300))
+	}
+
+	var resp struct {
+		List []struct {
+			ID            string `json:"id"`
+			Name          string `json:"name"`
+			INN           string `json:"inn"`
+			Phone         string `json:"phone"`
+			Email         string `json:"email"`
+			ContactPerson string `json:"contact_person"`
+			Address       string `json:"address"`
+			Units         int    `json:"units"`
+			ParentID      string `json:"parent_id"`
+			ParentName    string `json:"parent_name"`
+			Blocked       bool   `json:"blocked"`
+			IsDefault     bool   `json:"is_default"`
+			Type          struct {
+				Key string `json:"key"`
+			} `json:"type"`
+			SkifSupportType struct {
+				Key string `json:"key"`
+			} `json:"skif_support_type"`
+		} `json:"list"`
+	}
+	if err := json.Unmarshal(rawBody, &resp); err != nil {
+		return 0, fmt.Errorf("dealers parse: %w", err)
+	}
+
+	now := time.Now()
+	upserted := 0
+	for _, d := range resp.List {
+		if d.ID == "" || d.ParentID == "" {
+			continue // root-dealer без parent_id — пропускаем
+		}
+		row := models.SkifDealer{
+			ConnectionID:       conn.ID,
+			SkifDealerID:       d.ID,
+			Name:               d.Name,
+			Type:               d.Type.Key,
+			INN:                d.INN,
+			Phone:              d.Phone,
+			Email:              d.Email,
+			ContactPerson:      d.ContactPerson,
+			Address:            d.Address,
+			ParentID:           d.ParentID,
+			ParentName:         d.ParentName,
+			UnitsCount:         d.Units,
+			Blocked:            d.Blocked,
+			IsDefault:          d.IsDefault,
+			SkifSupportTypeKey: d.SkifSupportType.Key,
+			LastSyncedAt:       now,
+		}
+		if err := s.db.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "connection_id"}, {Name: "skif_dealer_id"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"name":                  d.Name,
+				"type":                  d.Type.Key,
+				"inn":                   d.INN,
+				"phone":                 d.Phone,
+				"email":                 d.Email,
+				"contact_person":        d.ContactPerson,
+				"address":               d.Address,
+				"parent_id":             d.ParentID,
+				"parent_name":           d.ParentName,
+				"units_count":           d.Units,
+				"blocked":               d.Blocked,
+				"is_default":            d.IsDefault,
+				"skif_support_type_key": d.SkifSupportType.Key,
+				"last_synced_at":        now,
+				"updated_at":            now,
+			}),
+		}).Create(&row).Error; err != nil {
+			log.Printf("⚠️ SKIF SyncSubdealers upsert %s: %v", d.ID, err)
+			continue
+		}
+		upserted++
+	}
+	log.Printf("🔁 SKIF SyncSubdealers: conn=%d upserted=%d (root и subdealers всего %d)", conn.ID, upserted, len(resp.List))
+	return upserted, nil
+}
+
 // SyncCompanyStatuses тянет список компаний через admin auth_admin_query
 // и обновляет локальную таблицу skif_company_statuses.
 //

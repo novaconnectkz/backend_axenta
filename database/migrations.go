@@ -165,6 +165,12 @@ func GetAllMigrations() []MigrationInfo {
 			IsGlobal:    true,
 		},
 		{
+			TableName:   "skif_dealers",
+			Model:       &models.SkifDealer{},
+			Description: "Локальный кеш дилеров/субинтеграторов SKIF (parent_id != null), для /accounts type=partner",
+			IsGlobal:    true,
+		},
+		{
 			TableName:   "local_users",
 			Model:       &models.LocalUser{},
 			Description: "Локальные пользователи для альтернативной авторизации",
