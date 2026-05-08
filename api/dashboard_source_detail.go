@@ -21,13 +21,44 @@ type ConnectionHistoryPoint struct {
 
 // ConnectionDetail — агрегат по одному подключению за period.
 type ConnectionDetail struct {
-	ID      uint                     `json:"id"`
-	Name    string                   `json:"name"`
-	Type    string                   `json:"type"` // "hosting" | "local" | "skif" | "axenta"
-	Total   int64                    `json:"total"`
-	Created int64                    `json:"created"`
-	Deleted int64                    `json:"deleted"`
-	History []ConnectionHistoryPoint `json:"history"`
+	ID        uint                     `json:"id"`
+	Name      string                   `json:"name"`
+	Type      string                   `json:"type"` // "hosting" | "local" | "skif" | "axenta"
+	Total     int64                    `json:"total"`
+	Created   int64                    `json:"created"`
+	Deleted   int64                    `json:"deleted"`
+	History   []ConnectionHistoryPoint `json:"history"`
+	Estimated bool                     `json:"estimated"` // true если created/deleted восстановлены из diff total
+}
+
+// reconstructCreatedDeleted — для connection без honest events (обычно крупные
+// root-resource'ы Wialon не возвращают avl_unit_created/deleted) воссоздаёт
+// числа из изменения total: net > 0 → created, net < 0 → deleted.
+func reconstructCreatedDeleted(d *ConnectionDetail) {
+	if d.Created > 0 || d.Deleted > 0 || len(d.History) < 2 {
+		return
+	}
+	var prevTotal int64 = -1
+	for i := range d.History {
+		h := &d.History[i]
+		if h.Total <= 0 {
+			continue
+		}
+		if prevTotal >= 0 {
+			diff := h.Total - prevTotal
+			if diff > 0 {
+				h.Created = diff
+				d.Created += diff
+			} else if diff < 0 {
+				h.Deleted = -diff
+				d.Deleted += -diff
+			}
+		}
+		prevTotal = h.Total
+	}
+	if d.Created > 0 || d.Deleted > 0 {
+		d.Estimated = true
+	}
 }
 
 // SourceDetailResponse — ответ /dashboard/source-detail.
@@ -162,6 +193,7 @@ func buildWialonDetails(publicDB *gorm.DB, companyID uint, connType string, buck
 			detail.Deleted += ev.Deleted
 		}
 
+		reconstructCreatedDeleted(&detail)
 		out = append(out, detail)
 	}
 	return out
