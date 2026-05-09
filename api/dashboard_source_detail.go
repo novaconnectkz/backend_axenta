@@ -195,11 +195,17 @@ func buildWialonDetails(publicDB *gorm.DB, companyID uint, connType string, buck
 			endStr := b.end.Format("2006-01-02")
 			eomDate := b.end.AddDate(0, 0, -1).Format("2006-01-02")
 
+			// SUM по latest row per (connection, day) — иначе разные account_wialon_id
+			// одного connection двоят счётчики. См. dashboard_chart.go.
 			var total struct{ Cnt int64 }
 			publicDB.Raw(`
-				SELECT COALESCE(SUM(total_units), 0) AS cnt
-				FROM `+publicTable(publicDB, "wialon_daily_snapshots")+`
-				WHERE connection_id = ? AND snapshot_date = ?
+				WITH latest AS (
+					SELECT DISTINCT ON (connection_id, snapshot_date) total_units
+					FROM `+publicTable(publicDB, "wialon_daily_snapshots")+`
+					WHERE connection_id = ? AND snapshot_date = ?
+					ORDER BY connection_id, snapshot_date, updated_at DESC, id DESC
+				)
+				SELECT COALESCE(SUM(total_units), 0) AS cnt FROM latest
 			`, c.ID, eomDate).Scan(&total)
 
 			var ev struct {
@@ -207,10 +213,15 @@ func buildWialonDetails(publicDB *gorm.DB, companyID uint, connType string, buck
 				Deleted int64
 			}
 			publicDB.Raw(`
+				WITH latest AS (
+					SELECT DISTINCT ON (connection_id, snapshot_date) units_created, units_deleted
+					FROM `+publicTable(publicDB, "wialon_daily_snapshots")+`
+					WHERE connection_id = ? AND snapshot_date >= ? AND snapshot_date < ?
+					ORDER BY connection_id, snapshot_date, updated_at DESC, id DESC
+				)
 				SELECT COALESCE(SUM(units_created), 0) AS created,
 				       COALESCE(SUM(units_deleted), 0) AS deleted
-				FROM `+publicTable(publicDB, "wialon_daily_snapshots")+`
-				WHERE connection_id = ? AND snapshot_date >= ? AND snapshot_date < ?
+				FROM latest
 			`, c.ID, startStr, endStr).Scan(&ev)
 
 			detail.History = append(detail.History, ConnectionHistoryPoint{

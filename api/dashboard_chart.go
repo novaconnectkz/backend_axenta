@@ -270,17 +270,28 @@ func GetDashboardChart(c *gin.Context) {
 			fallbackByType[r.ConnType] = r.Cnt
 		}
 
-		// История из snapshots — per-type
+		// История из snapshots — per-type.
+		// Для каждой пары (connection_id, snapshot_date) берём только ОДНУ row (latest по
+		// updated_at) — иначе SUM суммирует разные account_wialon_id per resource и даёт
+		// двукратный/тройной счёт когда scheduler писал snapshot для нескольких ресурсов.
+		// См. инцидент 2026-05-09 — bad row 33810 на glomoskz из-за разных account_wialon_id.
 		snapshotByType := map[string]int64{}
 		if historyEnabled && companyID > 0 {
 			snapDate := time.Date(eom.Year(), eom.Month(), eom.Day(), 0, 0, 0, 0, time.UTC)
 			publicDB.Raw(`
-				SELECT wc.connection_type AS conn_type, COALESCE(SUM(wds.total_units), 0) AS cnt
-				FROM `+publicTable(publicDB, "wialon_daily_snapshots")+` wds
-				JOIN `+publicTable(publicDB, "wialon_connections")+` wc ON wc.id = wds.connection_id
-				WHERE wc.company_id = ? AND wds.snapshot_date = ?
+				WITH latest AS (
+					SELECT DISTINCT ON (connection_id, snapshot_date)
+					       connection_id, snapshot_date, total_units
+					FROM `+publicTable(publicDB, "wialon_daily_snapshots")+`
+					WHERE snapshot_date = ?
+					ORDER BY connection_id, snapshot_date, updated_at DESC, id DESC
+				)
+				SELECT wc.connection_type AS conn_type, COALESCE(SUM(latest.total_units), 0) AS cnt
+				FROM latest
+				JOIN `+publicTable(publicDB, "wialon_connections")+` wc ON wc.id = latest.connection_id
+				WHERE wc.company_id = ?
 				GROUP BY wc.connection_type
-			`, companyID, snapDate).Scan(&whwlRows)
+			`, snapDate, companyID).Scan(&whwlRows)
 			for _, r := range whwlRows {
 				snapshotByType[r.ConnType] = r.Cnt
 			}
@@ -337,15 +348,24 @@ func GetDashboardChart(c *gin.Context) {
 		var whwlEvRows []whwlEvents
 		var whCreated, whDeleted, wlCreated, wlDeleted int64
 		if companyID > 0 {
+			// Events SUM: тоже берём только одну row per (connection, day) — latest, чтобы
+			// не складывать created/deleted разных account_wialon_id одного connection.
 			publicDB.Raw(`
+				WITH latest AS (
+					SELECT DISTINCT ON (connection_id, snapshot_date)
+					       connection_id, snapshot_date, units_created, units_deleted
+					FROM `+publicTable(publicDB, "wialon_daily_snapshots")+`
+					WHERE snapshot_date >= ? AND snapshot_date < ?
+					ORDER BY connection_id, snapshot_date, updated_at DESC, id DESC
+				)
 				SELECT wc.connection_type AS conn_type,
-				       COALESCE(SUM(wds.units_created), 0) AS created,
-				       COALESCE(SUM(wds.units_deleted), 0) AS deleted
-				FROM `+publicTable(publicDB, "wialon_daily_snapshots")+` wds
-				JOIN `+publicTable(publicDB, "wialon_connections")+` wc ON wc.id = wds.connection_id
-				WHERE wc.company_id = ? AND wds.snapshot_date >= ? AND wds.snapshot_date < ?
+				       COALESCE(SUM(latest.units_created), 0) AS created,
+				       COALESCE(SUM(latest.units_deleted), 0) AS deleted
+				FROM latest
+				JOIN `+publicTable(publicDB, "wialon_connections")+` wc ON wc.id = latest.connection_id
+				WHERE wc.company_id = ?
 				GROUP BY wc.connection_type
-			`, companyID, startStr, endStr).Scan(&whwlEvRows)
+			`, startStr, endStr, companyID).Scan(&whwlEvRows)
 			for _, r := range whwlEvRows {
 				switch r.ConnType {
 				case "hosting":

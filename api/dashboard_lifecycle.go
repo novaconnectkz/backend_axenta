@@ -288,15 +288,23 @@ func buildWialonLifecycleByType(db *gorm.DB, connType, key, label string, from t
 	to := from.AddDate(0, 0, days)
 
 	var rows []dayRow
+	// SUM по latest row per (connection, day): иначе разные account_wialon_id одного
+	// connection двоят total_units и LAG-дельта получается мусором.
 	db.Raw(`
-		WITH daily AS (
-			SELECT snapshot_date::date AS day,
-			       SUM(wds.total_units) AS total
-			FROM `+publicTable(db, "wialon_daily_snapshots")+` wds
-			JOIN `+publicTable(db, "wialon_connections")+` wc ON wc.id = wds.connection_id
+		WITH latest AS (
+			SELECT DISTINCT ON (connection_id, snapshot_date)
+			       connection_id, snapshot_date, total_units
+			FROM `+publicTable(db, "wialon_daily_snapshots")+`
+			WHERE snapshot_date >= ? AND snapshot_date < ?
+			ORDER BY connection_id, snapshot_date, updated_at DESC, id DESC
+		),
+		daily AS (
+			SELECT latest.snapshot_date::date AS day,
+			       SUM(latest.total_units) AS total
+			FROM latest
+			JOIN `+publicTable(db, "wialon_connections")+` wc ON wc.id = latest.connection_id
 			WHERE wc.connection_type = ?
-			  AND wds.snapshot_date >= ? AND wds.snapshot_date < ?
-			GROUP BY snapshot_date
+			GROUP BY latest.snapshot_date
 		),
 		lagged AS (
 			SELECT day, total,
@@ -308,7 +316,7 @@ func buildWialonLifecycleByType(db *gorm.DB, connType, key, label string, from t
 		       GREATEST(-COALESCE(delta, 0), 0)::int AS deleted
 		FROM lagged
 		WHERE day >= ? AND day < ?
-	`, connType, from.AddDate(0, 0, -1), to, from, to).Scan(&rows)
+	`, from.AddDate(0, 0, -1), to, connType, from, to).Scan(&rows)
 
 	hasSnapshotData := false
 	for _, r := range rows {
