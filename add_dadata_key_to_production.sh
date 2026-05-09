@@ -13,7 +13,7 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # Конфигурация (из deploy-production.sh)
-PRODUCTION_SERVER="api.axenta.glonass-saratov.ru"
+PRODUCTION_SERVER="api.acrm.su"
 PRODUCTION_USER="root"
 PRODUCTION_PATH="/opt/axenta-backend"
 

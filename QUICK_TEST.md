@@ -46,8 +46,8 @@
 
 **Продакшен:**
 - SSH: `ssh -i id_rsa.key root@194.87.143.169`
-- API: `https://api.axenta.glonass-saratov.ru`
-- Frontend: `https://axenta.glonass-saratov.ru`
+- API: `https://api.acrm.su`
+- Frontend: `https://acrm.su`
 
 **Локальный:**
 - API: `http://localhost:8080`
@@ -67,14 +67,14 @@ ssh -i id_rsa.key root@194.87.143.169 "cd /var/www/app/backend_axenta && ps aux 
 
 ### 2. Тест авторизации
 ```bash
-curl -X POST https://api.axenta.glonass-saratov.ru/api/auth/login \
+curl -X POST https://api.acrm.su/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"glomos","password":"A51ewweB"}'
 ```
 
 ### 3. Тест создания пользователя
 ```bash
-curl -X POST https://api.axenta.glonass-saratov.ru/api/cms/users/ \
+curl -X POST https://api.acrm.su/api/cms/users/ \
   -H "Content-Type: application/json" \
   -H "Authorization: Token 5e515a8f2874fc78f31c74af45260333f2c84c35" \
   -d '{
@@ -90,19 +90,19 @@ curl -X POST https://api.axenta.glonass-saratov.ru/api/cms/users/ \
 
 ### 4. Тест получения объектов
 ```bash
-curl -X GET https://api.axenta.glonass-saratov.ru/api/auth/objects/ \
+curl -X GET https://api.acrm.su/api/auth/objects/ \
   -H "Authorization: Token 5e515a8f2874fc78f31c74af45260333f2c84c35"
 ```
 
 ### 5. Тест получения устройств
 ```bash
-curl -X GET https://api.axenta.glonass-saratov.ru/api/devices/ \
+curl -X GET https://api.acrm.su/api/devices/ \
   -H "Authorization: Token 5e515a8f2874fc78f31c74af45260333f2c84c35"
 ```
 
 ### 6. Тест получения водителей
 ```bash
-curl -X GET https://api.axenta.glonass-saratov.ru/api/drivers/ \
+curl -X GET https://api.acrm.su/api/drivers/ \
   -H "Authorization: Token 5e515a8f2874fc78f31c74af45260333f2c84c35"
 ```
 

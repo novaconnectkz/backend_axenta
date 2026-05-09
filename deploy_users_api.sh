@@ -39,13 +39,13 @@ print_header() {
 print_header
 
 print_info "Развертывание новых endpoints для загрузки пользователей из Axenta Cloud API"
-print_info "Сервер: api.axenta.glonass-saratov.ru"
+print_info "Сервер: api.acrm.su"
 print_info "Ветка: 2025-10-11-izac-45ad8"
 
 # Проверяем подключение к серверу
 print_info "Проверка подключения к продакшн серверу..."
-if ! ping -c 1 api.axenta.glonass-saratov.ru > /dev/null 2>&1; then
-    print_error "Не удается подключиться к серверу api.axenta.glonass-saratov.ru"
+if ! ping -c 1 api.acrm.su > /dev/null 2>&1; then
+    print_error "Не удается подключиться к серверу api.acrm.su"
     exit 1
 fi
 print_success "Подключение к серверу установлено"
@@ -71,7 +71,7 @@ curl -s http://localhost:8080/ping
 "
 
 # Выполняем команды на сервере
-if ssh root@api.axenta.glonass-saratov.ru "$ssh_commands"; then
+if ssh root@api.acrm.su "$ssh_commands"; then
     print_success "Развертывание завершено успешно!"
     print_info "Новые endpoints доступны:"
     print_info "  • GET /api/auth/users - список пользователей из Axenta Cloud"
@@ -80,7 +80,7 @@ if ssh root@api.axenta.glonass-saratov.ru "$ssh_commands"; then
     
     print_warning "Не забудьте вернуть конфигурацию фронтенда на продакшн URL!"
     print_info "В src/config/env.ts измените:"
-    print_info "  backendUrl: 'http://localhost:8080' → 'https://api.axenta.glonass-saratov.ru'"
+    print_info "  backendUrl: 'http://localhost:8080' → 'https://api.acrm.su'"
 else
     print_error "Ошибка развертывания!"
     exit 1

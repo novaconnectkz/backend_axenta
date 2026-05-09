@@ -29,11 +29,11 @@ if [ $? -eq 0 ]; then
     
     # Тест эндпоинта ролей
     echo "📋 Тест /api/auth/roles:"
-    curl -s -w "HTTP Status: %{http_code}\n" "https://api.axenta.glonass-saratov.ru/api/auth/roles?page=1&limit=100&active_only=true" || echo "Ошибка запроса"
+    curl -s -w "HTTP Status: %{http_code}\n" "https://api.acrm.su/api/auth/roles?page=1&limit=100&active_only=true" || echo "Ошибка запроса"
     
     echo ""
     echo "📋 Тест /api/auth/user-templates:"
-    curl -s -w "HTTP Status: %{http_code}\n" "https://api.axenta.glonass-saratov.ru/api/auth/user-templates?page=1&limit=100&active_only=true" || echo "Ошибка запроса"
+    curl -s -w "HTTP Status: %{http_code}\n" "https://api.acrm.su/api/auth/user-templates?page=1&limit=100&active_only=true" || echo "Ошибка запроса"
     
 else
     echo "❌ Ошибка при создании таблиц"

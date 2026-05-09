@@ -26,11 +26,11 @@ sleep 5
 echo "🧪 Тестируем новые публичные эндпоинты..."
 
 echo "📋 Тест /api/public/roles:"
-curl -s -w "HTTP Status: %{http_code}\n" "https://api.axenta.glonass-saratov.ru/api/public/roles?page=1&limit=100&active_only=true" || echo "Ошибка запроса"
+curl -s -w "HTTP Status: %{http_code}\n" "https://api.acrm.su/api/public/roles?page=1&limit=100&active_only=true" || echo "Ошибка запроса"
 
 echo ""
 echo "📋 Тест /api/public/user-templates:"
-curl -s -w "HTTP Status: %{http_code}\n" "https://api.axenta.glonass-saratov.ru/api/public/user-templates?page=1&limit=100&active_only=true" || echo "Ошибка запроса"
+curl -s -w "HTTP Status: %{http_code}\n" "https://api.acrm.su/api/public/user-templates?page=1&limit=100&active_only=true" || echo "Ошибка запроса"
 
 echo ""
 echo "✅ Тестирование завершено!"

@@ -17,14 +17,14 @@ echo ""
 # psql -h localhost -U axenta_user -d axenta_db
 
 # Пример 2: Если БД находится на удаленном сервере
-# psql -h api.axenta.glonass-saratov.ru -U your_user -d axenta_db
+# psql -h api.acrm.su -U your_user -d axenta_db
 
 # Пример 3: Через SSH тоннель
-# ssh -L 5433:localhost:5432 user@api.axenta.glonass-saratov.ru
+# ssh -L 5433:localhost:5432 user@api.acrm.su
 # psql -h localhost -p 5433 -U axenta_user -d axenta_db
 
 echo "📝 Введите данные подключения к продакшен БД:"
-read -p "Хост (например, localhost или api.axenta.glonass-saratov.ru): " DB_HOST
+read -p "Хост (например, localhost или api.acrm.su): " DB_HOST
 read -p "Порт [5432]: " DB_PORT
 DB_PORT=${DB_PORT:-5432}
 read -p "База данных [axenta_db]: " DB_NAME

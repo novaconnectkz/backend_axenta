@@ -13,7 +13,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Конфигурация
-PRODUCTION_API="https://api.axenta.glonass-saratov.ru"
+PRODUCTION_API="https://api.acrm.su"
 TOKEN=""
 
 echo -e "${BLUE}🔍 Диагностика продакшен API Axenta CRM${NC}"

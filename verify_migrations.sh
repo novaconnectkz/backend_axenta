@@ -14,7 +14,7 @@ PURPLE='\033[0;35m'
 NC='\033[0m' # No Color
 
 # Конфигурация
-PRODUCTION_SERVER="api.axenta.glonass-saratov.ru"
+PRODUCTION_SERVER="api.acrm.su"
 PRODUCTION_USER="root"
 PRODUCTION_PATH="/opt/axenta-backend"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")

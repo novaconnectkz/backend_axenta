@@ -24,7 +24,7 @@ cd /path/to/backend_axenta
 
 1. Подключитесь к продакшен серверу:
 ```bash
-ssh root@api.axenta.glonass-saratov.ru
+ssh root@api.acrm.su
 ```
 
 2. Перейдите в директорию бэкенда:

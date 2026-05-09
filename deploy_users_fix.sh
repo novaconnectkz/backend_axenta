@@ -34,7 +34,7 @@ print_header() {
 print_header
 
 print_info "Развертывание исправлений для endpoints пользователей"
-print_info "Сервер: api.axenta.glonass-saratov.ru"
+print_info "Сервер: api.acrm.su"
 
 # Команды для выполнения на сервере
 ssh_commands="
@@ -58,7 +58,7 @@ curl -s -w 'HTTP Status: %{http_code}\\n' http://localhost:8080/api/auth/roles |
 print_info "Подключение к серверу для развертывания..."
 
 # Выполняем команды на сервере
-if ssh -o StrictHostKeyChecking=no root@api.axenta.glonass-saratov.ru "$ssh_commands"; then
+if ssh -o StrictHostKeyChecking=no root@api.acrm.su "$ssh_commands"; then
     print_success "Развертывание завершено!"
     
     print_info "Проверяем endpoints с внешнего доступа..."
@@ -67,16 +67,16 @@ if ssh -o StrictHostKeyChecking=no root@api.axenta.glonass-saratov.ru "$ssh_comm
     # Проверяем endpoints
     echo ""
     print_info "Проверка /api/auth/roles:"
-    curl -s -w "HTTP Status: %{http_code}\n" https://api.axenta.glonass-saratov.ru/api/auth/roles || echo "Ошибка проверки"
+    curl -s -w "HTTP Status: %{http_code}\n" https://api.acrm.su/api/auth/roles || echo "Ошибка проверки"
     
     print_info "Проверка /api/auth/users:"
-    curl -s -w "HTTP Status: %{http_code}\n" https://api.axenta.glonass-saratov.ru/api/auth/users || echo "Ошибка проверки"
+    curl -s -w "HTTP Status: %{http_code}\n" https://api.acrm.su/api/auth/users || echo "Ошибка проверки"
     
     print_info "Проверка /api/auth/user-templates:"
-    curl -s -w "HTTP Status: %{http_code}\n" https://api.axenta.glonass-saratov.ru/api/auth/user-templates || echo "Ошибка проверки"
+    curl -s -w "HTTP Status: %{http_code}\n" https://api.acrm.su/api/auth/user-templates || echo "Ошибка проверки"
     
     print_info "Проверка /api/auth/users/stats:"
-    curl -s -w "HTTP Status: %{http_code}\n" https://api.axenta.glonass-saratov.ru/api/auth/users/stats || echo "Ошибка проверки"
+    curl -s -w "HTTP Status: %{http_code}\n" https://api.acrm.su/api/auth/users/stats || echo "Ошибка проверки"
     
     echo ""
     print_success "Исправления развернуты! Теперь endpoints должны возвращать 401 (Unauthorized) вместо 404"
