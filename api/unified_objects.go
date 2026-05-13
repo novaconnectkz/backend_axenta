@@ -229,11 +229,12 @@ func fetchAxentaObjectsFast(db *gorm.DB, search, active string) ([]UnifiedObject
 		Where("axenta_deleted_at IS NULL")
 
 	if search != "" {
-		pattern := "%" + strings.ToLower(search) + "%"
-		// phone_numbers — jsonb, для LIKE приводим к ::text
+		// БД создана с lc_collate=C → LOWER() и ILIKE без COLLATE не понимают кириллицу.
+		// Используем ILIKE + COLLATE "und-x-icu" (тот же приём что в /unified/accounts).
+		pattern := "%" + search + "%"
 		q = q.Where(
-			"LOWER(object_name) LIKE ? OR LOWER(unique_id) LIKE ? OR LOWER(account_name) LIKE ? OR LOWER(device_type_name) LIKE ? OR LOWER(creator_name) LIKE ? OR phone_numbers::text ILIKE ? OR CAST(external_object_id AS TEXT) LIKE ?",
-			pattern, pattern, pattern, pattern, pattern, pattern, "%"+search+"%",
+			`object_name ILIKE ? COLLATE "und-x-icu" OR unique_id ILIKE ? COLLATE "und-x-icu" OR account_name ILIKE ? COLLATE "und-x-icu" OR device_type_name ILIKE ? COLLATE "und-x-icu" OR creator_name ILIKE ? COLLATE "und-x-icu" OR phone_numbers::text ILIKE ? OR CAST(external_object_id AS TEXT) LIKE ?`,
+			pattern, pattern, pattern, pattern, pattern, pattern, pattern,
 		)
 	}
 	switch active {

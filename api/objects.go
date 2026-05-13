@@ -631,7 +631,8 @@ func GetDeletedObjects(c *gin.Context) {
 
 	// Фильтр поиска
 	if search != "" {
-		query = query.Where("name ILIKE ? OR imei ILIKE ? OR phone_number ILIKE ?",
+		// БД с lc_collate=C → ILIKE без COLLATE не понимает кириллицу.
+		query = query.Where(`name ILIKE ? COLLATE "und-x-icu" OR imei ILIKE ? OR phone_number ILIKE ?`,
 			"%"+search+"%", "%"+search+"%", "%"+search+"%")
 	}
 
