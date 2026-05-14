@@ -35,15 +35,17 @@ import (
 type WialonHistoryService struct {
 	db            *gorm.DB
 	wialonService *WialonService
+	statsService  *WialonStatsService // для ResolveBactForUser (top-level user.bact resource)
 	mu            sync.Mutex
 	running       map[uint]bool // companyID → backfill в процессе
 }
 
 // NewWialonHistoryService создаёт сервис.
-func NewWialonHistoryService(db *gorm.DB, ws *WialonService) *WialonHistoryService {
+func NewWialonHistoryService(db *gorm.DB, ws *WialonService, ss *WialonStatsService) *WialonHistoryService {
 	return &WialonHistoryService{
 		db:            db,
 		wialonService: ws,
+		statsService:  ss,
 		running:       make(map[uint]bool),
 	}
 }
@@ -227,48 +229,35 @@ func (s *WialonHistoryService) backfillConnection(conn models.WialonConnection, 
 	// conn.Host уже содержит схему (например "https://hst-api.regwialon.com")
 	apiURL := conn.Host + "/wialon/ajax.html"
 
-	// 1. Кандидаты: avl_resource.id по убыванию objects_total.
-	//    Пробуем top-resource — если error 7 (access denied для нашего токена)
-	//    идём к следующему. Так покрываем кейс когда max-resource в иерархии
-	//    принадлежит чужому юзеру и API запрещает get_statistics.
-	type topRow struct {
-		ResourceID   int64
-		ObjectsTotal int64
+	if loginResp.User == nil || loginResp.User.ID == 0 {
+		return 0, fmt.Errorf("login response не содержит user.id для conn=%d", conn.ID)
 	}
-	var candidates []topRow
-	s.db.Table("wialon_object_stats").
-		Select("resource_id, objects_total").
-		Where("connection_id = ? AND objects_total > 0", conn.ID).
-		Order("objects_total DESC").
-		Limit(20).
-		Scan(&candidates)
 
-	if len(candidates) == 0 {
-		return 0, fmt.Errorf("нет resource_id в wialon_object_stats для conn=%d", conn.ID)
+	// Метрика snapshot должна совпадать с wialon_connection_summary.objects_total
+	// (top-level user.bact non-recursive — то же что показывает CMS Manager и
+	// карточка дашборда). Берём bact resource юзера и get_statistics(recursive=0).
+	//
+	// Ранее: перебор top-N candidates по objects_total + recursive=1 → давал sum
+	// по всей иерархии (вкл. sub-dealers), что для shared/dealer-аккаунтов
+	// расходилось с summary в разы (conn 9: snapshot=2209, summary=743).
+	bactResID, err := s.statsService.ResolveBactForUser(conn.Host, loginResp.Eid, loginResp.User.ID)
+	if err != nil {
+		return 0, fmt.Errorf("resolve bact for user=%d: %w", loginResp.User.ID, err)
+	}
+	if bactResID == 0 {
+		return 0, fmt.Errorf("bact=0 для user=%d (conn=%d)", loginResp.User.ID, conn.ID)
 	}
 
 	progress.TotalResources += 1
 	publishProgress(*progress)
 
-	// Пробуем кандидатов по убыванию objects_total. При error 7 (access denied)
-	// идём к следующему, пока не найдём resource с правами на get_statistics.
-	var workingResID int64
-	var workingStats []WialonDailyStat
-	for _, cand := range candidates {
-		got, err := s.GetStatisticsRecursive(apiURL, loginResp.Eid, cand.ResourceID, from, to)
-		if err != nil {
-			log.Printf("WialonHistory: get_statistics для resource=%d: %v (next candidate)", cand.ResourceID, err)
-			continue
-		}
-		workingResID = cand.ResourceID
-		workingStats = got
-		log.Printf("WialonHistory: conn=%d использует resource=%d (objects_total=%d)", conn.ID, cand.ResourceID, cand.ObjectsTotal)
-		break
+	workingResID := bactResID
+	workingStats, err := s.GetStatistics(apiURL, loginResp.Eid, bactResID, from, to)
+	if err != nil {
+		return 0, fmt.Errorf("get_statistics(bact=%d, recursive=0): %w", bactResID, err)
 	}
-
-	if workingResID == 0 {
-		return 0, fmt.Errorf("нет доступного resource для conn=%d (все 20 кандидатов вернули error)", conn.ID)
-	}
+	log.Printf("WialonHistory: conn=%d использует bact=%d (recursive=0, %d daily points)",
+		conn.ID, bactResID, len(workingStats))
 
 	// Идемпотентность: удаляем existing snapshots за период по этому connection
 	// (могут быть от прошлого backfill с другим выбранным resource'ом).

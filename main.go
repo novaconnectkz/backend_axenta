@@ -141,7 +141,7 @@ func main() {
 
 	// On-demand backfill истории Wialon (для точных графиков /dashboard/chart)
 	wialonService := services.NewWialonService()
-	wialonHistoryService := services.NewWialonHistoryService(database.DB, wialonService)
+	wialonHistoryService := services.NewWialonHistoryService(database.DB, wialonService, wialonStatsService)
 	api.SetWialonHistoryService(wialonHistoryService)
 
 	// Ночной cron — backfill вчерашнего дня для всех companies с enabled=true.

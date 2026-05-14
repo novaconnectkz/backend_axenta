@@ -178,7 +178,7 @@ func (s *WialonStatsService) collectForConnection(conn models.WialonConnection) 
 // Это те же числа что показывает Wialon CMS Manager на корневом аккаунте.
 func (s *WialonStatsService) collectSummaryForConnection(conn models.WialonConnection, eid string, ownUserID int64) error {
 	// 1. Resolve user.bact (главный resource)
-	resourceID, err := s.resolveBactForUser(conn.Host, eid, ownUserID)
+	resourceID, err := s.ResolveBactForUser(conn.Host, eid, ownUserID)
 	if err != nil {
 		return fmt.Errorf("resolve bact for user=%d: %w", ownUserID, err)
 	}
@@ -534,9 +534,9 @@ func (s *WialonStatsService) RefreshSingleAccount(connectionID uint, userID int6
 
 	// Wialon связь user → собственный resource хранится в user.bact (billing_account_id) = resource.id.
 	// Резолвим bact через search_items на конкретного user.
-	resourceID, err := s.resolveBactForUser(conn.Host, loginResp.Eid, userID)
+	resourceID, err := s.ResolveBactForUser(conn.Host, loginResp.Eid, userID)
 	if err != nil {
-		log.Printf("⚠️ RefreshSingleAccount: resolveBactForUser(user=%d) не вышел: %v, фолбэк к кандидатам", userID, err)
+		log.Printf("⚠️ RefreshSingleAccount: ResolveBactForUser(user=%d) не вышел: %v, фолбэк к кандидатам", userID, err)
 	}
 
 	candidates := []int64{}
@@ -583,10 +583,10 @@ func (s *WialonStatsService) RefreshSingleAccount(connectionID uint, userID int6
 	return nil, fmt.Errorf("не удалось найти ресурс для user_id=%d (пробовали %v)", userID, candidates)
 }
 
-// resolveBactForUser — найти resourceID (bact) который "принадлежит" пользователю.
+// ResolveBactForUser — найти resourceID (bact) который "принадлежит" пользователю.
 // Wialon: user.bact указывает на user-собственный billing-resource (avl_resource).
 // flags=5 даёт id+nm+bact для user.
-func (s *WialonStatsService) resolveBactForUser(host, eid string, userID int64) (int64, error) {
+func (s *WialonStatsService) ResolveBactForUser(host, eid string, userID int64) (int64, error) {
 	calls := []map[string]interface{}{
 		{
 			"svc": "core/search_item",
