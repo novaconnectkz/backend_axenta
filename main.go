@@ -399,9 +399,8 @@ func main() {
 	r.GET("/api/debug/roles", api.TestRolesCreation)
 	r.GET("/api/debug/user-role", api.TestUserWithRole)
 
-	// Публичные endpoints для ролей и шаблонов пользователей (без аутентификации)
+	// Публичные endpoints для ролей (без аутентификации)
 	r.GET("/api/public/roles", api.GetRolesPublic)
-	r.GET("/api/public/user-templates", api.GetUserTemplatesPublic)
 
 	// Тестовый endpoint для создания пользователя в Axenta Cloud (без проверки токена)
 	r.POST("/api/test/cms/users", api.TestCreateUserInAxenta)
@@ -522,22 +521,6 @@ func main() {
 	// r.GET("/api/cms/objects/stats", getObjectsStatsHandler)
 	// r.GET("/api/cms/objects/stats/", getObjectsStatsHandler)
 
-	getObjectTemplatesHandler := func(c *gin.Context) {
-		// Добавляем заголовки для предотвращения кеширования
-		c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
-		c.Header("Pragma", "no-cache")
-		c.Header("Expires", "0")
-		c.JSON(200, gin.H{
-			"status": "success",
-			"data": gin.H{
-				"items":    []gin.H{},
-				"total":    0,
-				"page":     1,
-				"per_page": 50,
-			},
-		})
-	}
-	r.GET("/api/object-templates", getObjectTemplatesHandler)
 	// Временный публичный маршрут для создания объектов (для тестирования фронтенда)
 	createObjectHandler := func(c *gin.Context) {
 		// Парсим данные из запроса
@@ -568,54 +551,6 @@ func main() {
 	}
 	r.POST("/api/objects", createObjectHandler)
 	// Временный публичный маршрут для создания шаблона из объекта
-	createTemplateHandler := func(c *gin.Context) {
-		// Получаем ID объекта
-		objectID := c.Param("id")
-
-		// Парсим данные для нового шаблона
-		var templateData gin.H
-		if err := c.ShouldBindJSON(&templateData); err != nil {
-			c.JSON(400, gin.H{"status": "error", "error": "Некорректные данные: " + err.Error()})
-			return
-		}
-
-		// Ищем объект в нашем временном хранилище
-		var foundObject gin.H
-		for _, obj := range mockObjects {
-			if objID, ok := obj["id"].(int); ok && objID == parseID(objectID) {
-				foundObject = obj
-				break
-			}
-		}
-
-		if foundObject == nil {
-			c.JSON(404, gin.H{"status": "error", "error": "Объект не найден"})
-			return
-		}
-
-		// Создаем шаблон на основе объекта
-		template := gin.H{
-			"id":          len(mockObjects) + 100, // Уникальный ID для шаблона
-			"name":        templateData["name"],
-			"description": templateData["description"],
-			"category":    templateData["category"],
-			"icon":        templateData["icon"],
-			"color":       templateData["color"],
-			"type":        foundObject["type"],
-			"is_active":   true,
-			"is_system":   false,
-			"usage_count": 0,
-			"created_at":  "2025-09-24T07:40:00Z",
-			"updated_at":  "2025-09-24T07:40:00Z",
-		}
-
-		c.JSON(201, gin.H{
-			"status":  "success",
-			"message": "Шаблон успешно создан на основе объекта (демо режим)",
-			"data":    template,
-		})
-	}
-	r.POST("/api/objects/:id/create-template", createTemplateHandler)
 	// Временный публичный маршрут для обновления объектов (для тестирования фронтенда)
 	updateObjectHandler := func(c *gin.Context) {
 		// Получаем ID объекта
@@ -767,40 +702,6 @@ func main() {
 	apiGroup.DELETE("/objects/:id/permanent", api.PermanentDeleteObject)
 	// CMS эндпоинты для корзины (совместимость с фронтендом) - проксирование к Axenta Cloud
 	apiGroup.GET("/cms/trash", api.GetDeletedObjectsFromAxentaCloud)
-	// Шаблоны объектов - временно отключено
-	// apiGroup.GET("/object-templates", api.GetObjectTemplates)
-	// apiGroup.GET("/object-templates/:id", api.GetObjectTemplate)
-	// apiGroup.POST("/object-templates", api.CreateObjectTemplate)
-	// apiGroup.PUT("/object-templates/:id", api.UpdateObjectTemplate)
-	// apiGroup.DELETE("/object-templates/:id", api.DeleteObjectTemplate)
-	// apiGroup.POST("/objects/:id/create-template", api.CreateTemplateFromObject)
-
-	// Временный эндпоинт для шаблонов объектов (возвращает пустой список)
-	apiGroup.GET("/object-templates", func(c *gin.Context) {
-		c.JSON(200, gin.H{
-			"status": "success",
-			"data": gin.H{
-				"items":       []gin.H{},
-				"total":       0,
-				"page":        1,
-				"per_page":    50,
-				"total_pages": 0,
-			},
-		})
-	})
-	apiGroup.GET("/object-templates/", func(c *gin.Context) {
-		c.JSON(200, gin.H{
-			"status": "success",
-			"data": gin.H{
-				"items":       []gin.H{},
-				"total":       0,
-				"page":        1,
-				"per_page":    50,
-				"total_pages": 0,
-			},
-		})
-	})
-
 	// Пользователи (прокси к Axenta Cloud API)
 	log.Println("🔧 Registering users proxy endpoints...")
 	apiGroup.GET("/users", api.GetUsersFromAxentaCloud)
@@ -872,15 +773,8 @@ func main() {
 	apiGroup.GET("/permissions", api.GetPermissions)
 	apiGroup.POST("/permissions", api.CreatePermission)
 
-	// Шаблоны пользователей
-	apiGroup.GET("/user-templates", api.GetUserTemplates)
-	apiGroup.GET("/user-templates/:id", api.GetUserTemplate)
-	apiGroup.POST("/user-templates", api.CreateUserTemplate)
-	apiGroup.PUT("/user-templates/:id", api.UpdateUserTemplate)
-	apiGroup.DELETE("/user-templates/:id", api.DeleteUserTemplate)
-
 	// === Примечание: эндпоинты уже зарегистрированы выше ===
-	// Удалены дубликаты для /users, /roles, /permissions, /user-templates
+	// Удалены дубликаты для /users, /roles, /permissions
 	// так как apiGroup уже имеет префикс /api/auth и роуты уже зарегистрированы
 
 	// Управление ролями Axenta пользователей
