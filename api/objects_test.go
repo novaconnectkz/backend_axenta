@@ -69,13 +69,6 @@ func setupTestRouter(db *gorm.DB) *gin.Engine {
 		api.GET("/objects-trash", GetDeletedObjects)
 		api.PUT("/objects/:id/restore", RestoreObject)
 		api.DELETE("/objects/:id/permanent", PermanentDeleteObject)
-
-		// Шаблоны объектов
-		api.GET("/object-templates", GetObjectTemplates)
-		api.GET("/object-templates/:id", GetObjectTemplate)
-		api.POST("/object-templates", CreateObjectTemplate)
-		api.PUT("/object-templates/:id", UpdateObjectTemplate)
-		api.DELETE("/object-templates/:id", DeleteObjectTemplate)
 	}
 
 	return router
@@ -309,98 +302,6 @@ func TestScheduleObjectDelete(t *testing.T) {
 	assert.Equal(t, "scheduled_delete", updatedObject.Status)
 	assert.NotNil(t, updatedObject.ScheduledDeleteAt)
 	assert.False(t, updatedObject.IsActive)
-}
-
-func TestObjectTemplatesCRUD(t *testing.T) {
-	db := setupTestDB(t)
-	router := setupTestRouter(db)
-
-	// Тест создания шаблона
-	templateData := map[string]interface{}{
-		"name":        "Шаблон автомобиля",
-		"description": "Шаблон для легковых автомобилей",
-		"category":    "vehicle",
-		"icon":        "car",
-		"color":       "#FF5722",
-	}
-
-	jsonData, _ := json.Marshal(templateData)
-	req, _ := http.NewRequest("POST", "/api/object-templates", bytes.NewBuffer(jsonData))
-	req.Header.Set("Content-Type", "application/json")
-
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, 201, w.Code)
-
-	var response map[string]interface{}
-	err := json.Unmarshal(w.Body.Bytes(), &response)
-	require.NoError(t, err)
-
-	assert.Equal(t, "success", response["status"])
-	data := response["data"].(map[string]interface{})
-	templateID := uint(data["id"].(float64))
-	assert.Equal(t, "Шаблон автомобиля", data["name"])
-	assert.Equal(t, "vehicle", data["category"])
-
-	// Тест получения списка шаблонов
-	req, _ = http.NewRequest("GET", "/api/object-templates", nil)
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, 200, w.Code)
-	err = json.Unmarshal(w.Body.Bytes(), &response)
-	require.NoError(t, err)
-
-	assert.Equal(t, "success", response["status"])
-	listData := response["data"].(map[string]interface{})
-	assert.Equal(t, float64(1), listData["total"])
-
-	// Тест получения конкретного шаблона
-	req, _ = http.NewRequest("GET", fmt.Sprintf("/api/object-templates/%d", templateID), nil)
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, 200, w.Code)
-	err = json.Unmarshal(w.Body.Bytes(), &response)
-	require.NoError(t, err)
-
-	assert.Equal(t, "success", response["status"])
-	data = response["data"].(map[string]interface{})
-	assert.Equal(t, "Шаблон автомобиля", data["name"])
-
-	// Тест обновления шаблона
-	updateData := map[string]interface{}{
-		"name":        "Обновленный шаблон автомобиля",
-		"description": "Обновленное описание",
-	}
-
-	jsonData, _ = json.Marshal(updateData)
-	req, _ = http.NewRequest("PUT", fmt.Sprintf("/api/object-templates/%d", templateID), bytes.NewBuffer(jsonData))
-	req.Header.Set("Content-Type", "application/json")
-
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, 200, w.Code)
-	err = json.Unmarshal(w.Body.Bytes(), &response)
-	require.NoError(t, err)
-
-	assert.Equal(t, "success", response["status"])
-	data = response["data"].(map[string]interface{})
-	assert.Equal(t, "Обновленный шаблон автомобиля", data["name"])
-	assert.Equal(t, "Обновленное описание", data["description"])
-
-	// Тест удаления шаблона
-	req, _ = http.NewRequest("DELETE", fmt.Sprintf("/api/object-templates/%d", templateID), nil)
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, 200, w.Code)
-	err = json.Unmarshal(w.Body.Bytes(), &response)
-	require.NoError(t, err)
-
-	assert.Equal(t, "success", response["status"])
 }
 
 func TestTrashBinOperations(t *testing.T) {

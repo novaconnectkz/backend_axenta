@@ -716,22 +716,6 @@ func restoreSubscription(db *gorm.DB, entityID uint) (bool, error) {
 func restoreTemplate(db *gorm.DB, entityType string, entityID uint) (bool, error) {
 	// Определяем тип шаблона и восстанавливаем
 	switch entityType {
-	case "user_template":
-		var template models.UserTemplate
-		if err := db.Unscoped().First(&template, entityID).Error; err != nil {
-			return false, err
-		}
-		if err := db.Unscoped().Model(&template).Update("deleted_at", nil).Error; err != nil {
-			return false, err
-		}
-	case "object_template":
-		var template models.ObjectTemplate
-		if err := db.Unscoped().First(&template, entityID).Error; err != nil {
-			return false, err
-		}
-		if err := db.Unscoped().Model(&template).Update("deleted_at", nil).Error; err != nil {
-			return false, err
-		}
 	case "report_template":
 		var template models.ReportTemplate
 		if err := db.Unscoped().First(&template, entityID).Error; err != nil {
@@ -770,10 +754,6 @@ func permanentlyDeleteSubscription(db *gorm.DB, entityID uint) error {
 
 func permanentlyDeleteTemplate(db *gorm.DB, entityType string, entityID uint) error {
 	switch entityType {
-	case "user_template":
-		return db.Unscoped().Delete(&models.UserTemplate{}, entityID).Error
-	case "object_template":
-		return db.Unscoped().Delete(&models.ObjectTemplate{}, entityID).Error
 	case "report_template":
 		return db.Unscoped().Delete(&models.ReportTemplate{}, entityID).Error
 	default:
