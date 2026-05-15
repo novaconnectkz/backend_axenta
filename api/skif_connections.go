@@ -13,6 +13,7 @@ import (
 	"backend_axenta/middleware"
 	"backend_axenta/models"
 	"backend_axenta/services"
+	"backend_axenta/utils"
 )
 
 // SKIF Connections API — CRUD + test/sync для multi-account SKIF.PRO интеграции.
@@ -69,12 +70,17 @@ func CreateSkifConnection(c *gin.Context) {
 	if body.SyncInterval <= 0 {
 		body.SyncInterval = 15
 	}
+	encPwd, err := utils.EncryptString(body.Password)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "encrypt password: " + err.Error()})
+		return
+	}
 	conn := models.SkifConnection{
 		CompanyID:       companyID,
 		Name:            body.Name,
 		BaseURL:         body.BaseURL,
 		Login:           body.Login,
-		Password:        body.Password,
+		Password:        encPwd,
 		SyncInterval:    body.SyncInterval,
 		AutoSyncEnabled: body.AutoSyncEnabled,
 		SyncUnits:       body.SyncUnits,
@@ -125,7 +131,12 @@ func UpdateSkifConnection(c *gin.Context) {
 		credsChanged = true
 	}
 	if body.Password != nil && *body.Password != "" {
-		updates["password"] = *body.Password
+		encPwd, err := utils.EncryptString(*body.Password)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "encrypt password: " + err.Error()})
+			return
+		}
+		updates["password"] = encPwd
 		credsChanged = true
 	}
 	if body.SyncInterval != nil {

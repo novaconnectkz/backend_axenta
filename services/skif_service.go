@@ -16,7 +16,14 @@ import (
 	"gorm.io/gorm/clause"
 
 	"backend_axenta/models"
+	"backend_axenta/utils"
 )
+
+// plainPassword — расшифровка SkifConnection.Password (AES-GCM, format "enc:v1:...").
+// Legacy plaintext (без префикса) возвращается as-is — для постепенной миграции.
+func (s *SkifService) plainPassword(conn *models.SkifConnection) (string, error) {
+	return utils.DecryptString(conn.Password)
+}
 
 // SkifService — клиент SKIF.PRO API. Cookie session-based auth.
 //
@@ -49,10 +56,14 @@ func (s *SkifService) httpClient(conn *models.SkifConnection) (*http.Client, *co
 // При повторных вызовах перезаписывает существующую сессию.
 func (s *SkifService) Login(conn *models.SkifConnection) error {
 	client, jar := s.httpClient(conn)
+	plainPwd, err := s.plainPassword(conn)
+	if err != nil {
+		return fmt.Errorf("decrypt password: %w", err)
+	}
 	body, _ := json.Marshal(map[string]string{
 		"userProviderId": conn.Login,
 		"provider_key":   "TEXT",
-		"password":       conn.Password,
+		"password":       plainPwd,
 	})
 	req, err := http.NewRequest("POST", strings.TrimRight(conn.BaseURL, "/")+"/api_v1/login", bytes.NewReader(body))
 	if err != nil {
@@ -312,10 +323,14 @@ func (s *SkifService) SyncUnits(conn *models.SkifConnection) (int, error) {
 // loginWithClient — login через переданный client (общий cookie jar для всего sync run).
 // Дублирует Login(), но без создания нового client'а.
 func (s *SkifService) loginWithClient(conn *models.SkifConnection, client *http.Client) error {
+	plainPwd, err := s.plainPassword(conn)
+	if err != nil {
+		return fmt.Errorf("decrypt password: %w", err)
+	}
 	body, _ := json.Marshal(map[string]string{
 		"userProviderId": conn.Login,
 		"provider_key":   "TEXT",
-		"password":       conn.Password,
+		"password":       plainPwd,
 	})
 	req, err := http.NewRequest("POST", strings.TrimRight(conn.BaseURL, "/")+"/api_v1/login", bytes.NewReader(body))
 	if err != nil {
@@ -1442,10 +1457,14 @@ func resolveSkifTimezone(tz string) (key, value string, ok bool) {
 // adminLogin делает POST admin/api_v1/login и возвращает PLAY_SESSION cookie-string.
 // Отличается от обычного Login: provider_key="EMAIL", is_admin_panel=true, host=admin.skif.pro.
 func (s *SkifService) adminLogin(conn *models.SkifConnection) (string, error) {
+	plainPwd, err := s.plainPassword(conn)
+	if err != nil {
+		return "", fmt.Errorf("decrypt password: %w", err)
+	}
 	body, _ := json.Marshal(map[string]interface{}{
 		"userProviderId":  conn.Login,
 		"provider_key":    "EMAIL",
-		"password":        conn.Password,
+		"password":        plainPwd,
 		"is_admin_panel":  true,
 		"timezone_key":    "UTC+3",
 	})
