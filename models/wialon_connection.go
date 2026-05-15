@@ -4,6 +4,8 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+
+	"backend_axenta/utils"
 )
 
 // WialonConnectionType тип подключения Wialon
@@ -71,6 +73,39 @@ func (w *WialonConnection) BeforeCreate(tx *gorm.DB) error {
 	if w.ConnectionType == WialonConnectionTypeHosting && w.Host == "" {
 		w.Host = GetWialonHostingURL(w.DataCenter)
 	}
+	return w.encryptToken()
+}
+
+// BeforeUpdate хук — encrypt token при сохранении (struct save).
+// На raw map updates через .Updates(map[string]interface{}{...}) не сработает —
+// для таких случаев encrypt вручную через utils.EncryptString.
+func (w *WialonConnection) BeforeUpdate(tx *gorm.DB) error {
+	return w.encryptToken()
+}
+
+// AfterFind хук — decrypt token после загрузки из БД. Идемпотентно через
+// префикс "enc:v1:" — если токен plaintext (legacy до миграции), возвращается as-is.
+func (w *WialonConnection) AfterFind(tx *gorm.DB) error {
+	if w.Token == "" {
+		return nil
+	}
+	plain, err := utils.DecryptString(w.Token)
+	if err != nil {
+		return err
+	}
+	w.Token = plain
+	return nil
+}
+
+func (w *WialonConnection) encryptToken() error {
+	if w.Token == "" {
+		return nil
+	}
+	enc, err := utils.EncryptString(w.Token)
+	if err != nil {
+		return err
+	}
+	w.Token = enc
 	return nil
 }
 
