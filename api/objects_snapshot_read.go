@@ -63,9 +63,12 @@ func tryServeObjectsFromSnapshot(c *gin.Context, page, perPage int) bool {
 	ordering := c.DefaultQuery("ordering", "name")
 
 	if search != "" {
-		pattern := "%" + strings.ToLower(search) + "%"
+		// prod PG имеет lc_ctype=C → LOWER() не опускает кириллицу, а Go strings.ToLower
+		// опускает: LOWER(account_name) LIKE LOWER(go) даёт 0 совпадений на кириллице.
+		// Проектный паттерн — ILIKE ? COLLATE "und-x-icu" без strings.ToLower.
+		pattern := "%" + search + "%"
 		q = q.Where(
-			"LOWER(object_name) LIKE ? OR LOWER(unique_id) LIKE ? OR LOWER(account_name) LIKE ? OR phone_numbers::text ILIKE ?",
+			`object_name ILIKE ? COLLATE "und-x-icu" OR unique_id ILIKE ? COLLATE "und-x-icu" OR account_name ILIKE ? COLLATE "und-x-icu" OR phone_numbers::text ILIKE ?`,
 			pattern, pattern, pattern, pattern,
 		)
 	}
@@ -89,16 +92,16 @@ func tryServeObjectsFromSnapshot(c *gin.Context, page, perPage int) bool {
 		}
 	}
 	if accountName != "" {
-		q = q.Where("LOWER(account_name) LIKE ?", "%"+strings.ToLower(accountName)+"%")
+		q = q.Where(`account_name ILIKE ? COLLATE "und-x-icu"`, "%"+accountName+"%")
 	}
 	if creatorName != "" {
-		q = q.Where("LOWER(creator_name) LIKE ?", "%"+strings.ToLower(creatorName)+"%")
+		q = q.Where(`creator_name ILIKE ? COLLATE "und-x-icu"`, "%"+creatorName+"%")
 	}
 	if deviceTypeName != "" {
-		q = q.Where("LOWER(device_type_name) LIKE ?", "%"+strings.ToLower(deviceTypeName)+"%")
+		q = q.Where(`device_type_name ILIKE ? COLLATE "und-x-icu"`, "%"+deviceTypeName+"%")
 	}
 	if uniqueID != "" {
-		q = q.Where("LOWER(unique_id) LIKE ?", "%"+strings.ToLower(uniqueID)+"%")
+		q = q.Where(`unique_id ILIKE ? COLLATE "und-x-icu"`, "%"+uniqueID+"%")
 	}
 	if contractID != "" {
 		// contract_id в текущей модели не отделен от account_external_id (см. live-маппинг ниже)
