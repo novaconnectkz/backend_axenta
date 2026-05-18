@@ -1039,6 +1039,8 @@ func main() {
 	apiGroup.DELETE("/gelios/connections/:id", api.DeleteGeliosConnection)
 	apiGroup.POST("/gelios/connections/:id/test", api.TestGeliosConnection)
 	apiGroup.POST("/gelios/connections/:id/sync", api.SyncGeliosConnection)
+	apiGroup.GET("/gelios/health", api.GetGeliosHealth)
+	apiGroup.GET("/gelios/health/", api.GetGeliosHealth)
 
 	// Wialon History (on-demand backfill точной истории через core/get_statistics)
 	apiGroup.GET("/wialon-history/settings", api.GetWialonHistorySettings)

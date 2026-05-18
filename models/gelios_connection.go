@@ -47,6 +47,10 @@ type GeliosConnection struct {
 	// флот; легит-пустой аккаунт чистится после подтверждения).
 	EmptySyncStreak int `json:"-" gorm:"default:0"`
 
+	// LoginCount — счётчик full password-login (не refresh). Наблюдаемость
+	// login-rate: высокий рост = refresh ломается (фикс #1 не работает).
+	LoginCount int64 `json:"login_count" gorm:"default:0"`
+
 	// Sync settings
 	SyncInterval    int  `json:"sync_interval" gorm:"default:15"` // минуты
 	AutoSyncEnabled bool `json:"auto_sync_enabled" gorm:"default:false"`

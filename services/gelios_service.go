@@ -118,7 +118,9 @@ func (s *GeliosService) refresh(conn *models.GeliosConnection) (string, error) {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("gelios refresh: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		// auth-endpoint: raw body НЕ включаем (внешне-контролируемый,
+		// попадёт в ErrorMessage→health). Только статус.
+		return "", fmt.Errorf("gelios refresh: HTTP %d", resp.StatusCode)
 	}
 	var tr geliosTokenResp
 	if err := json.Unmarshal(body, &tr); err != nil {
@@ -153,13 +155,21 @@ func (s *GeliosService) login(conn *models.GeliosConnection) (string, error) {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("gelios login: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		// auth-endpoint: raw body НЕ включаем (внешне-контролируемый,
+		// попадёт в ErrorMessage→health). Только статус.
+		return "", fmt.Errorf("gelios login: HTTP %d", resp.StatusCode)
 	}
 	var tr geliosTokenResp
 	if err := json.Unmarshal(body, &tr); err != nil {
 		return "", fmt.Errorf("gelios login: parse token: %w", err)
 	}
-	return s.persistToken(conn, tr)
+	tok, perr := s.persistToken(conn, tr)
+	if perr == nil {
+		// login_count++ ТОЛЬКО на full password-login (не refresh):
+		// высокий счётчик при фикс #1 = refresh не работает (наблюдаемость).
+		s.db.Model(conn).UpdateColumn("login_count", gorm.Expr("login_count + 1"))
+	}
+	return tok, perr
 }
 
 // token возвращает валидный Bearer-токен (кешированный или свежий login).

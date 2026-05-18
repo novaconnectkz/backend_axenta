@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -38,6 +39,88 @@ func GetGeliosConnections(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": conns})
+}
+
+// GetGeliosHealth — операционная наблюдаемость per-connection (Gemini #3):
+// sync-drift (overdue), login-rate, error-state, empty-streak. Read-only,
+// tenant-scoped. Bloat gelios_units = Postgres autovacuum (ops, не код).
+// GET /api/auth/gelios/health
+func GetGeliosHealth(c *gin.Context) {
+	companyID := middleware.GetCompanyID(c)
+	if companyID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no company context"})
+		return
+	}
+	var conns []models.GeliosConnection
+	if err := database.DB.Where("company_id = ?", companyID).
+		Order("id ASC").Find(&conns).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	now := time.Now()
+	ageSec := func(t *time.Time) *int64 {
+		if t == nil {
+			return nil
+		}
+		v := int64(now.Sub(*t).Seconds())
+		return &v
+	}
+	type connHealth struct {
+		ID              uint   `json:"id"`
+		Name            string `json:"name"`
+		IsActive        bool   `json:"is_active"`
+		AutoSyncEnabled bool   `json:"auto_sync_enabled"`
+		SyncIntervalMin int    `json:"sync_interval_min"`
+		UnitsCount      int    `json:"units_count"`
+		LastSyncAgeSec  *int64 `json:"last_sync_age_sec"`
+		Overdue         bool   `json:"overdue"` // нет успешного синка > 2×интервал
+		LastLoginAgeSec *int64 `json:"last_login_age_sec"`
+		LoginCount      int64  `json:"login_count"` // full-login (не refresh) — рост = refresh ломается
+		ErrorCount      int    `json:"error_count"`
+		LastError       string `json:"last_error,omitempty"`
+		LastErrorAgeSec *int64 `json:"last_error_age_sec"`
+		EmptySyncStreak int    `json:"empty_sync_streak"` // >0 = подозрение API-flap
+		Status          string `json:"status"`            // ok | overdue | error | idle
+	}
+	out := make([]connHealth, 0, len(conns))
+	for i := range conns {
+		cn := &conns[i]
+		interval := cn.SyncInterval
+		if interval <= 0 {
+			interval = 15
+		}
+		overdue := false
+		if cn.IsActive && cn.AutoSyncEnabled {
+			if cn.LastSyncAt == nil ||
+				now.Sub(*cn.LastSyncAt) > time.Duration(2*interval)*time.Minute {
+				overdue = true
+			}
+		}
+		status := "ok"
+		switch {
+		case !cn.IsActive || !cn.AutoSyncEnabled:
+			status = "idle"
+		case cn.ErrorMessage != "":
+			status = "error"
+		case overdue:
+			status = "overdue"
+		}
+		out = append(out, connHealth{
+			ID: cn.ID, Name: cn.Name, IsActive: cn.IsActive,
+			AutoSyncEnabled: cn.AutoSyncEnabled, SyncIntervalMin: interval,
+			UnitsCount:      cn.UnitsCount,
+			LastSyncAgeSec:  ageSec(cn.LastSyncAt),
+			Overdue:         overdue,
+			LastLoginAgeSec: ageSec(cn.LastLoginAt),
+			LoginCount:      cn.LoginCount,
+			ErrorCount:      cn.ErrorCount,
+			LastError:       cn.ErrorMessage,
+			LastErrorAgeSec: ageSec(cn.LastErrorAt),
+			EmptySyncStreak: cn.EmptySyncStreak,
+			Status:          status,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": out})
 }
 
 // CreateGeliosConnection создаёт новое подключение.
