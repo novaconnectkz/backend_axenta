@@ -184,6 +184,22 @@ func TestGeliosConnection(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": info})
 }
 
+// SyncGeliosConnection триггерит синхронизацию объектов.
+// POST /api/auth/gelios/connections/:id/sync
+func SyncGeliosConnection(c *gin.Context) {
+	companyID := middleware.GetCompanyID(c)
+	conn, err := loadOwnedGeliosConn(c, companyID)
+	if err != nil {
+		return
+	}
+	count, err := geliosService().SyncUnits(conn)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{"upserted": count}})
+}
+
 func loadOwnedGeliosConn(c *gin.Context, companyID uint) (*models.GeliosConnection, error) {
 	if companyID == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no company context"})

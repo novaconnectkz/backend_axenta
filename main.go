@@ -240,6 +240,22 @@ func main() {
 		log.Println("⚠️ SkifSyncScheduler отключён (DISABLE_SKIF_SYNC_SCHEDULER=true)")
 	}
 
+	// GELIOS sync scheduler — аналогично SKIF, per-connection sync_interval.
+	geliosTickInterval := 5
+	if v := os.Getenv("GELIOS_SYNC_TICK_MIN"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			geliosTickInterval = n
+		}
+	}
+	if os.Getenv("DISABLE_GELIOS_SYNC_SCHEDULER") != "true" {
+		geliosSyncScheduler := services.NewGeliosSyncScheduler(geliosTickInterval)
+		if err := geliosSyncScheduler.Start(); err != nil {
+			log.Printf("⚠️ GeliosSyncScheduler failed to start: %v", err)
+		}
+	} else {
+		log.Println("⚠️ GeliosSyncScheduler отключён (DISABLE_GELIOS_SYNC_SCHEDULER=true)")
+	}
+
 	// Wialon billing plans scheduler — раз в час обходит connections и обновляет тарифы.
 	// Раньше тарифы дёргались с Wialon на каждое открытие формы создания (1-2с overhead),
 	// теперь — мгновенный SELECT из public.wialon_billing_plans.
@@ -1022,6 +1038,7 @@ func main() {
 	apiGroup.PUT("/gelios/connections/:id", api.UpdateGeliosConnection)
 	apiGroup.DELETE("/gelios/connections/:id", api.DeleteGeliosConnection)
 	apiGroup.POST("/gelios/connections/:id/test", api.TestGeliosConnection)
+	apiGroup.POST("/gelios/connections/:id/sync", api.SyncGeliosConnection)
 
 	// Wialon History (on-demand backfill точной истории через core/get_statistics)
 	apiGroup.GET("/wialon-history/settings", api.GetWialonHistorySettings)
