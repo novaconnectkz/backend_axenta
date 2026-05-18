@@ -195,6 +195,12 @@ func GetAllMigrations() []MigrationInfo {
 			IsGlobal:    true,
 		},
 		{
+			TableName:   "gelios_users",
+			Model:       &models.GeliosUser{},
+			Description: "Реестр GELIOS пользователей (per connection_id+gelios_user_id) — дерево users+биллинг, для unified users/accounts",
+			IsGlobal:    true,
+		},
+		{
 			TableName:   "local_users",
 			Model:       &models.LocalUser{},
 			Description: "Локальные пользователи для альтернативной авторизации",

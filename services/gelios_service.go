@@ -497,6 +497,260 @@ func (s *GeliosService) SyncUnits(conn *models.GeliosConnection) (int, error) {
 	return saved, nil
 }
 
+// geliosUserItem — элемент GET /api/v1/users?inclbillinf=true.
+// billingInfo/unitsCount = null без inclbillinf / когда нет юнитов.
+type geliosUserItem struct {
+	ID        int64  `json:"id"`
+	Login     string `json:"login"`
+	Email     string `json:"email"`
+	Phone     string `json:"phone"`
+	LegalName string `json:"legalName"`
+	IsAdmin   bool   `json:"isAdmin"`
+	IsBlock   bool   `json:"isBlock"`
+	Creator   struct {
+		ID    int64  `json:"id"`
+		Login string `json:"login"`
+	} `json:"creator"`
+	BillingInfo *struct {
+		Balance    float64 `json:"balance"`
+		MinBalance float64 `json:"minBalance"`
+		Currency   *struct {
+			AlphabeticCode string `json:"alphabeticCode"`
+			Abbreviation   string `json:"abbreviation"`
+		} `json:"currency"`
+		UnitsLimit     *int `json:"unitsLimit"`
+		FreeUnitsLimit *int `json:"freeUnitsLimit"`
+		PaymentType    *struct {
+			ID   int    `json:"id"`
+			Name string `json:"name"`
+		} `json:"paymentType"`
+		PaymentPeriod *struct {
+			ID   int    `json:"id"`
+			Name string `json:"name"`
+		} `json:"paymentPeriod"`
+		PaymentPeriodLength int `json:"paymentPeriodLength"`
+	} `json:"billingInfo"`
+	UnitsCount *struct {
+		All    int `json:"all"`
+		Active int `json:"active"`
+	} `json:"unitsCount"`
+}
+
+// SyncGeliosUsers — зеркало SyncUnits для дерева пользователей GELIOS.
+// GET /api/v1/users?inclbillinf=true (billing в одном вызове, без N+1).
+// Тот же completeness-gate + API-flap streak-guard (отдельный
+// UsersEmptySyncStreak), soft-delete gelios_deleted_at (GELIOS DELETE = hard,
+// у нас только метка). Общий geliosConnLock с SyncUnits — сериализует
+// users/units одного conn (защита от race token-refresh).
+func (s *GeliosService) SyncGeliosUsers(conn *models.GeliosConnection) (int, error) {
+	mu := geliosConnLock(conn.ID)
+	if !mu.TryLock() {
+		return 0, fmt.Errorf("gelios users sync conn=%d уже выполняется", conn.ID)
+	}
+	defer mu.Unlock()
+
+	now := time.Now()
+	tok, err := s.token(conn)
+	if err != nil {
+		s.recordError(conn, err.Error())
+		return 0, err
+	}
+
+	saved := 0
+	upsertErrs := 0
+	seenSet := make(map[string]struct{}, 256)
+	offset := 0
+	totalCount := 0
+	expectedTotal := -1
+	for {
+		req, e := http.NewRequest(http.MethodGet,
+			fmt.Sprintf("%s/api/v1/users?inclbillinf=true&limit=%d&offset=%d", s.baseURL(conn), geliosPageSize, offset), nil)
+		if e != nil {
+			s.recordError(conn, e.Error())
+			return 0, e
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
+		req.Header.Set("Accept", "application/json")
+		resp, e := s.cli.Do(req)
+		if e != nil {
+			s.recordError(conn, fmt.Sprintf("users: %v", e))
+			return 0, fmt.Errorf("gelios users: %w", e)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			s.recordError(conn, fmt.Sprintf("users HTTP %d", resp.StatusCode))
+			return 0, fmt.Errorf("gelios users: HTTP %d", resp.StatusCode)
+		}
+		var page struct {
+			Items              []geliosUserItem `json:"items"`
+			PaginationMetadata struct {
+				TotalCount int `json:"totalCount"`
+			} `json:"paginationMetadata"`
+		}
+		if e := json.Unmarshal(body, &page); e != nil {
+			s.recordError(conn, "users parse")
+			return 0, fmt.Errorf("gelios users: parse: %w", e)
+		}
+		totalCount = page.PaginationMetadata.TotalCount
+		if offset == 0 {
+			expectedTotal = totalCount
+		}
+		if len(page.Items) == 0 {
+			if offset == 0 && totalCount > 0 {
+				s.recordError(conn, "users empty page при totalCount>0 (transient)")
+				return 0, fmt.Errorf("gelios users: пустая страница при totalCount=%d", totalCount)
+			}
+			break
+		}
+		for _, it := range page.Items {
+			uid := fmt.Sprintf("%d", it.ID)
+			row := models.GeliosUser{
+				ConnectionID:    conn.ID,
+				GeliosUserID:    uid,
+				Login:           it.Login,
+				Email:           it.Email,
+				Phone:           it.Phone,
+				LegalName:       it.LegalName,
+				IsAdmin:         it.IsAdmin,
+				IsBlock:         it.IsBlock,
+				CreatorID:       it.Creator.ID,
+				CreatorLogin:    it.Creator.Login,
+				CompanyID:       conn.CompanyID,
+				LastCollectedAt: now,
+			}
+			if b := it.BillingInfo; b != nil {
+				row.Balance = b.Balance
+				row.MinBalance = b.MinBalance
+				row.UnitsLimit = b.UnitsLimit
+				row.FreeUnitsLimit = b.FreeUnitsLimit
+				row.PaymentPeriodLen = b.PaymentPeriodLength
+				if b.Currency != nil {
+					row.CurrencyCode = b.Currency.AlphabeticCode
+					row.CurrencyAbbr = b.Currency.Abbreviation
+				}
+				if b.PaymentType != nil {
+					row.PaymentTypeID = b.PaymentType.ID
+					row.PaymentTypeName = b.PaymentType.Name
+				}
+				if b.PaymentPeriod != nil {
+					row.PaymentPeriodID = b.PaymentPeriod.ID
+					row.PaymentPeriodName = b.PaymentPeriod.Name
+				}
+			}
+			if uc := it.UnitsCount; uc != nil {
+				row.UnitsCount = uc.All
+			}
+			if e := s.db.Clauses(clause.OnConflict{
+				Columns: []clause.Column{{Name: "connection_id"}, {Name: "gelios_user_id"}},
+				DoUpdates: clause.Assignments(map[string]interface{}{
+					"login":               row.Login,
+					"email":               row.Email,
+					"phone":               row.Phone,
+					"legal_name":          row.LegalName,
+					"is_admin":            row.IsAdmin,
+					"is_block":            row.IsBlock,
+					"creator_id":          row.CreatorID,
+					"creator_login":       row.CreatorLogin,
+					"company_id":          row.CompanyID,
+					"balance":             row.Balance,
+					"min_balance":         row.MinBalance,
+					"currency_code":       row.CurrencyCode,
+					"currency_abbr":       row.CurrencyAbbr,
+					"units_limit":         row.UnitsLimit,
+					"free_units_limit":    row.FreeUnitsLimit,
+					"payment_type_id":     row.PaymentTypeID,
+					"payment_type_name":   row.PaymentTypeName,
+					"payment_period_id":   row.PaymentPeriodID,
+					"payment_period_name": row.PaymentPeriodName,
+					"payment_period_len":  row.PaymentPeriodLen,
+					"units_count":         row.UnitsCount,
+					"last_collected_at":   row.LastCollectedAt,
+					"gelios_deleted_at":   nil, // юзер вернулся → сброс mark
+					"updated_at":          time.Now(),
+				}),
+			}).Create(&row).Error; e != nil {
+				log.Printf("⚠️ GELIOS upsert user %s: %v", uid, e)
+				upsertErrs++
+				continue
+			}
+			seenSet[uid] = struct{}{}
+			saved++
+		}
+		offset += geliosPageSize
+		if offset >= totalCount {
+			break
+		}
+	}
+
+	complete := upsertErrs == 0 && expectedTotal >= 0 && len(seenSet) == expectedTotal
+	if !complete {
+		msg := fmt.Sprintf("неполная выгрузка users: seen=%d expected=%d upsertErrs=%d", len(seenSet), expectedTotal, upsertErrs)
+		s.recordError(conn, msg)
+		log.Printf("⚠️ GELIOS conn=%d users: %s → mark-deleted+success пропущены", conn.ID, msg)
+		return saved, fmt.Errorf("gelios users conn=%d: %s", conn.ID, msg)
+	}
+
+	if expectedTotal == 0 {
+		var liveCount int64
+		if e := s.db.Model(&models.GeliosUser{}).
+			Where("connection_id = ? AND gelios_deleted_at IS NULL", conn.ID).
+			Count(&liveCount).Error; e != nil {
+			s.recordError(conn, fmt.Sprintf("users live-count: %v", e))
+			return saved, fmt.Errorf("gelios users conn=%d: live-count: %w", conn.ID, e)
+		}
+		if liveCount > 0 {
+			var freshStreak int
+			if e := s.db.Model(&models.GeliosConnection{}).
+				Select("users_empty_sync_streak").Where("id = ?", conn.ID).
+				Scan(&freshStreak).Error; e != nil {
+				s.recordError(conn, fmt.Sprintf("users fresh-streak read: %v", e))
+				return saved, fmt.Errorf("gelios users conn=%d: fresh-streak read: %w", conn.ID, e)
+			}
+			streak := freshStreak + 1
+			if streak < geliosEmptyConfirmTicks {
+				if e := s.db.Model(conn).Update("users_empty_sync_streak", streak).Error; e != nil {
+					log.Printf("⚠️ GELIOS conn=%d: persist users streak fail: %v", conn.ID, e)
+				}
+				msg := fmt.Sprintf("users totalCount=0 при %d живых — подтверждение %d/%d, mass-delete отложен",
+					liveCount, streak, geliosEmptyConfirmTicks)
+				s.recordError(conn, msg)
+				return saved, fmt.Errorf("gelios users conn=%d: %s", conn.ID, msg)
+			}
+			res := s.db.Model(&models.GeliosUser{}).
+				Where("connection_id = ? AND gelios_deleted_at IS NULL", conn.ID).
+				Update("gelios_deleted_at", now)
+			if res.Error != nil {
+				s.recordError(conn, fmt.Sprintf("users confirmed-empty delete: %v", res.Error))
+				return saved, fmt.Errorf("gelios users conn=%d: confirmed-empty delete: %w", conn.ID, res.Error)
+			}
+			if res.RowsAffected > 0 {
+				log.Printf("🗑 GELIOS conn=%d: users пусто подтверждено %dx, помечено %d", conn.ID, streak, res.RowsAffected)
+			}
+		}
+	} else {
+		seen := make([]string, 0, len(seenSet))
+		for uid := range seenSet {
+			seen = append(seen, uid)
+		}
+		res := s.db.Model(&models.GeliosUser{}).
+			Where("connection_id = ? AND gelios_deleted_at IS NULL AND gelios_user_id NOT IN ?", conn.ID, seen).
+			Update("gelios_deleted_at", now)
+		if res.Error != nil {
+			log.Printf("⚠️ GELIOS users mark deleted: %v", res.Error)
+		} else if res.RowsAffected > 0 {
+			log.Printf("🗑 GELIOS conn=%d: помечено удалёнными %d users", conn.ID, res.RowsAffected)
+		}
+	}
+
+	s.db.Model(conn).Updates(map[string]interface{}{
+		"users_count":             len(seenSet),
+		"users_empty_sync_streak": 0,
+	})
+	log.Printf("✅ GELIOS sync users: conn=%d unique=%d total=%d", conn.ID, len(seenSet), expectedTotal)
+	return saved, nil
+}
+
 func (s *GeliosService) recordError(conn *models.GeliosConnection, msg string) {
 	now := time.Now()
 	s.db.Model(conn).Updates(map[string]interface{}{

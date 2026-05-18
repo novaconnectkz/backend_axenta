@@ -22,27 +22,27 @@ import (
 // Унификация с UnifiedUser/UnifiedObject (camelCase), поля совпадают с
 // frontend-таблицей AccountsTable.vue.
 type UnifiedAccount struct {
-	ID                int     `json:"id"`
-	Name              string  `json:"name"`
-	Type              string  `json:"type"` // client | partner
-	AdminFullname     string  `json:"adminFullname,omitempty"`
-	AdminID           int     `json:"adminId,omitempty"`
-	AdminIsActive     bool    `json:"adminIsActive,omitempty"`
-	ParentAccountName string  `json:"parentAccountName,omitempty"`
-	ObjectsActive     int     `json:"objectsActive"`
-	ObjectsTotal      int     `json:"objectsTotal"`
-	ObjectsDeleted    int     `json:"objectsDeleted,omitempty"`
-	IsActive          bool    `json:"isActive"`
-	Hierarchy         string  `json:"hierarchy,omitempty"`
-	CreationDatetime  string  `json:"creationDatetime,omitempty"`
-	Comment           *string `json:"comment,omitempty"`
-	BlockingDatetime  *string `json:"blockingDatetime,omitempty"`
-	DaysBeforeBlocking *int   `json:"daysBeforeBlocking,omitempty"`
-	Source            string  `json:"source"`                 // "axenta" | "WH(...)" | "WL(...)" | "skif"
-	SourceLabel       string  `json:"sourceLabel,omitempty"`
-	ConnectionID      *uint   `json:"connectionId,omitempty"` // wialon + skif
-	DealerRights      bool    `json:"dealerRights,omitempty"`
-	SkifCompanyID     string  `json:"skifCompanyId,omitempty"`     // UUID дилерской компании в SKIF
+	ID                 int     `json:"id"`
+	Name               string  `json:"name"`
+	Type               string  `json:"type"` // client | partner
+	AdminFullname      string  `json:"adminFullname,omitempty"`
+	AdminID            int     `json:"adminId,omitempty"`
+	AdminIsActive      bool    `json:"adminIsActive,omitempty"`
+	ParentAccountName  string  `json:"parentAccountName,omitempty"`
+	ObjectsActive      int     `json:"objectsActive"`
+	ObjectsTotal       int     `json:"objectsTotal"`
+	ObjectsDeleted     int     `json:"objectsDeleted,omitempty"`
+	IsActive           bool    `json:"isActive"`
+	Hierarchy          string  `json:"hierarchy,omitempty"`
+	CreationDatetime   string  `json:"creationDatetime,omitempty"`
+	Comment            *string `json:"comment,omitempty"`
+	BlockingDatetime   *string `json:"blockingDatetime,omitempty"`
+	DaysBeforeBlocking *int    `json:"daysBeforeBlocking,omitempty"`
+	Source             string  `json:"source"` // "axenta" | "WH(...)" | "WL(...)" | "skif"
+	SourceLabel        string  `json:"sourceLabel,omitempty"`
+	ConnectionID       *uint   `json:"connectionId,omitempty"` // wialon + skif
+	DealerRights       bool    `json:"dealerRights,omitempty"`
+	SkifCompanyID      string  `json:"skifCompanyId,omitempty"`      // UUID дилерской компании в SKIF
 	DeleteScheduledFor *string `json:"deleteScheduledFor,omitempty"` // ISO timestamp когда SKIF удалит компанию (RFC3339)
 }
 
@@ -60,6 +60,10 @@ type UnifiedAccountsStats struct {
 	WialonWLActive int `json:"wialon_wl_active"`
 	SkifTotal      int `json:"skif_total"`
 	SkifActive     int `json:"skif_active"`
+	GeliosTotal    int `json:"gelios_total"`
+	GeliosActive   int `json:"gelios_active"`
+	GeliosClients  int `json:"gelios_clients"`
+	GeliosPartners int `json:"gelios_partners"`
 }
 
 // UnifiedAccountsResponse — формат ответа.
@@ -109,6 +113,7 @@ func GetUnifiedAccounts(c *gin.Context) {
 	loadAxenta := source == "all" || source == "axenta"
 	loadWialon := source == "all" || source == "wialon" || source == "wh" || source == "wl"
 	loadSkif := source == "all" || source == "skif"
+	loadGelios := source == "all" || source == "gelios"
 
 	if loadAxenta {
 		wg.Add(1)
@@ -166,6 +171,27 @@ func GetUnifiedAccounts(c *gin.Context) {
 			allAccounts = append(allAccounts, items...)
 			stats.SkifTotal = sTotal
 			stats.SkifActive = sActive
+			mu.Unlock()
+		}()
+	}
+
+	if loadGelios {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			companyID, exists := c.Get("company_id")
+			if !exists {
+				return
+			}
+			t0 := time.Now()
+			items, gTotal, gActive, gClients, gPartners := fetchGeliosAccountsForUnified(companyID.(uint), search, accountType, activeStr, parent)
+			log.Printf("🔍 unified/accounts gelios: %d items за %s", len(items), time.Since(t0).Round(time.Millisecond))
+			mu.Lock()
+			allAccounts = append(allAccounts, items...)
+			stats.GeliosTotal = gTotal
+			stats.GeliosActive = gActive
+			stats.GeliosClients = gClients
+			stats.GeliosPartners = gPartners
 			mu.Unlock()
 		}()
 	}
@@ -281,18 +307,18 @@ func fetchAxentaAccountsForUnified(db *gorm.DB, search, accountType, activeStr, 
 			partners++
 		}
 		ua := UnifiedAccount{
-			ID:                int(r.ExternalAccountID),
-			Name:              r.AccountName,
-			Type:              r.AccountType,
-			AdminFullname:     r.AdminFullname,
-			ParentAccountName: r.ParentAccountName,
-			ObjectsActive:     r.ObjectsActive,
-			ObjectsTotal:      r.ObjectsTotal,
-			IsActive:          r.IsActive,
-			Hierarchy:         r.Hierarchy,
-			Source:            "axenta",
-			SourceLabel:       "Axenta Cloud",
-			Comment:           strPtrIfNotEmpty(r.Comment),
+			ID:                 int(r.ExternalAccountID),
+			Name:               r.AccountName,
+			Type:               r.AccountType,
+			AdminFullname:      r.AdminFullname,
+			ParentAccountName:  r.ParentAccountName,
+			ObjectsActive:      r.ObjectsActive,
+			ObjectsTotal:       r.ObjectsTotal,
+			IsActive:           r.IsActive,
+			Hierarchy:          r.Hierarchy,
+			Source:             "axenta",
+			SourceLabel:        "Axenta Cloud",
+			Comment:            strPtrIfNotEmpty(r.Comment),
 			DaysBeforeBlocking: r.DaysBeforeBlocking,
 		}
 		if r.AdminExternalID != nil {
@@ -712,6 +738,123 @@ func fetchSkifAccountsForUnified(companyID uint, search, accountType, activeStr,
 	}
 
 	return items, total, active
+}
+
+// fetchGeliosAccountsForUnified — учётки GELIOS = узлы дерева users,
+// которые являются биллинг-сущностью: is_admin (дилер/админ-узел) ИЛИ
+// units_count>0 (владеет объектами = клиентский аккаунт). Биллинг живёт
+// на юзере. type: is_admin→partner, иначе client. active = !is_block.
+// parent = creator_login. ObjectsTotal/Active = units_count (GELIOS
+// per-active разбивку в списке не отдаёт → total≈active при !is_block).
+func fetchGeliosAccountsForUnified(companyID uint, search, accountType, activeStr, parent string) ([]UnifiedAccount, int, int, int, int) {
+	var connections []models.GeliosConnection
+	if err := database.DB.Where("company_id = ? AND is_active = ?", companyID, true).
+		Find(&connections).Error; err != nil {
+		log.Printf("⚠️ fetchGeliosAccountsForUnified: connections: %v", err)
+		return nil, 0, 0, 0, 0
+	}
+	if len(connections) == 0 {
+		return nil, 0, 0, 0, 0
+	}
+	connByID := make(map[uint]string, len(connections))
+	connIDs := make([]uint, 0, len(connections))
+	for _, cn := range connections {
+		connByID[cn.ID] = cn.Name
+		connIDs = append(connIDs, cn.ID)
+	}
+
+	// Аккаунт = биллинг-узел: дилер/админ ИЛИ владелец объектов.
+	q := database.DB.Model(&models.GeliosUser{}).
+		Where("connection_id IN ? AND gelios_deleted_at IS NULL", connIDs).
+		Where("is_admin = ? OR units_count > 0", true)
+
+	if search != "" {
+		terms := splitSearchTerms(search)
+		pattern := func(t string) string { return "%" + strings.ToLower(t) + "%" }
+		if len(terms) > 1 {
+			ph := make([]string, 0, len(terms)*3)
+			args := make([]any, 0, len(terms)*3)
+			for _, t := range terms {
+				p := pattern(t)
+				ph = append(ph, "LOWER(login) LIKE ?", "LOWER(email) LIKE ?", "LOWER(legal_name) LIKE ?")
+				args = append(args, p, p, p)
+			}
+			q = q.Where(strings.Join(ph, " OR "), args...)
+		} else {
+			p := pattern(search)
+			q = q.Where("LOWER(login) LIKE ? OR LOWER(email) LIKE ? OR LOWER(legal_name) LIKE ?", p, p, p)
+		}
+	}
+	switch accountType {
+	case "partner", "Партнёр", "Партнер":
+		q = q.Where("is_admin = ?", true)
+	case "client", "Клиент":
+		q = q.Where("is_admin = ?", false)
+	}
+	if activeStr == "true" || activeStr == "1" {
+		q = q.Where("is_block = ?", false)
+	} else if activeStr == "false" || activeStr == "0" {
+		q = q.Where("is_block = ?", true)
+	}
+	if parent != "" {
+		q = q.Where("LOWER(creator_login) = ?", strings.ToLower(parent))
+	}
+
+	var totalCount int64
+	if err := q.Count(&totalCount).Error; err != nil {
+		log.Printf("⚠️ fetchGeliosAccountsForUnified count: %v", err)
+		return nil, 0, 0, 0, 0
+	}
+	var activeCount int64
+	q.Session(&gorm.Session{}).Where("is_block = ?", false).Count(&activeCount)
+
+	var rows []models.GeliosUser
+	if err := q.Order("login ASC").Limit(5000).Find(&rows).Error; err != nil {
+		log.Printf("⚠️ fetchGeliosAccountsForUnified find: %v", err)
+		return nil, 0, 0, 0, 0
+	}
+
+	items := make([]UnifiedAccount, 0, len(rows))
+	clients, partners := 0, 0
+	for _, r := range rows {
+		typ := "client"
+		if r.IsAdmin {
+			typ = "partner"
+			partners++
+		} else {
+			clients++
+		}
+		name := r.Login
+		if r.LegalName != "" {
+			name = r.LegalName
+		}
+		connName := connByID[r.ConnectionID]
+		sourceLabel := "GELIOS"
+		if connName != "" {
+			sourceLabel = "GELIOS(" + connName + ")"
+		}
+		active := !r.IsBlock
+		objActive := 0
+		if active {
+			objActive = r.UnitsCount
+		}
+		connID := r.ConnectionID
+		items = append(items, UnifiedAccount{
+			ID:                int(r.ID),
+			Name:              name,
+			Type:              typ,
+			ObjectsTotal:      r.UnitsCount,
+			ObjectsActive:     objActive,
+			IsActive:          active,
+			ParentAccountName: r.CreatorLogin,
+			Hierarchy:         r.CreatorLogin,
+			Source:            "gelios",
+			SourceLabel:       sourceLabel,
+			ConnectionID:      &connID,
+			DealerRights:      r.IsAdmin,
+		})
+	}
+	return items, int(totalCount), int(activeCount), clients, partners
 }
 
 // hashSkifID — детерминированный int ID из UUID для UnifiedAccount.ID (frontend ключ).

@@ -57,8 +57,8 @@ type UnifiedUser struct {
 
 	// Account-привязка (для UI cross-section: User → Objects этого аккаунта).
 	// Заполняется по AdminAccountID (Axenta) или BillingAccount (Wialon).
-	AccountID        int64  `json:"accountId,omitempty"`
-	AccountName      string `json:"accountName,omitempty"`
+	AccountID   int64  `json:"accountId,omitempty"`
+	AccountName string `json:"accountName,omitempty"`
 
 	AccountType      string `json:"account_type,omitempty"`
 	AccountTypeAlias string `json:"accountType,omitempty"`
@@ -131,6 +131,8 @@ type UnifiedUsersStats struct {
 	WialonWLActive int `json:"wialon_wl_active"`
 	SkifTotal      int `json:"skif_total"`
 	SkifActive     int `json:"skif_active"`
+	GeliosTotal    int `json:"gelios_total"`
+	GeliosActive   int `json:"gelios_active"`
 }
 
 // unifiedUsersSnapshotTTL — окно свежести snapshot Axenta для read-path.
@@ -186,6 +188,7 @@ func GetUnifiedUsers(c *gin.Context) {
 	loadAxenta := source == "all" || source == "axenta"
 	loadWialon := source == "all" || source == "wialon" || source == "wh" || source == "wl"
 	loadSkif := source == "all" || source == "skif"
+	loadGelios := source == "all" || source == "gelios"
 
 	if loadAxenta {
 		wg.Add(1)
@@ -236,6 +239,23 @@ func GetUnifiedUsers(c *gin.Context) {
 				allUsers = append(allUsers, skifUsers...)
 				stats.SkifTotal = sTotal
 				stats.SkifActive = sActive
+				mu.Unlock()
+			}
+		}()
+	}
+
+	if loadGelios {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if companyID != nil {
+				t0 := time.Now()
+				geliosUsers, gTotal, gActive := fetchGeliosUsersFast(companyID.(uint), search, activeStr, role)
+				log.Printf("🔍 unified/users gelios: %d users за %s", len(geliosUsers), time.Since(t0).Round(time.Millisecond))
+				mu.Lock()
+				allUsers = append(allUsers, geliosUsers...)
+				stats.GeliosTotal = gTotal
+				stats.GeliosActive = gActive
 				mu.Unlock()
 			}
 		}()
@@ -1084,6 +1104,122 @@ func mapSkifRoleToRole(roleKey string) string {
 	default:
 		return "client"
 	}
+}
+
+// fetchGeliosUsersFast — пользователи GELIOS (дерево users) per company.
+// Зеркало fetchSkifUsersFast. active = !is_block. role: isAdmin→partner,
+// иначе client. CreatorName/Hierarchy = creator (родитель в дереве).
+func fetchGeliosUsersFast(companyID uint, search, activeStr, roleFilter string) ([]UnifiedUser, int, int) {
+	var connections []models.GeliosConnection
+	if err := database.DB.Where("company_id = ? AND is_active = ?", companyID, true).
+		Find(&connections).Error; err != nil {
+		log.Printf("⚠️ fetchGeliosUsersFast: загрузка connections: %v", err)
+		return nil, 0, 0
+	}
+	if len(connections) == 0 {
+		return nil, 0, 0
+	}
+
+	connByID := make(map[uint]string, len(connections))
+	connIDs := make([]uint, 0, len(connections))
+	for _, c := range connections {
+		connByID[c.ID] = c.Name
+		connIDs = append(connIDs, c.ID)
+	}
+
+	q := database.DB.Model(&models.GeliosUser{}).
+		Where("connection_id IN ? AND gelios_deleted_at IS NULL", connIDs)
+
+	if search != "" {
+		terms := splitSearchTerms(search)
+		if len(terms) > 1 {
+			placeholders := make([]string, 0, len(terms)*4)
+			args := make([]any, 0, len(terms)*4)
+			for _, t := range terms {
+				p := "%" + strings.ToLower(t) + "%"
+				placeholders = append(placeholders,
+					"LOWER(login) LIKE ?", "LOWER(email) LIKE ?", "LOWER(phone) LIKE ?", "LOWER(legal_name) LIKE ?")
+				args = append(args, p, p, p, p)
+			}
+			q = q.Where(strings.Join(placeholders, " OR "), args...)
+		} else {
+			pattern := "%" + strings.ToLower(search) + "%"
+			q = q.Where("LOWER(login) LIKE ? OR LOWER(email) LIKE ? OR LOWER(phone) LIKE ? OR LOWER(legal_name) LIKE ?",
+				pattern, pattern, pattern, pattern)
+		}
+	}
+
+	// active = НЕ заблокирован.
+	if activeStr != "" {
+		switch activeStr {
+		case "true", "1":
+			q = q.Where("is_block = ?", false)
+		case "false", "0":
+			q = q.Where("is_block = ?", true)
+		}
+	}
+
+	// role: partner = дилер/админ-узел (is_admin), client = обычный юзер.
+	if roleFilter != "" {
+		switch roleFilter {
+		case "Партнёр", "Партнер", "partner":
+			q = q.Where("is_admin = ?", true)
+		case "Клиент", "client":
+			q = q.Where("is_admin = ?", false)
+		}
+	}
+
+	var totalCount int64
+	if err := q.Count(&totalCount).Error; err != nil {
+		log.Printf("⚠️ fetchGeliosUsersFast count: %v", err)
+		return nil, 0, 0
+	}
+
+	var activeCount int64
+	q.Session(&gorm.Session{}).Where("is_block = ?", false).Count(&activeCount)
+
+	var rows []models.GeliosUser
+	if err := q.Order("login ASC").Limit(5000).Find(&rows).Error; err != nil {
+		log.Printf("⚠️ fetchGeliosUsersFast find: %v", err)
+		return nil, 0, 0
+	}
+
+	users := make([]UnifiedUser, 0, len(rows))
+	for _, r := range rows {
+		role := "client"
+		if r.IsAdmin {
+			role = "partner"
+		}
+		connName := connByID[r.ConnectionID]
+		sourceLabel := "GELIOS"
+		if connName != "" {
+			sourceLabel = "GELIOS(" + connName + ")"
+		}
+		name := r.Login
+		if r.LegalName != "" {
+			name = r.LegalName
+		}
+		connID := r.ConnectionID
+		users = append(users, UnifiedUser{
+			ID:           int64(r.ID),
+			Username:     r.Login,
+			Name:         name,
+			Email:        r.Email,
+			Role:         role,
+			IsActive:     !r.IsBlock,
+			CreatorName:  r.CreatorLogin,
+			Source:       "gelios",
+			SourceLabel:  sourceLabel,
+			Hierarchy:    r.CreatorLogin,
+			ConnectionID: &connID,
+			AccountType:  role,
+			DealerRights: r.IsAdmin,
+			Phone:        r.Phone,
+			ExternalID:   r.GeliosUserID,
+		})
+	}
+
+	return users, int(totalCount), int(activeCount)
 }
 
 // mapAxentaTypeToRole преобразует тип аккаунта Axenta в роль (для отображения)

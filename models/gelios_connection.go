@@ -51,10 +51,17 @@ type GeliosConnection struct {
 	// login-rate: высокий рост = refresh ломается (фикс #1 не работает).
 	LoginCount int64 `json:"login_count" gorm:"default:0"`
 
+	// UsersEmptySyncStreak — то же что EmptySyncStreak, но для SyncGeliosUsers
+	// (отдельный счётчик: users и units синкаются независимо, общий streak
+	// исказил бы API-flap защиту обоих). AutoMigrate-additive.
+	UsersEmptySyncStreak int `json:"-" gorm:"default:0"`
+	UsersCount           int `json:"users_count" gorm:"default:0"`
+
 	// Sync settings
 	SyncInterval    int  `json:"sync_interval" gorm:"default:15"` // минуты
 	AutoSyncEnabled bool `json:"auto_sync_enabled" gorm:"default:false"`
 	SyncUnits       bool `json:"sync_units" gorm:"default:true"`
+	SyncUsersFlag   bool `json:"sync_users" gorm:"column:sync_users;default:true"`
 
 	// Ошибки
 	LastErrorAt  *time.Time `json:"last_error_at"`

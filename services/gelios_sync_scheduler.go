@@ -183,6 +183,13 @@ func (s *GeliosSyncScheduler) tick() {
 				atomic.AddInt64(&failed, 1)
 				return
 			}
+			// Users sync — best-effort: ошибка не валит весь conn-тик
+			// (units уже синканы). SyncUsersFlag-гейт.
+			if c.SyncUsersFlag {
+				if _, err := svc.SyncGeliosUsers(c); err != nil {
+					log.Printf("⚠️ GeliosSyncScheduler: conn=%d users sync error: %v", c.ID, err)
+				}
+			}
 			atomic.AddInt64(&synced, 1)
 		}(conn)
 	}

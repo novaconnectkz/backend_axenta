@@ -139,6 +139,7 @@ func CreateGeliosConnection(c *gin.Context) {
 		SyncInterval    int    `json:"sync_interval"`
 		AutoSyncEnabled bool   `json:"auto_sync_enabled"`
 		SyncUnits       bool   `json:"sync_units"`
+		SyncUsers       *bool  `json:"sync_users"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -146,6 +147,10 @@ func CreateGeliosConnection(c *gin.Context) {
 	}
 	if body.SyncInterval <= 0 {
 		body.SyncInterval = 15
+	}
+	syncUsers := true // дефолт ON (смысл фичи — accounts/users)
+	if body.SyncUsers != nil {
+		syncUsers = *body.SyncUsers
 	}
 	encPwd, err := utils.EncryptString(body.Password)
 	if err != nil {
@@ -161,6 +166,7 @@ func CreateGeliosConnection(c *gin.Context) {
 		SyncInterval:    body.SyncInterval,
 		AutoSyncEnabled: body.AutoSyncEnabled,
 		SyncUnits:       body.SyncUnits,
+		SyncUsersFlag:   syncUsers,
 		IsActive:        true,
 	}
 	if err := database.DB.Create(&conn).Error; err != nil {
@@ -186,6 +192,7 @@ func UpdateGeliosConnection(c *gin.Context) {
 		SyncInterval    *int    `json:"sync_interval"`
 		AutoSyncEnabled *bool   `json:"auto_sync_enabled"`
 		SyncUnits       *bool   `json:"sync_units"`
+		SyncUsers       *bool   `json:"sync_users"`
 		IsActive        *bool   `json:"is_active"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -218,6 +225,9 @@ func UpdateGeliosConnection(c *gin.Context) {
 	}
 	if body.SyncUnits != nil {
 		updates["sync_units"] = *body.SyncUnits
+	}
+	if body.SyncUsers != nil {
+		updates["sync_users"] = *body.SyncUsers
 	}
 	if body.IsActive != nil {
 		updates["is_active"] = *body.IsActive
@@ -275,12 +285,25 @@ func SyncGeliosConnection(c *gin.Context) {
 	if err != nil {
 		return
 	}
-	count, err := geliosService().SyncUnits(conn)
+	svc := geliosService()
+	count, err := svc.SyncUnits(conn)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{"upserted": count}})
+	// Users sync — best-effort: ошибка не валит ответ (units уже синканы).
+	usersCount := 0
+	var usersErr string
+	if conn.SyncUsersFlag {
+		if uc, e := svc.SyncGeliosUsers(conn); e != nil {
+			usersErr = e.Error()
+		} else {
+			usersCount = uc
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{
+		"upserted": count, "users_upserted": usersCount, "users_error": usersErr,
+	}})
 }
 
 func loadOwnedGeliosConn(c *gin.Context, companyID uint) (*models.GeliosConnection, error) {
