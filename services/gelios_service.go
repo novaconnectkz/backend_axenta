@@ -59,7 +59,72 @@ type geliosTokenResp struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 	TokenType    string `json:"token_type"`
-	ExpiresIn    int    `json:"expires_in"`
+	// ВНИМАНИЕ: GELIOS отдаёт expires_in как АБСОЛЮТНЫЙ unix-epoch
+	// (проверено: now+86401), НЕ относительную длительность.
+	ExpiresIn int64 `json:"expires_in"`
+}
+
+// persistToken валидирует и сохраняет токен-ответ (общий для login+refresh).
+// expires_in трактуется как абсолютный unix-epoch.
+func (s *GeliosService) persistToken(conn *models.GeliosConnection, tr geliosTokenResp) (string, error) {
+	if tr.AccessToken == "" {
+		return "", fmt.Errorf("gelios: пустой access_token")
+	}
+	if tr.ExpiresIn <= 0 {
+		return "", fmt.Errorf("gelios: некорректный expires_in=%d", tr.ExpiresIn)
+	}
+	now := time.Now()
+	exp := time.Unix(tr.ExpiresIn, 0).UTC()
+	if !exp.After(now) {
+		return "", fmt.Errorf("gelios: токен уже истёк (exp=%s)", exp)
+	}
+	if e := s.db.Model(conn).Updates(map[string]interface{}{
+		"access_token":     tr.AccessToken,
+		"refresh_token":    tr.RefreshToken,
+		"token_expires_at": exp,
+		"last_login_at":    now,
+	}).Error; e != nil {
+		// Best-effort: in-memory conn-токен валиден для ТЕКУЩЕЙ операции,
+		// не валим её из-за DB-сбоя. Не персистнутый ротированный
+		// refresh_token само-лечится: следующий тик (scheduler перезагрузит
+		// conn из БД) сделает full login (refresh_token пуст/старый → login).
+		log.Printf("⚠️ GELIOS: не сохранён токен conn=%d: %v (self-heal: re-login)", conn.ID, e)
+	}
+	conn.AccessToken = tr.AccessToken
+	conn.RefreshToken = tr.RefreshToken
+	conn.TokenExpiresAt = &exp
+	return tr.AccessToken, nil
+}
+
+// refresh — OAuth2 refresh через POST /api/v1/auth/refresh (JSON body).
+// GELIOS НЕ принимает grant_type=refresh_token на /auth/login (только
+// password); refresh — отдельный JSON-эндпоинт. refresh_token ротируется.
+func (s *GeliosService) refresh(conn *models.GeliosConnection) (string, error) {
+	if conn.RefreshToken == "" {
+		return "", fmt.Errorf("gelios: нет refresh_token")
+	}
+	bodyJSON, _ := json.Marshal(map[string]string{"refresh_token": conn.RefreshToken})
+	req, err := http.NewRequest(http.MethodPost,
+		s.baseURL(conn)+"/api/v1/auth/refresh", strings.NewReader(string(bodyJSON)))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	resp, err := s.cli.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("gelios refresh: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("gelios refresh: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var tr geliosTokenResp
+	if err := json.Unmarshal(body, &tr); err != nil {
+		return "", fmt.Errorf("gelios refresh: parse: %w", err)
+	}
+	return s.persistToken(conn, tr)
 }
 
 // login выполняет OAuth2 password grant и сохраняет токен в connection.
@@ -94,25 +159,7 @@ func (s *GeliosService) login(conn *models.GeliosConnection) (string, error) {
 	if err := json.Unmarshal(body, &tr); err != nil {
 		return "", fmt.Errorf("gelios login: parse token: %w", err)
 	}
-	if tr.AccessToken == "" {
-		return "", fmt.Errorf("gelios login: пустой access_token")
-	}
-
-	now := time.Now()
-	exp := now.Add(time.Duration(tr.ExpiresIn) * time.Second)
-	updates := map[string]interface{}{
-		"access_token":     tr.AccessToken,
-		"refresh_token":    tr.RefreshToken,
-		"token_expires_at": exp,
-		"last_login_at":    now,
-	}
-	if e := s.db.Model(conn).Updates(updates).Error; e != nil {
-		log.Printf("⚠️ GELIOS: не сохранён токен conn=%d: %v", conn.ID, e)
-	}
-	conn.AccessToken = tr.AccessToken
-	conn.RefreshToken = tr.RefreshToken
-	conn.TokenExpiresAt = &exp
-	return tr.AccessToken, nil
+	return s.persistToken(conn, tr)
 }
 
 // token возвращает валидный Bearer-токен (кешированный или свежий login).
@@ -121,12 +168,30 @@ func (s *GeliosService) token(conn *models.GeliosConnection) (string, error) {
 		time.Until(*conn.TokenExpiresAt) > 60*time.Second {
 		return conn.AccessToken, nil
 	}
+	// Истёк/нет: сначала refresh (дешевле, без пароля), при неудаче —
+	// полный password-login (fallback). refresh_token ротируется.
+	if conn.RefreshToken != "" {
+		if t, err := s.refresh(conn); err == nil {
+			return t, nil
+		} else {
+			log.Printf("⚠️ GELIOS conn=%d: refresh не удался (%v) → full login", conn.ID, err)
+		}
+	}
 	return s.login(conn)
 }
 
 // TestConnection делает login + GET /api/v1/units?limit=1 для проверки кредов.
 // Возвращает units_total (paginationMetadata.totalCount).
 func (s *GeliosService) TestConnection(conn *models.GeliosConnection) (map[string]interface{}, error) {
+	// Под тем же per-conn lock что SyncUnits: login() здесь ротирует
+	// refresh_token; параллельный SyncUnits→refresh() иначе = last-write-wins
+	// по refresh_token в БД (stale перетёр бы свежий).
+	mu := geliosConnLock(conn.ID)
+	if !mu.TryLock() {
+		return nil, fmt.Errorf("gelios conn=%d занят (sync/test уже выполняется)", conn.ID)
+	}
+	defer mu.Unlock()
+
 	tok, err := s.login(conn)
 	if err != nil {
 		return nil, err
