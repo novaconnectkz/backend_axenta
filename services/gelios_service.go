@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -808,6 +809,15 @@ type GeliosUserOpError struct {
 
 func (e *GeliosUserOpError) Error() string { return e.Msg }
 
+// geliosPwdRe — редакция значения password в строке ошибки upstream
+// (если GELIOS когда-либо эхо-нёт submitted-поля в error/detail —
+// пароль не утечёт клиенту/в логи; Codex Sec, recursive по строке).
+var geliosPwdRe = regexp.MustCompile(`(?i)("?password"?\s*[:=]\s*)("(?:[^"\\]|\\.)*"|[^\s,}]+)`)
+
+func geliosSanitizeErr(msg string) string {
+	return geliosPwdRe.ReplaceAllString(msg, `$1"***"`)
+}
+
 // CreateGeliosUser — POST /api/v1/users. Защита от дурака: длины валидируются
 // локально (быстрый внятный fail до сетевого вызова); creator/login GELIOS
 // добивает 403 (structurally impossible). Под per-conn lock (как Sync — общий
@@ -869,7 +879,7 @@ func (s *GeliosService) CreateGeliosUser(conn *models.GeliosConnection, req Geli
 		if msg == "" {
 			msg = "запрос отклонён GELIOS"
 		}
-		return 0, &GeliosUserOpError{UpstreamStatus: resp.StatusCode, Msg: msg}
+		return 0, &GeliosUserOpError{UpstreamStatus: resp.StatusCode, Msg: geliosSanitizeErr(msg)}
 	}
 	var created struct {
 		ID int64 `json:"id"`
@@ -918,6 +928,106 @@ func (s *GeliosService) DeleteGeliosUser(conn *models.GeliosConnection, geliosUs
 	default:
 		return fmt.Errorf("gelios delete user: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
+}
+
+// GeliosUserUpdateReq — частичный PATCH (только переданные поля).
+// nil = не трогать. Зеркало разведанного PATCH /api/v1/users/{id}.
+type GeliosUserUpdateReq struct {
+	Login     *string `json:"login"`
+	Password  *string `json:"password"`
+	Email     *string `json:"email"`
+	Phone     *string `json:"phone"`
+	LegalName *string `json:"legal_name"`
+	IsAdmin   *bool   `json:"is_admin"`
+	IsBlock   *bool   `json:"is_block"`
+	CreatorID *int64  `json:"creator_id"` // перенос узла дерева (опц.)
+}
+
+// UpdateGeliosUser — PATCH /api/v1/users/{id}. Частичный.
+// КРИТИЧНО (разведка-граблина): GELIOS PATCH НЕ валидирует длины
+// (login="ab" принят бы 200, ≠ POST 422) → валидируем ЛОКАЛЬНО, иначе
+// UI сломает юзера коротким логином. Под per-conn lock.
+func (s *GeliosService) UpdateGeliosUser(conn *models.GeliosConnection, geliosUserID string, req GeliosUserUpdateReq) error {
+	body := map[string]interface{}{}
+	if req.Login != nil {
+		if len([]rune(*req.Login)) < 3 {
+			return &GeliosUserOpError{Local: true, Msg: "login: минимум 3 символа"}
+		}
+		body["login"] = *req.Login
+	}
+	if req.Password != nil && *req.Password != "" {
+		if len(*req.Password) < 5 {
+			return &GeliosUserOpError{Local: true, Msg: "password: минимум 5 символов"}
+		}
+		body["password"] = *req.Password
+	}
+	if req.Email != nil {
+		body["email"] = *req.Email
+	}
+	if req.Phone != nil {
+		body["phone"] = *req.Phone
+	}
+	if req.LegalName != nil {
+		body["legalName"] = *req.LegalName
+	}
+	if req.IsAdmin != nil {
+		body["isAdmin"] = *req.IsAdmin
+	}
+	if req.IsBlock != nil {
+		body["isBlock"] = *req.IsBlock
+	}
+	if req.CreatorID != nil {
+		body["creatorId"] = *req.CreatorID
+	}
+	if len(body) == 0 {
+		return &GeliosUserOpError{Local: true, Msg: "нет полей для обновления"}
+	}
+
+	mu := geliosConnLock(conn.ID)
+	if !mu.TryLock() {
+		return fmt.Errorf("gelios conn=%d занят (sync/op уже выполняется)", conn.ID)
+	}
+	defer mu.Unlock()
+
+	tok, err := s.token(conn)
+	if err != nil {
+		return err
+	}
+	bodyJSON, _ := json.Marshal(body)
+	httpReq, e := http.NewRequest(http.MethodPatch,
+		s.baseURL(conn)+"/api/v1/users/"+url.PathEscape(geliosUserID), strings.NewReader(string(bodyJSON)))
+	if e != nil {
+		return e
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+tok)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json")
+	resp, e := s.cli.Do(httpReq)
+	if e != nil {
+		return fmt.Errorf("gelios update user: %w", e)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		// raw body НЕ прокидываем (может содержать password если эхо) —
+		// только error/detail (как create, Codex Sec).
+		var er struct {
+			Error  string `json:"error"`
+			Detail any    `json:"detail"`
+		}
+		_ = json.Unmarshal(respBody, &er)
+		msg := er.Error
+		if msg == "" && er.Detail != nil {
+			if d, e := json.Marshal(er.Detail); e == nil {
+				msg = string(d)
+			}
+		}
+		if msg == "" {
+			msg = "PATCH отклонён GELIOS"
+		}
+		return &GeliosUserOpError{UpstreamStatus: resp.StatusCode, Msg: geliosSanitizeErr(msg)}
+	}
+	return nil
 }
 
 func (s *GeliosService) recordError(conn *models.GeliosConnection, msg string) {

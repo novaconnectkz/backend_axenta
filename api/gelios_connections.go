@@ -362,6 +362,8 @@ func CreateGeliosUserHandler(c *gin.Context) {
 				status = http.StatusBadRequest
 			case oe.UpstreamStatus == http.StatusForbidden:
 				status = http.StatusConflict
+			case oe.UpstreamStatus == http.StatusBadRequest:
+				status = http.StatusBadRequest
 			case oe.UpstreamStatus == http.StatusUnprocessableEntity:
 				status = http.StatusUnprocessableEntity
 			}
@@ -464,6 +466,90 @@ func DeleteGeliosUserHandler(c *gin.Context) {
 	if _, se := geliosService().SyncGeliosUsers(conn); se != nil {
 		resynced = false
 		log.Printf("⚠️ GELIOS post-delete re-sync conn=%d: %v (scheduler согласует)", conn.ID, se)
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{"resynced": resynced}})
+}
+
+// UpdateGeliosUserHandler — PATCH /gelios/connections/:id/users/:userId.
+// Защита от дурака (зеркало create+delete):
+//   - tenant-scope (loadOwnedGeliosConn);
+//   - редактируем ТОЛЬКО known синканный узел conn (root/token-user не в
+//     gelios_users → структурно недостижим, как delete);
+//   - если меняется creator_id — он обязан быть в дереве conn (allow-list,
+//     как create); GELIOS 403 — финальный net;
+//   - len-валидация login≥3/pwd≥5 в сервисе (PATCH сам НЕ валидирует —
+//     разведка-граблина);
+//   - после — re-sync (единственный truth, как delete).
+func UpdateGeliosUserHandler(c *gin.Context) {
+	companyID := middleware.GetCompanyID(c)
+	conn, err := loadOwnedGeliosConn(c, companyID)
+	if err != nil {
+		return
+	}
+	geliosUserID := c.Param("userId")
+	if geliosUserID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "userId обязателен"})
+		return
+	}
+
+	var row models.GeliosUser
+	if e := database.DB.Where(
+		"connection_id = ? AND gelios_user_id = ? AND gelios_deleted_at IS NULL",
+		conn.ID, geliosUserID).First(&row).Error; e != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "пользователь не найден среди синканных узлов этого подключения",
+		})
+		return
+	}
+
+	var req services.GeliosUserUpdateReq
+	if e := c.ShouldBindJSON(&req); e != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": e.Error()})
+		return
+	}
+
+	// Перенос узла: новый creator обязан быть в дереве этого connection.
+	if req.CreatorID != nil {
+		creatorStr := strconv.FormatInt(*req.CreatorID, 10)
+		var allowed int64
+		if e := database.DB.Raw(`
+			SELECT COUNT(*) FROM gelios_users
+			WHERE connection_id = ? AND gelios_deleted_at IS NULL
+			  AND (gelios_user_id = ? OR creator_id = ?)
+		`, conn.ID, creatorStr, *req.CreatorID).Scan(&allowed).Error; e != nil {
+			log.Printf("⚠️ GELIOS update: creator allow-list query conn=%d: %v", conn.ID, e)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка проверки creator_id"})
+			return
+		}
+		if allowed == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "creator_id вне дерева подключения",
+			})
+			return
+		}
+	}
+
+	if e := geliosService().UpdateGeliosUser(conn, geliosUserID, req); e != nil {
+		status := http.StatusBadGateway
+		if oe, ok := e.(*services.GeliosUserOpError); ok {
+			switch {
+			case oe.Local:
+				status = http.StatusBadRequest
+			case oe.UpstreamStatus == http.StatusForbidden:
+				status = http.StatusConflict
+			case oe.UpstreamStatus == http.StatusBadRequest:
+				status = http.StatusBadRequest
+			case oe.UpstreamStatus == http.StatusUnprocessableEntity:
+				status = http.StatusUnprocessableEntity
+			}
+		}
+		c.JSON(status, gin.H{"status": "error", "error": e.Error()})
+		return
+	}
+	resynced := true
+	if _, se := geliosService().SyncGeliosUsers(conn); se != nil {
+		resynced = false
+		log.Printf("⚠️ GELIOS post-update re-sync conn=%d: %v (scheduler согласует)", conn.ID, se)
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{"resynced": resynced}})
 }
