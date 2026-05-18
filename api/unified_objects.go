@@ -54,6 +54,9 @@ type UnifiedObjectsStats struct {
 	WialonWHActive     int `json:"wialon_wh_active"`
 	WialonWLTotal      int `json:"wialon_wl_total"`
 	WialonWLActive     int `json:"wialon_wl_active"`
+	GeliosTotal        int `json:"gelios_total"`
+	GeliosActive       int `json:"gelios_active"`
+	GeliosInactive     int `json:"gelios_inactive"`
 }
 
 // UnifiedObjectsResponse — формат ответа.
@@ -103,6 +106,7 @@ func GetUnifiedObjects(c *gin.Context) {
 
 	loadAxenta := source == "all" || source == "axenta"
 	loadWialon := source == "all" || source == "wialon" || source == "wh" || source == "wl"
+	loadGelios := source == "all" || source == "gelios"
 
 	if loadAxenta {
 		wg.Add(1)
@@ -140,6 +144,23 @@ func GetUnifiedObjects(c *gin.Context) {
 			stats.WialonWLActive = wlActive
 			stats.WialonTotal = whTotal + wlTotal
 			stats.WialonActive = whActive + wlActive
+			mu.Unlock()
+		}()
+	}
+
+	if gCompanyID, gOK := companyIDRaw.(uint); loadGelios && gOK {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			t0 := time.Now()
+			gObjects, gTotal, gActive, gInactive := fetchGeliosObjectsFast(gCompanyID, search, activeStr)
+			log.Printf("🔍 unified/objects gelios: %d за %s",
+				len(gObjects), time.Since(t0).Round(time.Millisecond))
+			mu.Lock()
+			all = append(all, gObjects...)
+			stats.GeliosTotal = gTotal
+			stats.GeliosActive = gActive
+			stats.GeliosInactive = gInactive
 			mu.Unlock()
 		}()
 	}
@@ -574,6 +595,98 @@ func buildWialonUserIDToNameMap(companyID uint) map[int64]string {
 		}
 	}
 	return out
+}
+
+// fetchGeliosObjectsFast — объекты GELIOS (gelios_units) per company.
+// Зеркало паттерна fetchGeliosUsersFast/Accounts. active = is_active
+// (!removed && !isBlock из sync). Возвращает: objects, total, active, inactive.
+func fetchGeliosObjectsFast(companyID uint, search, active string) ([]UnifiedObject, int, int, int) {
+	var connections []models.GeliosConnection
+	if err := database.DB.Where("company_id = ? AND is_active = ?", companyID, true).
+		Find(&connections).Error; err != nil {
+		log.Printf("⚠️ fetchGeliosObjectsFast: connections: %v", err)
+		return nil, 0, 0, 0
+	}
+	if len(connections) == 0 {
+		return nil, 0, 0, 0
+	}
+	connByID := make(map[uint]string, len(connections))
+	connIDs := make([]uint, 0, len(connections))
+	for _, cn := range connections {
+		connByID[cn.ID] = cn.Name
+		connIDs = append(connIDs, cn.ID)
+	}
+
+	q := database.DB.Model(&models.GeliosUnit{}).
+		Where("connection_id IN ? AND gelios_deleted_at IS NULL", connIDs)
+
+	if search != "" {
+		terms := splitSearchTerms(search)
+		if len(terms) > 1 {
+			ph := make([]string, 0, len(terms)*2)
+			args := make([]any, 0, len(terms)*2)
+			for _, t := range terms {
+				p := "%" + strings.ToLower(t) + "%"
+				ph = append(ph, "LOWER(name) LIKE ?", "LOWER(imei) LIKE ?")
+				args = append(args, p, p)
+			}
+			q = q.Where(strings.Join(ph, " OR "), args...)
+		} else {
+			p := "%" + strings.ToLower(search) + "%"
+			q = q.Where("LOWER(name) LIKE ? OR LOWER(imei) LIKE ?", p, p)
+		}
+	}
+	if active == "true" || active == "1" {
+		q = q.Where("is_active = ?", true)
+	} else if active == "false" || active == "0" {
+		q = q.Where("is_active = ?", false)
+	}
+
+	var totalCount int64
+	if err := q.Count(&totalCount).Error; err != nil {
+		log.Printf("⚠️ fetchGeliosObjectsFast count: %v", err)
+		return nil, 0, 0, 0
+	}
+	var activeCount int64
+	q.Session(&gorm.Session{}).Where("is_active = ?", true).Count(&activeCount)
+
+	var rows []models.GeliosUnit
+	if err := q.Order("name ASC").Limit(5000).Find(&rows).Error; err != nil {
+		log.Printf("⚠️ fetchGeliosObjectsFast find: %v", err)
+		return nil, 0, 0, 0
+	}
+
+	out := make([]UnifiedObject, 0, len(rows))
+	for _, r := range rows {
+		connName := connByID[r.ConnectionID]
+		sourceLabel := "GELIOS"
+		if connName != "" {
+			sourceLabel = "GELIOS(" + connName + ")"
+		}
+		createdAt := ""
+		if r.GeliosCreatedAt != nil {
+			createdAt = r.GeliosCreatedAt.Format(time.RFC3339)
+		}
+		lastMsg := ""
+		if r.LastMsgAt != nil {
+			lastMsg = r.LastMsgAt.Format(time.RFC3339)
+		}
+		connID := r.ConnectionID
+		out = append(out, UnifiedObject{
+			ID:                  int64(r.ID),
+			Name:                r.Name,
+			UniqueID:            r.GeliosUnitID,
+			IMEI:                r.IMEI,
+			IsActive:            r.IsActive,
+			CreatorName:         r.GeliosCreatorLogin,
+			CreatedAt:           createdAt,
+			LastMessageDatetime: lastMsg,
+			Source:              "gelios",
+			SourceLabel:         sourceLabel,
+			ConnectionID:        &connID,
+		})
+	}
+	return out, int(totalCount), int(activeCount), int(totalCount) - int(activeCount)
 }
 
 // sortUnifiedObjects сортирует in-place по ordering ("name", "-name", "created_at", "-created_at").
