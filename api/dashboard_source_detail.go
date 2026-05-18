@@ -102,7 +102,7 @@ type SourceDetailResponse struct {
 
 // GetDashboardSourceDetail возвращает breakdown по подключениям выбранного источника.
 //
-// GET /api/auth/dashboard/source-detail?key=wh|wl|skif|axenta&period=7d|1m|3m|6m|1y
+// GET /api/auth/dashboard/source-detail?key=wh|wl|skif|gelios|axenta&period=7d|1m|3m|6m|1y
 func GetDashboardSourceDetail(c *gin.Context) {
 	tenantDB := middleware.GetTenantDB(c)
 	if tenantDB == nil {
@@ -145,6 +145,8 @@ func GetDashboardSourceDetail(c *gin.Context) {
 		resp.Connections = buildWialonDetails(publicDB, companyID, connType, buckets)
 	case "skif":
 		resp.Connections = buildSkifDetails(publicDB, companyID, buckets)
+	case "gelios":
+		resp.Connections = buildGeliosDetails(publicDB, companyID, buckets)
 	case "axenta":
 		resp.Connections = buildAxentaDetails(tenantDB, buckets)
 	default:
@@ -310,6 +312,94 @@ func buildSkifDetails(publicDB *gorm.DB, companyID uint, buckets []chartBucket) 
 			})
 			detail.Created += ev.Created
 			detail.Deleted += ev.Deleted
+		}
+
+		reconstructCreatedDeleted(&detail)
+		alignHistoryWithLive(&detail)
+		out = append(out, detail)
+	}
+	return out
+}
+
+// buildGeliosDetails — per gelios_connection.
+// Live total = COUNT(gelios_units WHERE gelios_deleted_at IS NULL) — то же
+// число что sources-stats GELIOS-карта (паритет breakdown sum с "ТЕКУЩЕЕ").
+// НЕ фильтруем gc.deleted_at: sources-stats считает gelios_units по company_id
+// без join на connections, а soft-delete connection не каскадит на units —
+// иначе сумма breakdown < карты. Точное зеркало buildSkifDetails.
+// Total на конец бакета = COUNT proxy на eom (gelios_created_at <= eom AND
+// (gelios_deleted_at IS NULL OR > eom)).
+// Created/Deleted = proxy в окне [start, end) (нет skif_daily_snapshots-аналога:
+// created = gelios_created_at, deleted = gelios_deleted_at — момент
+// подтверждённого исчезновения, не реального удаления в GELIOS).
+func buildGeliosDetails(publicDB *gorm.DB, companyID uint, buckets []chartBucket) []ConnectionDetail {
+	if companyID == 0 {
+		return []ConnectionDetail{}
+	}
+
+	type connRow struct {
+		ID        uint
+		Name      string
+		LiveTotal int64
+	}
+	var conns []connRow
+	publicDB.Raw(`
+		SELECT gc.id, gc.name,
+		       COALESCE(COUNT(gu.id) FILTER (WHERE gu.gelios_deleted_at IS NULL), 0) AS live_total
+		FROM `+publicTable(publicDB, "gelios_connections")+` gc
+		LEFT JOIN `+publicTable(publicDB, "gelios_units")+` gu ON gu.connection_id = gc.id
+		WHERE gc.company_id = ?
+		GROUP BY gc.id, gc.name
+		ORDER BY gc.name
+	`, companyID).Scan(&conns)
+
+	out := make([]ConnectionDetail, 0, len(conns))
+	for _, c := range conns {
+		detail := ConnectionDetail{
+			ID:      c.ID,
+			Name:    c.Name,
+			Type:    "gelios",
+			Total:   c.LiveTotal,
+			History: make([]ConnectionHistoryPoint, 0, len(buckets)),
+		}
+
+		for _, b := range buckets {
+			eom := b.end.Add(-time.Nanosecond)
+
+			var total int64
+			publicDB.Raw(`
+				SELECT COUNT(*) FROM `+publicTable(publicDB, "gelios_units")+`
+				WHERE connection_id = ?
+				  AND COALESCE(gelios_created_at, created_at) <= ?
+				  AND (gelios_deleted_at IS NULL OR gelios_deleted_at > ?)
+			`, c.ID, eom, eom).Scan(&total)
+
+			var created int64
+			publicDB.Raw(`
+				SELECT COUNT(*) FROM `+publicTable(publicDB, "gelios_units")+`
+				WHERE connection_id = ?
+				  AND COALESCE(gelios_created_at, created_at) >= ?
+				  AND COALESCE(gelios_created_at, created_at) < ?
+			`, c.ID, b.start, b.end).Scan(&created)
+
+			var deleted int64
+			publicDB.Raw(`
+				SELECT COUNT(*) FROM `+publicTable(publicDB, "gelios_units")+`
+				WHERE connection_id = ?
+				  AND gelios_deleted_at IS NOT NULL
+				  AND gelios_deleted_at >= ?
+				  AND gelios_deleted_at < ?
+			`, c.ID, b.start, b.end).Scan(&deleted)
+
+			detail.History = append(detail.History, ConnectionHistoryPoint{
+				Date:    b.key,
+				Label:   b.label,
+				Total:   total,
+				Created: created,
+				Deleted: deleted,
+			})
+			detail.Created += created
+			detail.Deleted += deleted
 		}
 
 		reconstructCreatedDeleted(&detail)

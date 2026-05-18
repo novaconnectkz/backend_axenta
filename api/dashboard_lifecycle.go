@@ -70,12 +70,13 @@ func GetDashboardLifecycle(c *gin.Context) {
 	wh := buildWialonLifecycleByType(publicDB, "hosting", "wh", "Wialon Hosting", from, days, loc)
 	wl := buildWialonLifecycleByType(publicDB, "local", "wl", "Wialon Local", from, days, loc)
 	skif := buildSkifLifecycle(publicDB, companyID, from, days, loc)
-	total := combineLifecycle(from, days, loc, axenta, wh, wl, skif)
+	gelios := buildGeliosLifecycle(publicDB, companyID, from, days, loc)
+	total := combineLifecycle(from, days, loc, axenta, wh, wl, skif, gelios)
 
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
 		"data": LifecycleResponse{
-			Sources:     []LifecycleSource{axenta, wh, wl, skif},
+			Sources:     []LifecycleSource{axenta, wh, wl, skif, gelios},
 			Total:       total,
 			Period:      period,
 			From:        from,
@@ -157,6 +158,68 @@ func buildSkifLifecycle(db *gorm.DB, companyID uint, from time.Time, days int, l
 		  AND skif_deleted_at IS NOT NULL
 		  AND skif_deleted_at >= ?
 		  AND skif_deleted_at < ?
+		GROUP BY 1
+	`, companyID, from, to).Scan(&deleted)
+
+	for _, r := range created {
+		if i := dateIndex(from, r.Day, days); i >= 0 {
+			src.Points[i].Created = r.Count
+			src.TotalCreated += r.Count
+		}
+	}
+	for _, r := range deleted {
+		if i := dateIndex(from, r.Day, days); i >= 0 {
+			src.Points[i].Deleted = r.Count
+			src.TotalDeleted += r.Count
+		}
+	}
+	return src
+}
+
+// buildGeliosLifecycle — created/deleted proxy через gelios_units.
+// GELIOS не имеет operation-log API (нет skif_daily_snapshots-аналога),
+// поэтому строим напрямую из реестра:
+//   - created = COALESCE(gelios_created_at, created_at) per day (реальная
+//     дата создания в GELIOS, fallback на наш created_at)
+//   - deleted = gelios_deleted_at per day (момент подтверждённого
+//     исчезновения из выгрузки, НЕ реального удаления в GELIOS)
+// Прошлое до первого sync невосстановимо (forward-сбор).
+func buildGeliosLifecycle(db *gorm.DB, companyID uint, from time.Time, days int, loc *time.Location) LifecycleSource {
+	src := LifecycleSource{
+		Key:    "gelios",
+		Label:  "GELIOS",
+		Points: initLifecyclePoints(from, days, loc),
+	}
+	if companyID == 0 {
+		return src
+	}
+
+	type cntRow struct {
+		Day   time.Time
+		Count int
+	}
+	to := from.AddDate(0, 0, days)
+
+	var created []cntRow
+	db.Raw(`
+		SELECT date_trunc('day', COALESCE(gelios_created_at, created_at) AT TIME ZONE 'UTC') AS day,
+		       COUNT(*) AS count
+		FROM `+publicTable(db, "gelios_units")+`
+		WHERE company_id = ?
+		  AND COALESCE(gelios_created_at, created_at) >= ?
+		  AND COALESCE(gelios_created_at, created_at) < ?
+		GROUP BY 1
+	`, companyID, from, to).Scan(&created)
+
+	var deleted []cntRow
+	db.Raw(`
+		SELECT date_trunc('day', gelios_deleted_at AT TIME ZONE 'UTC') AS day,
+		       COUNT(*) AS count
+		FROM `+publicTable(db, "gelios_units")+`
+		WHERE company_id = ?
+		  AND gelios_deleted_at IS NOT NULL
+		  AND gelios_deleted_at >= ?
+		  AND gelios_deleted_at < ?
 		GROUP BY 1
 	`, companyID, from, to).Scan(&deleted)
 

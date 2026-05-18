@@ -30,10 +30,13 @@ type ChartPoint struct {
 	WH         int64             `json:"wh"`          // Wialon Hosting — proxy через wialon_units.created_at
 	WL         int64             `json:"wl"`          // Wialon Local — proxy
 	Skif       int64             `json:"skif"`        // SKIF.PRO — proxy через skif_units.created_at
+	Gelios     int64             `json:"gelios"`      // GELIOS — proxy через gelios_created_at
 	Revenues   []CurrencyRevenue `json:"revenues"`    // Выручки по валютам
 
 	// Per-bucket created/deleted (sum events за окно бакета).
 	// Источники: wialon_daily_snapshots / skif_daily_snapshots / axenta_object_snapshots.
+	// GELIOS — proxy из gelios_created_at/gelios_deleted_at (нет operation-log API,
+	// deleted = дата когда scheduler подтвердил исчезновение, не реального удаления).
 	AxentaCreated int64 `json:"axenta_created"`
 	AxentaDeleted int64 `json:"axenta_deleted"`
 	WHCreated     int64 `json:"wh_created"`
@@ -42,6 +45,8 @@ type ChartPoint struct {
 	WLDeleted     int64 `json:"wl_deleted"`
 	SkifCreated   int64 `json:"skif_created"`
 	SkifDeleted   int64 `json:"skif_deleted"`
+	GeliosCreated int64 `json:"gelios_created"`
+	GeliosDeleted int64 `json:"gelios_deleted"`
 }
 
 // ChartResponse — payload ответа /api/auth/dashboard/chart.
@@ -324,7 +329,22 @@ func GetDashboardChart(c *gin.Context) {
 			`, companyID, eom, eom).Scan(&skifCount)
 		}
 
-		objectsCount := axentaCount + whCount + wlCount + skifCount
+		// GELIOS: COUNT по реальной дате создания в GELIOS (gelios_created_at),
+		// fallback на наш created_at где gelios_created_at NULL. Юниты помеченные
+		// gelios_deleted_at после eom существовали тогда (как SKIF).
+		// gelios_deleted_at = момент подтверждённого исчезновения из выгрузки
+		// (не реального удаления в GELIOS — API operation-log нет).
+		var geliosCount int64
+		if companyID > 0 {
+			publicDB.Raw(`
+				SELECT COUNT(*) FROM `+publicTable(publicDB, "gelios_units")+`
+				WHERE company_id = ?
+				  AND COALESCE(gelios_created_at, created_at) <= ?
+				  AND (gelios_deleted_at IS NULL OR gelios_deleted_at > ?)
+			`, companyID, eom, eom).Scan(&geliosCount)
+		}
+
+		objectsCount := axentaCount + whCount + wlCount + skifCount + geliosCount
 
 		// Per-bucket created/deleted events (окно [b.start, b.end))
 		startStr := b.start.Format("2006-01-02")
@@ -393,6 +413,25 @@ func GetDashboardChart(c *gin.Context) {
 			skifCreated, skifDeleted = skifEv.Created, skifEv.Deleted
 		}
 
+		// GELIOS: proxy created/deleted (нет skif_daily_snapshots-аналога).
+		// created = gelios_created_at в окне, deleted = gelios_deleted_at в окне.
+		var geliosCreated, geliosDeleted int64
+		if companyID > 0 {
+			publicDB.Raw(`
+				SELECT COUNT(*) FROM `+publicTable(publicDB, "gelios_units")+`
+				WHERE company_id = ?
+				  AND COALESCE(gelios_created_at, created_at) >= ?
+				  AND COALESCE(gelios_created_at, created_at) < ?
+			`, companyID, b.start, b.end).Scan(&geliosCreated)
+			publicDB.Raw(`
+				SELECT COUNT(*) FROM `+publicTable(publicDB, "gelios_units")+`
+				WHERE company_id = ?
+				  AND gelios_deleted_at IS NOT NULL
+				  AND gelios_deleted_at >= ?
+				  AND gelios_deleted_at < ?
+			`, companyID, b.start, b.end).Scan(&geliosDeleted)
+		}
+
 		revenues := sumPaidByCurrency(publicDB, companyID, b.start, b.end)
 		for _, r := range revenues {
 			currencySet[r.Currency] = struct{}{}
@@ -406,6 +445,7 @@ func GetDashboardChart(c *gin.Context) {
 			WH:            whCount,
 			WL:            wlCount,
 			Skif:          skifCount,
+			Gelios:        geliosCount,
 			Revenues:      revenues,
 			AxentaCreated: axentaCreated,
 			AxentaDeleted: axentaDeleted,
@@ -415,6 +455,8 @@ func GetDashboardChart(c *gin.Context) {
 			WLDeleted:     wlDeleted,
 			SkifCreated:   skifCreated,
 			SkifDeleted:   skifDeleted,
+			GeliosCreated: geliosCreated,
+			GeliosDeleted: geliosDeleted,
 		})
 	}
 
