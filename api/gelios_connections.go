@@ -352,7 +352,21 @@ func CreateGeliosUserHandler(c *gin.Context) {
 
 	newID, e := geliosService().CreateGeliosUser(conn, req)
 	if e != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": e.Error()})
+		// Полировка статусов: локальная валидация → 400; GELIOS 403
+		// (дубль login / structurally impossible) → 409 Conflict; GELIOS
+		// 422 (field) → 422; прочий upstream-сбой → 502.
+		status := http.StatusBadGateway
+		if oe, ok := e.(*services.GeliosUserOpError); ok {
+			switch {
+			case oe.Local:
+				status = http.StatusBadRequest
+			case oe.UpstreamStatus == http.StatusForbidden:
+				status = http.StatusConflict
+			case oe.UpstreamStatus == http.StatusUnprocessableEntity:
+				status = http.StatusUnprocessableEntity
+			}
+		}
+		c.JSON(status, gin.H{"status": "error", "error": e.Error()})
 		return
 	}
 	// Сразу подтянуть дерево (новый юзер появится в unified/users|accounts).

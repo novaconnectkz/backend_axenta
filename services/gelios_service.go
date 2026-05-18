@@ -798,19 +798,29 @@ type GeliosUserCreateReq struct {
 	LegalName string `json:"legal_name"`
 }
 
+// GeliosUserOpError — типизированная ошибка create/delete для корректного
+// HTTP-маппинга в handler'е (локальная валидация → 400, upstream → по коду).
+type GeliosUserOpError struct {
+	Local          bool // ошибка локальной валидации (клиентский ввод)
+	UpstreamStatus int  // HTTP-код GELIOS (0 если не дошли/не upstream)
+	Msg            string
+}
+
+func (e *GeliosUserOpError) Error() string { return e.Msg }
+
 // CreateGeliosUser — POST /api/v1/users. Защита от дурака: длины валидируются
 // локально (быстрый внятный fail до сетевого вызова); creator/login GELIOS
 // добивает 403 (structurally impossible). Под per-conn lock (как Sync — общий
 // token-refresh). Возвращает GELIOS id созданного юзера.
 func (s *GeliosService) CreateGeliosUser(conn *models.GeliosConnection, req GeliosUserCreateReq) (int64, error) {
 	if len([]rune(req.Login)) < 3 {
-		return 0, fmt.Errorf("login: минимум 3 символа")
+		return 0, &GeliosUserOpError{Local: true, Msg: "login: минимум 3 символа"}
 	}
 	if len(req.Password) < 5 {
-		return 0, fmt.Errorf("password: минимум 5 символов")
+		return 0, &GeliosUserOpError{Local: true, Msg: "password: минимум 5 символов"}
 	}
 	if req.CreatorID <= 0 {
-		return 0, fmt.Errorf("creator_id обязателен")
+		return 0, &GeliosUserOpError{Local: true, Msg: "creator_id обязателен"}
 	}
 
 	mu := geliosConnLock(conn.ID)
@@ -859,7 +869,7 @@ func (s *GeliosService) CreateGeliosUser(conn *models.GeliosConnection, req Geli
 		if msg == "" {
 			msg = "запрос отклонён GELIOS"
 		}
-		return 0, fmt.Errorf("gelios create user: HTTP %d: %s", resp.StatusCode, msg)
+		return 0, &GeliosUserOpError{UpstreamStatus: resp.StatusCode, Msg: msg}
 	}
 	var created struct {
 		ID int64 `json:"id"`
