@@ -2,6 +2,10 @@ package services
 
 import (
 	"log"
+	"os"
+	"strconv"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -9,6 +13,19 @@ import (
 	"backend_axenta/database"
 	"backend_axenta/models"
 )
+
+// geliosSyncWorkers — размер worker-pool тика (env GELIOS_SYNC_WORKERS,
+// дефолт 4). Распараллеливает sync РАЗНЫХ connections; один conn
+// защищён per-conn TryLock в SyncUnits.
+func geliosSyncWorkers() int {
+	w := 4
+	if v := os.Getenv("GELIOS_SYNC_WORKERS"); v != "" {
+		if n, e := strconv.Atoi(v); e == nil && n > 0 {
+			w = n
+		}
+	}
+	return w
+}
 
 // GeliosSyncScheduler — фоновый sync объектов GELIOS GPS.
 //
@@ -24,6 +41,10 @@ type GeliosSyncScheduler struct {
 	tickInterval time.Duration
 	isRunning    bool
 	entryID      cron.EntryID
+	// tickRunning — self-guard tick(): закрывает overlap НЕЗАВИСИМО от
+	// вызывающего (cron-chain SkipIfStillRunning не покрывает первичный
+	// `go s.tick()` из Start()). Belt-and-suspenders с cron-chain.
+	tickRunning atomic.Bool
 }
 
 func NewGeliosSyncScheduler(tickIntervalMin int) *GeliosSyncScheduler {
@@ -33,7 +54,12 @@ func NewGeliosSyncScheduler(tickIntervalMin int) *GeliosSyncScheduler {
 	return &GeliosSyncScheduler{
 		cron: cron.New(
 			cron.WithLocation(time.UTC),
-			cron.WithChain(cron.Recover(cron.DefaultLogger)),
+			// SkipIfStillRunning: долгий тик не плодит внахлёст новые
+			// pool'ы → нет ложных TryLock-failed++ и pool/DB-churn.
+			cron.WithChain(
+				cron.SkipIfStillRunning(cron.DefaultLogger),
+				cron.Recover(cron.DefaultLogger),
+			),
 		),
 		tickInterval: time.Duration(tickIntervalMin) * time.Minute,
 	}
@@ -64,7 +90,14 @@ func (s *GeliosSyncScheduler) Start() error {
 
 func (s *GeliosSyncScheduler) Stop() {
 	if s.cron != nil {
-		s.cron.Stop()
+		// cron.Stop() возвращает ctx, закрываемый когда running job
+		// завершился. Ждём bounded (graceful), не висим вечно.
+		ctx := s.cron.Stop()
+		select {
+		case <-ctx.Done():
+		case <-time.After(35 * time.Second):
+			log.Printf("⚠️ GeliosSyncScheduler: Stop timeout 35s — тик ещё бежит")
+		}
 		s.isRunning = false
 		log.Printf("🛑 GeliosSyncScheduler остановлен")
 	}
@@ -73,6 +106,14 @@ func (s *GeliosSyncScheduler) Stop() {
 func (s *GeliosSyncScheduler) IsRunning() bool { return s.isRunning }
 
 func (s *GeliosSyncScheduler) tick() {
+	// Self-guard: только один tick одновременно (cron-тик ИЛИ первичный
+	// go-тик из Start()). Иначе — скип (overlap = ложные failed/churn).
+	if !s.tickRunning.CompareAndSwap(false, true) {
+		log.Printf("⏭ GeliosSyncScheduler: предыдущий тик ещё бежит — скип")
+		return
+	}
+	defer s.tickRunning.Store(false)
+
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("❌ ПАНИКА в GeliosSyncScheduler.tick: %v", r)
@@ -96,29 +137,58 @@ func (s *GeliosSyncScheduler) tick() {
 	}
 
 	now := time.Now()
-	svc := NewGeliosService(database.DB)
-	synced, skipped, failed := 0, 0, 0
+	svc := NewGeliosService(database.DB) // *gorm.DB и http.Client concurrency-safe
 
+	// 1. Due-фильтр последовательно (без I/O, дёшево).
+	due := make([]*models.GeliosConnection, 0, len(conns))
+	skipped := 0
 	for i := range conns {
 		conn := &conns[i]
 		if conn.SyncInterval <= 0 {
 			conn.SyncInterval = 15
 		}
-		if conn.LastSyncAt != nil {
-			if now.Sub(*conn.LastSyncAt) < time.Duration(conn.SyncInterval)*time.Minute {
-				skipped++
-				continue
-			}
-		}
-		log.Printf("🔄 GeliosSyncScheduler: sync conn=%d (%s) interval=%dм", conn.ID, conn.Name, conn.SyncInterval)
-		if _, err := svc.SyncUnits(conn); err != nil {
-			log.Printf("⚠️ GeliosSyncScheduler: conn=%d sync error: %v", conn.ID, err)
-			failed++
+		if conn.LastSyncAt != nil &&
+			now.Sub(*conn.LastSyncAt) < time.Duration(conn.SyncInterval)*time.Minute {
+			skipped++
 			continue
 		}
-		synced++
+		due = append(due, conn)
 	}
 
-	log.Printf("✅ GeliosSyncScheduler: тик завершён, total=%d synced=%d skipped=%d failed=%d за %v",
-		len(conns), synced, skipped, failed, time.Since(now).Round(time.Millisecond))
+	// 2. Bounded worker-pool по due-conns. Разные conn параллельны
+	// безопасно (SyncUnits держит per-conn TryLock; conn-структуры
+	// различны — каждый своя строка БД). Counters атомарны.
+	workers := geliosSyncWorkers()
+	if len(due) > 0 && workers > len(due) {
+		workers = len(due)
+	}
+	var synced, failed int64
+	sem := make(chan struct{}, workers)
+	var wg sync.WaitGroup
+	for _, conn := range due {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(c *models.GeliosConnection) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			defer func() {
+				if r := recover(); r != nil {
+					atomic.AddInt64(&failed, 1)
+					log.Printf("❌ ПАНИКА GeliosSyncScheduler worker conn=%d: %v", c.ID, r)
+				}
+			}()
+			log.Printf("🔄 GeliosSyncScheduler: sync conn=%d (%s) interval=%dм", c.ID, c.Name, c.SyncInterval)
+			if _, err := svc.SyncUnits(c); err != nil {
+				log.Printf("⚠️ GeliosSyncScheduler: conn=%d sync error: %v", c.ID, err)
+				atomic.AddInt64(&failed, 1)
+				return
+			}
+			atomic.AddInt64(&synced, 1)
+		}(conn)
+	}
+	wg.Wait()
+
+	log.Printf("✅ GeliosSyncScheduler: тик завершён, total=%d synced=%d skipped=%d failed=%d workers=%d за %v",
+		len(conns), atomic.LoadInt64(&synced), skipped, atomic.LoadInt64(&failed), workers,
+		time.Since(now).Round(time.Millisecond))
 }
