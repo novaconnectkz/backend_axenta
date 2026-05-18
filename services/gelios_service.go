@@ -188,6 +188,10 @@ func geliosUnixPtr(v *int64) *time.Time {
 
 const geliosPageSize = 500
 
+// geliosEmptyConfirmTicks — сколько подряд totalCount=0 синков нужно
+// чтобы поверить в реально пустой аккаунт и mass-soft-delete (API-flap).
+const geliosEmptyConfirmTicks = 2
+
 // geliosConnLocks — per-connection mutex (prod = single systemd-процесс).
 // Защищает от overlap: scheduler-tick + ручной /sync + cron overlap
 // иначе бьют по token-кешу, counters и soft-delete окну.
@@ -331,14 +335,66 @@ func (s *GeliosService) SyncUnits(conn *models.GeliosConnection) (int, error) {
 	}
 
 	if expectedTotal == 0 {
-		// Легитимно пустой аккаунт (подтверждённый totalCount=0) →
-		// все ранее живые помечаем удалёнными.
-		res := s.db.Model(&models.GeliosUnit{}).
+		// API-flap защита: чистый totalCount=0 неотличим от сбоя GELIOS.
+		// Если были живые юниты — НЕ массово удаляем сразу, ждём
+		// geliosEmptyConfirmTicks подтверждений подряд (transient 0 не
+		// сносит флот; реально пустой аккаунт чистится через N тиков).
+		var liveCount int64
+		if e := s.db.Model(&models.GeliosUnit{}).
 			Where("connection_id = ? AND gelios_deleted_at IS NULL", conn.ID).
-			Update("gelios_deleted_at", now)
-		if res.Error == nil && res.RowsAffected > 0 {
-			log.Printf("🗑 GELIOS conn=%d: аккаунт пуст, помечено удалёнными %d", conn.ID, res.RowsAffected)
+			Count(&liveCount).Error; e != nil {
+			// DB-сбой на live-count → НЕ трактуем как пустой аккаунт
+			// (иначе success-блок ложно сбросит streak и объявит успех).
+			s.recordError(conn, fmt.Sprintf("live-count: %v", e))
+			log.Printf("⚠️ GELIOS conn=%d: live-count fail: %v", conn.ID, e)
+			return saved, fmt.Errorf("gelios conn=%d: live-count: %w", conn.ID, e)
 		}
+		if liveCount > 0 {
+			// Streak читаем СВЕЖИМ из БД под per-conn lock: scheduler
+			// batch-загружает conns заранее, ручной sync мог сбросить
+			// empty_sync_streak в БД между load и обработкой — stale
+			// struct-значение иначе досрочно открыло бы mass-delete.
+			var freshStreak int
+			if e := s.db.Model(&models.GeliosConnection{}).
+				Select("empty_sync_streak").Where("id = ?", conn.ID).
+				Scan(&freshStreak).Error; e != nil {
+				// DB-сбой на чтении streak → transient, не решаем по
+				// неизвестному состоянию (единообразно с live-count).
+				s.recordError(conn, fmt.Sprintf("fresh-streak read: %v", e))
+				log.Printf("⚠️ GELIOS conn=%d: fresh-streak read fail: %v", conn.ID, e)
+				return saved, fmt.Errorf("gelios conn=%d: fresh-streak read: %w", conn.ID, e)
+			}
+			streak := freshStreak + 1
+			if streak < geliosEmptyConfirmTicks {
+				if e := s.db.Model(conn).Update("empty_sync_streak", streak).Error; e != nil {
+					// Не персистнули streak → следующий тик начнёт заново
+					// (лишняя задержка, но НЕ ложный delete/success).
+					log.Printf("⚠️ GELIOS conn=%d: persist streak fail: %v", conn.ID, e)
+				}
+				msg := fmt.Sprintf("totalCount=0 при %d живых — подтверждение %d/%d, mass-delete отложен (API-flap защита)",
+					liveCount, streak, geliosEmptyConfirmTicks)
+				s.recordError(conn, msg)
+				log.Printf("⚠️ GELIOS conn=%d: %s", conn.ID, msg)
+				return saved, fmt.Errorf("gelios conn=%d: %s", conn.ID, msg)
+			}
+			// Подтверждено N тиков подряд → реально пустой аккаунт.
+			res := s.db.Model(&models.GeliosUnit{}).
+				Where("connection_id = ? AND gelios_deleted_at IS NULL", conn.ID).
+				Update("gelios_deleted_at", now)
+			if res.Error != nil {
+				// Delete не выполнился → подтверждение НЕ теряем (streak
+				// не сбрасываем, success не объявляем) — иначе легит-пустой
+				// никогда не очистится.
+				s.recordError(conn, fmt.Sprintf("confirmed-empty delete: %v", res.Error))
+				log.Printf("⚠️ GELIOS conn=%d: confirmed-empty delete fail: %v", conn.ID, res.Error)
+				return saved, fmt.Errorf("gelios conn=%d: confirmed-empty delete: %w", conn.ID, res.Error)
+			}
+			if res.RowsAffected > 0 {
+				log.Printf("🗑 GELIOS conn=%d: пусто подтверждено %dx, помечено удалёнными %d",
+					conn.ID, streak, res.RowsAffected)
+			}
+		}
+		// liveCount==0 → нечего удалять (success-блок ниже сбросит streak).
 	} else {
 		seen := make([]string, 0, len(seenSet))
 		for uid := range seenSet {
@@ -355,11 +411,12 @@ func (s *GeliosService) SyncUnits(conn *models.GeliosConnection) (int, error) {
 	}
 
 	s.db.Model(conn).Updates(map[string]interface{}{
-		"units_count":   len(seenSet), // уникальные (без дублей пагинации)
-		"last_sync_at":  &now,
-		"error_message": "",
-		"error_count":   0,
-		"last_error_at": nil,
+		"units_count":       len(seenSet), // уникальные (без дублей пагинации)
+		"last_sync_at":      &now,
+		"error_message":     "",
+		"error_count":       0,
+		"last_error_at":     nil,
+		"empty_sync_streak": 0, // здоровый/подтверждённый синк → сброс
 	})
 	log.Printf("✅ GELIOS sync units: conn=%d unique=%d total=%d", conn.ID, len(seenSet), expectedTotal)
 	return saved, nil

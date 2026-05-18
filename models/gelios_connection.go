@@ -41,6 +41,12 @@ type GeliosConnection struct {
 	LastSyncAt *time.Time `json:"last_sync_at"`
 	UnitsCount int        `json:"units_count" gorm:"default:0"`
 
+	// EmptySyncStreak — сколько ПОДРЯД синков вернули totalCount=0 при
+	// наличии живых юнитов. Защита от API-flap: mass-soft-delete только
+	// после geliosEmptyConfirmTicks подтверждений (transient 0 не сносит
+	// флот; легит-пустой аккаунт чистится после подтверждения).
+	EmptySyncStreak int `json:"-" gorm:"default:0"`
+
 	// Sync settings
 	SyncInterval    int  `json:"sync_interval" gorm:"default:15"` // минуты
 	AutoSyncEnabled bool `json:"auto_sync_enabled" gorm:"default:false"`
