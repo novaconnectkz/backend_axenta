@@ -68,9 +68,10 @@ func GetDashboardSourcesStats(c *gin.Context) {
 	axenta := buildAxentaSourceStats(tenantDB)
 	wh, wl := buildWialonSourceStats(companyID)
 	skif := buildSkifSourceStats(companyID)
+	gelios := buildGeliosSourceStats(companyID)
 
 	total := SourceStats{Key: "all", Label: "Все"}
-	for _, s := range []SourceStats{axenta, wh, wl, skif} {
+	for _, s := range []SourceStats{axenta, wh, wl, skif, gelios} {
 		total.Objects.Total += s.Objects.Total
 		total.Objects.Active += s.Objects.Active
 		total.Objects.Inactive += s.Objects.Inactive
@@ -85,7 +86,7 @@ func GetDashboardSourcesStats(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
 		"data": SourcesStatsResponse{
-			Sources: []SourceStats{axenta, wh, wl, skif},
+			Sources: []SourceStats{axenta, wh, wl, skif, gelios},
 			Total:   total,
 		},
 	})
@@ -139,6 +140,61 @@ func buildSkifSourceStats(companyID uint) SourceStats {
 	s.Accounts.Active = int(cc.Active)
 	s.Accounts.Blocked = int(cc.Blocked)
 	s.Accounts.Clients = int(cc.Total) // SKIF подключение = клиентский аккаунт
+	return s
+}
+
+// buildGeliosSourceStats — агрегаты по GELIOS юнитам и подключениям.
+// Объекты: COUNT gelios_units по company_id (gelios_deleted_at учитывается
+// отдельно — soft-delete). Аккаунты: 1 на каждый gelios_connection.
+func buildGeliosSourceStats(companyID uint) SourceStats {
+	s := SourceStats{Key: "gelios", Label: "GELIOS"}
+	if database.DB == nil {
+		return s
+	}
+
+	type objCounts struct {
+		Total    int64
+		Active   int64
+		Inactive int64
+		Deleted  int64
+	}
+	var oc objCounts
+	if err := database.DB.Raw(`
+		SELECT
+			COUNT(*) FILTER (WHERE gelios_deleted_at IS NULL) AS total,
+			COUNT(*) FILTER (WHERE gelios_deleted_at IS NULL AND is_active = true) AS active,
+			COUNT(*) FILTER (WHERE gelios_deleted_at IS NULL AND is_active = false) AS inactive,
+			COUNT(*) FILTER (WHERE gelios_deleted_at IS NOT NULL) AS deleted
+		FROM gelios_units
+		WHERE company_id = ?
+	`, companyID).Scan(&oc).Error; err != nil {
+		log.Printf("⚠️ sources-stats gelios objects: %v", err)
+	}
+	s.Objects.Total = int(oc.Total)
+	s.Objects.Active = int(oc.Active)
+	s.Objects.Inactive = int(oc.Inactive)
+	s.Objects.Deleted = int(oc.Deleted)
+
+	type connCounts struct {
+		Total   int64
+		Active  int64
+		Blocked int64
+	}
+	var cc connCounts
+	if err := database.DB.Raw(`
+		SELECT
+			COUNT(*) AS total,
+			COUNT(*) FILTER (WHERE is_active = true) AS active,
+			COUNT(*) FILTER (WHERE is_active = false) AS blocked
+		FROM gelios_connections
+		WHERE company_id = ? AND deleted_at IS NULL
+	`, companyID).Scan(&cc).Error; err != nil {
+		log.Printf("⚠️ sources-stats gelios connections: %v", err)
+	}
+	s.Accounts.Total = int(cc.Total)
+	s.Accounts.Active = int(cc.Active)
+	s.Accounts.Blocked = int(cc.Blocked)
+	s.Accounts.Clients = int(cc.Total) // GELIOS подключение = клиентский аккаунт
 	return s
 }
 
