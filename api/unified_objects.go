@@ -622,18 +622,20 @@ func fetchGeliosObjectsFast(companyID uint, search, active string) ([]UnifiedObj
 
 	if search != "" {
 		terms := splitSearchTerms(search)
+		// Поиск по name/imei/phone/phone2 — строка поиска обещает
+		// «по названию, IMEI, номеру телефона» (Codex #5b).
 		if len(terms) > 1 {
-			ph := make([]string, 0, len(terms)*2)
-			args := make([]any, 0, len(terms)*2)
+			ph := make([]string, 0, len(terms)*4)
+			args := make([]any, 0, len(terms)*4)
 			for _, t := range terms {
 				p := "%" + strings.ToLower(t) + "%"
-				ph = append(ph, "LOWER(name) LIKE ?", "LOWER(imei) LIKE ?")
-				args = append(args, p, p)
+				ph = append(ph, "LOWER(name) LIKE ?", "LOWER(imei) LIKE ?", "LOWER(phone) LIKE ?", "LOWER(phone2) LIKE ?")
+				args = append(args, p, p, p, p)
 			}
 			q = q.Where(strings.Join(ph, " OR "), args...)
 		} else {
 			p := "%" + strings.ToLower(search) + "%"
-			q = q.Where("LOWER(name) LIKE ? OR LOWER(imei) LIKE ?", p, p)
+			q = q.Where("LOWER(name) LIKE ? OR LOWER(imei) LIKE ? OR LOWER(phone) LIKE ? OR LOWER(phone2) LIKE ?", p, p, p, p)
 		}
 	}
 	if active == "true" || active == "1" {
@@ -671,14 +673,31 @@ func fetchGeliosObjectsFast(companyID uint, search, active string) ([]UnifiedObj
 		if r.LastMsgAt != nil {
 			lastMsg = r.LastMsgAt.Format(time.RFC3339)
 		}
+		phones := make([]string, 0, 2)
+		if r.Phone != "" {
+			phones = append(phones, r.Phone)
+		}
+		if r.Phone2 != "" {
+			phones = append(phones, r.Phone2)
+		}
+		// Идентификатор (колонка ID/IMEI) = IMEI (реальный device id в GELIOS),
+		// fallback на внутренний gelios unit id если imei пуст.
+		uniqueID := r.IMEI
+		if uniqueID == "" {
+			uniqueID = r.GeliosUnitID
+		}
 		connID := r.ConnectionID
 		out = append(out, UnifiedObject{
-			ID:                  int64(r.ID),
-			Name:                r.Name,
-			UniqueID:            r.GeliosUnitID,
-			IMEI:                r.IMEI,
-			IsActive:            r.IsActive,
+			ID:       int64(r.ID),
+			Name:     r.Name,
+			UniqueID: uniqueID,
+			IMEI:     r.IMEI,
+			IsActive: r.IsActive,
+			// Учетка = владелец объекта в GELIOS (creator-узел дерева).
+			AccountName:         r.GeliosCreatorLogin,
 			CreatorName:         r.GeliosCreatorLogin,
+			DeviceTypeName:      r.HwTypeName,
+			PhoneNumbers:        phones,
 			CreatedAt:           createdAt,
 			LastMessageDatetime: lastMsg,
 			Source:              "gelios",

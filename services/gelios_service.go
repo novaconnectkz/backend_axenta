@@ -239,6 +239,8 @@ type geliosUnitItem struct {
 	ID      int64  `json:"id"`
 	Name    string `json:"name"`
 	IMEI    string `json:"imei"`
+	Phone   string `json:"phone"`
+	Phone2  string `json:"phone2"`
 	IsBlock bool   `json:"isBlock"`
 	Removed bool   `json:"removed"`
 	// Unix epoch seconds; null → nil.
@@ -248,6 +250,9 @@ type geliosUnitItem struct {
 		ID    int64  `json:"id"`
 		Login string `json:"login"`
 	} `json:"creator"`
+	HwType *struct {
+		Name string `json:"name"`
+	} `json:"hwType"` // тип оборудования ("Wialon Combine")
 	LastMsg *struct {
 		Time int64 `json:"time"`
 	} `json:"lastMsg"`
@@ -352,11 +357,18 @@ func (s *GeliosService) SyncUnits(conn *models.GeliosConnection) (int, error) {
 			if it.LastMsg != nil {
 				lastMsg = geliosUnixPtr(&it.LastMsg.Time)
 			}
+			hwType := ""
+			if it.HwType != nil {
+				hwType = it.HwType.Name
+			}
 			row := models.GeliosUnit{
 				ConnectionID:       conn.ID,
 				GeliosUnitID:       uid,
 				Name:               it.Name,
 				IMEI:               it.IMEI,
+				Phone:              it.Phone,
+				Phone2:             it.Phone2,
+				HwTypeName:         hwType,
 				IsActive:           !it.Removed && !it.IsBlock,
 				CompanyID:          conn.CompanyID,
 				GeliosCreatorID:    it.Creator.ID,
@@ -368,9 +380,18 @@ func (s *GeliosService) SyncUnits(conn *models.GeliosConnection) (int, error) {
 			}
 			if e := s.db.Clauses(clause.OnConflict{
 				Columns: []clause.Column{{Name: "connection_id"}, {Name: "gelios_unit_id"}},
+				// phone/phone2/hw_type_name — изменяемые current-state атрибуты
+				// (как name/imei): GELIOS units API отдаёт полный объект (поле=""
+				// если очищено, не отсутствует), completeness-gate отсекает
+				// частичные дампы → unconditional overwrite корректен. НЕ
+				// COALESCE-preserve (в отличие от иммутабельного gelios_created_at):
+				// иначе легитимная очистка телефона не отразилась бы (Codex #4).
 				DoUpdates: clause.Assignments(map[string]interface{}{
 					"name":                 row.Name,
 					"imei":                 row.IMEI,
+					"phone":                row.Phone,
+					"phone2":               row.Phone2,
+					"hw_type_name":         row.HwTypeName,
 					"is_active":            row.IsActive,
 					"company_id":           row.CompanyID,
 					"gelios_creator_id":    row.GeliosCreatorID,

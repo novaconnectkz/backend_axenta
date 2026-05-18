@@ -18,10 +18,13 @@ type GeliosUnit struct {
 	ConnectionID uint   `json:"connection_id" gorm:"not null;index;uniqueIndex:uq_gelios_units_conn_unit"`
 	GeliosUnitID string `json:"gelios_unit_id" gorm:"not null;type:varchar(100);uniqueIndex:uq_gelios_units_conn_unit"` // unit.id из GELIOS
 
-	Name      string `json:"name"       gorm:"type:varchar(255)"`
-	IMEI      string `json:"imei"       gorm:"type:varchar(50);index"`
-	IsActive  bool   `json:"is_active"  gorm:"index;default:true"` // !removed && !isBlock
-	CompanyID uint   `json:"company_id" gorm:"index"`              // ACRM tenant company_id (для фильтра)
+	Name       string `json:"name"       gorm:"type:varchar(255)"`
+	IMEI       string `json:"imei"       gorm:"type:varchar(50);index"`
+	Phone      string `json:"phone"        gorm:"type:varchar(32)"`  // GELIOS unit.phone (основной)
+	Phone2     string `json:"phone2"       gorm:"type:varchar(32)"`  // GELIOS unit.phone2 (дополнительный)
+	HwTypeName string `json:"hw_type_name" gorm:"type:varchar(128)"` // GELIOS unit.hwType.name (тип оборудования)
+	IsActive   bool   `json:"is_active"  gorm:"index;default:true"`  // !removed && !isBlock
+	CompanyID  uint   `json:"company_id" gorm:"index"`               // ACRM tenant company_id (для фильтра)
 
 	// Владелец-аккаунт в GELIOS (creator). На тест-токене маскирован (id=0, login="*****").
 	GeliosCreatorID    int64  `json:"gelios_creator_id"    gorm:"index"`
