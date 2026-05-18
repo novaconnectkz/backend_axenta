@@ -534,6 +534,10 @@ type geliosUserItem struct {
 		All    int `json:"all"`
 		Active int `json:"active"`
 	} `json:"unitsCount"`
+	Timestamp *struct {
+		Create    *int64 `json:"create"`
+		LastLogin *int64 `json:"lastLogin"`
+	} `json:"timestamp"`
 }
 
 // SyncGeliosUsers — зеркало SyncUnits для дерева пользователей GELIOS.
@@ -641,6 +645,10 @@ func (s *GeliosService) SyncGeliosUsers(conn *models.GeliosConnection) (int, err
 			if uc := it.UnitsCount; uc != nil {
 				row.UnitsCount = uc.All
 			}
+			if ts := it.Timestamp; ts != nil {
+				row.GeliosCreatedAt = geliosUnixPtr(ts.Create)
+				row.LastLoginAt = geliosUnixPtr(ts.LastLogin)
+			}
 			if e := s.db.Clauses(clause.OnConflict{
 				Columns: []clause.Column{{Name: "connection_id"}, {Name: "gelios_user_id"}},
 				DoUpdates: clause.Assignments(map[string]interface{}{
@@ -665,9 +673,16 @@ func (s *GeliosService) SyncGeliosUsers(conn *models.GeliosConnection) (int, err
 					"payment_period_name": row.PaymentPeriodName,
 					"payment_period_len":  row.PaymentPeriodLen,
 					"units_count":         row.UnitsCount,
-					"last_collected_at":   row.LastCollectedAt,
-					"gelios_deleted_at":   nil, // юзер вернулся → сброс mark
-					"updated_at":          time.Now(),
+					// Дата создания иммутабельна, last_login монотонен: если
+					// GELIOS не отдал timestamp в этот sync (nil) — НЕ затираем
+					// уже сохранённое (Codex High). COALESCE(новое, старое).
+					"gelios_created_at": gorm.Expr(
+						"COALESCE(EXCLUDED.gelios_created_at, gelios_users.gelios_created_at)"),
+					"last_login_at": gorm.Expr(
+						"COALESCE(EXCLUDED.last_login_at, gelios_users.last_login_at)"),
+					"last_collected_at": row.LastCollectedAt,
+					"gelios_deleted_at": nil, // юзер вернулся → сброс mark
+					"updated_at":        time.Now(),
 				}),
 			}).Create(&row).Error; e != nil {
 				log.Printf("⚠️ GELIOS upsert user %s: %v", uid, e)

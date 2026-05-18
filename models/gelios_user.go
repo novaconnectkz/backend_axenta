@@ -51,6 +51,10 @@ type GeliosUser struct {
 
 	CompanyID uint `json:"company_id" gorm:"index"` // ACRM tenant company_id (для фильтра)
 
+	// Из GELIOS timestamp{create,lastLogin,block} (unix epoch sec).
+	GeliosCreatedAt *time.Time `json:"gelios_created_at" gorm:"index"` // timestamp.create — дата создания в GELIOS
+	LastLoginAt     *time.Time `json:"last_login_at"     gorm:"index"` // timestamp.lastLogin
+
 	LastCollectedAt time.Time  `json:"last_collected_at" gorm:"not null;index"`
 	GeliosDeletedAt *time.Time `json:"gelios_deleted_at" gorm:"index"` // Когда юзер исчез из выгрузки (soft-delete метка; GELIOS DELETE = hard)
 	CreatedAt       time.Time  `json:"created_at"`

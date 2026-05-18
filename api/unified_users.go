@@ -1199,23 +1199,33 @@ func fetchGeliosUsersFast(companyID uint, search, activeStr, roleFilter string) 
 		if r.LegalName != "" {
 			name = r.LegalName
 		}
+		creationDT := ""
+		if r.GeliosCreatedAt != nil {
+			creationDT = r.GeliosCreatedAt.Format(time.RFC3339)
+		}
+		lastLogin := ""
+		if r.LastLoginAt != nil {
+			lastLogin = r.LastLoginAt.Format(time.RFC3339)
+		}
 		connID := r.ConnectionID
 		users = append(users, UnifiedUser{
-			ID:           int64(r.ID),
-			Username:     r.Login,
-			Name:         name,
-			Email:        r.Email,
-			Role:         role,
-			IsActive:     !r.IsBlock,
-			CreatorName:  r.CreatorLogin,
-			Source:       "gelios",
-			SourceLabel:  sourceLabel,
-			Hierarchy:    r.CreatorLogin,
-			ConnectionID: &connID,
-			AccountType:  role,
-			DealerRights: r.IsAdmin,
-			Phone:        r.Phone,
-			ExternalID:   r.GeliosUserID,
+			ID:               int64(r.ID),
+			Username:         r.Login,
+			Name:             name,
+			Email:            r.Email,
+			Role:             role,
+			IsActive:         !r.IsBlock,
+			CreationDatetime: creationDT,
+			CreatorName:      r.CreatorLogin,
+			Source:           "gelios",
+			SourceLabel:      sourceLabel,
+			Hierarchy:        r.CreatorLogin,
+			ConnectionID:     &connID,
+			AccountType:      role,
+			DealerRights:     r.IsAdmin,
+			Phone:            r.Phone,
+			LastLogin:        lastLogin,
+			ExternalID:       r.GeliosUserID,
 		})
 	}
 

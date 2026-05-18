@@ -838,6 +838,10 @@ func fetchGeliosAccountsForUnified(companyID uint, search, accountType, activeSt
 		if active {
 			objActive = r.UnitsCount
 		}
+		creationDT := ""
+		if r.GeliosCreatedAt != nil {
+			creationDT = r.GeliosCreatedAt.Format(time.RFC3339)
+		}
 		connID := r.ConnectionID
 		items = append(items, UnifiedAccount{
 			ID:                int(r.ID),
@@ -846,6 +850,7 @@ func fetchGeliosAccountsForUnified(companyID uint, search, accountType, activeSt
 			ObjectsTotal:      r.UnitsCount,
 			ObjectsActive:     objActive,
 			IsActive:          active,
+			CreationDatetime:  creationDT,
 			ParentAccountName: r.CreatorLogin,
 			Hierarchy:         r.CreatorLogin,
 			Source:            "gelios",
