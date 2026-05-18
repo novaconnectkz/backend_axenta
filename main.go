@@ -1039,6 +1039,9 @@ func main() {
 	apiGroup.DELETE("/gelios/connections/:id", api.DeleteGeliosConnection)
 	apiGroup.POST("/gelios/connections/:id/test", api.TestGeliosConnection)
 	apiGroup.POST("/gelios/connections/:id/sync", api.SyncGeliosConnection)
+	apiGroup.POST("/gelios/connections/:id/users", api.CreateGeliosUserHandler)
+	apiGroup.DELETE("/gelios/connections/:id/users/:userId", api.DeleteGeliosUserHandler)
+	apiGroup.GET("/gelios/connections/:id/creators", api.ListGeliosCreatorsHandler)
 	apiGroup.GET("/gelios/health", api.GetGeliosHealth)
 	apiGroup.GET("/gelios/health/", api.GetGeliosHealth)
 

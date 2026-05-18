@@ -787,6 +787,129 @@ func (s *GeliosService) SyncGeliosUsers(conn *models.GeliosConnection) (int, err
 	return saved, nil
 }
 
+// GeliosUserCreateReq — вход создания GELIOS-юзера (только разведанные поля).
+type GeliosUserCreateReq struct {
+	Login     string `json:"login"`
+	Password  string `json:"password"`
+	CreatorID int64  `json:"creator_id"` // GELIOS id родителя (узел дерева)
+	IsAdmin   bool   `json:"is_admin"`
+	Email     string `json:"email"`
+	Phone     string `json:"phone"`
+	LegalName string `json:"legal_name"`
+}
+
+// CreateGeliosUser — POST /api/v1/users. Защита от дурака: длины валидируются
+// локально (быстрый внятный fail до сетевого вызова); creator/login GELIOS
+// добивает 403 (structurally impossible). Под per-conn lock (как Sync — общий
+// token-refresh). Возвращает GELIOS id созданного юзера.
+func (s *GeliosService) CreateGeliosUser(conn *models.GeliosConnection, req GeliosUserCreateReq) (int64, error) {
+	if len([]rune(req.Login)) < 3 {
+		return 0, fmt.Errorf("login: минимум 3 символа")
+	}
+	if len(req.Password) < 5 {
+		return 0, fmt.Errorf("password: минимум 5 символов")
+	}
+	if req.CreatorID <= 0 {
+		return 0, fmt.Errorf("creator_id обязателен")
+	}
+
+	mu := geliosConnLock(conn.ID)
+	if !mu.TryLock() {
+		return 0, fmt.Errorf("gelios conn=%d занят (sync/op уже выполняется)", conn.ID)
+	}
+	defer mu.Unlock()
+
+	tok, err := s.token(conn)
+	if err != nil {
+		return 0, err
+	}
+	body, _ := json.Marshal(map[string]interface{}{
+		"login": req.Login, "password": req.Password,
+		"creatorId": req.CreatorID, "isAdmin": req.IsAdmin,
+		"email": req.Email, "phone": req.Phone, "legalName": req.LegalName,
+	})
+	httpReq, e := http.NewRequest(http.MethodPost, s.baseURL(conn)+"/api/v1/users", strings.NewReader(string(body)))
+	if e != nil {
+		return 0, e
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+tok)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json")
+	resp, e := s.cli.Do(httpReq)
+	if e != nil {
+		return 0, fmt.Errorf("gelios create user: %w", e)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		// НЕ прокидываем raw body: запрос содержит password, если GELIOS
+		// когда-либо эхо-нёт его в ошибке — утечёт клиенту (Codex Sec).
+		// Извлекаем только известные безопасные поля.
+		var er struct {
+			Error  string `json:"error"`
+			Detail any    `json:"detail"`
+		}
+		_ = json.Unmarshal(respBody, &er)
+		msg := er.Error
+		if msg == "" && er.Detail != nil {
+			if d, e := json.Marshal(er.Detail); e == nil {
+				msg = string(d) // 422 detail[] = {loc,msg,type} — без пароля
+			}
+		}
+		if msg == "" {
+			msg = "запрос отклонён GELIOS"
+		}
+		return 0, fmt.Errorf("gelios create user: HTTP %d: %s", resp.StatusCode, msg)
+	}
+	var created struct {
+		ID int64 `json:"id"`
+	}
+	if e := json.Unmarshal(respBody, &created); e != nil || created.ID == 0 {
+		return 0, fmt.Errorf("gelios create user: не распарсен id ответа")
+	}
+	return created.ID, nil
+}
+
+// DeleteGeliosUser — DELETE /api/v1/users/{geliosUserID}. HARD-delete в GELIOS.
+// Idempotent: 403 "Access denied" (уже нет / вне scope) трактуем как success
+// (sync всё равно бы пометил). Под per-conn lock. Защита root/scope — в
+// handler'е (только known gelios_users этого conn, см. api).
+func (s *GeliosService) DeleteGeliosUser(conn *models.GeliosConnection, geliosUserID string) error {
+	mu := geliosConnLock(conn.ID)
+	if !mu.TryLock() {
+		return fmt.Errorf("gelios conn=%d занят (sync/op уже выполняется)", conn.ID)
+	}
+	defer mu.Unlock()
+
+	tok, err := s.token(conn)
+	if err != nil {
+		return err
+	}
+	httpReq, e := http.NewRequest(http.MethodDelete, s.baseURL(conn)+"/api/v1/users/"+url.PathEscape(geliosUserID), nil)
+	if e != nil {
+		return e
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+tok)
+	httpReq.Header.Set("Accept", "application/json")
+	resp, e := s.cli.Do(httpReq)
+	if e != nil {
+		return fmt.Errorf("gelios delete user: %w", e)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	switch {
+	case resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusOK:
+		return nil
+	case resp.StatusCode == http.StatusForbidden &&
+		strings.Contains(string(respBody), "Access denied"):
+		// «уже нет» / вне scope — idempotent success (sync синхронизировал бы).
+		log.Printf("ℹ️ GELIOS delete user %s: 403 Access denied → idempotent (уже отсутствует)", geliosUserID)
+		return nil
+	default:
+		return fmt.Errorf("gelios delete user: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+}
+
 func (s *GeliosService) recordError(conn *models.GeliosConnection, msg string) {
 	now := time.Now()
 	s.db.Model(conn).Updates(map[string]interface{}{
