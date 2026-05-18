@@ -183,6 +183,18 @@ func GetAllMigrations() []MigrationInfo {
 			IsGlobal:    true,
 		},
 		{
+			TableName:   "gelios_connections",
+			Model:       &models.GeliosConnection{},
+			Description: "Подключения к GELIOS GPS (api.geliospro.com, OAuth2 Bearer auth, multi-tenant)",
+			IsGlobal:    true,
+		},
+		{
+			TableName:   "gelios_units",
+			Model:       &models.GeliosUnit{},
+			Description: "Реестр GELIOS юнитов (per connection_id+gelios_unit_id) — для unified objects",
+			IsGlobal:    true,
+		},
+		{
 			TableName:   "local_users",
 			Model:       &models.LocalUser{},
 			Description: "Локальные пользователи для альтернативной авторизации",

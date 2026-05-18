@@ -1013,6 +1013,16 @@ func main() {
 	apiGroup.POST("/skif/connections/:id/subdealers/:dealerId/hide", api.HideSkifSubdealer)
 	apiGroup.POST("/skif/connections/:id/subdealers/:dealerId/unhide", api.UnhideSkifSubdealer)
 
+	// GELIOS GPS интеграция (api.geliospro.com, OAuth2 Bearer)
+	// RedirectTrailingSlash=false → дублируем с/без слеша (quirk проекта)
+	apiGroup.GET("/gelios/connections", api.GetGeliosConnections)
+	apiGroup.GET("/gelios/connections/", api.GetGeliosConnections)
+	apiGroup.POST("/gelios/connections", api.CreateGeliosConnection)
+	apiGroup.POST("/gelios/connections/", api.CreateGeliosConnection)
+	apiGroup.PUT("/gelios/connections/:id", api.UpdateGeliosConnection)
+	apiGroup.DELETE("/gelios/connections/:id", api.DeleteGeliosConnection)
+	apiGroup.POST("/gelios/connections/:id/test", api.TestGeliosConnection)
+
 	// Wialon History (on-demand backfill точной истории через core/get_statistics)
 	apiGroup.GET("/wialon-history/settings", api.GetWialonHistorySettings)
 	apiGroup.PUT("/wialon-history/settings", api.UpdateWialonHistorySettings)
