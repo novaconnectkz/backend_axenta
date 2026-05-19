@@ -90,9 +90,9 @@ func (s *PlatformSubscription) IsCurrent(now time.Time) bool {
 // CompanyEntitlement — ручной override фичи для компании поверх плана
 // (включить/выключить точечно, с лимитами и причиной).
 type CompanyEntitlement struct {
-	ID             uint       `json:"id" gorm:"primaryKey"`
-	CompanyID      uint       `json:"company_id" gorm:"not null;index;uniqueIndex:uq_company_feature"`
-	FeatureCode    string     `json:"feature_code" gorm:"not null;size:64;index;uniqueIndex:uq_company_feature"`
+	ID          uint   `json:"id" gorm:"primaryKey"`
+	CompanyID   uint   `json:"company_id" gorm:"not null;index;uniqueIndex:uq_company_feature"`
+	FeatureCode string `json:"feature_code" gorm:"not null;size:64;index;uniqueIndex:uq_company_feature"`
 	// БЕЗ default — иначе GORM пропускает zero-value(false) в INSERT
 	// и БД ставит default → override не может ВЫКЛЮЧИТЬ фичу плана.
 	// Значение всегда задаётся явно control-plane'ом.

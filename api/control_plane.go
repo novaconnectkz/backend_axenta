@@ -162,6 +162,7 @@ func (a *ControlPlaneAPI) DeactivatePlan(c *gin.Context) {
 		cpErr(c, 500, "db error")
 		return
 	}
+	a.ent.InvalidateAll() // BLK-F1: деактивация плана отзывает доступ у подписчиков
 	cpOK(c, gin.H{"deactivated": id})
 }
 
@@ -216,6 +217,7 @@ func (a *ControlPlaneAPI) UpdateFeature(c *gin.Context) {
 		cpErr(c, 500, "db error")
 		return
 	}
+	a.ent.InvalidateAll() // R1: UpdateFeature — альт-путь деактивации, отзываем кэш
 	cpOK(c, gin.H{"updated": id})
 }
 
@@ -230,6 +232,7 @@ func (a *ControlPlaneAPI) DeactivateFeature(c *gin.Context) {
 		cpErr(c, 500, "db error")
 		return
 	}
+	a.ent.InvalidateAll() // BLK-F1: деактивация фичи отзывает её у всех
 	cpOK(c, gin.H{"deactivated": id})
 }
 
@@ -266,6 +269,13 @@ func (a *ControlPlaneAPI) SetPlanFeature(c *gin.Context) {
 		return
 	}
 	db := a.pdb()
+	// R3: каталог = source of truth — нельзя класть в пакет фичу, у
+	// которой нет активной строки в platform_features.
+	var fcat models.PlatformFeature
+	if e := db.Where("code = ? AND is_active = ?", r.FeatureCode, true).First(&fcat).Error; e != nil {
+		cpErr(c, 400, "Фича не найдена или деактивирована")
+		return
+	}
 	var pf models.PlatformPlanFeature
 	err := db.Where("plan_id = ? AND feature_code = ?", id, r.FeatureCode).First(&pf).Error
 	if err == gorm.ErrRecordNotFound {
@@ -275,7 +285,10 @@ func (a *ControlPlaneAPI) SetPlanFeature(c *gin.Context) {
 			return
 		}
 	} else if err == nil {
-		db.Model(&pf).Update("limits_json", r.LimitsJSON)
+		if e := db.Model(&pf).Update("limits_json", r.LimitsJSON).Error; e != nil {
+			cpErr(c, 500, "db error")
+			return
+		}
 	} else {
 		cpErr(c, 500, "db error")
 		return
@@ -346,6 +359,11 @@ func (a *ControlPlaneAPI) AssignSubscription(c *gin.Context) {
 		cpErr(c, 404, "Пакет не найден")
 		return
 	}
+	if !plan.IsActive {
+		// BLK-F2: нельзя назначить деактивированный пакет.
+		cpErr(c, 400, "Пакет деактивирован — назначение запрещено")
+		return
+	}
 	err := db.Transaction(func(tx *gorm.DB) error {
 		// Закрываем прежние активные подписки компании.
 		if err := tx.Model(&models.PlatformSubscription{}).
@@ -397,6 +415,13 @@ func (a *ControlPlaneAPI) SetOverride(c *gin.Context) {
 		return
 	}
 	db := a.pdb()
+	// R3: override можно ставить только на существующую активную фичу
+	// каталога (нельзя продать снятую с продажи / неизвестную).
+	var fcat models.PlatformFeature
+	if e := db.Where("code = ? AND is_active = ?", code, true).First(&fcat).Error; e != nil {
+		cpErr(c, 400, "Фича не найдена или деактивирована")
+		return
+	}
 	var ov models.CompanyEntitlement
 	err := db.Where("company_id = ? AND feature_code = ?", companyID, code).First(&ov).Error
 	if err == gorm.ErrRecordNotFound {
@@ -411,10 +436,13 @@ func (a *ControlPlaneAPI) SetOverride(c *gin.Context) {
 		}
 	} else if err == nil {
 		// Updates с map — false-bool пишется явно (без GORM-ловушки).
-		db.Model(&ov).Updates(map[string]any{
+		if e := db.Model(&ov).Updates(map[string]any{
 			"enabled": *r.Enabled, "limits_json": r.LimitsJSON,
 			"override_reason": r.OverrideReason, "ends_at": parseTimePtr(r.EndsAt),
-		})
+		}).Error; e != nil {
+			cpErr(c, 500, "db error")
+			return
+		}
 	} else {
 		cpErr(c, 500, "db error")
 		return
@@ -499,6 +527,15 @@ func (a *ControlPlaneAPI) Provision(c *gin.Context) {
 			return fmt.Errorf("admin create: %w", err)
 		}
 		if r.PlanID > 0 {
+			// R2: provisioning — тоже write-path подписки; нельзя
+			// назначить несуществующий/деактивированный пакет.
+			var pl models.PlatformPlan
+			if err := tx.First(&pl, r.PlanID).Error; err != nil {
+				return errProvPlanInvalid
+			}
+			if !pl.IsActive {
+				return errProvPlanInvalid
+			}
 			if err := tx.Create(&models.PlatformSubscription{
 				CompanyID: company.ID, PlanID: r.PlanID,
 				Status: "active", StartsAt: time.Now(),
@@ -514,6 +551,9 @@ func (a *ControlPlaneAPI) Provision(c *gin.Context) {
 	case nil:
 	case errProvUsernameTaken:
 		cpErr(c, 409, "Имя tenant-админа занято")
+		return
+	case errProvPlanInvalid:
+		cpErr(c, 400, "Пакет не найден или деактивирован")
 		return
 	default:
 		log.Printf("❌ Provision tx failed: %v", txErr)
@@ -541,6 +581,7 @@ func (a *ControlPlaneAPI) Provision(c *gin.Context) {
 }
 
 var errProvUsernameTaken = fmt.Errorf("provision username taken")
+var errProvPlanInvalid = fmt.Errorf("provision plan invalid")
 
 func orDef(v, def string) string {
 	if v == "" {

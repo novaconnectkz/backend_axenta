@@ -44,6 +44,12 @@ type EntitlementService struct {
 	mu    sync.RWMutex
 	cache map[uint]entitlementCacheEntry
 	ttl   time.Duration
+	// epoch/genAll — защита от stale-resurrection (BLK-F3): запись в
+	// кэш принимается только если ни per-company epoch, ни глобальная
+	// генерация не изменились за время compute (т.е. не было
+	// Invalidate/InvalidateAll в гонке с in-flight расчётом).
+	epoch  map[uint]uint64
+	genAll uint64
 }
 
 // NewEntitlementService создаёт сервис.
@@ -51,6 +57,7 @@ func NewEntitlementService(db *gorm.DB) *EntitlementService {
 	return &EntitlementService{
 		db:    db,
 		cache: make(map[uint]entitlementCacheEntry),
+		epoch: make(map[uint]uint64),
 		ttl:   entitlementCacheTTL,
 	}
 }
@@ -69,13 +76,15 @@ func (s *EntitlementService) publicDB() *gorm.DB {
 func (s *EntitlementService) Invalidate(companyID uint) {
 	s.mu.Lock()
 	delete(s.cache, companyID)
+	s.epoch[companyID]++
 	s.mu.Unlock()
 }
 
-// InvalidateAll сбрасывает весь кэш (напр. при массовом изменении плана).
+// InvalidateAll сбрасывает весь кэш (массовое изменение плана/фичи).
 func (s *EntitlementService) InvalidateAll() {
 	s.mu.Lock()
 	s.cache = make(map[uint]entitlementCacheEntry)
+	s.genAll++
 	s.mu.Unlock()
 }
 
@@ -117,6 +126,8 @@ func (s *EntitlementService) effective(companyID uint) map[string]Entitlement {
 		s.mu.RUnlock()
 		return e.features
 	}
+	e0 := s.epoch[companyID]
+	g0 := s.genAll
 	s.mu.RUnlock()
 
 	features, err := s.compute(companyID, now)
@@ -127,9 +138,15 @@ func (s *EntitlementService) effective(companyID uint) map[string]Entitlement {
 	}
 
 	s.mu.Lock()
-	s.cache[companyID] = entitlementCacheEntry{
-		features:  features,
-		expiresAt: now.Add(s.ttl),
+	// BLK-F3: кладём в кэш ТОЛЬКО если за время compute не было
+	// Invalidate(company)/InvalidateAll (epoch/genAll не менялись).
+	// Иначе результат потенциально stale — вернём свежий вызывающему,
+	// но НЕ закэшируем (следующий запрос пересчитает на новом состоянии).
+	if s.epoch[companyID] == e0 && s.genAll == g0 {
+		s.cache[companyID] = entitlementCacheEntry{
+			features:  features,
+			expiresAt: now.Add(s.ttl),
+		}
 	}
 	s.mu.Unlock()
 	return features
@@ -155,17 +172,24 @@ func (s *EntitlementService) compute(companyID uint, now time.Time) (map[string]
 		}
 	}
 
-	// 2. Фичи плана активной подписки.
+	// 2. Фичи плана активной подписки — ТОЛЬКО если сам план активен
+	// (BLK-F1: деактивация пакета должна отзывать доступ).
 	if active != nil {
-		var planFeatures []models.PlatformPlanFeature
-		if err := db.Where("plan_id = ?", active.PlanID).Find(&planFeatures).Error; err != nil {
-			return nil, fmt.Errorf("read plan features: %w", err)
+		var plan models.PlatformPlan
+		if err := db.First(&plan, active.PlanID).Error; err != nil {
+			return nil, fmt.Errorf("read plan: %w", err)
 		}
-		for _, pf := range planFeatures {
-			result[pf.FeatureCode] = Entitlement{
-				Enabled:    true,
-				LimitsJSON: pf.LimitsJSON,
-				Source:     "plan",
+		if plan.IsActive {
+			var planFeatures []models.PlatformPlanFeature
+			if err := db.Where("plan_id = ?", active.PlanID).Find(&planFeatures).Error; err != nil {
+				return nil, fmt.Errorf("read plan features: %w", err)
+			}
+			for _, pf := range planFeatures {
+				result[pf.FeatureCode] = Entitlement{
+					Enabled:    true,
+					LimitsJSON: pf.LimitsJSON,
+					Source:     "plan",
+				}
 			}
 		}
 	}
@@ -184,6 +208,27 @@ func (s *EntitlementService) compute(companyID uint, now time.Time) (map[string]
 			Enabled:    ov.Enabled,
 			LimitsJSON: ov.LimitsJSON,
 			Source:     "override",
+		}
+	}
+
+	// 4. R3: каталог фич = source of truth (биллинг). Фича грантуется
+	// ТОЛЬКО если есть АКТИВНАЯ строка platform_features. Нет строки
+	// или is_active=false → код выкидывается и из плана, и из override
+	// (продавать снятую с продажи / неизвестную фичу нельзя — fail-
+	// closed).
+	if len(result) > 0 {
+		var feats []models.PlatformFeature
+		if err := db.Where("is_active = ?", true).Find(&feats).Error; err != nil {
+			return nil, fmt.Errorf("read features: %w", err)
+		}
+		active := make(map[string]struct{}, len(feats))
+		for _, f := range feats {
+			active[f.Code] = struct{}{}
+		}
+		for code := range result {
+			if _, ok := active[code]; !ok {
+				delete(result, code)
+			}
 		}
 	}
 

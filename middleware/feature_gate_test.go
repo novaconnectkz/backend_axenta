@@ -18,8 +18,9 @@ func fgDB(t *testing.T) *gorm.DB {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
-		&models.PlatformPlan{}, &models.PlatformPlanFeature{},
-		&models.PlatformSubscription{}, &models.CompanyEntitlement{},
+		&models.PlatformPlan{}, &models.PlatformFeature{},
+		&models.PlatformPlanFeature{}, &models.PlatformSubscription{},
+		&models.CompanyEntitlement{},
 	))
 	return db
 }
@@ -43,6 +44,7 @@ func runGate(ent *services.EntitlementService, companyID uint) int {
 func TestRequireFeature_EnabledByPlan_Allows(t *testing.T) {
 	db := fgDB(t)
 	db.Create(&models.PlatformPlan{ID: 1, Code: "pro"})
+	db.Create(&models.PlatformFeature{Code: "advanced_reports", Name: "AR", IsActive: true})
 	db.Create(&models.PlatformPlanFeature{PlanID: 1, FeatureCode: "advanced_reports"})
 	db.Create(&models.PlatformSubscription{CompanyID: 5, PlanID: 1, Status: "active", StartsAt: time.Now().Add(-time.Hour)})
 	ent := services.NewEntitlementService(db)
@@ -57,6 +59,7 @@ func TestRequireFeature_NoSubscription_403(t *testing.T) {
 func TestRequireFeature_OverrideDisabled_403(t *testing.T) {
 	db := fgDB(t)
 	db.Create(&models.PlatformPlan{ID: 1, Code: "pro"})
+	db.Create(&models.PlatformFeature{Code: "advanced_reports", Name: "AR", IsActive: true})
 	db.Create(&models.PlatformPlanFeature{PlanID: 1, FeatureCode: "advanced_reports"})
 	db.Create(&models.PlatformSubscription{CompanyID: 5, PlanID: 1, Status: "active", StartsAt: time.Now().Add(-time.Hour)})
 	db.Create(&models.CompanyEntitlement{CompanyID: 5, FeatureCode: "advanced_reports", Enabled: false})
