@@ -171,8 +171,8 @@ func (h *AccountsHandler) CreateAccount(c *gin.Context) {
 		return
 	}
 
-	// Downstream 401 — server-токен компании отозван: сброс + 1 retry.
-	if statusCode == http.StatusUnauthorized {
+	// Downstream 401/403 — server-токен компании отозван: сброс + 1 retry.
+	if isAxentaAuthError(statusCode) {
 		invalidateAxentaServerToken(c)
 		axToken2, ok2 := axentaServerTokenFor(c)
 		if !ok2 {
@@ -348,8 +348,8 @@ func (h *AccountsHandler) MoveAccount(c *gin.Context) {
 		return
 	}
 
-	// Downstream 401 — server-токен компании отозван: сброс + 1 retry.
-	if statusCode == http.StatusUnauthorized {
+	// Downstream 401/403 — server-токен компании отозван: сброс + 1 retry.
+	if isAxentaAuthError(statusCode) {
 		invalidateAxentaServerToken(c)
 		axToken2, ok2 := axentaServerTokenFor(c)
 		if !ok2 {
@@ -441,8 +441,8 @@ func (h *AccountsHandler) ToggleAccountStatus(c *gin.Context) {
 		return
 	}
 
-	// Downstream 401 — server-токен компании отозван: сброс + 1 retry.
-	if statusCode == http.StatusUnauthorized {
+	// Downstream 401/403 — server-токен компании отозван: сброс + 1 retry.
+	if isAxentaAuthError(statusCode) {
 		invalidateAxentaServerToken(c)
 		axToken2, ok2 := axentaServerTokenFor(c)
 		if !ok2 {

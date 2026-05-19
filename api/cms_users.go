@@ -1098,9 +1098,9 @@ func CreateUserInAxentaCloud(c *gin.Context) {
 		return
 	}
 
-	// Downstream 401 — server-токен компании отозван раньше срока:
+	// Downstream 401/403 — server-токен компании отозван раньше срока:
 	// сброс кэша + единственный retry свежим токеном.
-	if status == http.StatusUnauthorized {
+	if isAxentaAuthError(status) {
 		invalidateAxentaServerToken(c)
 		axToken2, ok2 := axentaServerTokenFor(c)
 		if !ok2 {

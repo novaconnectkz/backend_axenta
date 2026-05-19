@@ -82,9 +82,17 @@ func axentaMutationUnavailable(c *gin.Context, err error) {
 	})
 }
 
+// isAxentaAuthError — downstream-код axenta.cloud, означающий протухший/
+// отозванный server-токен → нужен сброс кэша + retry. Ф3-A/Codex Q3:
+// 401 И 403 (раньше только 401: при 12h-TTL кэша, если Axenta на
+// протухший токен отдаёт 403, мёртвый токен залипал бы до TTL).
+func isAxentaAuthError(code int) bool {
+	return code == http.StatusUnauthorized || code == http.StatusForbidden
+}
+
 // invalidateAxentaServerToken сбрасывает кэш server-токена компании запроса.
-// Вызывать при downstream 401 от axenta.cloud (токен отозван раньше срока)
-// перед единственным retry.
+// Вызывать при downstream auth-ошибке от axenta.cloud (токен отозван
+// раньше срока, см. isAxentaAuthError) перед единственным retry.
 func invalidateAxentaServerToken(c *gin.Context) {
 	if axentaServerToken == nil {
 		return

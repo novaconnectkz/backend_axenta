@@ -1251,8 +1251,8 @@ func ActivateUser(c *gin.Context) {
 		return
 	}
 
-	// Downstream 401 — server-токен компании отозван: сброс + 1 retry.
-	if status == http.StatusUnauthorized {
+	// Downstream 401/403 — server-токен компании отозван: сброс + 1 retry.
+	if isAxentaAuthError(status) {
 		invalidateAxentaServerToken(c)
 		axToken2, ok2 := axentaServerTokenFor(c)
 		if !ok2 {
