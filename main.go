@@ -403,7 +403,8 @@ func main() {
 	r.GET("/ping", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "success", "message": "pong"})
 	})
-	r.POST("/api/auth/login", api.Login)
+	// /api/auth/login регистрируется ниже в блоке AUTH_MODE
+	// (kill-switch local|axenta) — см. "ЛОКАЛЬНАЯ АВТОРИЗАЦИЯ".
 
 	// Документация по интеграциям (публичный доступ)
 	r.GET("/docs/TELEGRAM_INTEGRATION.md", api.GetTelegramIntegrationDocs)
@@ -445,9 +446,39 @@ func main() {
 	})
 	r.GET("/api/version", api.GetAppVersion)
 
-	// === ЛОКАЛЬНАЯ АВТОРИЗАЦИЯ ===
+	// === ЛОКАЛЬНАЯ АВТОРИЗАЦИЯ + AUTH_MODE kill-switch ===
+	//
+	// AUTH_MODE=local (по умолчанию, Ф1): своя авторизация, ноль
+	// вызовов axenta.cloud на запрос. AUTH_MODE=axenta: legacy-прокси.
+	// Kill-switch реально откатывает ТОЛЬКО до первого bootstrap'а —
+	// после создания суперадмина у локальных юзеров нет Axenta-identity
+	// (риск B8: «откат» постфактум = redeploy старого бинаря, не флаг).
+	authMode := os.Getenv("AUTH_MODE")
+	if authMode == "" {
+		authMode = "local"
+	}
+
 	localAuthAPI := api.NewLocalAuthAPI(database.DB, jwtService)
-	localAuthAPI.RegisterRoutes(r.Group("/api"))
+	localAuthAPI.RegisterRoutes(r.Group("/api")) // back-compat /api/local/*
+
+	setupAPI := api.NewSetupAPI(database.DB)
+	originGuard := middleware.OriginGuard(cfg.CORS.AllowedOrigins)
+
+	// /api/setup — публичный bootstrap суперадмина (Origin-guard +
+	// строгий rate-limit; атомарность — внутри хендлера, риск B2).
+	r.GET("/api/setup", setupAPI.Status)
+	r.POST("/api/setup", originGuard, middleware.StrictRateLimit(), setupAPI.Bootstrap)
+
+	if authMode == "axenta" {
+		r.POST("/api/auth/login", api.Login)
+		log.Println("⚠️ AUTH_MODE=axenta — legacy Axenta-прокси авторизация (kill-switch)")
+	} else {
+		r.POST("/api/auth/login", originGuard, middleware.StrictRateLimit(), localAuthAPI.LocalLogin)
+		// refresh/logout аутентифицируются cookie → нужен CSRF (риск B4).
+		r.POST("/api/auth/refresh", originGuard, middleware.CSRFDoubleSubmit(), middleware.StrictRateLimit(), localAuthAPI.RefreshToken)
+		r.POST("/api/auth/logout", originGuard, middleware.CSRFDoubleSubmit(), localAuthAPI.LocalLogout)
+		log.Println("✅ AUTH_MODE=local — локальная авторизация (Axenta отвязана от входа)")
+	}
 
 	// === WEBSOCKET С АВТОРИЗАЦИЕЙ ===
 	wsAPI := api.NewWebSocketAuthAPI(jwtService)
@@ -662,15 +693,25 @@ func main() {
 	log.Println("🔧 Registering authenticated API endpoints...")
 	apiGroup := r.Group("/api/auth")
 
-	// Создаем middleware для локальной авторизации (используется в других местах)
-	_ = middleware.NewLocalAuthMiddleware(jwtService)
-
-	// Подключаем Axenta авторизацию и мультитенантность до регистрации маршрутов
-	apiGroup.Use(
-		authMiddleware.RequireAuth(),
-		tenantMiddleware.SetTenant(),
-	)
-	log.Println("✅ Axenta Cloud authentication enabled for /api/auth endpoints (with multitenancy)")
+	// Cutover (риск B5/B6): в local-режиме защита /api/auth/* —
+	// локальная проверка подписи JWT (0 сетевых вызовов на запрос,
+	// убирает per-request GET axenta.cloud/current_user). SetTenant
+	// идёт ПОСЛЕ auth: берёт схему из доверенного claim, а не из
+	// клиентского X-Tenant-ID (см. tenant.go, auth_company_id).
+	if authMode == "axenta" {
+		apiGroup.Use(
+			authMiddleware.RequireAuth(),
+			tenantMiddleware.SetTenant(),
+		)
+		log.Println("⚠️ /api/auth/* защищены legacy Axenta-валидацией (per-request axenta.cloud)")
+	} else {
+		localAuthMW := middleware.NewLocalAuthMiddleware(jwtService)
+		apiGroup.Use(
+			localAuthMW.RequireAuth(),
+			tenantMiddleware.SetTenant(),
+		)
+		log.Println("✅ /api/auth/* защищены локальной JWT-проверкой (мультитенантность из claim)")
+	}
 
 	// Отдельная группа для CMS endpoints без проверки Axenta токенов
 	log.Println("🔧 Registering CMS endpoints without Axenta authentication...")

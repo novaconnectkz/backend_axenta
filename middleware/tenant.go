@@ -36,6 +36,25 @@ func (tm *TenantMiddleware) SetTenant() gin.HandlerFunc {
 			return
 		}
 
+		// B5: если запрос аутентифицирован локальным JWT, источник
+		// tenant — ТОЛЬКО подписанный claim, не клиентский заголовок.
+		// X-Tenant-ID, не совпадающий с claim → попытка cross-tenant
+		// доступа → 403. Совпадающий/пустой → подменяем заголовок
+		// доверенным значением, чтобы extractCompany использовал его.
+		if v, ok := c.Get("auth_company_id"); ok {
+			if authCID, ok2 := v.(string); ok2 && authCID != "" {
+				if hdr := c.GetHeader("X-Tenant-ID"); hdr != "" && hdr != authCID {
+					c.JSON(http.StatusForbidden, gin.H{
+						"status": "error",
+						"error":  "Доступ к чужому тенанту запрещён",
+					})
+					c.Abort()
+					return
+				}
+				c.Request.Header.Set("X-Tenant-ID", authCID)
+			}
+		}
+
 		// Логируем для отладки экспорта
 		if strings.Contains(c.Request.URL.Path, "/objects/export") {
 			log.Printf("🔍 SetTenant: обработка запроса экспорта: %s", c.Request.URL.Path)
