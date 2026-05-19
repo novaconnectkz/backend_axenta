@@ -2,6 +2,7 @@ package api
 
 import (
 	"backend_axenta/database"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -42,7 +43,7 @@ func setupAxentaProxyTestRouter(_ *testing.T, db *gorm.DB) *gin.Engine {
 }
 
 // TestGetObjectsFromAxentaCloud_NoTenantDB тестирует GetObjectsFromAxentaCloud без tenant_db.
-// Snapshot read-path молча fallback'ит на live, который без auth header возвращает 401.
+// Ф3-B: snapshot-only, без live-proxy — нет БД → 200 + degraded:true (не 4xx/5xx).
 func TestGetObjectsFromAxentaCloud_NoTenantDB(t *testing.T) {
 	router := gin.New()
 	gin.SetMode(gin.TestMode)
@@ -53,8 +54,44 @@ func TestGetObjectsFromAxentaCloud_NoTenantDB(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	// Любая ошибка >= 400 валидна (401 без auth, 500 при недоступности Axenta Cloud)
-	assert.GreaterOrEqual(t, w.Code, 400)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp struct {
+		Status string `json:"status"`
+		Data   struct {
+			Degraded bool          `json:"degraded"`
+			Items    []interface{} `json:"items"`
+		} `json:"data"`
+	}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "success", resp.Status)
+	assert.True(t, resp.Data.Degraded, "нет БД → degraded:true")
+	assert.Empty(t, resp.Data.Items, "нет БД → пустой список")
+}
+
+// TestGetDeletedObjectsFromAxentaCloud_NoTenantDB — Ф3-B7: корзина snapshot-only,
+// без live-proxy в axenta.cloud. Нет БД → 200 + degraded:true (не 4xx/5xx).
+func TestGetDeletedObjectsFromAxentaCloud_NoTenantDB(t *testing.T) {
+	router := gin.New()
+	gin.SetMode(gin.TestMode)
+
+	router.GET("/api/auth/cms/trash", GetDeletedObjectsFromAxentaCloud)
+
+	req, _ := http.NewRequest("GET", "/api/auth/cms/trash", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp struct {
+		Status string `json:"status"`
+		Data   struct {
+			Degraded bool          `json:"degraded"`
+			Items    []interface{} `json:"items"`
+		} `json:"data"`
+	}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "success", resp.Status)
+	assert.True(t, resp.Data.Degraded, "нет БД → degraded:true")
+	assert.Empty(t, resp.Data.Items, "нет БД → пустой список")
 }
 
 // TestGetObjectsFromAxentaCloud_Success тестирует успешное получение объектов
@@ -68,8 +105,8 @@ func TestGetObjectsFromAxentaCloud_Success(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	// Может вернуть ошибку из-за отсутствия токена или успех
-	assert.True(t, w.Code == http.StatusOK || w.Code >= 400)
+	// Ф3-B: snapshot-only — всегда 200 (пустой snapshot → degraded), не 4xx/5xx.
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 // TestGetObjectsStatsFromAxentaCloud_Success тестирует GetObjectsStatsFromAxentaCloud
@@ -83,8 +120,18 @@ func TestGetObjectsStatsFromAxentaCloud_Success(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	// Может вернуть ошибку из-за отсутствия токена или успех
-	assert.True(t, w.Code == http.StatusOK || w.Code >= 400)
+	// Ф3-B: snapshot-only — без токена/без snapshot всё равно 200 + degraded:true
+	// (никакого live-proxy в axenta.cloud по request-токену, см. local-auth-ph1 грабля #2).
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp struct {
+		Status string `json:"status"`
+		Data   struct {
+			Degraded bool `json:"degraded"`
+		} `json:"data"`
+	}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "success", resp.Status)
+	assert.True(t, resp.Data.Degraded, "пустой snapshot → degraded:true")
 }
 
 // TestGetUsersFromAxentaCloud_Success тестирует GetUsersFromAxentaCloud
@@ -98,8 +145,8 @@ func TestGetUsersFromAxentaCloud_Success(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	// Может вернуть ошибку из-за отсутствия токена или успех
-	assert.True(t, w.Code == http.StatusOK || w.Code >= 400)
+	// Ф3-B: snapshot-only — всегда 200 (пустой snapshot → degraded), не 4xx/5xx.
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 // TestGetUsersStatsFromAxentaCloud_Success тестирует GetUsersStatsFromAxentaCloud
@@ -113,8 +160,18 @@ func TestGetUsersStatsFromAxentaCloud_Success(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	// Может вернуть ошибку из-за отсутствия токена или успех
-	assert.True(t, w.Code == http.StatusOK || w.Code >= 400)
+	// Ф3-B: snapshot-only — без токена/без snapshot всё равно 200 + degraded:true
+	// (никакого live-proxy в axenta.cloud по request-токену).
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp struct {
+		Status string `json:"status"`
+		Data   struct {
+			Degraded bool `json:"degraded"`
+		} `json:"data"`
+	}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "success", resp.Status)
+	assert.True(t, resp.Data.Degraded, "пустой snapshot → degraded:true")
 }
 
 // TestSplitFullName тестирует функцию splitFullName

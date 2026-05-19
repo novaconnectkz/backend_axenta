@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // objectsStatsCacheTTL — TTL Redis-кэша для /objects/stats. 60s — точность KPI vs нагрузка на БД.
@@ -25,32 +26,13 @@ const objectsStatsCacheKey = "objects:stats:axenta:v1"
 // Использует общий SnapshotTTL (60 мин), см. snapshot_ttl.go.
 const objectsSnapshotTTL = SnapshotTTL
 
-// tryServeObjectsFromSnapshot возвращает true, если страница успешно отдана из axenta_object_snapshots.
-// Применяет фильтры/пагинацию на стороне БД. При устаревании snapshot или ошибке — false (caller fallback на live).
-func tryServeObjectsFromSnapshot(c *gin.Context, page, perPage int) bool {
-	db := middleware.GetTenantDB(c)
-	if db == nil {
-		db = database.DB
-	}
-	if db == nil {
-		return false
-	}
-
-	var lastSync time.Time
-	if err := db.Model(&models.AxentaObjectSnapshot{}).
-		Select("MAX(last_synced_at)").
-		Scan(&lastSync).Error; err != nil || lastSync.IsZero() {
-		return false
-	}
-	if time.Since(lastSync) > objectsSnapshotTTL {
-		log.Printf("⏰ AxentaObjectSnapshot устарел (last=%v), fallback на live", lastSync)
-		return false
-	}
-
-	// Базовый запрос: только не удалённые в Axenta объекты
+// applyObjectSnapshotFilters строит отфильтрованный (без сортировки/пагинации)
+// запрос к axenta_object_snapshots из query-параметров. Единый источник
+// фильтрации для списка (/cms/objects, /unified/objects) и XLSX-экспорта —
+// чтобы набор строк экспорта был 1:1 с тем, что видит пользователь в списке.
+func applyObjectSnapshotFilters(c *gin.Context, db *gorm.DB) *gorm.DB {
 	q := db.Model(&models.AxentaObjectSnapshot{}).Where("axenta_deleted_at IS NULL")
 
-	// Параметры запроса
 	search := c.Query("search")
 	status := c.Query("status")
 	isActive := c.Query("is_active")
@@ -60,7 +42,6 @@ func tryServeObjectsFromSnapshot(c *gin.Context, page, perPage int) bool {
 	deviceTypeName := c.Query("deviceTypeName")
 	uniqueID := c.Query("uniqueId")
 	contractID := c.Query("contract_id")
-	ordering := c.DefaultQuery("ordering", "name")
 
 	if search != "" {
 		// prod PG имеет lc_ctype=C → LOWER() не опускает кириллицу, а Go strings.ToLower
@@ -104,16 +85,73 @@ func tryServeObjectsFromSnapshot(c *gin.Context, page, perPage int) bool {
 		q = q.Where(`unique_id ILIKE ? COLLATE "und-x-icu"`, "%"+uniqueID+"%")
 	}
 	if contractID != "" {
-		// contract_id в текущей модели не отделен от account_external_id (см. live-маппинг ниже)
+		// contract_id в текущей модели не отделён от account_external_id
 		if v, err := strconv.ParseInt(contractID, 10, 64); err == nil {
 			q = q.Where("account_external_id = ?", v)
 		}
 	}
+	return q
+}
+
+// serveObjectsFromSnapshot отдаёт страницу объектов из axenta_object_snapshots.
+// Всегда 200 (snapshot-only, Ф3-B): свежий → from_snapshot:true; устаревший →
+// данные + degraded:true; нет БД/snapshot/SQL-ошибка → пустой список + degraded:true.
+// Без live-proxy в axenta.cloud по request-токену — после Ф1 логин = локальный
+// JWT, невалиден для Axenta (см. concepts/local-auth-ph1.md грабля #2).
+func serveObjectsFromSnapshot(c *gin.Context, page, perPage int) {
+	// Хардening: функция всегда безопасна даже при прямом вызове с мусором
+	// (защита от паники total_pages = ... / perPage при perPage<=0).
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 || perPage > 1000 {
+		perPage = 50
+	}
+
+	emptyDegraded := func() {
+		c.JSON(http.StatusOK, gin.H{
+			"status": "success",
+			"data": gin.H{
+				"items":       []gin.H{},
+				"total":       0,
+				"page":        page,
+				"per_page":    perPage,
+				"total_pages": 0,
+				"degraded":    true,
+			},
+		})
+	}
+
+	db := middleware.GetTenantDB(c)
+	if db == nil {
+		db = database.DB
+	}
+	if db == nil {
+		emptyDegraded()
+		return
+	}
+
+	var lastSync time.Time
+	if err := db.Model(&models.AxentaObjectSnapshot{}).
+		Select("MAX(last_synced_at)").
+		Scan(&lastSync).Error; err != nil || lastSync.IsZero() {
+		emptyDegraded()
+		return
+	}
+	stale := time.Since(lastSync) > objectsSnapshotTTL
+	if stale {
+		log.Printf("⏰ AxentaObjectSnapshot устарел (last=%v) — degraded", lastSync)
+	}
+
+	// Фильтры — единый источник applyObjectSnapshotFilters (общий со /objects/export).
+	q := applyObjectSnapshotFilters(c, db)
+	ordering := c.DefaultQuery("ordering", "name")
 
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
 		log.Printf("⚠️ AxentaObjectSnapshot count: %v", err)
-		return false
+		emptyDegraded()
+		return
 	}
 
 	// Сортировка
@@ -138,7 +176,8 @@ func tryServeObjectsFromSnapshot(c *gin.Context, page, perPage int) bool {
 	var rows []models.AxentaObjectSnapshot
 	if err := q.Order(orderClause).Limit(perPage).Offset(offset).Find(&rows).Error; err != nil {
 		log.Printf("⚠️ AxentaObjectSnapshot find: %v", err)
-		return false
+		emptyDegraded()
+		return
 	}
 
 	items := make([]gin.H, 0, len(rows))
@@ -209,19 +248,174 @@ func tryServeObjectsFromSnapshot(c *gin.Context, page, perPage int) bool {
 	}
 
 	totalPages := (int(total) + perPage - 1) / perPage
-	c.JSON(http.StatusOK, gin.H{
-		"status": "success",
-		"data": gin.H{
-			"items":                items,
-			"total":                total,
-			"page":                 page,
-			"per_page":             perPage,
-			"total_pages":          totalPages,
-			"from_snapshot":        true,
-			"snapshot_age_seconds": int(time.Since(lastSync).Seconds()),
-		},
-	})
-	return true
+	data := gin.H{
+		"items":                items,
+		"total":                total,
+		"page":                 page,
+		"per_page":             perPage,
+		"total_pages":          totalPages,
+		"snapshot_age_seconds": int(time.Since(lastSync).Seconds()),
+	}
+	if stale {
+		data["degraded"] = true
+	} else {
+		data["from_snapshot"] = true
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": data})
+}
+
+// serveDeletedObjectsFromSnapshot — корзина объектов (/cms/trash) из
+// axenta_object_snapshots WHERE axenta_deleted_at IS NOT NULL. Ф3-B7:
+// snapshot-only, без live-proxy в axenta.cloud по request-токену (после Ф1
+// невалиден). Всегда 200; нет БД/snapshot/SQL-ошибка → пустой список +
+// degraded:true. Envelope 1:1 со старым proxy ({items,total,page,limit,total_pages}).
+func serveDeletedObjectsFromSnapshot(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	perPage, _ := strconv.Atoi(c.DefaultQuery("per_page", "50"))
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 || perPage > 1000 {
+		perPage = 50
+	}
+	search := c.Query("search")
+
+	emptyDegraded := func() {
+		c.JSON(http.StatusOK, gin.H{
+			"status": "success",
+			"data": gin.H{
+				"items":       []gin.H{},
+				"total":       0,
+				"page":        page,
+				"limit":       perPage,
+				"total_pages": 0,
+				"degraded":    true,
+			},
+		})
+	}
+
+	db := middleware.GetTenantDB(c)
+	if db == nil {
+		db = database.DB
+	}
+	if db == nil {
+		emptyDegraded()
+		return
+	}
+
+	var lastSync time.Time
+	if err := db.Model(&models.AxentaObjectSnapshot{}).
+		Select("MAX(last_synced_at)").
+		Scan(&lastSync).Error; err != nil || lastSync.IsZero() {
+		emptyDegraded()
+		return
+	}
+	stale := time.Since(lastSync) > objectsSnapshotTTL
+	if stale {
+		log.Printf("⏰ AxentaObjectSnapshot устарел для trash (last=%v) — degraded", lastSync)
+	}
+
+	q := db.Model(&models.AxentaObjectSnapshot{}).Where("axenta_deleted_at IS NOT NULL")
+	if search != "" {
+		pattern := "%" + search + "%"
+		q = q.Where(
+			`object_name ILIKE ? COLLATE "und-x-icu" OR unique_id ILIKE ? COLLATE "und-x-icu" OR account_name ILIKE ? COLLATE "und-x-icu"`,
+			pattern, pattern, pattern,
+		)
+	}
+
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		log.Printf("⚠️ trash snapshot count: %v", err)
+		emptyDegraded()
+		return
+	}
+
+	offset := (page - 1) * perPage
+	var rows []models.AxentaObjectSnapshot
+	if err := q.Order("axenta_deleted_at DESC NULLS LAST").
+		Limit(perPage).Offset(offset).Find(&rows).Error; err != nil {
+		log.Printf("⚠️ trash snapshot find: %v", err)
+		emptyDegraded()
+		return
+	}
+
+	items := make([]gin.H, 0, len(rows))
+	for _, r := range rows {
+		var phones []string
+		if r.PhoneNumbers != nil && *r.PhoneNumbers != "" {
+			_ = json.Unmarshal([]byte(*r.PhoneNumbers), &phones)
+		}
+		creator := ""
+		if r.CreatorName != nil {
+			creator = *r.CreatorName
+		}
+		var createdAt string
+		if r.AxentaCreatedAt != nil {
+			createdAt = r.AxentaCreatedAt.UTC().Format(time.RFC3339)
+		}
+		var deletedAt string
+		if r.AxentaDeletedAt != nil {
+			deletedAt = r.AxentaDeletedAt.UTC().Format(time.RFC3339)
+		}
+		var lastMsg string
+		if r.LastCommunicationAt != nil {
+			lastMsg = r.LastCommunicationAt.UTC().Format(time.RFC3339)
+		}
+		phoneNumber := ""
+		if len(phones) > 0 {
+			phoneNumber = phones[0]
+		}
+		items = append(items, gin.H{
+			"id":                  r.ExternalObjectID,
+			"name":                r.ObjectName,
+			"type":                "vehicle",
+			"description":         "",
+			"latitude":            nil,
+			"longitude":           nil,
+			"address":             r.AccountName,
+			"imei":                r.UniqueID,
+			"phone_number":        phoneNumber,
+			"serial_number":       r.UniqueID,
+			"status":              "deleted",
+			"is_active":           false,
+			"scheduled_delete_at": nil,
+			"last_activity_at":    nil,
+			"company_id":          r.AccountExternalID,
+			"contract_id":         r.AccountExternalID,
+			"template_id":         nil,
+			"location_id":         r.AccountExternalID,
+			"created_at":          createdAt,
+			"updated_at":          createdAt,
+			"deleted_at":          deletedAt,
+			"accountName":         r.AccountName,
+			"creatorName":         creator,
+			"deviceTypeName":      r.DeviceTypeName,
+			"phoneNumbers":        phones,
+			"createdAt":           createdAt,
+			"lastMessageDatetime": lastMsg,
+			"uniqueId":            r.UniqueID,
+			"settings":            "{}",
+			"tags":                []string{r.DeviceTypeName},
+			"notes":               "Создатель: " + creator,
+			"external_id":         r.UniqueID,
+		})
+	}
+
+	totalPages := (int(total) + perPage - 1) / perPage
+	data := gin.H{
+		"items":       items,
+		"total":       total,
+		"page":        page,
+		"limit":       perPage,
+		"total_pages": totalPages,
+	}
+	if stale {
+		data["degraded"] = true
+	} else {
+		data["from_snapshot"] = true
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": data})
 }
 
 // objectsStatsResult — структура для bind COUNT FILTER в одном SQL.
@@ -233,16 +427,38 @@ type objectsStatsResult struct {
 	Deleted            int64 `json:"deleted"` // объекты в корзине (axenta_deleted_at IS NOT NULL)
 }
 
-// tryServeObjectsStatsFromSnapshot отдаёт KPI-агрегаты одним SQL по axenta_object_snapshots.
-// Redis cache TTL 60s (общий на всех партнёров — snapshot глобальный).
-// Возвращает true если успешно отдал, false → caller fallback на live Axenta Cloud.
-func tryServeObjectsStatsFromSnapshot(c *gin.Context) bool {
+// serveObjectsStatsFromSnapshot отдаёт KPI-агрегаты объектов одним SQL по
+// axenta_object_snapshots. Всегда отвечает 200 (snapshot-only, Ф3-B):
+//   - snapshot свежий     → реальные цифры, from_snapshot:true (+ Redis cache TTL 60s)
+//   - snapshot устарел    → реальные цифры + degraded:true + snapshot_age_seconds
+//   - нет БД/snapshot/SQL  → нули + degraded:true
+//
+// Никакого live-proxy в axenta.cloud по токену запроса: после Ф1 логин = локальный
+// JWT, request-токен невалиден для Axenta (см. concepts/local-auth-ph1.md грабля #2).
+func serveObjectsStatsFromSnapshot(c *gin.Context) {
+	emptyDegraded := func() {
+		c.JSON(http.StatusOK, gin.H{
+			"status": "success",
+			"data": gin.H{
+				"total":                0,
+				"active":               0,
+				"inactive":             0,
+				"scheduled_for_delete": 0,
+				"deleted":              0,
+				"by_type":              gin.H{"vehicle": 0},
+				"by_status":            gin.H{"active": 0, "inactive": 0},
+				"degraded":             true,
+			},
+		})
+	}
+
 	db := middleware.GetTenantDB(c)
 	if db == nil {
 		db = database.DB
 	}
 	if db == nil {
-		return false
+		emptyDegraded()
+		return
 	}
 
 	// Свежесть snapshot
@@ -250,42 +466,42 @@ func tryServeObjectsStatsFromSnapshot(c *gin.Context) bool {
 	if err := db.Model(&models.AxentaObjectSnapshot{}).
 		Select("MAX(last_synced_at)").
 		Scan(&lastSync).Error; err != nil || lastSync.IsZero() {
-		return false
+		emptyDegraded()
+		return
 	}
-	if time.Since(lastSync) > objectsSnapshotTTL {
-		log.Printf("⏰ AxentaObjectSnapshot устарел для stats (last=%v), fallback на live", lastSync)
-		return false
-	}
+	stale := time.Since(lastSync) > objectsSnapshotTTL
 
-	// 1) Redis cache hit
-	if rdb := database.GetRedis(); rdb != nil {
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 200*time.Millisecond)
-		defer cancel()
-		if cached, err := rdb.Get(ctx, objectsStatsCacheKey).Bytes(); err == nil && len(cached) > 0 {
-			var stats objectsStatsResult
-			if err := json.Unmarshal(cached, &stats); err == nil {
-				c.JSON(http.StatusOK, gin.H{
-					"status": "success",
-					"data": gin.H{
-						"total":                stats.Total,
-						"active":               stats.Active,
-						"inactive":             stats.Inactive,
-						"scheduled_for_delete": stats.ScheduledForDelete,
-						"deleted":              stats.Deleted,
-						"by_type":              gin.H{"vehicle": stats.Total},
-						"by_status": gin.H{
-							"active":   stats.Active,
-							"inactive": stats.Inactive,
+	// Redis cache hit — только для свежего snapshot
+	if !stale {
+		if rdb := database.GetRedis(); rdb != nil {
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 200*time.Millisecond)
+			defer cancel()
+			if cached, err := rdb.Get(ctx, objectsStatsCacheKey).Bytes(); err == nil && len(cached) > 0 {
+				var stats objectsStatsResult
+				if err := json.Unmarshal(cached, &stats); err == nil {
+					c.JSON(http.StatusOK, gin.H{
+						"status": "success",
+						"data": gin.H{
+							"total":                stats.Total,
+							"active":               stats.Active,
+							"inactive":             stats.Inactive,
+							"scheduled_for_delete": stats.ScheduledForDelete,
+							"deleted":              stats.Deleted,
+							"by_type":              gin.H{"vehicle": stats.Total},
+							"by_status": gin.H{
+								"active":   stats.Active,
+								"inactive": stats.Inactive,
+							},
+							"from_cache": true,
 						},
-						"from_cache": true,
-					},
-				})
-				return true
+					})
+					return
+				}
 			}
 		}
 	}
 
-	// 2) Один SQL агрегат (паттерн из dashboard_sources_stats.buildAxentaSourceStats)
+	// Один SQL агрегат (паттерн из dashboard_sources_stats.buildAxentaSourceStats)
 	var stats objectsStatsResult
 	if err := db.Raw(`
 		SELECT
@@ -315,34 +531,37 @@ func tryServeObjectsStatsFromSnapshot(c *gin.Context) bool {
 		FROM axenta_object_snapshots
 	`).Scan(&stats).Error; err != nil {
 		log.Printf("⚠️ AxentaObjectSnapshot stats SQL: %v", err)
-		return false
+		emptyDegraded()
+		return
 	}
 
-	// 3) Save to Redis cache
-	if rdb := database.GetRedis(); rdb != nil {
-		if payload, err := json.Marshal(stats); err == nil {
-			ctx, cancel := context.WithTimeout(c.Request.Context(), 200*time.Millisecond)
-			defer cancel()
-			_ = rdb.Set(ctx, objectsStatsCacheKey, payload, objectsStatsCacheTTL).Err()
+	data := gin.H{
+		"total":                stats.Total,
+		"active":               stats.Active,
+		"inactive":             stats.Inactive,
+		"scheduled_for_delete": stats.ScheduledForDelete,
+		"deleted":              stats.Deleted,
+		"by_type":              gin.H{"vehicle": stats.Total},
+		"by_status": gin.H{
+			"active":   stats.Active,
+			"inactive": stats.Inactive,
+		},
+		"snapshot_age_seconds": int(time.Since(lastSync).Seconds()),
+	}
+	if stale {
+		// Устаревший snapshot: отдаём реальные цифры, помечаем degraded,
+		// в Redis НЕ кладём (чтобы свежий синк не ждал TTL).
+		data["degraded"] = true
+		log.Printf("⏰ AxentaObjectSnapshot устарел для stats (last=%v) — degraded", lastSync)
+	} else {
+		data["from_snapshot"] = true
+		if rdb := database.GetRedis(); rdb != nil {
+			if payload, err := json.Marshal(stats); err == nil {
+				ctx, cancel := context.WithTimeout(c.Request.Context(), 200*time.Millisecond)
+				defer cancel()
+				_ = rdb.Set(ctx, objectsStatsCacheKey, payload, objectsStatsCacheTTL).Err()
+			}
 		}
 	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"status": "success",
-		"data": gin.H{
-			"total":                stats.Total,
-			"active":               stats.Active,
-			"inactive":             stats.Inactive,
-			"scheduled_for_delete": stats.ScheduledForDelete,
-			"deleted":              stats.Deleted,
-			"by_type":              gin.H{"vehicle": stats.Total},
-			"by_status": gin.H{
-				"active":   stats.Active,
-				"inactive": stats.Inactive,
-			},
-			"from_snapshot":        true,
-			"snapshot_age_seconds": int(time.Since(lastSync).Seconds()),
-		},
-	})
-	return true
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": data})
 }

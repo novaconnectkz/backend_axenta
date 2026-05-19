@@ -8,10 +8,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -133,6 +131,9 @@ type UnifiedUsersStats struct {
 	SkifActive     int `json:"skif_active"`
 	GeliosTotal    int `json:"gelios_total"`
 	GeliosActive   int `json:"gelios_active"`
+	// Ф3-B6: true если Axenta-источник деградировал (snapshot пуст/устарел;
+	// в axenta.cloud по request-токену больше НЕ ходим — после Ф1 невалиден).
+	AxentaDegraded bool `json:"axenta_degraded"`
 }
 
 // unifiedUsersSnapshotTTL — окно свежести snapshot Axenta для read-path.
@@ -170,14 +171,6 @@ func GetUnifiedUsers(c *gin.Context) {
 		limit = 20
 	}
 
-	authHeader := c.GetHeader("Authorization")
-	var userToken string
-	if strings.HasPrefix(authHeader, "Token ") {
-		userToken = strings.TrimPrefix(authHeader, "Token ")
-	} else if strings.HasPrefix(authHeader, "Bearer ") {
-		userToken = strings.TrimPrefix(authHeader, "Bearer ")
-	}
-
 	companyID, _ := c.Get("company_id")
 
 	allUsers := make([]UnifiedUser, 0)
@@ -196,12 +189,15 @@ func GetUnifiedUsers(c *gin.Context) {
 			defer wg.Done()
 			tenantDB := middleware.GetTenantDB(c)
 			t0 := time.Now()
-			axentaUsers, axentaTotal, axentaActive, fromSnapshot := fetchAxentaUsersFast(tenantDB, userToken, search, activeStr, role, ordering)
-			log.Printf("🔍 unified/users axenta: %d users (snapshot=%v) за %s", len(axentaUsers), fromSnapshot, time.Since(t0).Round(time.Millisecond))
+			axentaUsers, axentaTotal, axentaActive, served := fetchAxentaUsersFast(tenantDB, search, activeStr, role)
+			log.Printf("🔍 unified/users axenta: %d users (snapshot=%v) за %s", len(axentaUsers), served, time.Since(t0).Round(time.Millisecond))
 			mu.Lock()
 			allUsers = append(allUsers, axentaUsers...)
 			stats.AxentaTotal = axentaTotal
 			stats.AxentaActive = axentaActive
+			if !served {
+				stats.AxentaDegraded = true
+			}
 			mu.Unlock()
 		}()
 	}
@@ -299,43 +295,28 @@ func GetUnifiedUsers(c *gin.Context) {
 	})
 }
 
-// fetchAxentaUsersFast — read-path с snapshot, fallback на live при пустом/устаревшем snapshot.
-// Возвращает (users, total, active, fromSnapshot).
-func fetchAxentaUsersFast(db *gorm.DB, userToken, search, active, role, ordering string) ([]UnifiedUser, int, int, bool) {
+// fetchAxentaUsersFast — read-path Axenta из snapshot (axenta_user_snapshots).
+// Ф3-B6: НЕТ live-fallback в axenta.cloud по request-токену — после Ф1 логин =
+// локальный JWT, невалиден для Axenta. Snapshot пуст/устарел → (nil,0,0,false):
+// Axenta-источник деградирует (caller ставит stats.AxentaDegraded), остальные
+// источники (Wialon/SKIF/GELIOS) работают как раньше.
+// Возвращает (users, total, active, served).
+func fetchAxentaUsersFast(db *gorm.DB, search, active, role string) ([]UnifiedUser, int, int, bool) {
 	if users, total, activeN, ok := tryServeUnifiedUsersFromSnapshot(db, search, active, role); ok {
 		return users, total, activeN, true
 	}
-	users, total, activeN := fetchAxentaUsers(userToken, search, active, role, ordering)
-	return users, total, activeN, false
+	return nil, 0, 0, false
 }
 
-// tryServeUnifiedUsersFromSnapshot читает пользователей Axenta из snapshot (axenta_user_snapshots).
-// TTL 60 мин — fallback на live при устаревании. Фильтры применяются на стороне БД.
-func tryServeUnifiedUsersFromSnapshot(db *gorm.DB, search, active, role string) ([]UnifiedUser, int, int, bool) {
-	if db == nil {
-		return nil, 0, 0, false
-	}
-
-	var lastSync time.Time
-	if err := db.
-		Model(&models.AxentaUserSnapshot{}).
-		Select("MAX(last_synced_at)").
-		Scan(&lastSync).Error; err != nil || lastSync.IsZero() {
-		return nil, 0, 0, false
-	}
-
-	if time.Since(lastSync) > unifiedUsersSnapshotTTL {
-		log.Printf("⏰ AxentaUserSnapshot устарел (last=%v), fallback на live", lastSync)
-		return nil, 0, 0, false
-	}
-
-	q := db.Model(&models.AxentaUserSnapshot{})
-
-	// Множественный поиск через запятую (как для accounts): "user1, user2" → IN
+// applyAxentaUserSnapshotFilters накладывает фильтры search/active/role на
+// запрос к axenta_user_snapshots. Единый источник для unified-списка
+// (tryServeUnifiedUsersFromSnapshot) и legacy /cms/users (serveAxentaUsersFromSnapshot) —
+// чтобы фильтрация была идентична и не разъезжалась.
+func applyAxentaUserSnapshotFilters(q *gorm.DB, search, active, role string) *gorm.DB {
+	// Множественный поиск через запятую (как для accounts): "user1, user2" → OR
 	if search != "" {
 		terms := splitSearchTerms(search)
 		if len(terms) > 1 {
-			// Множественный поиск — точное совпадение (с любым из перечисленных)
 			lowered := make([]string, 0, len(terms)*3)
 			placeholders := make([]string, 0, len(terms)*3)
 			for _, t := range terms {
@@ -376,6 +357,30 @@ func tryServeUnifiedUsersFromSnapshot(db *gorm.DB, search, active, role string) 
 			q = q.Where("account_type = ?", role)
 		}
 	}
+	return q
+}
+
+// tryServeUnifiedUsersFromSnapshot читает пользователей Axenta из snapshot (axenta_user_snapshots).
+// TTL 60 мин — fallback на live при устаревании. Фильтры применяются на стороне БД.
+func tryServeUnifiedUsersFromSnapshot(db *gorm.DB, search, active, role string) ([]UnifiedUser, int, int, bool) {
+	if db == nil {
+		return nil, 0, 0, false
+	}
+
+	var lastSync time.Time
+	if err := db.
+		Model(&models.AxentaUserSnapshot{}).
+		Select("MAX(last_synced_at)").
+		Scan(&lastSync).Error; err != nil || lastSync.IsZero() {
+		return nil, 0, 0, false
+	}
+
+	if time.Since(lastSync) > unifiedUsersSnapshotTTL {
+		log.Printf("⏰ AxentaUserSnapshot устарел (last=%v), fallback на live", lastSync)
+		return nil, 0, 0, false
+	}
+
+	q := applyAxentaUserSnapshotFilters(db.Model(&models.AxentaUserSnapshot{}), search, active, role)
 
 	// Считаем total/active отдельным запросом до применения LIMIT
 	var totalCount int64
@@ -415,12 +420,233 @@ func tryServeUnifiedUsersFromSnapshot(db *gorm.DB, search, active, role string) 
 	return users, int(totalCount), int(activeCount), true
 }
 
-// tryServeUsersStatsFromSnapshot — read-path для GET /api/auth/users/stats.
-// Один COUNT FILTER (...) запрос к snapshot вместо live-fetch 2.6с с per_page=1000.
-// Возвращает (data, true) если snapshot непуст и свежий.
-func tryServeUsersStatsFromSnapshot(db *gorm.DB) (gin.H, bool) {
+// serveAxentaUsersFromSnapshot — legacy GET /api/auth/users + /cms/users (Ф3-B).
+// Snapshot-only (axenta_user_snapshots), без live-proxy в axenta.cloud по
+// request-токену (после Ф1 невалиден, см. concepts/local-auth-ph1.md грабля #2).
+// Всегда 200: свежий → from_snapshot:true; устаревший/пустой/ошибка →
+// degraded:true (+ пустой список при отсутствии данных). Формат ответа и
+// набор полей item — 1:1 со старым proxy (фронт-контракт не меняется);
+// поля, которых нет в snapshot (account_name/language/timezone/is_admin),
+// отдаются пустыми — не фабрикуем.
+func serveAxentaUsersFromSnapshot(c *gin.Context) {
+	page := c.DefaultQuery("page", "1")
+	limit := c.DefaultQuery("limit", "20")
+	search := c.Query("search")
+	active := c.Query("active")
+	role := c.Query("role")
+	ordering := c.Query("ordering")
+
+	pageInt, _ := strconv.Atoi(page)
+	limitInt, _ := strconv.Atoi(limit)
+	if pageInt < 1 {
+		pageInt = 1
+	}
+	if limitInt < 1 {
+		limitInt = 20
+	}
+
+	emptyDegraded := func() {
+		c.JSON(http.StatusOK, gin.H{
+			"status": "success",
+			"data": gin.H{
+				"items":    []gin.H{},
+				"total":    0,
+				"page":     pageInt,
+				"limit":    limitInt,
+				"pages":    0,
+				"degraded": true,
+			},
+		})
+	}
+
+	db := middleware.GetTenantDB(c)
 	if db == nil {
-		return nil, false
+		db = database.DB
+	}
+	if db == nil {
+		emptyDegraded()
+		return
+	}
+
+	var lastSync time.Time
+	if err := db.Model(&models.AxentaUserSnapshot{}).
+		Select("MAX(last_synced_at)").
+		Scan(&lastSync).Error; err != nil || lastSync.IsZero() {
+		emptyDegraded()
+		return
+	}
+	stale := time.Since(lastSync) > unifiedUsersSnapshotTTL
+	if stale {
+		log.Printf("⏰ AxentaUserSnapshot устарел (last=%v) — degraded", lastSync)
+	}
+
+	q := applyAxentaUserSnapshotFilters(db.Model(&models.AxentaUserSnapshot{}), search, active, role)
+
+	// Сортировка → колонка snapshot (default creation_datetime DESC, как unified).
+	orderClause := "creation_datetime DESC"
+	if ordering != "" {
+		col := ""
+		switch strings.TrimPrefix(ordering, "-") {
+		case "username":
+			col = "username"
+		case "name", "fullName":
+			col = "name"
+		case "email":
+			col = "email"
+		case "lastLogin", "last_login":
+			col = "last_login"
+		case "creationDatetime", "creation_datetime", "created_at":
+			col = "creation_datetime"
+		case "accountType", "account_type":
+			col = "account_type"
+		case "isActive", "is_active":
+			col = "is_active"
+		}
+		if col != "" {
+			if strings.HasPrefix(ordering, "-") {
+				orderClause = col + " DESC NULLS LAST"
+			} else {
+				orderClause = col + " ASC NULLS LAST"
+			}
+		}
+	}
+
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		log.Printf("⚠️ serveAxentaUsersFromSnapshot count: %v", err)
+		emptyDegraded()
+		return
+	}
+
+	offset := (pageInt - 1) * limitInt
+	var rows []models.AxentaUserSnapshot
+	if err := q.Order(orderClause).Limit(limitInt).Offset(offset).Find(&rows).Error; err != nil {
+		log.Printf("⚠️ serveAxentaUsersFromSnapshot find: %v", err)
+		emptyDegraded()
+		return
+	}
+
+	users := make([]gin.H, 0, len(rows))
+	for _, r := range rows {
+		var roleInfo gin.H
+		var roleID any = 0
+		if role, roleData := getRoleByAxentaType(db, r.AccountType); role != nil {
+			roleID = role.ID
+			roleInfo = roleData
+		}
+		firstName, lastName := splitFullName(r.Name)
+		var lastLogin any
+		if r.LastLogin != nil {
+			lastLogin = r.LastLogin.UTC().Format(time.RFC3339)
+		}
+		users = append(users, gin.H{
+			"id":                r.ExternalUserID,
+			"username":          r.Username,
+			"email":             r.Email,
+			"first_name":        firstName,
+			"last_name":         lastName,
+			"name":              r.Name,
+			"is_active":         r.IsActive,
+			"role_id":           roleID,
+			"role":              roleInfo,
+			"template_id":       nil,
+			"last_login":        lastLogin,
+			"login_count":       0,
+			"created_at":        r.CreationDatetime,
+			"updated_at":        r.CreationDatetime,
+			"creation_datetime": r.CreationDatetime,
+			"account_name":      "", // нет в user-snapshot
+			"account_type":      r.AccountType,
+			"creator_name":      r.CreatorName,
+			"creatorName":       r.CreatorName,
+			"language":          "", // нет в user-snapshot
+			"timezone":          "", // нет в user-snapshot
+			"is_admin":          nil,
+			"has_admin_access":  nil,
+			"axenta_user_type":  mapAccountTypeToAxentaType(r.AccountType),
+			"axenta_user_id":    fmt.Sprintf("%v", r.ExternalUserID),
+			"is_axenta_user":    true,
+			"external_source":   "axenta",
+		})
+	}
+
+	// Исключаем найденных только по creator_name (паритет со старым proxy).
+	if search != "" {
+		filtered := make([]gin.H, 0, len(users))
+		excluded := 0
+		for _, u := range users {
+			userMap := make(map[string]interface{}, len(u))
+			for k, v := range u {
+				userMap[k] = v
+			}
+			if shouldExcludeUserFromSearch(search, userMap) {
+				excluded++
+			} else {
+				filtered = append(filtered, u)
+			}
+		}
+		if excluded > 0 {
+			users = filtered
+			total -= int64(excluded)
+			if total < 0 {
+				total = 0
+			}
+		}
+	}
+
+	pages := 0
+	if limitInt > 0 {
+		pages = (int(total) + limitInt - 1) / limitInt
+	}
+	data := gin.H{
+		"items": users,
+		"total": total,
+		"page":  pageInt,
+		"limit": limitInt,
+		"pages": pages,
+	}
+	if stale {
+		data["degraded"] = true
+	} else {
+		data["from_snapshot"] = true
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": data})
+}
+
+// serveUsersStatsFromSnapshot — read-path для GET /api/auth/users/stats (Ф3-B).
+// Один COUNT FILTER (...) запрос к tenant_<id>.axenta_user_snapshots вместо
+// live-fetch 2.6с с per_page=1000. Всегда отвечает 200, без live-proxy в
+// axenta.cloud по request-токену (после Ф1 логин = локальный JWT, невалиден
+// для Axenta — см. concepts/local-auth-ph1.md грабля #2):
+//   - snapshot свежий     → реальные цифры, from_snapshot:true
+//   - snapshot устарел    → реальные цифры + degraded:true
+//   - нет БД/snapshot/SQL  → нули + degraded:true
+func serveUsersStatsFromSnapshot(c *gin.Context) {
+	emptyDegraded := func() {
+		c.JSON(http.StatusOK, gin.H{
+			"status": "success",
+			"data": gin.H{
+				"total_users":    0,
+				"active_users":   0,
+				"inactive_users": 0,
+				"recent_users":   0,
+				"total":          0,
+				"active":         0,
+				"inactive":       0,
+				"recent_logins":  0,
+				"role_stats":     gin.H{"partner": 0, "client": 0},
+				"degraded":       true,
+			},
+		})
+	}
+
+	db := middleware.GetTenantDB(c)
+	if db == nil {
+		db = database.DB
+	}
+	if db == nil {
+		emptyDegraded()
+		return
 	}
 
 	var lastSync time.Time
@@ -428,12 +654,10 @@ func tryServeUsersStatsFromSnapshot(db *gorm.DB) (gin.H, bool) {
 		Model(&models.AxentaUserSnapshot{}).
 		Select("MAX(last_synced_at)").
 		Scan(&lastSync).Error; err != nil || lastSync.IsZero() {
-		return nil, false
+		emptyDegraded()
+		return
 	}
-
-	if time.Since(lastSync) > unifiedUsersSnapshotTTL {
-		return nil, false
-	}
+	stale := time.Since(lastSync) > unifiedUsersSnapshotTTL
 
 	type counts struct {
 		Total      int64
@@ -445,7 +669,7 @@ func tryServeUsersStatsFromSnapshot(db *gorm.DB) (gin.H, bool) {
 		StaffCnt   int64
 	}
 	weekAgo := time.Now().Add(-7 * 24 * time.Hour)
-	var c counts
+	var cnt counts
 	if err := db.
 		Model(&models.AxentaUserSnapshot{}).
 		Select(`
@@ -457,32 +681,39 @@ func tryServeUsersStatsFromSnapshot(db *gorm.DB) (gin.H, bool) {
 			COUNT(*) FILTER (WHERE account_type = 'client') AS client_cnt,
 			COUNT(*) FILTER (WHERE account_type = 'staff') AS staff_cnt
 		`, weekAgo).
-		Scan(&c).Error; err != nil {
-		log.Printf("⚠️ tryServeUsersStatsFromSnapshot count: %v", err)
-		return nil, false
+		Scan(&cnt).Error; err != nil {
+		log.Printf("⚠️ serveUsersStatsFromSnapshot count: %v", err)
+		emptyDegraded()
+		return
 	}
 
 	roleStats := gin.H{
-		"partner": c.PartnerCnt,
-		"client":  c.ClientCnt,
+		"partner": cnt.PartnerCnt,
+		"client":  cnt.ClientCnt,
 	}
-	if c.StaffCnt > 0 {
-		roleStats["staff"] = c.StaffCnt
+	if cnt.StaffCnt > 0 {
+		roleStats["staff"] = cnt.StaffCnt
 	}
 
-	return gin.H{
-		"total_users":    c.Total,
-		"active_users":   c.Active,
-		"inactive_users": c.Inactive,
-		"recent_users":   c.Recent,
-		"total":          c.Total,
-		"active":         c.Active,
-		"inactive":       c.Inactive,
-		"recent_logins":  c.Recent,
+	data := gin.H{
+		"total_users":    cnt.Total,
+		"active_users":   cnt.Active,
+		"inactive_users": cnt.Inactive,
+		"recent_users":   cnt.Recent,
+		"total":          cnt.Total,
+		"active":         cnt.Active,
+		"inactive":       cnt.Inactive,
+		"recent_logins":  cnt.Recent,
 		"role_stats":     roleStats,
 		"last_updated":   lastSync.Format("2006-01-02T15:04:05Z"),
-		"from_snapshot":  true,
-	}, true
+	}
+	if stale {
+		data["degraded"] = true
+		log.Printf("⏰ AxentaUserSnapshot устарел для stats (last=%v) — degraded", lastSync)
+	} else {
+		data["from_snapshot"] = true
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": data})
 }
 
 // splitSearchTerms — разделяет search-строку через запятую, тримит, отбрасывает пустые
@@ -771,116 +1002,6 @@ func sortUnifiedUsers(users []UnifiedUser, ordering string) {
 		}
 		return less
 	})
-}
-
-// fetchAxentaUsers — fallback live-fetch (старая реализация). Используется если snapshot пуст.
-func fetchAxentaUsers(userToken, search, active, role, ordering string) ([]UnifiedUser, int, int) {
-	var users []UnifiedUser
-	var totalUsers, activeUsers int
-
-	if userToken == "" {
-		log.Printf("⚠️ fetchAxentaUsers: токен не предоставлен")
-		return users, 0, 0
-	}
-
-	baseURL := "https://axenta.cloud/api/cms/users/"
-	params := url.Values{}
-	params.Add("page", "1")
-	params.Add("per_page", "1000")
-
-	if search != "" {
-		params.Add("search", search)
-	}
-	if active != "" {
-		params.Add("active", active)
-	}
-	if role != "" {
-		params.Add("role", role)
-	}
-	if ordering != "" {
-		params.Add("ordering", convertOrderingToAxenta(ordering))
-	}
-
-	axentaURL := baseURL + "?" + params.Encode()
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	req, err := http.NewRequest("GET", axentaURL, nil)
-	if err != nil {
-		log.Printf("❌ fetchAxentaUsers: ошибка создания запроса: %v", err)
-		return users, 0, 0
-	}
-
-	req.Header.Set("Authorization", "Token "+userToken)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("❌ fetchAxentaUsers: ошибка запроса: %v", err)
-		return users, 0, 0
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Printf("❌ fetchAxentaUsers: ошибка чтения ответа: %v", err)
-		return users, 0, 0
-	}
-
-	var axentaResp struct {
-		Count   int `json:"count"`
-		Results []struct {
-			ID               int64  `json:"id"`
-			Username         string `json:"username"`
-			Name             string `json:"name"`
-			FirstName        string `json:"first_name"`
-			LastName         string `json:"last_name"`
-			Email            string `json:"email"`
-			AccountType      string `json:"accountType"`
-			IsActive         bool   `json:"isActive"`
-			CreationDatetime string `json:"creationDatetime"`
-			CreatorName      string `json:"creatorName"`
-		} `json:"results"`
-	}
-
-	if err := json.Unmarshal(body, &axentaResp); err != nil {
-		log.Printf("❌ fetchAxentaUsers: ошибка парсинга: %v", err)
-		return users, 0, 0
-	}
-
-	totalUsers = axentaResp.Count
-
-	for _, u := range axentaResp.Results {
-		name := strings.TrimSpace(u.Name)
-		if name == "" {
-			name = strings.TrimSpace(u.FirstName + " " + u.LastName)
-		}
-		if name == "" {
-			name = u.Username
-		}
-
-		role := mapAxentaTypeToRole(u.AccountType)
-
-		users = append(users, UnifiedUser{
-			ID:               u.ID,
-			Username:         u.Username,
-			Name:             name,
-			Email:            u.Email,
-			Role:             role,
-			IsActive:         u.IsActive,
-			CreationDatetime: u.CreationDatetime,
-			CreatorName:      u.CreatorName,
-			Source:           "axenta",
-			SourceLabel:      "Axenta Cloud",
-			AccountType:      u.AccountType,
-		})
-
-		if u.IsActive {
-			activeUsers++
-		}
-	}
-
-	log.Printf("✅ fetchAxentaUsers (live fallback): %d пользователей (активных: %d)", len(users), activeUsers)
-	return users, totalUsers, activeUsers
 }
 
 // fetchWialonUsersFiltered — fallback live-fetch (без cache). Используется если Redis пуст.

@@ -48,15 +48,18 @@ type UnifiedObjectsStats struct {
 	AxentaInactive     int `json:"axenta_inactive"`
 	AxentaDeleted      int `json:"axenta_deleted"`
 	AxentaScheduledDel int `json:"axenta_scheduled_delete"`
-	WialonTotal        int `json:"wialon_total"`
-	WialonActive       int `json:"wialon_active"`
-	WialonWHTotal      int `json:"wialon_wh_total"`
-	WialonWHActive     int `json:"wialon_wh_active"`
-	WialonWLTotal      int `json:"wialon_wl_total"`
-	WialonWLActive     int `json:"wialon_wl_active"`
-	GeliosTotal        int `json:"gelios_total"`
-	GeliosActive       int `json:"gelios_active"`
-	GeliosInactive     int `json:"gelios_inactive"`
+	// Ф3-B6: true если Axenta-источник деградировал (snapshot пуст/устарел;
+	// live-proxy в axenta.cloud по request-токену убран — после Ф1 невалиден).
+	AxentaDegraded bool `json:"axenta_degraded"`
+	WialonTotal    int  `json:"wialon_total"`
+	WialonActive   int  `json:"wialon_active"`
+	WialonWHTotal  int  `json:"wialon_wh_total"`
+	WialonWHActive int  `json:"wialon_wh_active"`
+	WialonWLTotal  int  `json:"wialon_wl_total"`
+	WialonWLActive int  `json:"wialon_wl_active"`
+	GeliosTotal    int  `json:"gelios_total"`
+	GeliosActive   int  `json:"gelios_active"`
+	GeliosInactive int  `json:"gelios_inactive"`
 }
 
 // UnifiedObjectsResponse — формат ответа.
@@ -124,6 +127,9 @@ func GetUnifiedObjects(c *gin.Context) {
 			stats.AxentaInactive = st.Inactive
 			stats.AxentaDeleted = st.Deleted
 			stats.AxentaScheduledDel = st.ScheduledDel
+			if !ok {
+				stats.AxentaDegraded = true
+			}
 			mu.Unlock()
 		}()
 	}
