@@ -1352,9 +1352,21 @@ func main() {
 	apiGroup.GET("/warehouse/statistics", warehouseAPI.GetWarehouseStatistics)
 
 	// Группа для интеграций (с мультитенантностью для изоляции данных между компаниями)
+	// Ф3-cutover: integrationsGroup (Wialon/1С/NovaConnect/Axenta-integration/
+	// Telegram/MAX/integrations-list) исторически висел на legacy
+	// authMiddleware.RequireAuth() (Axenta-токен). После Ф1 AUTH_MODE=local
+	// request-токен = локальный JWT → legacy-валидация даёт 401 → страница
+	// «Внешние интеграции» (Wialon-подключения, список) ломалась. Делаем
+	// AUTH_MODE-aware — тот же паттерн, что apiGroup/cmsGroup (Ф3-C).
 	integrationsGroup := r.Group("/api")
-	integrationsGroup.Use(authMiddleware.RequireAuth())
-	integrationsGroup.Use(tenantMiddleware.SetTenant()) // Добавляем мультитенантность для изоляции данных
+	if authMode == "axenta" {
+		integrationsGroup.Use(authMiddleware.RequireAuth())
+		integrationsGroup.Use(tenantMiddleware.SetTenant())
+	} else {
+		integrationsLocalAuthMW := middleware.NewLocalAuthMiddleware(jwtService)
+		integrationsGroup.Use(integrationsLocalAuthMW.RequireAuth())
+		integrationsGroup.Use(tenantMiddleware.SetTenant())
+	}
 
 	// Интеграция с 1С
 	oneCAPI := api.NewOneCIntegrationAPI()
@@ -1390,6 +1402,16 @@ func main() {
 
 	// Email SMTP интеграция (требует tenant middleware для company_id)
 	// КРИТИЧНО: Хотя NotificationSettings в public схеме, данные фильтруются по company_id
+	// Ф3-cutover/Codex Q4: emailAuthGroup НАМЕРЕННО оставлен на legacy
+	// authMiddleware (НЕ переведён на localAuthMW как integrationsGroup).
+	// Причина: email-хендлеры (SetupEmailIntegration/GetEmailConfig/
+	// TestEmailConnection, api/email.go) читают c.Get("user"), которое
+	// LocalAuthMiddleware НЕ ставит (только user_id/company_id/role). Перевод
+	// на local дал бы 401 уже ВНУТРИ хендлера. В local-режиме email-config
+	// и так не работал (legacy-auth 401 на middleware) — не регрессия,
+	// pre-existing долг. Корректный фикс (LocalAuthMiddleware +c.Set("user")
+	// ИЛИ рерайт email-хендлеров на user_id) — отдельная задача со своим
+	// Codex-раундом, ВНЕ cutover-scope (email ≠ страница «Внешние интеграции»).
 	emailAuthGroup := r.Group("/api/auth/email")
 	emailAuthGroup.Use(authMiddleware.RequireAuth()) // Auth middleware для проверки токена
 	emailAuthGroup.Use(tenantMiddleware.SetTenant()) // Tenant middleware для установки company_id
