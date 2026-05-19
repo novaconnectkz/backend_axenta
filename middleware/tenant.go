@@ -575,12 +575,26 @@ func GetCompanyID(c *gin.Context) uint {
 // X-Admin-ID/X-Account-ID/X-Axenta-Account/query (после Ф1 они
 // attacker-controlled, см. Codex New#1).
 //
-// adminAccountID в legacy-sync == Company.ID для основного кейса
-// (axenta_sync_service: adminAccountID = firstCompany.ID). RefreshAccount
-// дополнительно толерантен — UPDATE по external_account_id при любом
-// adminAccountID, поэтому несовпадение с shared-sync-значением не теряет
-// строку (точная сверка legacy-keying — долг Ф3-D). Реальная tenant-
-// изоляция = схема (tenantDB), не это поле.
+// adminAccountID в legacy-sync == общий firstCompany.ID для ВСЕХ компаний
+// (axenta_sync_service: adminAccountID = firstCompany.ID, пишется во все
+// tenant-схемы). Доверенный claim здесь = company.ID конкретной компании
+// → расходится с shared-значением для не-первой компании.
+//
+// Ф3-D долг #2 (закрыт «verified — cron-backed self-healing, без правки
+// кода»; broadening DELETE отклонён Codex-adversarial: unique-индекс
+// составной (admin_account_id, external_account_id), снятие admin-фильтра
+// = data-loss чужих строк при orphan от старого axetna_login):
+//   - RefreshAccount UPDATE-ветка admin_account_id не фильтрует by design;
+//   - RefreshAccount 404-DELETE admin-фильтр СОХРАНЁН; призрак удалённого
+//     аккаунта не теряется — cron stale-cleanup само-согласован (пишет и
+//     чистит одним adminAccountID) → уходит за ≤1 sync-цикл + 7д orphan;
+//   - Invalidate→SyncAdmin keying по этому ID — тот же cron-backed остаток:
+//     getActiveTokenForAdmin ищет user_tokens.account_id == claim, после Ф1
+//     user_tokens пуст → SyncAdmin no-op. НЕ регрессия: основной путь Ф3-C =
+//     синхронный RefreshAccount (server-токен), Invalidate — мёртвый
+//     fallback, полный cron-sync всё равно перекрывает.
+//
+// Реальная tenant-изоляция = схема (tenantDB), не это поле.
 func GetTrustedAdminAccountID(c *gin.Context) uint {
 	return GetCompanyID(c)
 }

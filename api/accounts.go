@@ -206,110 +206,15 @@ func (h *AccountsHandler) GetAccounts(c *gin.Context) {
 	c.JSON(http.StatusOK, accountsResponse)
 }
 
-// GetAccount получает конкретную учетную запись по ID
+// GetAccount получает конкретную учетную запись по ID.
+//
+// Ф3-D #4 (2026-05-19): раньше — live-proxy GET axenta.cloud/api/cms/
+// accounts/:id/ по request-`Authorization`. После Ф1 request-токен =
+// локальный JWT → axenta.cloud вернул бы 401. Переведено на snapshot-only
+// (см. serveAccountFromSnapshot), как read-path Ф3-B. Тонкая обёртка —
+// вся логика и контракт деградации в одной функции.
 func (h *AccountsHandler) GetAccount(c *gin.Context) {
-	// Получаем ID из параметров
-	idStr := c.Param("id")
-	id, err := strconv.Atoi(idStr)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status": "error",
-			"error":  "Invalid account ID",
-		})
-		return
-	}
-
-	// Получаем токен из заголовка
-	authHeader := c.GetHeader("Authorization")
-	if authHeader == "" {
-		authHeader = c.GetHeader("authorization")
-	}
-
-	if authHeader == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"status": "error",
-			"error":  "Authorization header is required",
-		})
-		return
-	}
-
-	// Строим URL для Axenta API
-	axentaURL := fmt.Sprintf("https://axenta.cloud/api/cms/accounts/%d/", id)
-
-	// Создаем HTTP клиент
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-	}
-
-	// Создаем запрос
-	req, err := http.NewRequest("GET", axentaURL, nil)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to create request: " + err.Error(),
-		})
-		return
-	}
-
-	// Добавляем заголовки авторизации
-	req.Header.Set("Authorization", authHeader)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	// Добавляем X-Tenant-ID если есть
-	tenantID := c.GetHeader("X-Tenant-ID")
-	if tenantID != "" {
-		req.Header.Set("X-Tenant-ID", tenantID)
-	}
-
-	// Выполняем запрос
-	resp, err := client.Do(req)
-	if err != nil {
-		axentaMutationUnavailable(c, err)
-		return
-	}
-	defer resp.Body.Close()
-
-	// Читаем ответ
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to read Axenta API response: " + err.Error(),
-		})
-		return
-	}
-
-	// Если статус не 200, возвращаем ошибку
-	if resp.StatusCode != http.StatusOK {
-		var errorResponse map[string]interface{}
-		if err := json.Unmarshal(body, &errorResponse); err == nil {
-			c.JSON(resp.StatusCode, gin.H{
-				"status":  "error",
-				"error":   "Axenta API error",
-				"details": errorResponse,
-			})
-		} else {
-			c.JSON(resp.StatusCode, gin.H{
-				"status": "error",
-				"error":  "Axenta API error: " + string(body),
-			})
-		}
-		return
-	}
-
-	// Парсим успешный ответ
-	var account Account
-	if err := json.Unmarshal(body, &account); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to parse Axenta API response: " + err.Error(),
-		})
-		return
-	}
-
-	// Возвращаем данные
-	c.JSON(http.StatusOK, account)
+	serveAccountFromSnapshot(c)
 }
 
 // CreateAccount создает новую учетную запись через прокси к Axenta API
@@ -833,43 +738,7 @@ func tryServeAccountsFromSnapshot(db *gorm.DB, page, perPage, ordering, search, 
 	// Преобразуем snapshot rows в формат Axenta API (Account)
 	results := make([]Account, 0, len(rows))
 	for _, r := range rows {
-		var acc Account
-		// RawPayload содержит оригинальный JSON от Axenta — desearializaция даёт все поля
-		if r.RawPayload != "" {
-			_ = json.Unmarshal([]byte(r.RawPayload), &acc)
-		}
-		// Подстраховка: если RawPayload неполон — заполняем из колонок
-		if acc.ID == 0 {
-			acc.ID = int(r.ExternalAccountID)
-		}
-		if acc.Name == "" {
-			acc.Name = r.AccountName
-		}
-		if acc.Type == "" {
-			acc.Type = r.AccountType
-		}
-		if acc.AdminFullname == "" {
-			acc.AdminFullname = r.AdminFullname
-		}
-		if acc.Hierarchy == "" {
-			acc.Hierarchy = r.Hierarchy
-		}
-		if acc.ParentAccountName == "" {
-			acc.ParentAccountName = r.ParentAccountName
-		}
-		if acc.ObjectsTotal == 0 {
-			acc.ObjectsTotal = r.ObjectsTotal
-		}
-		if acc.ObjectsActive == 0 {
-			acc.ObjectsActive = r.ObjectsActive
-		}
-		if !acc.IsActive {
-			acc.IsActive = r.IsActive
-		}
-		if acc.CreationDatetime == "" && !r.CreatedAt.IsZero() {
-			acc.CreationDatetime = r.CreatedAt.Format(time.RFC3339)
-		}
-		results = append(results, acc)
+		results = append(results, accountFromSnapshotRow(r))
 	}
 
 	resp := &AccountsResponse{
@@ -880,6 +749,131 @@ func tryServeAccountsFromSnapshot(db *gorm.DB, page, perPage, ordering, search, 
 	}
 	fmt.Printf("⚡ Snapshot served: total=%d, page=%d, returned=%d (last_sync=%v)\n", total, pageNum, len(results), lastSync.Format(time.RFC3339))
 	return resp, true
+}
+
+// accountFromSnapshotRow конвертирует одну строку axenta_account_snapshots в
+// формат Axenta API (Account). ЕДИНЫЙ источник маппинга для списка
+// (tryServeAccountsFromSnapshot) и детали (serveAccountFromSnapshot) — чтобы
+// карточка и строка списка не разъезжались (тот же принцип что фильтр-хелперы
+// Ф3-B B4). RawPayload (оригинальный JSON Axenta) — основной источник, колонки
+// — подстраховка при неполном payload.
+func accountFromSnapshotRow(r models.AxentaAccountSnapshot) Account {
+	var acc Account
+	if r.RawPayload != "" {
+		_ = json.Unmarshal([]byte(r.RawPayload), &acc)
+	}
+	if acc.ID == 0 {
+		acc.ID = int(r.ExternalAccountID)
+	}
+	if acc.Name == "" {
+		acc.Name = r.AccountName
+	}
+	if acc.Type == "" {
+		acc.Type = r.AccountType
+	}
+	if acc.AdminFullname == "" {
+		acc.AdminFullname = r.AdminFullname
+	}
+	if acc.Hierarchy == "" {
+		acc.Hierarchy = r.Hierarchy
+	}
+	if acc.ParentAccountName == "" {
+		acc.ParentAccountName = r.ParentAccountName
+	}
+	if acc.ObjectsTotal == 0 {
+		acc.ObjectsTotal = r.ObjectsTotal
+	}
+	if acc.ObjectsActive == 0 {
+		acc.ObjectsActive = r.ObjectsActive
+	}
+	if !acc.IsActive {
+		acc.IsActive = r.IsActive
+	}
+	if acc.CreationDatetime == "" && !r.CreatedAt.IsZero() {
+		acc.CreationDatetime = r.CreatedAt.Format(time.RFC3339)
+	}
+	return acc
+}
+
+// serveAccountFromSnapshot — Ф3-D #4: detail-read GetAccount читается из
+// локального snapshot, БЕЗ proxy в axenta.cloud по request-токену (после Ф1
+// request-токен = локальный JWT, для axenta.cloud невалиден → был бы 401).
+//
+// Контракт (производный от Ф3-B, адаптирован под by-id resource):
+//   - снапшот свежий + строка есть → 200 Account (как старый proxy: bare JSON,
+//     FE читает response.data напрямую);
+//   - снапшот есть, но устарел (>TTL) → ВСЁ РАВНО 200 Account (отдаём что
+//     есть, НЕ проксируем — принцип Ф3-B грабля #1), факт логируем;
+//   - снапшот свежий, строки для :id нет → 404 (честный resource-not-found,
+//     НЕ infra-сбой; FE catch это уже обрабатывает как раньше proxy-404);
+//   - tenantDB нет / таблицы нет / SQL-ошибка / снапшот ещё не наполнен →
+//     200 {degraded:true} (как Ф3-B list: не 5xx из-за отсутствия infra;
+//     этот edge практически недостижим — без списка нет клика в деталь).
+//
+// Никогда: 401/500 из-за proxy, обращение в axenta.cloud по request-токену.
+func serveAccountFromSnapshot(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil || id <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Invalid account ID"})
+		return
+	}
+
+	// snapshot живёт в tenant-схеме (tenant_<id>), НЕ в public.
+	// Ф3-D #4/Codex Q4: НЕТ fallback на database.DB (public). Если
+	// доверенный SetTenant не дал tenant_db — читать из public нельзя
+	// (там этой tenant-таблицы нет / search_path-quirk долга #15 →
+	// чужая/пустая выборка). Контракт: tenantDB nil → сразу degraded.
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB == nil {
+		c.JSON(http.StatusOK, gin.H{"degraded": true})
+		return
+	}
+
+	// Свежесть snapshot (как tryServeAccountsFromSnapshot). Пустой/недоступный
+	// snapshot → degraded (не 5xx). Устаревший — НЕ повод (отдаём ниже что есть).
+	var lastSync time.Time
+	if err := tenantDB.Model(&models.AxentaAccountSnapshot{}).
+		Select("MAX(last_synced_at)").Scan(&lastSync).Error; err != nil || lastSync.IsZero() {
+		c.JSON(http.StatusOK, gin.H{"degraded": true})
+		return
+	}
+
+	// Ф3-D #4/Codex Q2: composite-unique (admin_account_id, external_account_id)
+	// → в одной tenant-схеме теоретически >1 строки с одним external_account_id.
+	// НЕ добавляем admin-фильтр: GetTrustedAdminAccountID=company.ID ≠
+	// legacy-sync firstCompany.ID (закрытый долг #2) → admin-фильтр дал бы
+	// 0 строк. Дубли в проде = транзиентный orphan от смены axetna_login,
+	// чистится 7д orphan-cleanup (долг #2). Детерминизм: берём свежайшую по
+	// last_synced_at (= строка актуального admin'а, не протухший orphan) —
+	// стабильный, предсказуемый выбор; расхождение со списком (он Find'ит
+	// все, pre-existing list-показ-дублей вне scope #4) ограничено и
+	// само-исцеляется.
+	var row models.AxentaAccountSnapshot
+	if err := tenantDB.Where("external_account_id = ?", int64(id)).
+		Order("last_synced_at DESC").
+		Order("id ASC"). // явный tiebreak при равном last_synced_at (mass-sync = один timestamp) — ORM-независимый детерминизм (Codex Q2 minor)
+		First(&row).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			// snapshot наполнен, но этой учётки в нём нет — честный not-found
+			c.JSON(http.StatusNotFound, gin.H{
+				"status": "error",
+				"error":  "Учётная запись не найдена в snapshot",
+			})
+			return
+		}
+		// SQL-ошибка — деградируем, НЕ 500 (контракт Ф3-B)
+		fmt.Printf("⚠️ serveAccountFromSnapshot query failed (id=%d): %v\n", id, err)
+		c.JSON(http.StatusOK, gin.H{"degraded": true})
+		return
+	}
+
+	if time.Since(lastSync) > SnapshotTTL {
+		fmt.Printf("⏰ GetAccount snapshot устарел (id=%d, last_sync=%v, age=%v > TTL=%v) — отдаём из snapshot без proxy\n",
+			id, lastSync.Format(time.RFC3339), time.Since(lastSync).Round(time.Second), SnapshotTTL)
+	}
+
+	c.JSON(http.StatusOK, accountFromSnapshotRow(row))
 }
 
 // snapshotOrderClause маппит ordering из фронта (camelCase, опционально с минусом) на SQL ORDER BY для snapshot

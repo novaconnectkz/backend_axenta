@@ -440,14 +440,12 @@ func main() {
 	})
 	// ВРЕМЕННЫЙ тестовый endpoint для создания нумератора без авторизации (только для тестирования)
 	r.POST("/api/test/contract-numerators", api.CreateContractNumerator)
-	// Тестовый endpoint для создания пользователя без проверки токена
-	r.POST("/api/test-cms-users", api.CreateCmsUserWithCurrentToken)
-	// Основной endpoint для создания пользователей CMS
-	r.POST("/api/create-cms-user", api.CreateCmsUserWithCurrentToken)
-	// Endpoint для создания пользователей CMS без проверки Axenta токенов
-	r.POST("/api/cms/create-user", api.CreateCmsUserWithCurrentToken)
-	// Endpoint для создания пользователей CMS с проверкой сохраненного токена
-	r.POST("/api/cms/create-user-with-saved-token", api.CreateCmsUserWithCurrentToken)
+	// Ф3-D #3 (2026-05-19): УДАЛЕНЫ 4 bare cms-user-алиаса без auth
+	// (/api/test-cms-users, /api/create-cms-user, /api/cms/create-user,
+	// /api/cms/create-user-with-saved-token). Pre-Ф1 «прозрачный прокси,
+	// identity из request-токена» — после Ф1 company_id=0 → стабильно
+	// degraded. Фронт их не зовёт (проверено). Auth'd-эквивалент:
+	// cmsGroup.POST("/users") (localAuth+SetTenant, см. Ф3-C zone2-фикс).
 
 	// === ВЕРСИЯ BACKEND === (public, без auth — нужно фронту до логина для footer)
 	api.SetVersionInfoProvider(func() api.VersionInfo {
@@ -757,6 +755,18 @@ func main() {
 	// (общий кэш → Invalidate из /api/control мгновенно виден здесь).
 	apiGroup.GET("/my-entitlements", api.NewSelfEntitlementsAPI(entitlementSvc).MyEntitlements)
 
+	// Ф3-D #1 cred-UX: управление Axenta-кредами компании (admin/superadmin).
+	// После Ф1 весь Ф3-B/C server-токен держится на Company.AxetnaLogin/
+	// Password — здесь оператор их задаёт/тестирует/ротирует. apiGroup
+	// (/api/auth) уже под RequireAuth+SetTenant; роль-гейт — в хендлере.
+	// RedirectTrailingSlash=false → регистрируем оба варианта (quirk).
+	apiGroup.GET("/axenta-credentials", api.GetAxentaCredentials)
+	apiGroup.GET("/axenta-credentials/", api.GetAxentaCredentials)
+	apiGroup.PUT("/axenta-credentials", api.UpdateAxentaCredentials)
+	apiGroup.PUT("/axenta-credentials/", api.UpdateAxentaCredentials)
+	apiGroup.POST("/axenta-credentials/test", api.TestAxentaCredentials)
+	apiGroup.POST("/axenta-credentials/test/", api.TestAxentaCredentials)
+
 	// CMS endpoints. Ф3-C: исторически cmsGroup был БЕЗ middleware (старая
 	// модель «прозрачный прокси, auth из форвардящегося Axenta request-токена»).
 	// После Ф1 эта модель мертва, request-токен = локальный JWT. Мутации
@@ -824,9 +834,9 @@ func main() {
 	log.Println("🔧 Registering users proxy endpoints...")
 	apiGroup.GET("/users", api.GetUsersFromAxentaCloud)
 	apiGroup.POST("/users", api.CreateUserInAxentaCloud)
-	// Публичные маршруты для создания пользователей (без проверки auth)
-	log.Println("🔧 Registering public users endpoints...")
-	r.POST("/api/users", api.CreateUserInAxentaCloud)
+	// Ф3-D #3 (2026-05-19): УДАЛЁН bare r.POST("/api/users") без auth
+	// (pre-Ф1 «публичный» маршрут, company_id=0 → degraded; фронт не зовёт).
+	// Auth'd-эквивалент: apiGroup.POST("/users") выше.
 	apiGroup.GET("/users/stats", api.GetUsersStatsFromAxentaCloud)
 	apiGroup.GET("/users/stats/optimized", api.GetUsersStatsOptimizedFromAxentaCloud)
 	// Унифицированный API для пользователей (объединяет Axenta + Wialon)

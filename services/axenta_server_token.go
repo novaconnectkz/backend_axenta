@@ -51,6 +51,12 @@ type AxentaServerToken struct {
 	sf     singleflight.Group
 	mu     sync.RWMutex
 	cache  map[uint]*TenantCredentials
+	// epoch — счётчик ротаций per-company (Ф3-D #1/Codex Q3). Invalidate
+	// инкрементит; acquire фиксирует epoch ДО чтения кред и пишет кэш
+	// только если epoch не изменился — иначе in-flight acquire со
+	// старыми кредами «воскресил» бы кэш после Invalidate (ротация не
+	// применилась бы до TTL).
+	epoch map[uint]uint64
 }
 
 // NewAxentaServerToken: baseURL обычно "https://axenta.cloud/api"
@@ -60,6 +66,7 @@ func NewAxentaServerToken(db *gorm.DB, client axentaAuthenticator) *AxentaServer
 		db:     db,
 		client: client,
 		cache:  make(map[uint]*TenantCredentials),
+		epoch:  make(map[uint]uint64),
 	}
 }
 
@@ -82,6 +89,8 @@ func (s *AxentaServerToken) Token(ctx context.Context, companyID uint) (string, 
 			s.mu.RUnlock()
 			return c, nil
 		}
+		// Ф3-D #1/Codex Q3: фиксируем epoch ДО чтения кред в acquire.
+		startEpoch := s.epoch[companyID]
 		s.mu.RUnlock()
 
 		creds, aerr := s.acquire(ctx, companyID)
@@ -89,7 +98,13 @@ func (s *AxentaServerToken) Token(ctx context.Context, companyID uint) (string, 
 			return nil, aerr
 		}
 		s.mu.Lock()
-		s.cache[companyID] = creds
+		// Если в окне acquire прошла ротация (Invalidate инкрементил
+		// epoch) — НЕ пишем устаревший entry обратно. creds возвращаем
+		// вызывающему (для ЭТОГО запроса валидны), но кэш не «воскрешаем»:
+		// следующий вызов сделает свежий acquire новыми кредами.
+		if s.epoch[companyID] == startEpoch {
+			s.cache[companyID] = creds
+		}
 		s.mu.Unlock()
 		return creds, nil
 	})
@@ -104,7 +119,31 @@ func (s *AxentaServerToken) Token(ctx context.Context, companyID uint) (string, 
 func (s *AxentaServerToken) Invalidate(companyID uint) {
 	s.mu.Lock()
 	delete(s.cache, companyID)
+	// Ф3-D #1/Codex Q3: бамп epoch — любой in-flight acquire, начавшийся
+	// до этого момента (со старыми кредами), при попытке записать кэш
+	// увидит изменившийся epoch и НЕ перезапишет (ротация применится
+	// сразу, а не после TTL).
+	s.epoch[companyID]++
 	s.mu.Unlock()
+	// Ф3-D #1/Codex Q1 (вариант B): сбрасываем singleflight-флайт, чтобы
+	// вызов, пришедший ПОСЛЕ Invalidate, не присоединился к ещё бегущему
+	// acquire со старыми кредами и не получил old token. Следующий
+	// Token() запустит свежий acquire новыми кредами из БД.
+	s.sf.Forget(strconv.FormatUint(uint64(companyID), 10))
+}
+
+// Probe проверяет пару login/password против axenta.cloud БЕЗ кэша и БЕЗ
+// чтения/записи Company — для "Test connection" в cred-UX (Ф3-D #1).
+// nil = креды валидны. Тот же client/endpoint, что acquire → тест
+// отражает реальный server-логин (а не угадывает).
+func (s *AxentaServerToken) Probe(ctx context.Context, login, password string) error {
+	if login == "" || password == "" {
+		return ErrNoAxentaCreds
+	}
+	if _, err := s.client.Authenticate(ctx, login, password); err != nil {
+		return err
+	}
+	return nil
 }
 
 // acquire логинится в Axenta по хранимым кредам компании.

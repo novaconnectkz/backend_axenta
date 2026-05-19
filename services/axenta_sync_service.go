@@ -393,7 +393,25 @@ func (s *AxentaSyncService) RefreshAccount(token string, adminAccountID uint, ac
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		// Аккаунт удалён в Axenta — убираем из snapshot
+		// Аккаунт удалён в Axenta — убираем из snapshot.
+		//
+		// Ф3-D долг #2 (закрыт «verified, без правки»): admin-фильтр здесь
+		// СОХРАНЁН намеренно. Соблазн расширить до WHERE external_account_id
+		// (т.к. legacy-sync пишет общий firstCompany.ID, а вызывающий передаёт
+		// доверенный company.ID → admin-фильтр на не-первой компании = 0 строк)
+		// ОТКЛОНЁН: unique-индекс составной (admin_account_id, external_account_id),
+		// storeAccountsWithDB UPSERT'ит по той же паре — в одной схеме легально
+		// сосуществуют строки с одним external_account_id и разными admin
+		// (смена axetna_login → orphan от старого admin). Снятие admin-фильтра
+		// удалило бы чужие строки = data-loss (Codex BLOCKER).
+		//
+		// Призрак не теряется: cron stale-cleanup само-согласован (пишет и
+		// чистит одним adminAccountID, см. ~стр.250) → удалённый в Axenta
+		// аккаунт уходит за ≤1 sync-цикл, плюс global orphan-cleanup (>7д).
+		// Этот 404-DELETE — лишь latency-оптимизация (мгновенно vs ≤cron).
+		// Остаточная latency на редком пути (delete-in-Axenta + ручной
+		// RefreshSingleAccount до cron) — принятый cron-backed residual,
+		// тот же класс что Invalidate→SyncAdmin.
 		if db != nil {
 			db.Where("admin_account_id = ? AND external_account_id = ?", adminAccountID, accountID).
 				Delete(&models.AxentaAccountSnapshot{})

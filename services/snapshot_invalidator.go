@@ -77,6 +77,12 @@ func GetSnapshotInvalidator() *SnapshotInvalidator {
 
 // InvalidateAxenta помечает Axenta-admin'а как требующего re-sync.
 // Триггер: CreateUserInAxentaCloud, CreateAccount, MoveAccount, etc.
+//
+// Ф3-D долг #2: adminAccountID = доверенный company.ID. Воркер зовёт
+// SyncAdmin(id) → getActiveTokenForAdmin(id) по user_tokens.account_id;
+// после Ф1 user_tokens пуст → no-op (cron-backed, не регрессия — основной
+// путь мутаций Ф3-C = синхронный RefreshAccount на server-токене).
+// См. middleware.GetTrustedAdminAccountID.
 func (s *SnapshotInvalidator) InvalidateAxenta(adminAccountID uint, reason string) {
 	if s == nil || adminAccountID == 0 {
 		return
