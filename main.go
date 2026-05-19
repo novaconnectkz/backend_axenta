@@ -743,6 +743,11 @@ func main() {
 		log.Println("✅ /api/auth/* защищены локальной JWT-проверкой (мультитенантность из claim)")
 	}
 
+	// S4: self-entitlements — tenant-приложение узнаёт свои платные
+	// фичи (UI gate). Тот же EntitlementService, что control-plane
+	// (общий кэш → Invalidate из /api/control мгновенно виден здесь).
+	apiGroup.GET("/my-entitlements", api.NewSelfEntitlementsAPI(entitlementSvc).MyEntitlements)
+
 	// Отдельная группа для CMS endpoints без проверки Axenta токенов
 	log.Println("🔧 Registering CMS endpoints without Axenta authentication...")
 	cmsGroup := r.Group("/api/cms")
