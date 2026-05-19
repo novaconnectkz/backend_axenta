@@ -21,6 +21,7 @@ require (
 	github.com/stretchr/testify v1.10.0
 	github.com/xuri/excelize/v2 v2.9.1
 	golang.org/x/crypto v0.45.0
+	golang.org/x/sync v0.18.0
 	gorm.io/driver/postgres v1.5.9
 	gorm.io/driver/sqlite v1.5.7
 	gorm.io/gorm v1.25.12
@@ -61,7 +62,6 @@ require (
 	github.com/xuri/nfp v0.0.1 // indirect
 	golang.org/x/arch v0.3.0 // indirect
 	golang.org/x/net v0.47.0 // indirect
-	golang.org/x/sync v0.18.0 // indirect
 	golang.org/x/sys v0.38.0 // indirect
 	golang.org/x/text v0.31.0 // indirect
 	google.golang.org/protobuf v1.36.7 // indirect
