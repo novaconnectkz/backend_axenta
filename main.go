@@ -391,6 +391,12 @@ func main() {
 			"Pragma",
 			"Accept",
 			"X-Requested-With",
+			// Ф1 CSRF double-submit (api.ts:54 шлёт X-CSRF-Token на
+			// небезопасных методах). Без него preflight cross-origin
+			// (acrm.su → api.acrm.su) режет ВСЕ PUT/POST/DELETE мутации
+			// (cred-UX save, create account/user, toggle…). Ф1-cutover gap.
+			"X-CSRF-Token",
+			"x-csrf-token",
 		},
 		ExposeHeaders: []string{
 			"Content-Length",

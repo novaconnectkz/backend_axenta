@@ -221,7 +221,7 @@ func LoadConfig() (*Config, error) {
 				"http://api.acrm.su",
 			}),
 			AllowedMethods:   getEnvSlice("CORS_ALLOWED_METHODS", []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}),
-			AllowedHeaders:   getEnvSlice("CORS_ALLOWED_HEADERS", []string{"Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin", "X-Tenant-ID", "x-tenant-id"}),
+			AllowedHeaders:   getEnvSlice("CORS_ALLOWED_HEADERS", []string{"Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin", "X-Tenant-ID", "x-tenant-id", "X-CSRF-Token", "x-csrf-token"}),
 			AllowCredentials: getEnvBool("CORS_ALLOW_CREDENTIALS", true),
 			MaxAge:           getEnvInt("CORS_MAX_AGE", 86400),
 		},
