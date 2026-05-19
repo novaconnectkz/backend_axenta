@@ -115,8 +115,11 @@ func GetDefaultRetryConfig() RetryConfig {
 
 // Authenticate авторизуется в Axetna.cloud API
 func (c *AxetnaClient) Authenticate(ctx context.Context, login, password string) (*TenantCredentials, error) {
+	// Ф3-A баг: ключ ДОЛЖЕН быть "username" (axenta.cloud DRF-сериализатор
+	// требует username; "login" → 400). Эталон — рабочий легаси
+	// api/auth.go LoginRequest{json:"username","password"} → /auth/login/.
 	authData := map[string]string{
-		"login":    login,
+		"username": login,
 		"password": password,
 	}
 
@@ -125,7 +128,12 @@ func (c *AxetnaClient) Authenticate(ctx context.Context, login, password string)
 		return nil, fmt.Errorf("ошибка сериализации данных авторизации: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", c.BaseURL+"/auth/login", bytes.NewBuffer(jsonData))
+	// axenta.cloud = DRF с APPEND_SLASH: POST на /auth/login БЕЗ trailing
+	// slash → 405 (POST не редиректится, тело потерялось бы). Эталон —
+	// рабочий легаси api/auth.go:98 ("https://axenta.cloud/api/auth/login/")
+	// + wiki/sources/axenta-api.md. Слеш ОБЯЗАТЕЛЕН (Ф3-A баг: без него
+	// AxentaServerToken не мог авторизоваться → все Ф3-C мутации degraded).
+	req, err := http.NewRequestWithContext(ctx, "POST", c.BaseURL+"/auth/login/", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("ошибка создания запроса авторизации: %w", err)
 	}
@@ -152,11 +160,22 @@ func (c *AxetnaClient) Authenticate(ctx context.Context, login, password string)
 		return nil, fmt.Errorf("неуспешная авторизация, статус: %d", resp.StatusCode)
 	}
 
+	// Ф3-A: axenta.cloud auth НЕ возвращает expires_at (нет refresh-потока,
+	// см. wiki/sources/axenta-api.md + легаси AxentaLoginResponse =
+	// token/message/error). authResp.ExpiresAt = zero → AxentaServerToken
+	// кэш всегда промахивается → re-auth на КАЖДЫЙ вызов = риск Axenta
+	// rate-limit 500/мин + латентность. Ставим консервативный TTL; реальный
+	// отзыв ловится downstream-401 → invalidateAxentaServerToken + retry
+	// (Ф3-C). Если Axenta вдруг вернёт expires_at — уважаем его.
+	expiresAt := authResp.ExpiresAt
+	if expiresAt.IsZero() {
+		expiresAt = time.Now().Add(12 * time.Hour)
+	}
 	credentials := &TenantCredentials{
 		Login:     login,
 		Password:  password,
 		Token:     authResp.Token,
-		ExpiresAt: authResp.ExpiresAt,
+		ExpiresAt: expiresAt,
 	}
 
 	c.Logger.Printf("Успешная авторизация для пользователя: %s", login)
