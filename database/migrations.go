@@ -218,6 +218,57 @@ func GetAllMigrations() []MigrationInfo {
 			Description: "Singleton-маркер первичной инициализации (bootstrap суперадмина)",
 			IsGlobal:    true,
 		},
+		// Контур монетизации ACRM (Фаза 2, platform_*). Отдельный
+		// неймспейс — НЕ операционный billing дилеров/конечников.
+		{
+			TableName:   "platform_plans",
+			Model:       &models.PlatformPlan{},
+			Description: "Пакеты доступа к ACRM (монетизация)",
+			IsGlobal:    true,
+		},
+		{
+			TableName:   "platform_features",
+			Model:       &models.PlatformFeature{},
+			Description: "Каталог продаваемых фич ACRM",
+			IsGlobal:    true,
+		},
+		{
+			TableName:   "platform_plan_features",
+			Model:       &models.PlatformPlanFeature{},
+			Description: "Состав пакетов: фичи + лимиты",
+			IsGlobal:    true,
+		},
+		{
+			TableName:   "platform_subscriptions",
+			Model:       &models.PlatformSubscription{},
+			Description: "Подписки компаний на пакеты доступа к ACRM",
+			IsGlobal:    true,
+		},
+		{
+			TableName:   "company_entitlements",
+			Model:       &models.CompanyEntitlement{},
+			Description: "Ручные override фич для компаний (поверх плана)",
+			IsGlobal:    true,
+		},
+		// Операторский (control-plane) auth-контур — отдельно от tenant.
+		{
+			TableName:   "operators",
+			Model:       &models.Operator{},
+			Description: "Учётные записи SaaS-оператора (control-plane)",
+			IsGlobal:    true,
+		},
+		{
+			TableName:   "operator_refresh_tokens",
+			Model:       &models.OperatorRefreshToken{},
+			Description: "Refresh-токены операторского контура (хэш+ротация)",
+			IsGlobal:    true,
+		},
+		{
+			TableName:   "operator_bootstrap_state",
+			Model:       &models.OperatorBootstrapState{},
+			Description: "Singleton первичного создания оператора",
+			IsGlobal:    true,
+		},
 		{
 			TableName:   "notification_settings",
 			Model:       &models.NotificationSettings{},

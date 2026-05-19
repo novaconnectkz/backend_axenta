@@ -98,13 +98,19 @@ func OriginGuard(allowed []string) gin.HandlerFunc {
 // равный непустому заголовку X-CSRF-Token. Чужой сайт не может прочитать
 // cookie (другой сабдомен) и подставить заголовок → CSRF блокируется.
 func CSRFDoubleSubmit() gin.HandlerFunc {
+	return CSRFDoubleSubmitCookie(csrfCookieNameMW)
+}
+
+// CSRFDoubleSubmitCookie — то же, но с произвольным именем cookie
+// (операторский контур использует свою csrf-cookie, изолированно).
+func CSRFDoubleSubmitCookie(cookieName string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if isSafeMethod(c.Request.Method) {
 			c.Next()
 			return
 		}
 
-		cookieVal, err := c.Cookie(csrfCookieNameMW)
+		cookieVal, err := c.Cookie(cookieName)
 		headerVal := c.GetHeader(csrfHeaderName)
 
 		if err != nil || cookieVal == "" || headerVal == "" || cookieVal != headerVal {

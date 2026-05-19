@@ -480,6 +480,32 @@ func main() {
 		log.Println("✅ AUTH_MODE=local — локальная авторизация (Axenta отвязана от входа)")
 	}
 
+	// === CONTROL-PLANE (Фаза 2: монетизация, операторский контур) ===
+	// Полностью изолирован от tenant: свой JWT-секрет, своя cookie
+	// (acrm_op_*), путь /api/control, БЕЗ tenant-middleware. Operator-
+	// токен и tenant-токен взаимно не валидируются (разные ключи).
+	operatorJWT := services.NewOperatorJWTService(database.DB)
+	operatorAuthAPI := api.NewOperatorAuthAPI(database.DB, operatorJWT)
+	operatorMW := middleware.NewOperatorAuthMiddleware(operatorJWT)
+
+	// Публичные: bootstrap оператора + login/refresh/logout.
+	r.GET("/api/control/setup", operatorAuthAPI.SetupStatus)
+	r.POST("/api/control/setup", originGuard, middleware.StrictRateLimit(), operatorAuthAPI.SetupBootstrap)
+	r.POST("/api/control/auth/login", originGuard, middleware.StrictRateLimit(), operatorAuthAPI.Login)
+	r.POST("/api/control/auth/refresh", originGuard,
+		middleware.CSRFDoubleSubmitCookie("acrm_op_csrf"), middleware.StrictRateLimit(),
+		operatorAuthAPI.Refresh)
+	r.POST("/api/control/auth/logout", originGuard,
+		middleware.CSRFDoubleSubmitCookie("acrm_op_csrf"), operatorAuthAPI.Logout)
+
+	// Защищённая control-plane группа — ТОЛЬКО operatorAuth, без
+	// tenantMiddleware (оператор вне tenant-схем). S3 навесит сюда
+	// CRUD пакетов/фич/подписок/provisioning.
+	controlGroup := r.Group("/api/control")
+	controlGroup.Use(operatorMW.RequireOperator())
+	controlGroup.GET("/me", operatorAuthAPI.CurrentOperator)
+	log.Println("✅ Control-plane (operator) контур включён: /api/control/*")
+
 	// === WEBSOCKET С АВТОРИЗАЦИЕЙ ===
 	wsAPI := api.NewWebSocketAuthAPI(jwtService)
 	wsAPI.RegisterRoutes(r.Group("/ws"))

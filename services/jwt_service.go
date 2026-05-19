@@ -292,12 +292,16 @@ func (j *JWTService) RotateRefreshToken(rawRefresh string) (string, string, erro
 
 		now := time.Now()
 
-		// Истёк по сроку — не reuse, просто невалиден.
-		if now.After(rt.ExpiresAt) {
+		alreadyRotated := rt.RotatedAt != nil || rt.IsRevoked
+
+		// BLK2: reuse-detection ПЕРЕД expiry. Иначе украденный R0,
+		// предъявленный после своего истечения, выходил бы на «expired»
+		// и НЕ отзывал семью — кража не детектится. Ротированный/
+		// отозванный токен = либо гонка, либо кража, независимо от срока.
+		if !alreadyRotated && now.After(rt.ExpiresAt) {
+			// Свежий (не ротированный) токен просто состарился — не кража.
 			return fmt.Errorf("refresh token expired")
 		}
-
-		alreadyRotated := rt.RotatedAt != nil || rt.IsRevoked
 
 		if alreadyRotated {
 			// Семья уже отозвана целиком → точно reuse.

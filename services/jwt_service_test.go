@@ -239,6 +239,34 @@ func TestRotateRefreshToken_ReuseAfterGrace(t *testing.T) {
 	assert.Equal(t, total, revoked, "после reuse вся семья должна быть отозвана")
 }
 
+// BLK2: украденный R0, предъявленный ПОСЛЕ своего истечения, всё
+// равно должен дать reuse-detection (revoke family), а не «expired».
+func TestRotateRefreshToken_ReuseAfterExpiry(t *testing.T) {
+	db := setupJWTServiceTestDB(t)
+	service := setupJWTService(t, db)
+	user := makeUser(t, db)
+
+	_, refresh, err := service.GenerateTokenPair(user)
+	require.NoError(t, err)
+	_, _, err = service.RotateRefreshToken(refresh)
+	require.NoError(t, err)
+
+	// R0: ротирован И истёк (вне grace).
+	past := time.Now().Add(-2 * refreshGraceWindow)
+	expired := time.Now().Add(-time.Hour)
+	require.NoError(t, db.Model(&models.RefreshToken{}).
+		Where("token_hash = ?", service.hashRefresh(refresh)).
+		Updates(map[string]any{"rotated_at": past, "expires_at": expired}).Error)
+
+	_, _, err = service.RotateRefreshToken(refresh)
+	require.ErrorIs(t, err, ErrRefreshReuse, "истёкший ротированный R0 → reuse, не expired")
+
+	var total, revoked int64
+	db.Model(&models.RefreshToken{}).Count(&total)
+	db.Model(&models.RefreshToken{}).Where("is_revoked = ?", true).Count(&revoked)
+	require.Equal(t, total, revoked, "семья отозвана")
+}
+
 // B7: RevokeAllUserTokens отзывает refresh и поднимает TokenVersion,
 // делая все ранее выданные access-JWT невалидными.
 func TestRevokeAllUserTokens_BumpsVersion(t *testing.T) {
