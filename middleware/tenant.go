@@ -569,6 +569,22 @@ func GetCompanyID(c *gin.Context) uint {
 	return 0
 }
 
+// GetTrustedAdminAccountID — Ф3-C: admin_account_id ТОЛЬКО из доверенного
+// источника (signed JWT-claim company_id, проставляется SetTenant из
+// auth_company_id). В отличие от GetAdminAccountID НЕ читает клиентские
+// X-Admin-ID/X-Account-ID/X-Axenta-Account/query (после Ф1 они
+// attacker-controlled, см. Codex New#1).
+//
+// adminAccountID в legacy-sync == Company.ID для основного кейса
+// (axenta_sync_service: adminAccountID = firstCompany.ID). RefreshAccount
+// дополнительно толерантен — UPDATE по external_account_id при любом
+// adminAccountID, поэтому несовпадение с shared-sync-значением не теряет
+// строку (точная сверка legacy-keying — долг Ф3-D). Реальная tenant-
+// изоляция = схема (tenantDB), не это поле.
+func GetTrustedAdminAccountID(c *gin.Context) uint {
+	return GetCompanyID(c)
+}
+
 // GetTenantDBByCompanyID возвращает подключение к БД компании по ID
 func (tm *TenantMiddleware) GetTenantDBByCompanyID(companyID uint) *gorm.DB {
 	// Получаем информацию о компании из основной БД

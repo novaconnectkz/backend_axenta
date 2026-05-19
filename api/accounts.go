@@ -148,10 +148,7 @@ func (h *AccountsHandler) GetAccounts(c *gin.Context) {
 	resp, err := client.Do(req)
 	if err != nil {
 		fmt.Printf("❌ Axenta API request failed: %v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to connect to Axenta API: " + err.Error(),
-		})
+		axentaMutationUnavailable(c, err)
 		return
 	}
 	defer resp.Body.Close()
@@ -268,10 +265,7 @@ func (h *AccountsHandler) GetAccount(c *gin.Context) {
 	// Выполняем запрос
 	resp, err := client.Do(req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to connect to Axenta API: " + err.Error(),
-		})
+		axentaMutationUnavailable(c, err)
 		return
 	}
 	defer resp.Body.Close()
@@ -320,20 +314,6 @@ func (h *AccountsHandler) GetAccount(c *gin.Context) {
 
 // CreateAccount создает новую учетную запись через прокси к Axenta API
 func (h *AccountsHandler) CreateAccount(c *gin.Context) {
-	// Получаем токен из заголовка
-	authHeader := c.GetHeader("Authorization")
-	if authHeader == "" {
-		authHeader = c.GetHeader("authorization")
-	}
-
-	if authHeader == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"status": "error",
-			"error":  "Authorization header is required",
-		})
-		return
-	}
-
 	// Читаем тело запроса
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -344,68 +324,60 @@ func (h *AccountsHandler) CreateAccount(c *gin.Context) {
 		return
 	}
 
-	// Строим URL для Axenta API
-	axentaURL := "https://axenta.cloud/api/cms/accounts/"
+	// Ф3-C: server-side Axenta-токен (креды компании), НЕ request-токен.
+	// ok=false → degraded-ответ записан, мутацию НЕ делаем.
+	axToken, ok := axentaServerTokenFor(c)
+	if !ok {
+		return
+	}
 
-	// Создаем HTTP клиент
+	axentaURL := "https://axenta.cloud/api/cms/accounts/"
 	client := &http.Client{
 		Timeout: 30 * time.Second,
 	}
 
-	// Создаем запрос
-	req, err := http.NewRequest("POST", axentaURL, bytes.NewBuffer(body))
+	doReq := func(token string) (int, []byte, error) {
+		httpReq, e := http.NewRequest("POST", axentaURL, bytes.NewBuffer(body))
+		if e != nil {
+			return 0, nil, e
+		}
+		httpReq.Header.Set("Authorization", "Token "+token)
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Accept", "application/json")
+		rsp, e := client.Do(httpReq)
+		if e != nil {
+			return 0, nil, e
+		}
+		defer rsp.Body.Close()
+		b, e := io.ReadAll(rsp.Body)
+		return rsp.StatusCode, b, e
+	}
+
+	statusCode, respBody, err := doReq(axToken)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to create request: " + err.Error(),
-		})
+		axentaMutationUnavailable(c, err)
 		return
 	}
 
-	// Добавляем заголовки авторизации
-	req.Header.Set("Authorization", authHeader)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	// Добавляем X-Tenant-ID если есть
-	tenantID := c.GetHeader("X-Tenant-ID")
-	if tenantID != "" {
-		req.Header.Set("X-Tenant-ID", tenantID)
+	// Downstream 401 — server-токен компании отозван: сброс + 1 retry.
+	if statusCode == http.StatusUnauthorized {
+		invalidateAxentaServerToken(c)
+		axToken2, ok2 := axentaServerTokenFor(c)
+		if !ok2 {
+			return
+		}
+		statusCode, respBody, err = doReq(axToken2)
+		if err != nil {
+			axentaMutationUnavailable(c, err)
+			return
+		}
 	}
 
-	// Логируем запрос
-	fmt.Printf("🔄 Proxy POST request to Axenta API: %s\n", axentaURL)
-	fmt.Printf("📋 Headers: Authorization=%s, X-Tenant-ID=%s\n",
-		authHeader[:min(20, len(authHeader))]+"...", tenantID)
-	fmt.Printf("📦 Body: %s\n", string(body))
-
-	// Выполняем запрос
-	resp, err := client.Do(req)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to connect to Axenta API: " + err.Error(),
-		})
-		return
-	}
-	defer resp.Body.Close()
-
-	// Читаем ответ
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to read Axenta API response: " + err.Error(),
-		})
-		return
-	}
-
-	// Логируем ответ
-	fmt.Printf("📥 Axenta API response: %d %s\n", resp.StatusCode, string(respBody))
+	fmt.Printf("📥 CreateAccount via server-token: %d\n", statusCode)
 
 	// Если Axenta API вернул ошибку, передаем её клиенту
-	if resp.StatusCode >= 400 {
-		c.JSON(resp.StatusCode, gin.H{
+	if statusCode >= 400 {
+		c.JSON(statusCode, gin.H{
 			"status": "error",
 			"error":  "Axenta API error: " + string(respBody),
 		})
@@ -424,7 +396,7 @@ func (h *AccountsHandler) CreateAccount(c *gin.Context) {
 
 	// Триггерим резинк snapshot'ов чтобы новый аккаунт появился в /unified/accounts
 	// и в KPI dashboard без ожидания scheduled cron.
-	if adminID, err := middleware.GetAdminAccountID(c); err == nil {
+	if adminID := middleware.GetTrustedAdminAccountID(c); adminID != 0 {
 		services.GetSnapshotInvalidator().Invalidate(adminID, "account.create")
 
 		// Точечный upsert AxentaUserSnapshot для admin'а нового аккаунта.
@@ -495,20 +467,6 @@ type AccountMoveRequest struct {
 
 // MoveAccount перемещает учетную запись и все её данные к другому партнеру
 func (h *AccountsHandler) MoveAccount(c *gin.Context) {
-	// Получаем токен из заголовка
-	authHeader := c.GetHeader("Authorization")
-	if authHeader == "" {
-		authHeader = c.GetHeader("authorization")
-	}
-
-	if authHeader == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"status": "error",
-			"error":  "Authorization header is required",
-		})
-		return
-	}
-
 	// Парсим запрос
 	var moveRequest AccountMoveRequest
 	if err := c.ShouldBindJSON(&moveRequest); err != nil {
@@ -528,20 +486,21 @@ func (h *AccountsHandler) MoveAccount(c *gin.Context) {
 		return
 	}
 
-	// Строим URL для Axenta API
-	axentaURL := "https://axenta.cloud/api/cms/accounts/change_account/"
+	// Ф3-C: server-side Axenta-токен (креды компании), НЕ request-токен.
+	axToken, ok := axentaServerTokenFor(c)
+	if !ok {
+		return
+	}
 
-	// Создаем HTTP клиент
+	axentaURL := "https://axenta.cloud/api/cms/accounts/change_account/"
 	client := &http.Client{
 		Timeout: 30 * time.Second,
 	}
 
-	// Подготавливаем данные для отправки
 	requestData := map[string]interface{}{
 		"accountId":       moveRequest.AccountID,
 		"targetAccountId": moveRequest.TargetAccountID,
 	}
-
 	jsonData, err := json.Marshal(requestData)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -551,55 +510,49 @@ func (h *AccountsHandler) MoveAccount(c *gin.Context) {
 		return
 	}
 
-	// Создаем запрос
-	req, err := http.NewRequest("POST", axentaURL, bytes.NewBuffer(jsonData))
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to create request: " + err.Error(),
-		})
-		return
+	doReq := func(token string) (int, []byte, error) {
+		httpReq, e := http.NewRequest("POST", axentaURL, bytes.NewBuffer(jsonData))
+		if e != nil {
+			return 0, nil, e
+		}
+		httpReq.Header.Set("Authorization", "Token "+token)
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Accept", "application/json")
+		rsp, e := client.Do(httpReq)
+		if e != nil {
+			return 0, nil, e
+		}
+		defer rsp.Body.Close()
+		b, e := io.ReadAll(rsp.Body)
+		return rsp.StatusCode, b, e
 	}
 
-	// Добавляем заголовки авторизации
-	req.Header.Set("Authorization", authHeader)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	// Добавляем X-Tenant-ID если есть
-	tenantID := c.GetHeader("X-Tenant-ID")
-	if tenantID != "" {
-		req.Header.Set("X-Tenant-ID", tenantID)
-	}
-
-	// Логируем запрос
-	fmt.Printf("🔄 Moving account %d to target account %d via Axenta API\n",
+	fmt.Printf("🔄 Moving account %d → %d via Axenta (server-token)\n",
 		moveRequest.AccountID, moveRequest.TargetAccountID)
 
-	// Выполняем запрос
-	resp, err := client.Do(req)
+	statusCode, body, err := doReq(axToken)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to connect to Axenta API: " + err.Error(),
-		})
+		axentaMutationUnavailable(c, err)
 		return
 	}
-	defer resp.Body.Close()
 
-	// Читаем ответ
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to read Axenta API response: " + err.Error(),
-		})
-		return
+	// Downstream 401 — server-токен компании отозван: сброс + 1 retry.
+	if statusCode == http.StatusUnauthorized {
+		invalidateAxentaServerToken(c)
+		axToken2, ok2 := axentaServerTokenFor(c)
+		if !ok2 {
+			return
+		}
+		statusCode, body, err = doReq(axToken2)
+		if err != nil {
+			axentaMutationUnavailable(c, err)
+			return
+		}
 	}
 
 	// Проверяем статус ответа
-	if resp.StatusCode != http.StatusOK {
-		c.JSON(resp.StatusCode, gin.H{
+	if statusCode != http.StatusOK {
+		c.JSON(statusCode, gin.H{
 			"status": "error",
 			"error":  fmt.Sprintf("Axenta API error: %s", string(body)),
 		})
@@ -610,7 +563,7 @@ func (h *AccountsHandler) MoveAccount(c *gin.Context) {
 		moveRequest.AccountID, moveRequest.TargetAccountID)
 
 	// Триггерим резинк snapshot'ов — иерархия аккаунтов изменилась.
-	if adminID, err := middleware.GetAdminAccountID(c); err == nil {
+	if adminID := middleware.GetTrustedAdminAccountID(c); adminID != 0 {
 		services.GetSnapshotInvalidator().Invalidate(adminID, "account.move")
 	}
 
@@ -638,71 +591,89 @@ func (h *AccountsHandler) ToggleAccountStatus(c *gin.Context) {
 		return
 	}
 
-	authHeader := c.GetHeader("Authorization")
-	if authHeader == "" {
-		authHeader = c.GetHeader("authorization")
-	}
-	if authHeader == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": "Authorization header is required"})
-		return
-	}
-
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Failed to read request body: " + err.Error()})
 		return
 	}
 
+	// Ф3-C: server-side Axenta-токен (креды компании), НЕ request-токен.
+	axToken, ok := axentaServerTokenFor(c)
+	if !ok {
+		return
+	}
+
 	axentaURL := fmt.Sprintf("https://axenta.cloud/api/cms/accounts/%s/activate/", id)
 	client := &http.Client{Timeout: 30 * time.Second}
-	req, err := http.NewRequest("POST", axentaURL, bytes.NewBuffer(body))
+
+	doReq := func(tk string) (int, []byte, error) {
+		httpReq, e := http.NewRequest("POST", axentaURL, bytes.NewBuffer(body))
+		if e != nil {
+			return 0, nil, e
+		}
+		httpReq.Header.Set("Authorization", "Token "+tk)
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Accept", "application/json")
+		rsp, e := client.Do(httpReq)
+		if e != nil {
+			return 0, nil, e
+		}
+		defer rsp.Body.Close()
+		b, e := io.ReadAll(rsp.Body)
+		return rsp.StatusCode, b, e
+	}
+
+	statusCode, respBody, err := doReq(axToken)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "Failed to create request: " + err.Error()})
+		axentaMutationUnavailable(c, err)
 		return
 	}
-	req.Header.Set("Authorization", authHeader)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	if tenantID := c.GetHeader("X-Tenant-ID"); tenantID != "" {
-		req.Header.Set("X-Tenant-ID", tenantID)
+
+	// Downstream 401 — server-токен компании отозван: сброс + 1 retry.
+	if statusCode == http.StatusUnauthorized {
+		invalidateAxentaServerToken(c)
+		axToken2, ok2 := axentaServerTokenFor(c)
+		if !ok2 {
+			return
+		}
+		axToken = axToken2
+		statusCode, respBody, err = doReq(axToken)
+		if err != nil {
+			axentaMutationUnavailable(c, err)
+			return
+		}
 	}
 
-	resp, err := client.Do(req)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": "Axenta connect failed: " + err.Error()})
-		return
-	}
-	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode >= 400 {
-		c.Data(resp.StatusCode, "application/json", respBody)
+	if statusCode >= 400 {
+		c.Data(statusCode, "application/json", respBody)
 		return
 	}
 
 	// Точечный re-fetch конкретного аккаунта — намного быстрее SyncAdmin (~200ms vs ~30s).
 	// СИНХРОННО до ответа, чтобы frontend сразу после 201 видел обновлённый snapshot.
 	// При ошибке refresh — fallback на async SnapshotInvalidator.
-	token := strings.TrimPrefix(authHeader, "Token ")
-	token = strings.TrimPrefix(token, "Bearer ")
+	// Ф3-C: RefreshAccount тоже на server-токене (request-токен после Ф1 невалиден).
+	token := axToken
 
-	adminID, _ := middleware.GetAdminAccountID(c)
-	if adminID == 0 {
-		adminID = getAccountIDFromToken(token)
-	}
+	// Ф3-C/Codex: adminID ТОЛЬКО из доверенного claim. getAccountIDFromToken
+	// на server-токене вернул бы КОРНЕВОЙ аккаунт компании (не tenant-admin) →
+	// refresh/invalidate ушёл бы не в ту схему. adminID==0 → sync-refresh
+	// пропускаем (guard ниже), cron подхватит.
+	adminID := middleware.GetTrustedAdminAccountID(c)
 
-	// CMS endpoints без tenant middleware → middleware.GetTenantDB(c) вернёт nil.
-	// Вытаскиваем tenant из X-Tenant-ID заголовка вручную, иначе RefreshAccount
-	// запишет в public, а UI читает из tenant_<id>.
-	var tenantDB *gorm.DB
-	if tenantIDStr := c.GetHeader("X-Tenant-ID"); tenantIDStr != "" {
-		if tid, err := strconv.ParseUint(tenantIDStr, 10, 32); err == nil {
-			tenantDB = database.GetTenantDBByID(uint(tid))
-		}
-	}
+	// Ф3-C/Codex: ДОВЕРЕННЫЙ tenantDB из SetTenant (signed claim) — ПЕРЕД
+	// клиентским X-Tenant-ID. После zone2-фикса cmsGroup имеет SetTenant,
+	// поэтому GetTenantDB(c) непуст и привязан к аутентифицированной компании.
+	// X-Tenant-ID (client-controlled) — только legacy-fallback если trusted
+	// почему-то пуст; иначе аутентифицированный юзер форжил бы чужую схему
+	// (cross-tenant запись через RefreshAccount).
+	tenantDB := middleware.GetTenantDB(c)
 	if tenantDB == nil {
-		tenantDB = middleware.GetTenantDB(c)
+		if tenantIDStr := c.GetHeader("X-Tenant-ID"); tenantIDStr != "" {
+			if tid, err := strconv.ParseUint(tenantIDStr, 10, 32); err == nil {
+				tenantDB = database.GetTenantDBByID(uint(tid))
+			}
+		}
 	}
 	if tenantDB == nil {
 		tenantDB = database.GetDB()
@@ -723,7 +694,7 @@ func (h *AccountsHandler) ToggleAccountStatus(c *gin.Context) {
 		}
 	}
 
-	c.Data(resp.StatusCode, "application/json", respBody)
+	c.Data(statusCode, "application/json", respBody)
 }
 
 // RefreshSingleAccount — manual точечный refresh учётки по ID. Полезно когда
@@ -744,23 +715,19 @@ func (h *AccountsHandler) RefreshSingleAccount(c *gin.Context) {
 		return
 	}
 
-	authHeader := c.GetHeader("Authorization")
-	if authHeader == "" {
-		authHeader = c.GetHeader("authorization")
-	}
-	if authHeader == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": "Authorization header is required"})
+	// Ф3-C: server-side Axenta-токен (креды компании), НЕ request-токен —
+	// после Ф1 логин = локальный JWT, невалиден для axenta.cloud/RefreshAccount.
+	token, ok := axentaServerTokenFor(c)
+	if !ok {
 		return
 	}
-	token := strings.TrimPrefix(authHeader, "Token ")
-	token = strings.TrimPrefix(token, "Bearer ")
 
-	adminID, _ := middleware.GetAdminAccountID(c)
+	// Ф3-C/Codex: adminID ТОЛЬКО из доверенного claim. getAccountIDFromToken
+	// на server-токене вернул бы корневой аккаунт компании → refresh ушёл бы
+	// не в ту схему. Нет adminID — не угадываем, честная ошибка.
+	adminID := middleware.GetTrustedAdminAccountID(c)
 	if adminID == 0 {
-		adminID = getAccountIDFromToken(token)
-	}
-	if adminID == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Не удалось определить admin account"})
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Не удалось определить admin account из сессии"})
 		return
 	}
 
@@ -775,6 +742,8 @@ func (h *AccountsHandler) RefreshSingleAccount(c *gin.Context) {
 		return
 	}
 
+	// Один attempt (как до Ф3-C): RefreshAccount возвращает нетипизированную
+	// ошибку — retry-on-any-error плодил бы повторный логин+запрос на 404/5xx.
 	acc, err := syncSvc.RefreshAccount(token, adminID, accIDInt, tenantDB)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": "Refresh failed: " + err.Error()})

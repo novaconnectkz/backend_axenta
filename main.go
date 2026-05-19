@@ -120,6 +120,15 @@ func main() {
 	api.InitMaxService()
 	log.Println("✅ MAX Integration Service initialized successfully")
 
+	// Ф3-C: server-side Axenta-токен из хранимых Company-кред (после Ф1
+	// request-токен = локальный JWT, невалиден для axenta.cloud).
+	// Live-мутации (user/account create, activate, toggle, move) ходят им.
+	axentaServerToken := services.NewAxentaServerToken(
+		database.DB,
+		services.NewAxetnaClient("https://axenta.cloud/api", nil),
+	)
+	api.SetAxentaServerToken(axentaServerToken)
+
 	// Инициализируем сервис синхронизации Axenta
 	axentaSyncService := services.NewAxentaSyncService(database.DB)
 	axentaSyncIntervalMin := cfg.Axenta.SyncInterval
@@ -748,10 +757,27 @@ func main() {
 	// (общий кэш → Invalidate из /api/control мгновенно виден здесь).
 	apiGroup.GET("/my-entitlements", api.NewSelfEntitlementsAPI(entitlementSvc).MyEntitlements)
 
-	// Отдельная группа для CMS endpoints без проверки Axenta токенов
-	log.Println("🔧 Registering CMS endpoints without Axenta authentication...")
+	// CMS endpoints. Ф3-C: исторически cmsGroup был БЕЗ middleware (старая
+	// модель «прозрачный прокси, auth из форвардящегося Axenta request-токена»).
+	// После Ф1 эта модель мертва, request-токен = локальный JWT. Мутации
+	// (user/account create, toggle, move) ходят в Axenta server-токеном по
+	// company-кредам → нужен company_id из ДОВЕРЕННОГО claim, иначе любой
+	// неаутентифицированный мог бы дёрнуть мутацию чужой компании. Вешаем
+	// тот же auth+SetTenant что на apiGroup (AUTH_MODE-aware).
+	log.Println("🔧 Registering CMS endpoints (Ф3-C: local-JWT auth + tenant)...")
 	cmsGroup := r.Group("/api/cms")
-	// Не используем authMiddleware.RequireAuth() для CMS endpoints
+	if authMode == "axenta" {
+		cmsGroup.Use(
+			authMiddleware.RequireAuth(),
+			tenantMiddleware.SetTenant(),
+		)
+	} else {
+		cmsLocalAuthMW := middleware.NewLocalAuthMiddleware(jwtService)
+		cmsGroup.Use(
+			cmsLocalAuthMW.RequireAuth(),
+			tenantMiddleware.SetTenant(),
+		)
+	}
 	cmsGroup.POST("/users", api.CreateCmsUserWithCurrentToken)
 	cmsGroup.POST("/users/create", api.CreateCmsUserWithAdminToken)
 	cmsGroup.POST("/users/login_as", api.LoginAs)
