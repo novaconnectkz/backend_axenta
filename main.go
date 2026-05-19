@@ -501,9 +501,13 @@ func main() {
 	// Защищённая control-plane группа — ТОЛЬКО operatorAuth, без
 	// tenantMiddleware (оператор вне tenant-схем). S3 навесит сюда
 	// CRUD пакетов/фич/подписок/provisioning.
+	entitlementSvc := services.NewEntitlementService(database.DB)
+	controlPlaneAPI := api.NewControlPlaneAPI(database.DB, entitlementSvc)
+
 	controlGroup := r.Group("/api/control")
 	controlGroup.Use(operatorMW.RequireOperator())
 	controlGroup.GET("/me", operatorAuthAPI.CurrentOperator)
+	controlPlaneAPI.RegisterRoutes(controlGroup) // S3: CRUD пакетов/фич/подписок/provisioning
 	log.Println("✅ Control-plane (operator) контур включён: /api/control/*")
 
 	// === WEBSOCKET С АВТОРИЗАЦИЕЙ ===

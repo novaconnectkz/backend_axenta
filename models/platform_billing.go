@@ -47,7 +47,7 @@ type PlatformPlanFeature struct {
 	FeatureCode string `json:"feature_code" gorm:"not null;size:64;index;uniqueIndex:uq_plan_feature"`
 	// LimitsJSON — произвольные лимиты фичи в пакете (JSON-строка),
 	// напр. {"max_objects":1000}. Пусто = без лимита.
-	LimitsJSON string    `json:"limits_json" gorm:"type:jsonb"`
+	LimitsJSON string    `json:"limits_json" gorm:"type:text"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
 }
@@ -97,7 +97,7 @@ type CompanyEntitlement struct {
 	// и БД ставит default → override не может ВЫКЛЮЧИТЬ фичу плана.
 	// Значение всегда задаётся явно control-plane'ом.
 	Enabled        bool       `json:"enabled" gorm:"not null"`
-	LimitsJSON     string     `json:"limits_json" gorm:"type:jsonb"`
+	LimitsJSON     string     `json:"limits_json" gorm:"type:text"`
 	OverrideReason string     `json:"override_reason" gorm:"size:256"`
 	StartsAt       *time.Time `json:"starts_at"`
 	EndsAt         *time.Time `json:"ends_at"`
