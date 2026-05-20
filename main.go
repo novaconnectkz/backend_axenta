@@ -1037,7 +1037,9 @@ func main() {
 
 	// Эндпоинт для ручного запуска синхронизации Axenta
 	apiGroup.POST("/axenta-sync/trigger", api.TriggerAxentaSync)
+	apiGroup.GET("/axenta-sync/status", api.GetAxentaSyncStatus)
 	log.Println("✅ Зарегистрирован POST /api/auth/axenta-sync/trigger -> TriggerAxentaSync")
+	log.Println("✅ Зарегистрирован GET  /api/auth/axenta-sync/status  -> GetAxentaSyncStatus")
 
 	// Тестовый endpoint без авторизации
 	r.POST("/api/test/axenta-sync/trigger", api.TriggerAxentaSync)
