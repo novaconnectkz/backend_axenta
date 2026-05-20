@@ -255,6 +255,21 @@ func GetPartnerContractSnapshots(c *gin.Context) {
 					allCompanies = []models.Company{} // Продолжаем с пустым списком
 				}
 
+				// Ф3-F-followup: ключ snapshot.admin_account_id, под которым
+				// AxentaSync ПИШЕТ строки (services/axenta_sync_service.go:80
+				// adminAccountID = firstCompany.ID, где firstCompany — первая
+				// active компания из Where(is_active=true).Find). Берём ТОТ ЖЕ
+				// ключ — иначе фильтр снова даёт 0 строк (долг#2). НЕ
+				// trusted-claim Ф3-F (= caller's company.ID), который у нас в
+				// adminAccountID — он бы не совпал.
+				var snapshotAdminKey uint
+				if err := database.DB.Table("public.companies").
+					Where("is_active = ?", true).
+					Select("COALESCE(MIN(id), 0)").
+					Scan(&snapshotAdminKey).Error; err != nil || snapshotAdminKey == 0 {
+					log.Printf("⚠️ partner_snapshots: не удалось определить firstCompanyID для snapshot-keying (%v) — childAccounts будет пуст", err)
+				}
+
 				// Ищем дочерние аккаунты партнера во всех схемах
 				// Иерархия может содержать ID партнера в разных форматах: "/123/", "123", "/123"
 				// Ищем аккаунты, у которых в hierarchy есть ID партнера
@@ -268,20 +283,15 @@ func GetPartnerContractSnapshots(c *gin.Context) {
 						continue
 					}
 
-					// Ф3-F-followup: admin_account_id-фильтр СОХРАНЁН (Codex Q2 confirm
-					// поймал: эта функция итерирует ПО ВСЕМ companies через
-					// database.GetTenantDBByID(company.ID), не одна tenant-схема
-					// → без admin-фильтра hierarchy LIKE идёт ПО ВСЕМ схемам =
-					// cross-tenant leakage). Pre-existing keying-mismatch
-					// (snapshot keyed firstCompany.ID/долг#2 ≠ trusted company.ID
-					// → 0 строк для non-first tenant) НЕ регрессия (axenta-mode
-					// тоже не совпадал: Axenta accountId ≠ firstCompany.ID).
-					// Корректный фикс — отдельная задача: использовать lookup
-					// firstCompany.ID для admin_account_id ИЛИ перейти на
-					// company_id-field в snapshot (Ф3-F шаг последующий).
+					// Ф3-F-followup ЗАКРЫТ: admin_account_id-фильтр сохранён
+					// (cross-tenant защита, Codex Q2 — функция итерирует по
+					// ВСЕМ companies через GetTenantDBByID, hierarchy LIKE
+					// без admin-фильтра дал бы leakage). НО ключ = sync's
+					// firstCompanyID (snapshotAdminKey выше), НЕ trusted-claim
+					// caller'а — иначе долг#2 mismatch → 0 строк.
 					var childAccounts []models.AxentaAccountSnapshot
 					if err := tenantDBForSearch.Model(&models.AxentaAccountSnapshot{}).
-						Where("admin_account_id = ?", adminAccountID).
+						Where("admin_account_id = ?", snapshotAdminKey).
 						Where("(hierarchy LIKE ? OR hierarchy LIKE ? OR hierarchy LIKE ? OR external_account_id = ?)",
 							fmt.Sprintf("%%/%%%s/%%", partnerIDStr), // формат: /.../123/...
 							fmt.Sprintf("%%/%%%s%%", partnerIDStr),  // формат: /.../123...

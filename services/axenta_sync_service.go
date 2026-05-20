@@ -53,7 +53,14 @@ func GetAxentaSyncService() *AxentaSyncService {
 func (s *AxentaSyncService) SyncAllAdmins() {
 	// Получаем все компании из основной БД
 	var companies []models.Company
-	if err := s.db.Table("public.companies").Where("is_active = ?", true).Find(&companies).Error; err != nil {
+	// Ф3-F-followup/Codex Q1: ORDER BY id ASC ОБЯЗАТЕЛЕН для детерминизма
+	// firstCompany = companies[0] (см. ниже adminAccountID = firstCompany.ID).
+	// Без ORDER Find возвращает heap-order → snapshotAdminKey в read-path
+	// (api/partner_snapshots.go MIN(id)) мог бы не совпасть с тем что сюда
+	// пишется. Edge: fallback на userToken.AccountID (стр.~99) пишет
+	// другое значение — отдельная политика, prod main-path использует
+	// firstCompany.ID (snapshot.admin_account_id=6=MIN active id ✓).
+	if err := s.db.Table("public.companies").Where("is_active = ?", true).Order("id ASC").Find(&companies).Error; err != nil {
 		log.Printf("AxentaSync: не удалось загрузить компании: %v", err)
 		return
 	}
