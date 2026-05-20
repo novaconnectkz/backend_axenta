@@ -166,26 +166,26 @@ func (s *AxentaSyncService) SyncAllAdmins() {
 // это ответственность cron'а SyncAllAdmins. См. план:
 // memory/project_acrm_axenta_sync_refactor_plan.md (вариант C+B1).
 func (s *AxentaSyncService) RefreshAccountsOnlyForTenant(adminAccountID uint, token string, db *gorm.DB) (int, error) {
-	now := time.Now().UTC()
-
 	accounts, err := s.fetchAccountsParallel(token)
 	if err != nil {
 		return 0, fmt.Errorf("ошибка получения аккаунтов: %w", err)
 	}
+	return len(accounts), s.storeRefreshedAccounts(adminAccountID, accounts, db, time.Now().UTC())
+}
 
+// storeRefreshedAccounts — общий хвост: write snapshot'ов + per-admin cleanup.
+// Используется RefreshAccountsOnlyForTenant и RefreshAccountsOnlyAllTenants
+// (последний вызывает напрямую чтобы не дублировать fetch для каждого тенанта).
+func (s *AxentaSyncService) storeRefreshedAccounts(adminAccountID uint, accounts []axentaAccount, db *gorm.DB, now time.Time) error {
 	if err := s.storeAccountsWithDB(adminAccountID, accounts, now, db); err != nil {
-		return 0, fmt.Errorf("ошибка сохранения аккаунтов: %w", err)
+		return fmt.Errorf("ошибка сохранения аккаунтов: %w", err)
 	}
-
-	// Per-admin cleanup: удаляем snapshot'ы, которые не обновились в этом цикле
-	// (аккаунт удалён в Axenta). Аналогично syncAdminWithTokenAndDB шагу 3.
 	cutoff := now.Add(-30 * time.Second)
 	if err := db.Where("admin_account_id = ? AND last_synced_at < ?", adminAccountID, cutoff).
 		Delete(&models.AxentaAccountSnapshot{}).Error; err != nil {
 		log.Printf("RefreshAccountsOnly: предупреждение — ошибка очистки устаревших snapshot'ов admin=%d: %v", adminAccountID, err)
 	}
-
-	return len(accounts), nil
+	return nil
 }
 
 // RefreshAccountsOnlyAllTenants — обёртка-аналог SyncAllAdmins для inline-refresh:
@@ -236,6 +236,15 @@ func (s *AxentaSyncService) RefreshAccountsOnlyAllTenants() (int, error) {
 		}
 	}
 
+	// Один fetch на всех — токен один (GLOMOS), иерархия одна, accounts
+	// идентичны для всех тенантов. Дублировать fetch per-tenant = пустой
+	// расход 500 req/min лимита и времени.
+	accounts, err := s.fetchAccountsParallel(syncToken)
+	if err != nil {
+		return 0, fmt.Errorf("ошибка получения аккаунтов: %w", err)
+	}
+	now := time.Now().UTC()
+
 	total := 0
 	for _, company := range companies {
 		tenantDB := database.GetTenantDBByID(company.ID)
@@ -243,12 +252,11 @@ func (s *AxentaSyncService) RefreshAccountsOnlyAllTenants() (int, error) {
 			log.Printf("RefreshAccountsOnly: не удалось получить tenant DB для компании %d (%s)", company.ID, company.DatabaseSchema)
 			continue
 		}
-		count, err := s.RefreshAccountsOnlyForTenant(adminAccountID, syncToken, tenantDB)
-		if err != nil {
+		if err := s.storeRefreshedAccounts(adminAccountID, accounts, tenantDB, now); err != nil {
 			log.Printf("RefreshAccountsOnly: ошибка для компании %d: %v", company.ID, err)
 			continue
 		}
-		total += count
+		total += len(accounts)
 	}
 
 	return total, nil
