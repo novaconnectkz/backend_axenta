@@ -245,19 +245,33 @@ func (s *AxentaSyncService) RefreshAccountsOnlyAllTenants() (int, error) {
 	}
 	now := time.Now().UTC()
 
-	total := 0
+	// Параллельный store per-tenant: каждая компания пишет в свою схему,
+	// contention=0 (разные tables). Без лимита workers — практически
+	// активных тенантов единицы.
+	var (
+		mu      sync.Mutex
+		total   int
+		wg      sync.WaitGroup
+	)
 	for _, company := range companies {
 		tenantDB := database.GetTenantDBByID(company.ID)
 		if tenantDB == nil {
 			log.Printf("RefreshAccountsOnly: не удалось получить tenant DB для компании %d (%s)", company.ID, company.DatabaseSchema)
 			continue
 		}
-		if err := s.storeRefreshedAccounts(adminAccountID, accounts, tenantDB, now); err != nil {
-			log.Printf("RefreshAccountsOnly: ошибка для компании %d: %v", company.ID, err)
-			continue
-		}
-		total += len(accounts)
+		wg.Add(1)
+		go func(companyID uint, db *gorm.DB) {
+			defer wg.Done()
+			if err := s.storeRefreshedAccounts(adminAccountID, accounts, db, now); err != nil {
+				log.Printf("RefreshAccountsOnly: ошибка для компании %d: %v", companyID, err)
+				return
+			}
+			mu.Lock()
+			total += len(accounts)
+			mu.Unlock()
+		}(company.ID, tenantDB)
 	}
+	wg.Wait()
 
 	return total, nil
 }
