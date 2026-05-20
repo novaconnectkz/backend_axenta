@@ -1018,6 +1018,24 @@ func (ra *ReportsAPI) GetScheduleStatus(c *gin.Context) {
 
 	companyID := getCompanyID(c)
 
+	// Ф3-G: pre-check tenant ownership ПЕРЕД делегацией в schedulerService.
+	// services.GetScheduleStatus(uint) грузит schedule по ID БЕЗ company_id-фильтра
+	// (services/report_scheduler_service.go:355) → cross-tenant read любым
+	// авторизованным юзером по угаданному ID. Pre-existing risk (был и в
+	// axenta-mode), но Ф3-G открывает reports для local-mode и расширяет
+	// surface. Faithful-fix: tenant-guard на handler-уровне, без правок
+	// сервиса (cron-internal usage не требует guard'а).
+	var owned models.ReportSchedule
+	if err := ra.db.Select("id").Where("id = ? AND company_id = ?", scheduleID, companyID).
+		First(&owned).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Schedule not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to verify schedule ownership"})
+		return
+	}
+
 	if ra.schedulerService != nil {
 		status, err := ra.schedulerService.GetScheduleStatus(uint(scheduleID))
 		if err != nil {
