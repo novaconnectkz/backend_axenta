@@ -594,10 +594,15 @@ func (api *CompaniesAPI) getObjectsCountFromSnapshot(externalAccountID int64, ad
 		return 0, 0
 	}
 
-	// Ищем снимок аккаунта
+	// Ищем снимок аккаунта.
+	// Ф3-F/Codex Q3: БЕЗ admin_account_id-фильтра (tenantDB tenant-scoped;
+	// snapshot keyed firstCompany.ID/долг#2 ≠ trusted company.ID → mismatch
+	// → 0 строк). external_account_id уникален в схеме; детерминизм
+	// Order(last_synced_at DESC, id ASC) — паттерн Ф3-D #4 GetAccount.
 	var snapshot models.AxentaAccountSnapshot
-	if err := tenantDB.Where("external_account_id = ? AND admin_account_id = ?", externalAccountID, adminAccountID).
+	if err := tenantDB.Where("external_account_id = ?", externalAccountID).
 		Order("last_synced_at DESC").
+		Order("id ASC").
 		First(&snapshot).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			fmt.Printf("🔍 INFO: No snapshot found for external account ID %d (admin %d)\n", externalAccountID, adminAccountID)

@@ -268,6 +268,17 @@ func GetPartnerContractSnapshots(c *gin.Context) {
 						continue
 					}
 
+					// Ф3-F-followup: admin_account_id-фильтр СОХРАНЁН (Codex Q2 confirm
+					// поймал: эта функция итерирует ПО ВСЕМ companies через
+					// database.GetTenantDBByID(company.ID), не одна tenant-схема
+					// → без admin-фильтра hierarchy LIKE идёт ПО ВСЕМ схемам =
+					// cross-tenant leakage). Pre-existing keying-mismatch
+					// (snapshot keyed firstCompany.ID/долг#2 ≠ trusted company.ID
+					// → 0 строк для non-first tenant) НЕ регрессия (axenta-mode
+					// тоже не совпадал: Axenta accountId ≠ firstCompany.ID).
+					// Корректный фикс — отдельная задача: использовать lookup
+					// firstCompany.ID для admin_account_id ИЛИ перейти на
+					// company_id-field в snapshot (Ф3-F шаг последующий).
 					var childAccounts []models.AxentaAccountSnapshot
 					if err := tenantDBForSearch.Model(&models.AxentaAccountSnapshot{}).
 						Where("admin_account_id = ?", adminAccountID).

@@ -444,8 +444,11 @@ func main() {
 	r.GET("/api/test2", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "success", "message": "Test endpoint 2 is working"})
 	})
-	// ВРЕМЕННЫЙ тестовый endpoint для создания нумератора без авторизации (только для тестирования)
-	r.POST("/api/test/contract-numerators", api.CreateContractNumerator)
+	// Ф3-F/Codex Q4 (2026-05-20): УДАЛЁН bare r.POST("/api/test/contract-numerators")
+	// без auth — public mutation surface (CreateContractNumerator писал
+	// AdminAccountID из attacker-controlled X-Admin-ID при GetCompanyID==0).
+	// Тот же класс что Ф3-D #3. Auth'd-эквивалент: apiGroup.POST(
+	// "/contract-numerators") (=/api/auth/..., RequireAuth+SetTenant).
 	// Ф3-D #3 (2026-05-19): УДАЛЕНЫ 4 bare cms-user-алиаса без auth
 	// (/api/test-cms-users, /api/create-cms-user, /api/cms/create-user,
 	// /api/cms/create-user-with-saved-token). Pre-Ф1 «прозрачный прокси,
