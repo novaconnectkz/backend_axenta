@@ -31,8 +31,9 @@ func setupAxentaSyncTriggerTestRouter(_ *testing.T) *gin.Engine {
 	return router
 }
 
-// TestTriggerAxentaSync_Success тестирует успешный запуск синхронизации
-func TestTriggerAxentaSync_Success(t *testing.T) {
+// TestTriggerAxentaSync_NoCompanies — inline refresh без таблицы companies
+// возвращает 500 с graceful-error (поведение C+B1: handler ждёт результат).
+func TestTriggerAxentaSync_NoCompanies(t *testing.T) {
 	setupAxentaSyncTriggerTestDB(t)
 	router := setupAxentaSyncTriggerTestRouter(t)
 
@@ -42,10 +43,11 @@ func TestTriggerAxentaSync_Success(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	var response map[string]interface{}
 	err := json.Unmarshal(w.Body.Bytes(), &response)
 	require.NoError(t, err)
-	assert.Equal(t, "success", response["status"])
-	assert.Contains(t, response["message"], "принят")
+	assert.Equal(t, "error", response["status"])
+	assert.NotEmpty(t, response["message"])
+	assert.Contains(t, response, "duration_s")
 }

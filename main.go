@@ -702,7 +702,18 @@ func main() {
 	r.GET("/api/subscriptions-simple", api.GetSubscriptionsSimple)
 	r.GET("/api/billing-settings-simple", api.GetBillingSettingsSimple)
 
-	// Административные маршруты (с авторизацией)
+	// Административные маршруты (с авторизацией).
+	// Ф3-G ОТКАЗ от AUTH_MODE-aware-фикса: companies.go (GetCompanies/Create/
+	// Update) — Axenta-cloud-CRUD-proxy (шлёт Authorization-токен в
+	// https://axenta.cloud/api/cms/accounts/), не snapshot-handler. Простое
+	// переключение на LocalAuthMW даст security-blocker (нет role-gate, любой
+	// local-юзер мог бы toggle/update произвольную компанию по ID) + handler
+	// всё равно вернёт 401 от Axenta (local-JWT не валиден как Axenta-token).
+	// → /api/admin/accounts/* остаётся axenta-mode-only функционалом
+	// (master-data Axenta CRUD). В local-mode FE-селекторы компаний идут
+	// через /api/auth/accounts (snapshot read-path Ф3-B); CompanyDialog
+	// create/update в local-mode — по dизайну неработоспособен (axenta-mode
+	// feature). Решение fully snapshot-rewire — отдельная фаза вне Ф3-G.
 	adminGroup := r.Group("/api/admin")
 	adminGroup.Use(authMiddleware.RequireAuth()) // Требуем авторизацию для админ маршрутов
 	{
@@ -1026,7 +1037,9 @@ func main() {
 
 	// Эндпоинт для ручного запуска синхронизации Axenta
 	apiGroup.POST("/axenta-sync/trigger", api.TriggerAxentaSync)
+	apiGroup.GET("/axenta-sync/status", api.GetAxentaSyncStatus)
 	log.Println("✅ Зарегистрирован POST /api/auth/axenta-sync/trigger -> TriggerAxentaSync")
+	log.Println("✅ Зарегистрирован GET  /api/auth/axenta-sync/status  -> GetAxentaSyncStatus")
 
 	// Тестовый endpoint без авторизации
 	r.POST("/api/test/axenta-sync/trigger", api.TriggerAxentaSync)
@@ -1433,12 +1446,25 @@ func main() {
 	reportService := services.NewReportService(database.DB)
 	reportSchedulerService := services.NewReportSchedulerService(database.DB, reportService, nil) // notificationService временно отключен
 	reportsAPI := api.NewReportsAPI(database.DB, reportService, reportSchedulerService)
-	// Регистрируем маршруты отчетов в группе /api (не /api/auth)
+	// Регистрируем маршруты отчетов в группе /api (не /api/auth).
+	// Ф3-G: AUTH_MODE-aware (зеркало integrationsGroup из Ф3-cutover).
+	// До Ф3-G — hardcoded legacy authMiddleware.RequireAuth() → после
+	// AUTH_MODE=local FE reportsService (baseUrl=/api/reports, Reports.vue
+	// + 5 компонентов + меню AppLayout) получал 401. Класс Ф3-F.
+	// SetTenant обязателен: reports.go зовёт database.GetTenantDB(c).
 	reportsAPIGroup := r.Group("/api")
-	reportsAPIGroup.Use(
-		authMiddleware.RequireAuth(),
-		tenantMiddleware.SetTenant(),
-	)
+	if authMode == "axenta" {
+		reportsAPIGroup.Use(
+			authMiddleware.RequireAuth(),
+			tenantMiddleware.SetTenant(),
+		)
+	} else {
+		reportsLocalAuthMW := middleware.NewLocalAuthMiddleware(jwtService)
+		reportsAPIGroup.Use(
+			reportsLocalAuthMW.RequireAuth(),
+			tenantMiddleware.SetTenant(),
+		)
+	}
 	reportsAPI.RegisterRoutes(reportsAPIGroup)
 
 	// Запускаем планировщик отчетов
