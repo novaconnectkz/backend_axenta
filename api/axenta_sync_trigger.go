@@ -22,7 +22,10 @@ var (
 	axentaSyncErrMsg   string
 )
 
-// TriggerAxentaSync запускает синхронизацию всех компаний вручную
+// TriggerAxentaSync — inline lightweight refresh аккаунтов (план C+B1).
+// Тянет аккаунты из Axenta и пишет только axenta_account_snapshots для всех
+// тенантов; partner_snapshots / objects / users остаются за cron'ом
+// SyncAllAdmins (04:00 UTC daily). Mutex anti-double-click сохранён.
 // POST /api/auth/axenta-sync/trigger
 // POST /api/test/axenta-sync/trigger (без авторизации для тестирования)
 func TriggerAxentaSync(c *gin.Context) {
@@ -41,24 +44,37 @@ func TriggerAxentaSync(c *gin.Context) {
 	axentaSyncErrMsg = ""
 	axentaSyncMu.Unlock()
 
-	go func() {
-		defer func() {
-			axentaSyncMu.Lock()
-			axentaSyncRunning = false
-			axentaSyncFinishAt = time.Now()
-			if r := recover(); r != nil {
-				axentaSyncErrMsg = "panic during sync"
-			}
-			axentaSyncMu.Unlock()
-		}()
-		syncService := services.NewAxentaSyncService(database.DB)
-		syncService.SyncAllAdmins()
+	defer func() {
+		axentaSyncMu.Lock()
+		axentaSyncRunning = false
+		axentaSyncFinishAt = time.Now()
+		if r := recover(); r != nil {
+			axentaSyncErrMsg = "panic during sync"
+		}
+		axentaSyncMu.Unlock()
 	}()
 
+	syncService := services.NewAxentaSyncService(database.DB)
+	count, err := syncService.RefreshAccountsOnlyAllTenants()
+	durationS := time.Since(axentaSyncStartAt).Seconds()
+
+	if err != nil {
+		axentaSyncMu.Lock()
+		axentaSyncErrMsg = err.Error()
+		axentaSyncMu.Unlock()
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":     "error",
+			"message":    err.Error(),
+			"duration_s": durationS,
+		})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"status":  "success",
-		"message": "Запрос на синхронизацию всех компаний принят. Синхронизация выполняется в фоновом режиме.",
-		"running": true,
+		"status":         "success",
+		"message":        "Синхронизация аккаунтов завершена.",
+		"accounts_count": count,
+		"duration_s":     durationS,
 	})
 }
 

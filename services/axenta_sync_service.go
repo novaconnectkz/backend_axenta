@@ -157,6 +157,100 @@ func (s *AxentaSyncService) SyncAllAdmins() {
 	}
 }
 
+// RefreshAccountsOnlyForTenant — lightweight inline-refresh для UI: тянет
+// аккаунты из Axenta и пишет только axenta_account_snapshots. НЕ трогает
+// partner_snapshots / object_snapshots / user_snapshots / accounts —
+// это ответственность cron'а SyncAllAdmins. См. план:
+// memory/project_acrm_axenta_sync_refactor_plan.md (вариант C+B1).
+func (s *AxentaSyncService) RefreshAccountsOnlyForTenant(adminAccountID uint, token string, db *gorm.DB) (int, error) {
+	now := time.Now().UTC()
+
+	accounts, err := s.fetchAccounts(token)
+	if err != nil {
+		return 0, fmt.Errorf("ошибка получения аккаунтов: %w", err)
+	}
+
+	if err := s.storeAccountsWithDB(adminAccountID, accounts, now, db); err != nil {
+		return 0, fmt.Errorf("ошибка сохранения аккаунтов: %w", err)
+	}
+
+	// Per-admin cleanup: удаляем snapshot'ы, которые не обновились в этом цикле
+	// (аккаунт удалён в Axenta). Аналогично syncAdminWithTokenAndDB шагу 3.
+	cutoff := now.Add(-30 * time.Second)
+	if err := db.Where("admin_account_id = ? AND last_synced_at < ?", adminAccountID, cutoff).
+		Delete(&models.AxentaAccountSnapshot{}).Error; err != nil {
+		log.Printf("RefreshAccountsOnly: предупреждение — ошибка очистки устаревших snapshot'ов admin=%d: %v", adminAccountID, err)
+	}
+
+	return len(accounts), nil
+}
+
+// RefreshAccountsOnlyAllTenants — обёртка-аналог SyncAllAdmins для inline-refresh:
+// одинаковая логика получения токена (snapshot_settings → user_tokens fallback),
+// проход по всем активным компаниям с вызовом RefreshAccountsOnlyForTenant.
+// Возвращает total accounts-count (сумма по всем тенантам) и err первой
+// фатальной ошибки получения токена; per-tenant ошибки логируются и не
+// прерывают цикл (consistency с SyncAllAdmins).
+func (s *AxentaSyncService) RefreshAccountsOnlyAllTenants() (int, error) {
+	var companies []models.Company
+	if err := s.db.Table("public.companies").Where("is_active = ?", true).Order("id ASC").Find(&companies).Error; err != nil {
+		return 0, fmt.Errorf("не удалось загрузить компании: %w", err)
+	}
+	if len(companies) == 0 {
+		return 0, fmt.Errorf("нет активных компаний")
+	}
+
+	firstCompany := companies[0]
+	firstCompanyTenantDB := database.GetTenantDBByID(firstCompany.ID)
+	if firstCompanyTenantDB == nil {
+		return 0, fmt.Errorf("не удалось получить tenant DB для первой компании (ID=%d)", firstCompany.ID)
+	}
+
+	// Логика добычи токена идентична SyncAllAdmins.
+	var snapshotSettings models.SnapshotSettings
+	var syncToken string
+	var adminAccountID uint = firstCompany.ID
+
+	if err := firstCompanyTenantDB.
+		Where("company_id = ? AND is_active = ?", 1, true).
+		First(&snapshotSettings).Error; err != nil {
+		var userToken models.UserToken
+		if err := firstCompanyTenantDB.
+			Where("is_active = ? AND expires_at > ?", true, time.Now()).
+			Order("updated_at DESC").
+			First(&userToken).Error; err != nil {
+			return 0, fmt.Errorf("не найдено активных токенов: %w", err)
+		}
+		syncToken = userToken.Token
+		adminAccountID = userToken.AccountID
+		if adminAccountID == 0 {
+			adminAccountID = firstCompany.ID
+		}
+	} else {
+		syncToken = snapshotSettings.AxentaToken
+		if syncToken == "" {
+			return 0, fmt.Errorf("токен в snapshot_settings пустой")
+		}
+	}
+
+	total := 0
+	for _, company := range companies {
+		tenantDB := database.GetTenantDBByID(company.ID)
+		if tenantDB == nil {
+			log.Printf("RefreshAccountsOnly: не удалось получить tenant DB для компании %d (%s)", company.ID, company.DatabaseSchema)
+			continue
+		}
+		count, err := s.RefreshAccountsOnlyForTenant(adminAccountID, syncToken, tenantDB)
+		if err != nil {
+			log.Printf("RefreshAccountsOnly: ошибка для компании %d: %v", company.ID, err)
+			continue
+		}
+		total += count
+	}
+
+	return total, nil
+}
+
 // SyncAdmin синхронизирует данные для одного администратора
 func (s *AxentaSyncService) SyncAdmin(adminAccountID uint) error {
 	token, err := s.getActiveTokenForAdmin(adminAccountID)
