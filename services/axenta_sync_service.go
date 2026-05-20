@@ -3,6 +3,7 @@ package services
 import (
 	"backend_axenta/database"
 	"backend_axenta/models"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,8 +11,10 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
+	"golang.org/x/time/rate"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -165,7 +168,7 @@ func (s *AxentaSyncService) SyncAllAdmins() {
 func (s *AxentaSyncService) RefreshAccountsOnlyForTenant(adminAccountID uint, token string, db *gorm.DB) (int, error) {
 	now := time.Now().UTC()
 
-	accounts, err := s.fetchAccounts(token)
+	accounts, err := s.fetchAccountsParallel(token)
 	if err != nil {
 		return 0, fmt.Errorf("ошибка получения аккаунтов: %w", err)
 	}
@@ -572,6 +575,128 @@ func (s *AxentaSyncService) RefreshAccount(token string, adminAccountID uint, ac
 	}
 
 	return &acc, nil
+}
+
+// fetchAccountsPage — один запрос с retry. Используется fetchAccountsParallel.
+func (s *AxentaSyncService) fetchAccountsPage(token, pageURL string) (axentaAccountsResponse, error) {
+	var response axentaAccountsResponse
+	const maxRetries = 3
+	var err error
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		err = s.getJSON(pageURL, token, &response)
+		if err == nil {
+			return response, nil
+		}
+		if attempt < maxRetries {
+			time.Sleep(time.Duration(attempt) * time.Second)
+		}
+	}
+	return response, fmt.Errorf("после %d попыток: %w", maxRetries, err)
+}
+
+// fetchAccountsParallel — для inline-refresh (план B1). Первая страница sync
+// (узнаём count), остальные через worker-pool с rate-limiter под Axenta
+// 500 req/min. Используется только RefreshAccountsOnlyForTenant; cron
+// SyncAllAdmins использует sequential fetchAccounts (тяжёлый full sync,
+// риск contention не оправдан).
+func (s *AxentaSyncService) fetchAccountsParallel(token string) ([]axentaAccount, error) {
+	const (
+		perPage    = 100
+		workers    = 5
+		ratePerSec = 7 // ~420/min, под лимит 500/min
+	)
+
+	startTime := time.Now()
+	firstURL := fmt.Sprintf("%s/api/cms/accounts/?per_page=%d", axentaAPIBase, perPage)
+	log.Printf("📥 [parallel] Загрузка аккаунтов: workers=%d, rate=%d req/s", workers, ratePerSec)
+
+	first, err := s.fetchAccountsPage(token, firstURL)
+	if err != nil {
+		return nil, fmt.Errorf("страница 1: %w", err)
+	}
+
+	totalCount := first.Count
+	totalPages := 1
+	if totalCount > 0 {
+		totalPages = (totalCount + perPage - 1) / perPage
+	}
+	log.Printf("   📊 Всего аккаунтов: %d, страниц: %d", totalCount, totalPages)
+
+	result := make([]axentaAccount, 0, totalCount)
+	result = append(result, first.Results...)
+
+	if totalPages <= 1 || first.Next == nil || *first.Next == "" {
+		log.Printf("✅ [parallel] %d аккаунтов за %v", len(result), time.Since(startTime).Round(time.Second))
+		return result, nil
+	}
+
+	type pageResult struct {
+		page     int
+		accounts []axentaAccount
+		err      error
+	}
+
+	jobs := make(chan int, totalPages-1)
+	results := make(chan pageResult, totalPages-1)
+
+	limiter := rate.NewLimiter(rate.Limit(ratePerSec), ratePerSec)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for p := range jobs {
+				if err := limiter.Wait(ctx); err != nil {
+					results <- pageResult{p, nil, fmt.Errorf("limiter ждал: %w", err)}
+					continue
+				}
+				url := fmt.Sprintf("%s/api/cms/accounts/?per_page=%d&page=%d", axentaAPIBase, perPage, p)
+				resp, err := s.fetchAccountsPage(token, url)
+				if err != nil {
+					results <- pageResult{p, nil, err}
+					continue
+				}
+				results <- pageResult{p, resp.Results, nil}
+			}
+		}()
+	}
+
+	for p := 2; p <= totalPages; p++ {
+		jobs <- p
+	}
+	close(jobs)
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	var firstErr error
+	collected := 0
+	for r := range results {
+		if r.err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("страница %d: %w", r.page, r.err)
+			}
+			continue
+		}
+		result = append(result, r.accounts...)
+		collected++
+		if collected%10 == 0 {
+			log.Printf("   📈 [parallel] обработано %d/%d страниц", collected+1, totalPages)
+		}
+	}
+
+	if firstErr != nil {
+		return nil, firstErr
+	}
+
+	log.Printf("✅ [parallel] %d аккаунтов за %v (%d страниц)",
+		len(result), time.Since(startTime).Round(time.Second), totalPages)
+	return result, nil
 }
 
 func (s *AxentaSyncService) fetchAccounts(token string) ([]axentaAccount, error) {
