@@ -36,6 +36,25 @@ func (tm *TenantMiddleware) SetTenant() gin.HandlerFunc {
 			return
 		}
 
+		// B5: если запрос аутентифицирован локальным JWT, источник
+		// tenant — ТОЛЬКО подписанный claim, не клиентский заголовок.
+		// X-Tenant-ID, не совпадающий с claim → попытка cross-tenant
+		// доступа → 403. Совпадающий/пустой → подменяем заголовок
+		// доверенным значением, чтобы extractCompany использовал его.
+		if v, ok := c.Get("auth_company_id"); ok {
+			if authCID, ok2 := v.(string); ok2 && authCID != "" {
+				if hdr := c.GetHeader("X-Tenant-ID"); hdr != "" && hdr != authCID {
+					c.JSON(http.StatusForbidden, gin.H{
+						"status": "error",
+						"error":  "Доступ к чужому тенанту запрещён",
+					})
+					c.Abort()
+					return
+				}
+				c.Request.Header.Set("X-Tenant-ID", authCID)
+			}
+		}
+
 		// Логируем для отладки экспорта
 		if strings.Contains(c.Request.URL.Path, "/objects/export") {
 			log.Printf("🔍 SetTenant: обработка запроса экспорта: %s", c.Request.URL.Path)
@@ -548,6 +567,36 @@ func GetCompanyID(c *gin.Context) uint {
 		}
 	}
 	return 0
+}
+
+// GetTrustedAdminAccountID — Ф3-C: admin_account_id ТОЛЬКО из доверенного
+// источника (signed JWT-claim company_id, проставляется SetTenant из
+// auth_company_id). В отличие от GetAdminAccountID НЕ читает клиентские
+// X-Admin-ID/X-Account-ID/X-Axenta-Account/query (после Ф1 они
+// attacker-controlled, см. Codex New#1).
+//
+// adminAccountID в legacy-sync == общий firstCompany.ID для ВСЕХ компаний
+// (axenta_sync_service: adminAccountID = firstCompany.ID, пишется во все
+// tenant-схемы). Доверенный claim здесь = company.ID конкретной компании
+// → расходится с shared-значением для не-первой компании.
+//
+// Ф3-D долг #2 (закрыт «verified — cron-backed self-healing, без правки
+// кода»; broadening DELETE отклонён Codex-adversarial: unique-индекс
+// составной (admin_account_id, external_account_id), снятие admin-фильтра
+// = data-loss чужих строк при orphan от старого axetna_login):
+//   - RefreshAccount UPDATE-ветка admin_account_id не фильтрует by design;
+//   - RefreshAccount 404-DELETE admin-фильтр СОХРАНЁН; призрак удалённого
+//     аккаунта не теряется — cron stale-cleanup само-согласован (пишет и
+//     чистит одним adminAccountID) → уходит за ≤1 sync-цикл + 7д orphan;
+//   - Invalidate→SyncAdmin keying по этому ID — тот же cron-backed остаток:
+//     getActiveTokenForAdmin ищет user_tokens.account_id == claim, после Ф1
+//     user_tokens пуст → SyncAdmin no-op. НЕ регрессия: основной путь Ф3-C =
+//     синхронный RefreshAccount (server-токен), Invalidate — мёртвый
+//     fallback, полный cron-sync всё равно перекрывает.
+//
+// Реальная tenant-изоляция = схема (tenantDB), не это поле.
+func GetTrustedAdminAccountID(c *gin.Context) uint {
+	return GetCompanyID(c)
 }
 
 // GetTenantDBByCompanyID возвращает подключение к БД компании по ID

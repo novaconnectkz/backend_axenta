@@ -63,7 +63,14 @@ func (m *LocalAuthMiddleware) RequireAuth() gin.HandlerFunc {
 		c.Set("company_id", claims.CompanyID)
 		c.Set("role", claims.Role)
 		c.Set("username", claims.Username)
+		c.Set("is_superadmin", claims.IsSuperadmin)
 		c.Set("jwt_claims", claims)
+
+		// auth_company_id — ДОВЕРЕННЫЙ tenant из подписанного JWT.
+		// TenantMiddleware обязан брать схему отсюда, НЕ из клиентского
+		// X-Tenant-ID (риск B5: horizontal privilege escalation между
+		// схемами при подмене заголовка).
+		c.Set("auth_company_id", claims.CompanyID)
 
 		c.Next()
 	}

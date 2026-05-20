@@ -209,7 +209,64 @@ func GetAllMigrations() []MigrationInfo {
 		{
 			TableName:   "refresh_tokens",
 			Model:       &models.RefreshToken{},
-			Description: "Refresh токены для локальной авторизации",
+			Description: "Refresh токены локальной авторизации (хэш+ротация+family)",
+			IsGlobal:    true,
+		},
+		{
+			TableName:   "bootstrap_state",
+			Model:       &models.BootstrapState{},
+			Description: "Singleton-маркер первичной инициализации (bootstrap суперадмина)",
+			IsGlobal:    true,
+		},
+		// Контур монетизации ACRM (Фаза 2, platform_*). Отдельный
+		// неймспейс — НЕ операционный billing дилеров/конечников.
+		{
+			TableName:   "platform_plans",
+			Model:       &models.PlatformPlan{},
+			Description: "Пакеты доступа к ACRM (монетизация)",
+			IsGlobal:    true,
+		},
+		{
+			TableName:   "platform_features",
+			Model:       &models.PlatformFeature{},
+			Description: "Каталог продаваемых фич ACRM",
+			IsGlobal:    true,
+		},
+		{
+			TableName:   "platform_plan_features",
+			Model:       &models.PlatformPlanFeature{},
+			Description: "Состав пакетов: фичи + лимиты",
+			IsGlobal:    true,
+		},
+		{
+			TableName:   "platform_subscriptions",
+			Model:       &models.PlatformSubscription{},
+			Description: "Подписки компаний на пакеты доступа к ACRM",
+			IsGlobal:    true,
+		},
+		{
+			TableName:   "company_entitlements",
+			Model:       &models.CompanyEntitlement{},
+			Description: "Ручные override фич для компаний (поверх плана)",
+			IsGlobal:    true,
+		},
+		// Операторский (control-plane) auth-контур — отдельно от tenant.
+		{
+			TableName:   "operators",
+			Model:       &models.Operator{},
+			Description: "Учётные записи SaaS-оператора (control-plane)",
+			IsGlobal:    true,
+		},
+		{
+			TableName:   "operator_refresh_tokens",
+			Model:       &models.OperatorRefreshToken{},
+			Description: "Refresh-токены операторского контура (хэш+ротация)",
+			IsGlobal:    true,
+		},
+		{
+			TableName:   "operator_bootstrap_state",
+			Model:       &models.OperatorBootstrapState{},
+			Description: "Singleton первичного создания оператора",
 			IsGlobal:    true,
 		},
 		{
@@ -1166,6 +1223,10 @@ func CreateMissingGlobalTables() error {
 		log.Printf("⚠️ Ошибка проверки структуры таблиц биллинга: %v", err)
 	}
 
+	if err := ensureAuthSchemaIntegrity(); err != nil {
+		log.Printf("⚠️ Ошибка проверки структуры таблиц авторизации: %v", err)
+	}
+
 	return nil
 }
 
@@ -1348,6 +1409,57 @@ func ensureBillingSchemaIntegrity() error {
 		return fmt.Errorf("%s", strings.Join(issues, "; "))
 	}
 
+	return nil
+}
+
+// ensureAuthSchemaIntegrity добивает структуру таблиц локальной авторизации
+// после AutoMigrate (Ф1 hardening).
+//
+// AutoMigrate добавляет новые колонки, но НЕ удаляет старые. Поле
+// refresh_tokens.token (сырой токен в открытом виде, NOT NULL, unique)
+// заменено на token_hash — оставшаяся NOT NULL-колонка без дефолта ломала
+// бы INSERT новых refresh-токенов. Дропаем её и её unique-индекс
+// идемпотентно. Чистый старт авторизации (миграции пользователей нет),
+// поэтому потери данных нет.
+func ensureAuthSchemaIntegrity() error {
+	var issues []string
+
+	// АВТОРИТЕТНО (не полагаемся на GORM AutoMigrate — на populated БД
+	// он прерывается на легаси-констрейнтах до добавления колонок).
+	stmts := []string{
+		// local_users: новые Ф1-колонки идемпотентно + дефолты.
+		"ALTER TABLE IF EXISTS public.local_users ADD COLUMN IF NOT EXISTS is_superadmin boolean NOT NULL DEFAULT false",
+		"ALTER TABLE IF EXISTS public.local_users ADD COLUMN IF NOT EXISTS token_version integer NOT NULL DEFAULT 1",
+		"ALTER TABLE IF EXISTS public.local_users ADD COLUMN IF NOT EXISTS failed_attempts integer NOT NULL DEFAULT 0",
+		"ALTER TABLE IF EXISTS public.local_users ADD COLUMN IF NOT EXISTS locked_until timestamptz",
+		"ALTER TABLE IF EXISTS public.local_users ADD COLUMN IF NOT EXISTS password_changed_at timestamptz",
+		"UPDATE public.local_users SET token_version = 1 WHERE token_version IS NULL OR token_version = 0",
+
+		// refresh_tokens: clean-start (токены эфемерны, миграции старых
+		// по дизайну Ф1 нет — иначе token_hash NOT NULL падает на
+		// легаси-строках). Чистим строки + старый сырой столбец/индексы.
+		"DROP INDEX IF EXISTS idx_refresh_tokens_token",
+		"DROP INDEX IF EXISTS uni_refresh_tokens_token",
+		"DELETE FROM public.refresh_tokens",
+		"ALTER TABLE IF EXISTS public.refresh_tokens DROP COLUMN IF EXISTS token",
+		// Новые колонки refresh_tokens идемпотентно (на случай аборта
+		// AutoMigrate на легаси-индексе до их создания).
+		"ALTER TABLE IF EXISTS public.refresh_tokens ADD COLUMN IF NOT EXISTS token_hash varchar(64)",
+		"ALTER TABLE IF EXISTS public.refresh_tokens ADD COLUMN IF NOT EXISTS family_id varchar(64)",
+		"ALTER TABLE IF EXISTS public.refresh_tokens ADD COLUMN IF NOT EXISTS rotated_from bigint",
+		"ALTER TABLE IF EXISTS public.refresh_tokens ADD COLUMN IF NOT EXISTS rotated_at timestamptz",
+		"ALTER TABLE IF EXISTS public.refresh_tokens ADD COLUMN IF NOT EXISTS replaced_by bigint",
+	}
+
+	for _, stmt := range stmts {
+		if err := DB.Exec(stmt).Error; err != nil {
+			issues = append(issues, fmt.Sprintf("%q: %v", stmt, err))
+		}
+	}
+
+	if len(issues) > 0 {
+		return fmt.Errorf("%s", strings.Join(issues, "; "))
+	}
 	return nil
 }
 

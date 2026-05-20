@@ -120,6 +120,15 @@ func main() {
 	api.InitMaxService()
 	log.Println("✅ MAX Integration Service initialized successfully")
 
+	// Ф3-C: server-side Axenta-токен из хранимых Company-кред (после Ф1
+	// request-токен = локальный JWT, невалиден для axenta.cloud).
+	// Live-мутации (user/account create, activate, toggle, move) ходят им.
+	axentaServerToken := services.NewAxentaServerToken(
+		database.DB,
+		services.NewAxetnaClient("https://axenta.cloud/api", nil),
+	)
+	api.SetAxentaServerToken(axentaServerToken)
+
 	// Инициализируем сервис синхронизации Axenta
 	axentaSyncService := services.NewAxentaSyncService(database.DB)
 	axentaSyncIntervalMin := cfg.Axenta.SyncInterval
@@ -382,6 +391,12 @@ func main() {
 			"Pragma",
 			"Accept",
 			"X-Requested-With",
+			// Ф1 CSRF double-submit (api.ts:54 шлёт X-CSRF-Token на
+			// небезопасных методах). Без него preflight cross-origin
+			// (acrm.su → api.acrm.su) режет ВСЕ PUT/POST/DELETE мутации
+			// (cred-UX save, create account/user, toggle…). Ф1-cutover gap.
+			"X-CSRF-Token",
+			"x-csrf-token",
 		},
 		ExposeHeaders: []string{
 			"Content-Length",
@@ -403,7 +418,8 @@ func main() {
 	r.GET("/ping", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "success", "message": "pong"})
 	})
-	r.POST("/api/auth/login", api.Login)
+	// /api/auth/login регистрируется ниже в блоке AUTH_MODE
+	// (kill-switch local|axenta) — см. "ЛОКАЛЬНАЯ АВТОРИЗАЦИЯ".
 
 	// Документация по интеграциям (публичный доступ)
 	r.GET("/docs/TELEGRAM_INTEGRATION.md", api.GetTelegramIntegrationDocs)
@@ -428,16 +444,17 @@ func main() {
 	r.GET("/api/test2", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "success", "message": "Test endpoint 2 is working"})
 	})
-	// ВРЕМЕННЫЙ тестовый endpoint для создания нумератора без авторизации (только для тестирования)
-	r.POST("/api/test/contract-numerators", api.CreateContractNumerator)
-	// Тестовый endpoint для создания пользователя без проверки токена
-	r.POST("/api/test-cms-users", api.CreateCmsUserWithCurrentToken)
-	// Основной endpoint для создания пользователей CMS
-	r.POST("/api/create-cms-user", api.CreateCmsUserWithCurrentToken)
-	// Endpoint для создания пользователей CMS без проверки Axenta токенов
-	r.POST("/api/cms/create-user", api.CreateCmsUserWithCurrentToken)
-	// Endpoint для создания пользователей CMS с проверкой сохраненного токена
-	r.POST("/api/cms/create-user-with-saved-token", api.CreateCmsUserWithCurrentToken)
+	// Ф3-F/Codex Q4 (2026-05-20): УДАЛЁН bare r.POST("/api/test/contract-numerators")
+	// без auth — public mutation surface (CreateContractNumerator писал
+	// AdminAccountID из attacker-controlled X-Admin-ID при GetCompanyID==0).
+	// Тот же класс что Ф3-D #3. Auth'd-эквивалент: apiGroup.POST(
+	// "/contract-numerators") (=/api/auth/..., RequireAuth+SetTenant).
+	// Ф3-D #3 (2026-05-19): УДАЛЕНЫ 4 bare cms-user-алиаса без auth
+	// (/api/test-cms-users, /api/create-cms-user, /api/cms/create-user,
+	// /api/cms/create-user-with-saved-token). Pre-Ф1 «прозрачный прокси,
+	// identity из request-токена» — после Ф1 company_id=0 → стабильно
+	// degraded. Фронт их не зовёт (проверено). Auth'd-эквивалент:
+	// cmsGroup.POST("/users") (localAuth+SetTenant, см. Ф3-C zone2-фикс).
 
 	// === ВЕРСИЯ BACKEND === (public, без auth — нужно фронту до логина для footer)
 	api.SetVersionInfoProvider(func() api.VersionInfo {
@@ -445,9 +462,69 @@ func main() {
 	})
 	r.GET("/api/version", api.GetAppVersion)
 
-	// === ЛОКАЛЬНАЯ АВТОРИЗАЦИЯ ===
+	// === ЛОКАЛЬНАЯ АВТОРИЗАЦИЯ + AUTH_MODE kill-switch ===
+	//
+	// AUTH_MODE=local (по умолчанию, Ф1): своя авторизация, ноль
+	// вызовов axenta.cloud на запрос. AUTH_MODE=axenta: legacy-прокси.
+	// Kill-switch реально откатывает ТОЛЬКО до первого bootstrap'а —
+	// после создания суперадмина у локальных юзеров нет Axenta-identity
+	// (риск B8: «откат» постфактум = redeploy старого бинаря, не флаг).
+	authMode := os.Getenv("AUTH_MODE")
+	if authMode == "" {
+		authMode = "local"
+	}
+
 	localAuthAPI := api.NewLocalAuthAPI(database.DB, jwtService)
-	localAuthAPI.RegisterRoutes(r.Group("/api"))
+	localAuthAPI.RegisterRoutes(r.Group("/api")) // back-compat /api/local/*
+
+	setupAPI := api.NewSetupAPI(database.DB)
+	originGuard := middleware.OriginGuard(cfg.CORS.AllowedOrigins)
+
+	// /api/setup — публичный bootstrap суперадмина (Origin-guard +
+	// строгий rate-limit; атомарность — внутри хендлера, риск B2).
+	r.GET("/api/setup", setupAPI.Status)
+	r.POST("/api/setup", originGuard, middleware.StrictRateLimit(), setupAPI.Bootstrap)
+
+	if authMode == "axenta" {
+		r.POST("/api/auth/login", api.Login)
+		log.Println("⚠️ AUTH_MODE=axenta — legacy Axenta-прокси авторизация (kill-switch)")
+	} else {
+		r.POST("/api/auth/login", originGuard, middleware.StrictRateLimit(), localAuthAPI.LocalLogin)
+		// refresh/logout аутентифицируются cookie → нужен CSRF (риск B4).
+		r.POST("/api/auth/refresh", originGuard, middleware.CSRFDoubleSubmit(), middleware.StrictRateLimit(), localAuthAPI.RefreshToken)
+		r.POST("/api/auth/logout", originGuard, middleware.CSRFDoubleSubmit(), localAuthAPI.LocalLogout)
+		log.Println("✅ AUTH_MODE=local — локальная авторизация (Axenta отвязана от входа)")
+	}
+
+	// === CONTROL-PLANE (Фаза 2: монетизация, операторский контур) ===
+	// Полностью изолирован от tenant: свой JWT-секрет, своя cookie
+	// (acrm_op_*), путь /api/control, БЕЗ tenant-middleware. Operator-
+	// токен и tenant-токен взаимно не валидируются (разные ключи).
+	operatorJWT := services.NewOperatorJWTService(database.DB)
+	operatorAuthAPI := api.NewOperatorAuthAPI(database.DB, operatorJWT)
+	operatorMW := middleware.NewOperatorAuthMiddleware(operatorJWT)
+
+	// Публичные: bootstrap оператора + login/refresh/logout.
+	r.GET("/api/control/setup", operatorAuthAPI.SetupStatus)
+	r.POST("/api/control/setup", originGuard, middleware.StrictRateLimit(), operatorAuthAPI.SetupBootstrap)
+	r.POST("/api/control/auth/login", originGuard, middleware.StrictRateLimit(), operatorAuthAPI.Login)
+	r.POST("/api/control/auth/refresh", originGuard,
+		middleware.CSRFDoubleSubmitCookie("acrm_op_csrf"), middleware.StrictRateLimit(),
+		operatorAuthAPI.Refresh)
+	r.POST("/api/control/auth/logout", originGuard,
+		middleware.CSRFDoubleSubmitCookie("acrm_op_csrf"), operatorAuthAPI.Logout)
+
+	// Защищённая control-plane группа — ТОЛЬКО operatorAuth, без
+	// tenantMiddleware (оператор вне tenant-схем). S3 навесит сюда
+	// CRUD пакетов/фич/подписок/provisioning.
+	entitlementSvc := services.NewEntitlementService(database.DB)
+	controlPlaneAPI := api.NewControlPlaneAPI(database.DB, entitlementSvc)
+
+	controlGroup := r.Group("/api/control")
+	controlGroup.Use(operatorMW.RequireOperator())
+	controlGroup.GET("/me", operatorAuthAPI.CurrentOperator)
+	controlPlaneAPI.RegisterRoutes(controlGroup) // S3: CRUD пакетов/фич/подписок/provisioning
+	log.Println("✅ Control-plane (operator) контур включён: /api/control/*")
 
 	// === WEBSOCKET С АВТОРИЗАЦИЕЙ ===
 	wsAPI := api.NewWebSocketAuthAPI(jwtService)
@@ -662,20 +739,64 @@ func main() {
 	log.Println("🔧 Registering authenticated API endpoints...")
 	apiGroup := r.Group("/api/auth")
 
-	// Создаем middleware для локальной авторизации (используется в других местах)
-	_ = middleware.NewLocalAuthMiddleware(jwtService)
+	// Cutover (риск B5/B6): в local-режиме защита /api/auth/* —
+	// локальная проверка подписи JWT (0 сетевых вызовов на запрос,
+	// убирает per-request GET axenta.cloud/current_user). SetTenant
+	// идёт ПОСЛЕ auth: берёт схему из доверенного claim, а не из
+	// клиентского X-Tenant-ID (см. tenant.go, auth_company_id).
+	if authMode == "axenta" {
+		apiGroup.Use(
+			authMiddleware.RequireAuth(),
+			tenantMiddleware.SetTenant(),
+		)
+		log.Println("⚠️ /api/auth/* защищены legacy Axenta-валидацией (per-request axenta.cloud)")
+	} else {
+		localAuthMW := middleware.NewLocalAuthMiddleware(jwtService)
+		apiGroup.Use(
+			localAuthMW.RequireAuth(),
+			tenantMiddleware.SetTenant(),
+		)
+		log.Println("✅ /api/auth/* защищены локальной JWT-проверкой (мультитенантность из claim)")
+	}
 
-	// Подключаем Axenta авторизацию и мультитенантность до регистрации маршрутов
-	apiGroup.Use(
-		authMiddleware.RequireAuth(),
-		tenantMiddleware.SetTenant(),
-	)
-	log.Println("✅ Axenta Cloud authentication enabled for /api/auth endpoints (with multitenancy)")
+	// S4: self-entitlements — tenant-приложение узнаёт свои платные
+	// фичи (UI gate). Тот же EntitlementService, что control-plane
+	// (общий кэш → Invalidate из /api/control мгновенно виден здесь).
+	apiGroup.GET("/my-entitlements", api.NewSelfEntitlementsAPI(entitlementSvc).MyEntitlements)
 
-	// Отдельная группа для CMS endpoints без проверки Axenta токенов
-	log.Println("🔧 Registering CMS endpoints without Axenta authentication...")
+	// Ф3-D #1 cred-UX: управление Axenta-кредами компании (admin/superadmin).
+	// После Ф1 весь Ф3-B/C server-токен держится на Company.AxetnaLogin/
+	// Password — здесь оператор их задаёт/тестирует/ротирует. apiGroup
+	// (/api/auth) уже под RequireAuth+SetTenant; роль-гейт — в хендлере.
+	// RedirectTrailingSlash=false → регистрируем оба варианта (quirk).
+	apiGroup.GET("/axenta-credentials", api.GetAxentaCredentials)
+	apiGroup.GET("/axenta-credentials/", api.GetAxentaCredentials)
+	apiGroup.PUT("/axenta-credentials", api.UpdateAxentaCredentials)
+	apiGroup.PUT("/axenta-credentials/", api.UpdateAxentaCredentials)
+	apiGroup.POST("/axenta-credentials/test", api.TestAxentaCredentials)
+	apiGroup.POST("/axenta-credentials/test/", api.TestAxentaCredentials)
+
+	// CMS endpoints. Ф3-C: исторически cmsGroup был БЕЗ middleware (старая
+	// модель «прозрачный прокси, auth из форвардящегося Axenta request-токена»).
+	// После Ф1 эта модель мертва, request-токен = локальный JWT. Мутации
+	// (user/account create, toggle, move) ходят в Axenta server-токеном по
+	// company-кредам → нужен company_id из ДОВЕРЕННОГО claim, иначе любой
+	// неаутентифицированный мог бы дёрнуть мутацию чужой компании. Вешаем
+	// тот же auth+SetTenant что на apiGroup (AUTH_MODE-aware).
+	log.Println("🔧 Registering CMS endpoints (Ф3-C: local-JWT auth + tenant)...")
 	cmsGroup := r.Group("/api/cms")
-	// Не используем authMiddleware.RequireAuth() для CMS endpoints
+	if authMode == "axenta" {
+		cmsGroup.Use(
+			authMiddleware.RequireAuth(),
+			tenantMiddleware.SetTenant(),
+		)
+	} else {
+		cmsLocalAuthMW := middleware.NewLocalAuthMiddleware(jwtService)
+		cmsGroup.Use(
+			cmsLocalAuthMW.RequireAuth(),
+			tenantMiddleware.SetTenant(),
+		)
+	}
 	cmsGroup.POST("/users", api.CreateCmsUserWithCurrentToken)
 	cmsGroup.POST("/users/create", api.CreateCmsUserWithAdminToken)
 	cmsGroup.POST("/users/login_as", api.LoginAs)
@@ -722,9 +843,9 @@ func main() {
 	log.Println("🔧 Registering users proxy endpoints...")
 	apiGroup.GET("/users", api.GetUsersFromAxentaCloud)
 	apiGroup.POST("/users", api.CreateUserInAxentaCloud)
-	// Публичные маршруты для создания пользователей (без проверки auth)
-	log.Println("🔧 Registering public users endpoints...")
-	r.POST("/api/users", api.CreateUserInAxentaCloud)
+	// Ф3-D #3 (2026-05-19): УДАЛЁН bare r.POST("/api/users") без auth
+	// (pre-Ф1 «публичный» маршрут, company_id=0 → degraded; фронт не зовёт).
+	// Auth'd-эквивалент: apiGroup.POST("/users") выше.
 	apiGroup.GET("/users/stats", api.GetUsersStatsFromAxentaCloud)
 	apiGroup.GET("/users/stats/optimized", api.GetUsersStatsOptimizedFromAxentaCloud)
 	// Унифицированный API для пользователей (объединяет Axenta + Wialon)
@@ -1240,9 +1361,21 @@ func main() {
 	apiGroup.GET("/warehouse/statistics", warehouseAPI.GetWarehouseStatistics)
 
 	// Группа для интеграций (с мультитенантностью для изоляции данных между компаниями)
+	// Ф3-cutover: integrationsGroup (Wialon/1С/NovaConnect/Axenta-integration/
+	// Telegram/MAX/integrations-list) исторически висел на legacy
+	// authMiddleware.RequireAuth() (Axenta-токен). После Ф1 AUTH_MODE=local
+	// request-токен = локальный JWT → legacy-валидация даёт 401 → страница
+	// «Внешние интеграции» (Wialon-подключения, список) ломалась. Делаем
+	// AUTH_MODE-aware — тот же паттерн, что apiGroup/cmsGroup (Ф3-C).
 	integrationsGroup := r.Group("/api")
-	integrationsGroup.Use(authMiddleware.RequireAuth())
-	integrationsGroup.Use(tenantMiddleware.SetTenant()) // Добавляем мультитенантность для изоляции данных
+	if authMode == "axenta" {
+		integrationsGroup.Use(authMiddleware.RequireAuth())
+		integrationsGroup.Use(tenantMiddleware.SetTenant())
+	} else {
+		integrationsLocalAuthMW := middleware.NewLocalAuthMiddleware(jwtService)
+		integrationsGroup.Use(integrationsLocalAuthMW.RequireAuth())
+		integrationsGroup.Use(tenantMiddleware.SetTenant())
+	}
 
 	// Интеграция с 1С
 	oneCAPI := api.NewOneCIntegrationAPI()
@@ -1278,6 +1411,16 @@ func main() {
 
 	// Email SMTP интеграция (требует tenant middleware для company_id)
 	// КРИТИЧНО: Хотя NotificationSettings в public схеме, данные фильтруются по company_id
+	// Ф3-cutover/Codex Q4: emailAuthGroup НАМЕРЕННО оставлен на legacy
+	// authMiddleware (НЕ переведён на localAuthMW как integrationsGroup).
+	// Причина: email-хендлеры (SetupEmailIntegration/GetEmailConfig/
+	// TestEmailConnection, api/email.go) читают c.Get("user"), которое
+	// LocalAuthMiddleware НЕ ставит (только user_id/company_id/role). Перевод
+	// на local дал бы 401 уже ВНУТРИ хендлера. В local-режиме email-config
+	// и так не работал (legacy-auth 401 на middleware) — не регрессия,
+	// pre-existing долг. Корректный фикс (LocalAuthMiddleware +c.Set("user")
+	// ИЛИ рерайт email-хендлеров на user_id) — отдельная задача со своим
+	// Codex-раундом, ВНЕ cutover-scope (email ≠ страница «Внешние интеграции»).
 	emailAuthGroup := r.Group("/api/auth/email")
 	emailAuthGroup.Use(authMiddleware.RequireAuth()) // Auth middleware для проверки токена
 	emailAuthGroup.Use(tenantMiddleware.SetTenant()) // Tenant middleware для установки company_id

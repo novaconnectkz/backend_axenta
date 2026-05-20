@@ -324,7 +324,24 @@ func GetAdminAccountID(c *gin.Context) (uint, error) {
 		}
 	}
 
-	// 2. Пробуем получить из заголовков
+	// Ф3-F: доверенный signed-claim company_id (SetTenant из auth_company_id)
+	// — ПЕРЕД attacker-controlled X-Admin-ID/query (Ф3-C-принцип: не
+	// доверять client-id). После Ф1 legacy-источники (ctx/GetCurrentUser
+	// = Axenta request-токен) пусты → этот fallback даёт корректный
+	// admin_account_id для billing/dashboard/contracts/system (66 callsite,
+	// иначе 401). Реальные prod-данные (contracts.admin_account_id) keyed
+	// by company.ID → совпадает. axenta-mode: legacy-источники выше
+	// заполнены → сюда НЕ доходит, поведение не меняется. Snapshot-keying
+	// (firstCompany.ID, долг#2) не задевается — Ф3-B read-path snapshot-
+	// only/без admin-фильтра, не через эту функцию.
+	if adminID == 0 {
+		if cid := GetCompanyID(c); cid > 0 {
+			adminID = cid
+		}
+	}
+
+	// 2. Пробуем получить из заголовков (legacy/axenta-mode last-resort;
+	//    после trusted-claim — в local-mode фактически недостижимо).
 	if adminID == 0 {
 		headerCandidates := []string{
 			"X-Admin-ID",

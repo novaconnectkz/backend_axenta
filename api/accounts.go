@@ -55,25 +55,30 @@ type AccountsResponse struct {
 	Next     *string   `json:"next"`
 	Previous *string   `json:"previous"`
 	Results  []Account `json:"results"`
+	// Ф3-E/Codex Q2: true когда snapshot устарел (>TTL) — отдаём
+	// последние известные строки + флаг (паритет с objects/users
+	// Ф3-B: stale → данные+degraded, НЕ пусто). omitempty: на свежем
+	// ответе поля нет (1:1 со старым proxy-форматом).
+	Degraded bool `json:"degraded,omitempty"`
 }
 
-// GetAccounts получает список учетных записей через прокси к Axenta API
+// GetAccounts получает список учётных записей из локального snapshot.
+//
+// Ф3-E/Codex: РАНЬШЕ при пустом/устаревшем snapshot
+// (tryServeAccountsFromSnapshot=false) handler ПРОКСИРОВАЛ в
+// axenta.cloud по request-токену. После Ф1 request-токен = локальный
+// JWT → axenta.cloud отдаёт 401 → экран аккаунтов залочен (ровно
+// cutover-сценарий). Это была дыра Ф3-B (objects/users list рерайчены,
+// accounts list — нет; найдено на staging Ф3-E). Теперь контракт как
+// у objects/users: всегда 200, snapshot-only, ноль request-token proxy.
+//
+//   - snapshot свежий+есть → реальные данные (tryServe, degraded=false);
+//   - snapshot устарел (>TTL) → последние известные строки +
+//     degraded:true (Ф3-E/Codex Q2 паритет с objects/users — НЕ пусто);
+//   - нет БД / пустой snapshot / SQL-ошибка → 200 + пустой список +
+//     degraded:true (НЕ 4xx/5xx, НЕ proxy). Axenta Sync Scheduler
+//     наполнит snapshot в течение цикла — экран сам оживёт.
 func (h *AccountsHandler) GetAccounts(c *gin.Context) {
-	// Получаем токен из заголовка
-	authHeader := c.GetHeader("Authorization")
-	if authHeader == "" {
-		authHeader = c.GetHeader("authorization")
-	}
-
-	if authHeader == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"status": "error",
-			"error":  "Authorization header is required",
-		})
-		return
-	}
-
-	// Получаем параметры запроса
 	page := c.DefaultQuery("page", "1")
 	perPage := c.DefaultQuery("per_page", "50")
 	ordering := c.DefaultQuery("ordering", "name")
@@ -81,259 +86,46 @@ func (h *AccountsHandler) GetAccounts(c *gin.Context) {
 	accountType := c.Query("type")
 	isActive := c.Query("is_active")
 
-	// Сначала пробуем читать из локального snapshot (axenta_account_snapshots)
-	// Берём БД из tenant-контекста (snapshot живёт в tenant_<id>, не в public)
+	// snapshot живёт в tenant-схеме (tenant_<id>), НЕ в public.
+	// Ф3-D #4/Codex Q4-симметрия: nil tenantDB → degraded, public не трогаем.
 	tenantDB := middleware.GetTenantDB(c)
-	if tenantDB == nil {
-		tenantDB = database.DB
-	}
-	if resp, ok := tryServeAccountsFromSnapshot(tenantDB, page, perPage, ordering, search, accountType, isActive); ok {
-		c.JSON(http.StatusOK, resp)
-		return
-	}
-
-	// Строим URL для Axenta API
-	axentaURL := "https://axenta.cloud/api/cms/accounts/"
-
-	// Создаем HTTP клиент
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-	}
-
-	// Создаем запрос
-	req, err := http.NewRequest("GET", axentaURL, nil)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to create request: " + err.Error(),
-		})
-		return
-	}
-
-	// Добавляем параметры запроса
-	q := req.URL.Query()
-	q.Add("page", page)
-	q.Add("per_page", perPage)
-	q.Add("ordering", ordering)
-
-	if search != "" {
-		q.Add("search", search)
-	}
-	if accountType != "" {
-		q.Add("type", accountType)
-	}
-	if isActive != "" {
-		q.Add("is_active", isActive)
-	}
-
-	req.URL.RawQuery = q.Encode()
-
-	// Добавляем заголовки авторизации
-	req.Header.Set("Authorization", authHeader)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	// Добавляем X-Tenant-ID если есть
-	tenantID := c.GetHeader("X-Tenant-ID")
-	if tenantID != "" {
-		req.Header.Set("X-Tenant-ID", tenantID)
-	}
-
-	// Логируем запрос
-	fmt.Printf("🔄 Proxy request to Axenta API: %s\n", req.URL.String())
-	fmt.Printf("📋 Headers: Authorization=%s, X-Tenant-ID=%s\n",
-		authHeader[:min(len(authHeader), 20)]+"...", tenantID)
-
-	// Выполняем запрос
-	resp, err := client.Do(req)
-	if err != nil {
-		fmt.Printf("❌ Axenta API request failed: %v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to connect to Axenta API: " + err.Error(),
-		})
-		return
-	}
-	defer resp.Body.Close()
-
-	// Читаем ответ
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Printf("❌ Failed to read Axenta API response: %v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to read Axenta API response: " + err.Error(),
-		})
-		return
-	}
-
-	// Логируем ответ
-	fmt.Printf("✅ Axenta API response: status=%d, size=%d bytes\n", resp.StatusCode, len(body))
-
-	// Если статус не 200, возвращаем ошибку
-	if resp.StatusCode != http.StatusOK {
-		fmt.Printf("❌ Axenta API error: status=%d, body=%s\n", resp.StatusCode, string(body))
-
-		// Пытаемся распарсить ошибку
-		var errorResponse map[string]interface{}
-		if err := json.Unmarshal(body, &errorResponse); err == nil {
-			c.JSON(resp.StatusCode, gin.H{
-				"status":  "error",
-				"error":   "Axenta API error",
-				"details": errorResponse,
-			})
-		} else {
-			c.JSON(resp.StatusCode, gin.H{
-				"status": "error",
-				"error":  "Axenta API error: " + string(body),
-			})
+	if tenantDB != nil {
+		if resp, ok := tryServeAccountsFromSnapshot(tenantDB, page, perPage, ordering, search, accountType, isActive); ok {
+			c.JSON(http.StatusOK, resp)
+			return
 		}
-		return
 	}
 
-	// Парсим успешный ответ
-	var accountsResponse AccountsResponse
-	if err := json.Unmarshal(body, &accountsResponse); err != nil {
-		fmt.Printf("❌ Failed to parse Axenta API response: %v\n", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to parse Axenta API response: " + err.Error(),
-		})
-		return
+	// Snapshot не отдал (пусто/устарел/nil/SQL-err) — деградируем,
+	// НЕ проксируем в axenta.cloud (после Ф1 = 401).
+	pageNum, _ := strconv.Atoi(page)
+	if pageNum < 1 {
+		pageNum = 1
 	}
-
-	fmt.Printf("✅ Successfully proxied accounts: count=%d, results=%d\n",
-		accountsResponse.Count, len(accountsResponse.Results))
-
-	// Возвращаем данные
-	c.JSON(http.StatusOK, accountsResponse)
+	c.JSON(http.StatusOK, gin.H{
+		"count":     0,
+		"next":      nil,
+		"previous":  nil,
+		"results":   []Account{},
+		"degraded":  true,
+		"page":      pageNum,
+		"page_size": perPage,
+	})
 }
 
-// GetAccount получает конкретную учетную запись по ID
+// GetAccount получает конкретную учетную запись по ID.
+//
+// Ф3-D #4 (2026-05-19): раньше — live-proxy GET axenta.cloud/api/cms/
+// accounts/:id/ по request-`Authorization`. После Ф1 request-токен =
+// локальный JWT → axenta.cloud вернул бы 401. Переведено на snapshot-only
+// (см. serveAccountFromSnapshot), как read-path Ф3-B. Тонкая обёртка —
+// вся логика и контракт деградации в одной функции.
 func (h *AccountsHandler) GetAccount(c *gin.Context) {
-	// Получаем ID из параметров
-	idStr := c.Param("id")
-	id, err := strconv.Atoi(idStr)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status": "error",
-			"error":  "Invalid account ID",
-		})
-		return
-	}
-
-	// Получаем токен из заголовка
-	authHeader := c.GetHeader("Authorization")
-	if authHeader == "" {
-		authHeader = c.GetHeader("authorization")
-	}
-
-	if authHeader == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"status": "error",
-			"error":  "Authorization header is required",
-		})
-		return
-	}
-
-	// Строим URL для Axenta API
-	axentaURL := fmt.Sprintf("https://axenta.cloud/api/cms/accounts/%d/", id)
-
-	// Создаем HTTP клиент
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-	}
-
-	// Создаем запрос
-	req, err := http.NewRequest("GET", axentaURL, nil)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to create request: " + err.Error(),
-		})
-		return
-	}
-
-	// Добавляем заголовки авторизации
-	req.Header.Set("Authorization", authHeader)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	// Добавляем X-Tenant-ID если есть
-	tenantID := c.GetHeader("X-Tenant-ID")
-	if tenantID != "" {
-		req.Header.Set("X-Tenant-ID", tenantID)
-	}
-
-	// Выполняем запрос
-	resp, err := client.Do(req)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to connect to Axenta API: " + err.Error(),
-		})
-		return
-	}
-	defer resp.Body.Close()
-
-	// Читаем ответ
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to read Axenta API response: " + err.Error(),
-		})
-		return
-	}
-
-	// Если статус не 200, возвращаем ошибку
-	if resp.StatusCode != http.StatusOK {
-		var errorResponse map[string]interface{}
-		if err := json.Unmarshal(body, &errorResponse); err == nil {
-			c.JSON(resp.StatusCode, gin.H{
-				"status":  "error",
-				"error":   "Axenta API error",
-				"details": errorResponse,
-			})
-		} else {
-			c.JSON(resp.StatusCode, gin.H{
-				"status": "error",
-				"error":  "Axenta API error: " + string(body),
-			})
-		}
-		return
-	}
-
-	// Парсим успешный ответ
-	var account Account
-	if err := json.Unmarshal(body, &account); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to parse Axenta API response: " + err.Error(),
-		})
-		return
-	}
-
-	// Возвращаем данные
-	c.JSON(http.StatusOK, account)
+	serveAccountFromSnapshot(c)
 }
 
 // CreateAccount создает новую учетную запись через прокси к Axenta API
 func (h *AccountsHandler) CreateAccount(c *gin.Context) {
-	// Получаем токен из заголовка
-	authHeader := c.GetHeader("Authorization")
-	if authHeader == "" {
-		authHeader = c.GetHeader("authorization")
-	}
-
-	if authHeader == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"status": "error",
-			"error":  "Authorization header is required",
-		})
-		return
-	}
-
 	// Читаем тело запроса
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -344,68 +136,60 @@ func (h *AccountsHandler) CreateAccount(c *gin.Context) {
 		return
 	}
 
-	// Строим URL для Axenta API
-	axentaURL := "https://axenta.cloud/api/cms/accounts/"
+	// Ф3-C: server-side Axenta-токен (креды компании), НЕ request-токен.
+	// ok=false → degraded-ответ записан, мутацию НЕ делаем.
+	axToken, ok := axentaServerTokenFor(c)
+	if !ok {
+		return
+	}
 
-	// Создаем HTTP клиент
+	axentaURL := "https://axenta.cloud/api/cms/accounts/"
 	client := &http.Client{
 		Timeout: 30 * time.Second,
 	}
 
-	// Создаем запрос
-	req, err := http.NewRequest("POST", axentaURL, bytes.NewBuffer(body))
+	doReq := func(token string) (int, []byte, error) {
+		httpReq, e := http.NewRequest("POST", axentaURL, bytes.NewBuffer(body))
+		if e != nil {
+			return 0, nil, e
+		}
+		httpReq.Header.Set("Authorization", "Token "+token)
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Accept", "application/json")
+		rsp, e := client.Do(httpReq)
+		if e != nil {
+			return 0, nil, e
+		}
+		defer rsp.Body.Close()
+		b, e := io.ReadAll(rsp.Body)
+		return rsp.StatusCode, b, e
+	}
+
+	statusCode, respBody, err := doReq(axToken)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to create request: " + err.Error(),
-		})
+		axentaMutationUnavailable(c, err)
 		return
 	}
 
-	// Добавляем заголовки авторизации
-	req.Header.Set("Authorization", authHeader)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	// Добавляем X-Tenant-ID если есть
-	tenantID := c.GetHeader("X-Tenant-ID")
-	if tenantID != "" {
-		req.Header.Set("X-Tenant-ID", tenantID)
+	// Downstream 401/403 — server-токен компании отозван: сброс + 1 retry.
+	if isAxentaAuthError(statusCode) {
+		invalidateAxentaServerToken(c)
+		axToken2, ok2 := axentaServerTokenFor(c)
+		if !ok2 {
+			return
+		}
+		statusCode, respBody, err = doReq(axToken2)
+		if err != nil {
+			axentaMutationUnavailable(c, err)
+			return
+		}
 	}
 
-	// Логируем запрос
-	fmt.Printf("🔄 Proxy POST request to Axenta API: %s\n", axentaURL)
-	fmt.Printf("📋 Headers: Authorization=%s, X-Tenant-ID=%s\n",
-		authHeader[:min(20, len(authHeader))]+"...", tenantID)
-	fmt.Printf("📦 Body: %s\n", string(body))
-
-	// Выполняем запрос
-	resp, err := client.Do(req)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to connect to Axenta API: " + err.Error(),
-		})
-		return
-	}
-	defer resp.Body.Close()
-
-	// Читаем ответ
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to read Axenta API response: " + err.Error(),
-		})
-		return
-	}
-
-	// Логируем ответ
-	fmt.Printf("📥 Axenta API response: %d %s\n", resp.StatusCode, string(respBody))
+	fmt.Printf("📥 CreateAccount via server-token: %d\n", statusCode)
 
 	// Если Axenta API вернул ошибку, передаем её клиенту
-	if resp.StatusCode >= 400 {
-		c.JSON(resp.StatusCode, gin.H{
+	if statusCode >= 400 {
+		c.JSON(statusCode, gin.H{
 			"status": "error",
 			"error":  "Axenta API error: " + string(respBody),
 		})
@@ -424,7 +208,7 @@ func (h *AccountsHandler) CreateAccount(c *gin.Context) {
 
 	// Триггерим резинк snapshot'ов чтобы новый аккаунт появился в /unified/accounts
 	// и в KPI dashboard без ожидания scheduled cron.
-	if adminID, err := middleware.GetAdminAccountID(c); err == nil {
+	if adminID := middleware.GetTrustedAdminAccountID(c); adminID != 0 {
 		services.GetSnapshotInvalidator().Invalidate(adminID, "account.create")
 
 		// Точечный upsert AxentaUserSnapshot для admin'а нового аккаунта.
@@ -495,20 +279,6 @@ type AccountMoveRequest struct {
 
 // MoveAccount перемещает учетную запись и все её данные к другому партнеру
 func (h *AccountsHandler) MoveAccount(c *gin.Context) {
-	// Получаем токен из заголовка
-	authHeader := c.GetHeader("Authorization")
-	if authHeader == "" {
-		authHeader = c.GetHeader("authorization")
-	}
-
-	if authHeader == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"status": "error",
-			"error":  "Authorization header is required",
-		})
-		return
-	}
-
 	// Парсим запрос
 	var moveRequest AccountMoveRequest
 	if err := c.ShouldBindJSON(&moveRequest); err != nil {
@@ -528,20 +298,21 @@ func (h *AccountsHandler) MoveAccount(c *gin.Context) {
 		return
 	}
 
-	// Строим URL для Axenta API
-	axentaURL := "https://axenta.cloud/api/cms/accounts/change_account/"
+	// Ф3-C: server-side Axenta-токен (креды компании), НЕ request-токен.
+	axToken, ok := axentaServerTokenFor(c)
+	if !ok {
+		return
+	}
 
-	// Создаем HTTP клиент
+	axentaURL := "https://axenta.cloud/api/cms/accounts/change_account/"
 	client := &http.Client{
 		Timeout: 30 * time.Second,
 	}
 
-	// Подготавливаем данные для отправки
 	requestData := map[string]interface{}{
 		"accountId":       moveRequest.AccountID,
 		"targetAccountId": moveRequest.TargetAccountID,
 	}
-
 	jsonData, err := json.Marshal(requestData)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -551,55 +322,49 @@ func (h *AccountsHandler) MoveAccount(c *gin.Context) {
 		return
 	}
 
-	// Создаем запрос
-	req, err := http.NewRequest("POST", axentaURL, bytes.NewBuffer(jsonData))
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to create request: " + err.Error(),
-		})
-		return
+	doReq := func(token string) (int, []byte, error) {
+		httpReq, e := http.NewRequest("POST", axentaURL, bytes.NewBuffer(jsonData))
+		if e != nil {
+			return 0, nil, e
+		}
+		httpReq.Header.Set("Authorization", "Token "+token)
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Accept", "application/json")
+		rsp, e := client.Do(httpReq)
+		if e != nil {
+			return 0, nil, e
+		}
+		defer rsp.Body.Close()
+		b, e := io.ReadAll(rsp.Body)
+		return rsp.StatusCode, b, e
 	}
 
-	// Добавляем заголовки авторизации
-	req.Header.Set("Authorization", authHeader)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	// Добавляем X-Tenant-ID если есть
-	tenantID := c.GetHeader("X-Tenant-ID")
-	if tenantID != "" {
-		req.Header.Set("X-Tenant-ID", tenantID)
-	}
-
-	// Логируем запрос
-	fmt.Printf("🔄 Moving account %d to target account %d via Axenta API\n",
+	fmt.Printf("🔄 Moving account %d → %d via Axenta (server-token)\n",
 		moveRequest.AccountID, moveRequest.TargetAccountID)
 
-	// Выполняем запрос
-	resp, err := client.Do(req)
+	statusCode, body, err := doReq(axToken)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to connect to Axenta API: " + err.Error(),
-		})
+		axentaMutationUnavailable(c, err)
 		return
 	}
-	defer resp.Body.Close()
 
-	// Читаем ответ
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to read Axenta API response: " + err.Error(),
-		})
-		return
+	// Downstream 401/403 — server-токен компании отозван: сброс + 1 retry.
+	if isAxentaAuthError(statusCode) {
+		invalidateAxentaServerToken(c)
+		axToken2, ok2 := axentaServerTokenFor(c)
+		if !ok2 {
+			return
+		}
+		statusCode, body, err = doReq(axToken2)
+		if err != nil {
+			axentaMutationUnavailable(c, err)
+			return
+		}
 	}
 
 	// Проверяем статус ответа
-	if resp.StatusCode != http.StatusOK {
-		c.JSON(resp.StatusCode, gin.H{
+	if statusCode != http.StatusOK {
+		c.JSON(statusCode, gin.H{
 			"status": "error",
 			"error":  fmt.Sprintf("Axenta API error: %s", string(body)),
 		})
@@ -610,7 +375,7 @@ func (h *AccountsHandler) MoveAccount(c *gin.Context) {
 		moveRequest.AccountID, moveRequest.TargetAccountID)
 
 	// Триггерим резинк snapshot'ов — иерархия аккаунтов изменилась.
-	if adminID, err := middleware.GetAdminAccountID(c); err == nil {
+	if adminID := middleware.GetTrustedAdminAccountID(c); adminID != 0 {
 		services.GetSnapshotInvalidator().Invalidate(adminID, "account.move")
 	}
 
@@ -638,71 +403,89 @@ func (h *AccountsHandler) ToggleAccountStatus(c *gin.Context) {
 		return
 	}
 
-	authHeader := c.GetHeader("Authorization")
-	if authHeader == "" {
-		authHeader = c.GetHeader("authorization")
-	}
-	if authHeader == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": "Authorization header is required"})
-		return
-	}
-
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Failed to read request body: " + err.Error()})
 		return
 	}
 
+	// Ф3-C: server-side Axenta-токен (креды компании), НЕ request-токен.
+	axToken, ok := axentaServerTokenFor(c)
+	if !ok {
+		return
+	}
+
 	axentaURL := fmt.Sprintf("https://axenta.cloud/api/cms/accounts/%s/activate/", id)
 	client := &http.Client{Timeout: 30 * time.Second}
-	req, err := http.NewRequest("POST", axentaURL, bytes.NewBuffer(body))
+
+	doReq := func(tk string) (int, []byte, error) {
+		httpReq, e := http.NewRequest("POST", axentaURL, bytes.NewBuffer(body))
+		if e != nil {
+			return 0, nil, e
+		}
+		httpReq.Header.Set("Authorization", "Token "+tk)
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Accept", "application/json")
+		rsp, e := client.Do(httpReq)
+		if e != nil {
+			return 0, nil, e
+		}
+		defer rsp.Body.Close()
+		b, e := io.ReadAll(rsp.Body)
+		return rsp.StatusCode, b, e
+	}
+
+	statusCode, respBody, err := doReq(axToken)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "Failed to create request: " + err.Error()})
+		axentaMutationUnavailable(c, err)
 		return
 	}
-	req.Header.Set("Authorization", authHeader)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	if tenantID := c.GetHeader("X-Tenant-ID"); tenantID != "" {
-		req.Header.Set("X-Tenant-ID", tenantID)
+
+	// Downstream 401/403 — server-токен компании отозван: сброс + 1 retry.
+	if isAxentaAuthError(statusCode) {
+		invalidateAxentaServerToken(c)
+		axToken2, ok2 := axentaServerTokenFor(c)
+		if !ok2 {
+			return
+		}
+		axToken = axToken2
+		statusCode, respBody, err = doReq(axToken)
+		if err != nil {
+			axentaMutationUnavailable(c, err)
+			return
+		}
 	}
 
-	resp, err := client.Do(req)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": "Axenta connect failed: " + err.Error()})
-		return
-	}
-	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode >= 400 {
-		c.Data(resp.StatusCode, "application/json", respBody)
+	if statusCode >= 400 {
+		c.Data(statusCode, "application/json", respBody)
 		return
 	}
 
 	// Точечный re-fetch конкретного аккаунта — намного быстрее SyncAdmin (~200ms vs ~30s).
 	// СИНХРОННО до ответа, чтобы frontend сразу после 201 видел обновлённый snapshot.
 	// При ошибке refresh — fallback на async SnapshotInvalidator.
-	token := strings.TrimPrefix(authHeader, "Token ")
-	token = strings.TrimPrefix(token, "Bearer ")
+	// Ф3-C: RefreshAccount тоже на server-токене (request-токен после Ф1 невалиден).
+	token := axToken
 
-	adminID, _ := middleware.GetAdminAccountID(c)
-	if adminID == 0 {
-		adminID = getAccountIDFromToken(token)
-	}
+	// Ф3-C/Codex: adminID ТОЛЬКО из доверенного claim. getAccountIDFromToken
+	// на server-токене вернул бы КОРНЕВОЙ аккаунт компании (не tenant-admin) →
+	// refresh/invalidate ушёл бы не в ту схему. adminID==0 → sync-refresh
+	// пропускаем (guard ниже), cron подхватит.
+	adminID := middleware.GetTrustedAdminAccountID(c)
 
-	// CMS endpoints без tenant middleware → middleware.GetTenantDB(c) вернёт nil.
-	// Вытаскиваем tenant из X-Tenant-ID заголовка вручную, иначе RefreshAccount
-	// запишет в public, а UI читает из tenant_<id>.
-	var tenantDB *gorm.DB
-	if tenantIDStr := c.GetHeader("X-Tenant-ID"); tenantIDStr != "" {
-		if tid, err := strconv.ParseUint(tenantIDStr, 10, 32); err == nil {
-			tenantDB = database.GetTenantDBByID(uint(tid))
-		}
-	}
+	// Ф3-C/Codex: ДОВЕРЕННЫЙ tenantDB из SetTenant (signed claim) — ПЕРЕД
+	// клиентским X-Tenant-ID. После zone2-фикса cmsGroup имеет SetTenant,
+	// поэтому GetTenantDB(c) непуст и привязан к аутентифицированной компании.
+	// X-Tenant-ID (client-controlled) — только legacy-fallback если trusted
+	// почему-то пуст; иначе аутентифицированный юзер форжил бы чужую схему
+	// (cross-tenant запись через RefreshAccount).
+	tenantDB := middleware.GetTenantDB(c)
 	if tenantDB == nil {
-		tenantDB = middleware.GetTenantDB(c)
+		if tenantIDStr := c.GetHeader("X-Tenant-ID"); tenantIDStr != "" {
+			if tid, err := strconv.ParseUint(tenantIDStr, 10, 32); err == nil {
+				tenantDB = database.GetTenantDBByID(uint(tid))
+			}
+		}
 	}
 	if tenantDB == nil {
 		tenantDB = database.GetDB()
@@ -723,7 +506,7 @@ func (h *AccountsHandler) ToggleAccountStatus(c *gin.Context) {
 		}
 	}
 
-	c.Data(resp.StatusCode, "application/json", respBody)
+	c.Data(statusCode, "application/json", respBody)
 }
 
 // RefreshSingleAccount — manual точечный refresh учётки по ID. Полезно когда
@@ -744,23 +527,19 @@ func (h *AccountsHandler) RefreshSingleAccount(c *gin.Context) {
 		return
 	}
 
-	authHeader := c.GetHeader("Authorization")
-	if authHeader == "" {
-		authHeader = c.GetHeader("authorization")
-	}
-	if authHeader == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": "Authorization header is required"})
+	// Ф3-C: server-side Axenta-токен (креды компании), НЕ request-токен —
+	// после Ф1 логин = локальный JWT, невалиден для axenta.cloud/RefreshAccount.
+	token, ok := axentaServerTokenFor(c)
+	if !ok {
 		return
 	}
-	token := strings.TrimPrefix(authHeader, "Token ")
-	token = strings.TrimPrefix(token, "Bearer ")
 
-	adminID, _ := middleware.GetAdminAccountID(c)
+	// Ф3-C/Codex: adminID ТОЛЬКО из доверенного claim. getAccountIDFromToken
+	// на server-токене вернул бы корневой аккаунт компании → refresh ушёл бы
+	// не в ту схему. Нет adminID — не угадываем, честная ошибка.
+	adminID := middleware.GetTrustedAdminAccountID(c)
 	if adminID == 0 {
-		adminID = getAccountIDFromToken(token)
-	}
-	if adminID == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Не удалось определить admin account"})
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Не удалось определить admin account из сессии"})
 		return
 	}
 
@@ -775,6 +554,8 @@ func (h *AccountsHandler) RefreshSingleAccount(c *gin.Context) {
 		return
 	}
 
+	// Один attempt (как до Ф3-C): RefreshAccount возвращает нетипизированную
+	// ошибку — retry-on-any-error плодил бы повторный логин+запрос на 404/5xx.
 	acc, err := syncSvc.RefreshAccount(token, adminID, accIDInt, tenantDB)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": "Refresh failed: " + err.Error()})
@@ -791,11 +572,17 @@ func (h *AccountsHandler) RefreshSingleAccount(c *gin.Context) {
 	})
 }
 
-// tryServeAccountsFromSnapshot читает учётные записи из локального snapshot (axenta_account_snapshots).
-// Возвращает (response, true) если snapshot непуст и достаточно свежий, иначе (nil, false) — caller сделает fallback на Axenta proxy.
+// tryServeAccountsFromSnapshot читает учётные записи из локального snapshot
+// (axenta_account_snapshots). Возвращает (response, true) если в snapshot
+// ЕСТЬ данные (свежие ИЛИ устаревшие), иначе (nil, false) — caller отдаёт
+// пустой degraded-ответ. Ноль обращений в axenta.cloud (после Ф1
+// request-токен невалиден — см. GetAccounts).
 //
-// TTL свежести задан общей константой SnapshotTTL (60 мин). Если последняя
-// синхронизация старше — считаем устаревшим и идём в Axenta.
+// Ф3-E/Codex Q2: TTL (SnapshotTTL 60м) больше НЕ повод вернуть false.
+// Устарел → отдаём последние известные строки + resp.Degraded=true
+// (паритет с objects/users Ф3-B: stale → данные+degraded, НЕ пусто).
+// false только при реальном отсутствии данных (нет БД / пустой snapshot /
+// SQL-ошибка).
 func tryServeAccountsFromSnapshot(db *gorm.DB, page, perPage, ordering, search, accountType, isActive string) (*AccountsResponse, bool) {
 	if db == nil {
 		return nil, false
@@ -810,11 +597,12 @@ func tryServeAccountsFromSnapshot(db *gorm.DB, page, perPage, ordering, search, 
 		return nil, false
 	}
 
-	// TTL: общая константа SnapshotTTL. Если snapshot старше — fallback на Axenta.
-	if time.Since(lastSync) > SnapshotTTL {
-		fmt.Printf("⏰ Snapshot устарел (last_synced_at=%v, age=%v > TTL=%v), fallback на Axenta proxy\n",
+	// Устарел? — НЕ повод проксировать (после Ф1 = 401). Отдаём что есть
+	// с degraded:true. Axenta Sync Scheduler освежит в течение цикла.
+	stale := time.Since(lastSync) > SnapshotTTL
+	if stale {
+		fmt.Printf("⏰ Accounts snapshot устарел (last_synced_at=%v, age=%v > TTL=%v) — отдаём из snapshot + degraded (без proxy)\n",
 			lastSync.Format(time.RFC3339), time.Since(lastSync).Round(time.Second), SnapshotTTL)
-		return nil, false
 	}
 
 	q := db.Model(&models.AxentaAccountSnapshot{})
@@ -864,43 +652,7 @@ func tryServeAccountsFromSnapshot(db *gorm.DB, page, perPage, ordering, search, 
 	// Преобразуем snapshot rows в формат Axenta API (Account)
 	results := make([]Account, 0, len(rows))
 	for _, r := range rows {
-		var acc Account
-		// RawPayload содержит оригинальный JSON от Axenta — desearializaция даёт все поля
-		if r.RawPayload != "" {
-			_ = json.Unmarshal([]byte(r.RawPayload), &acc)
-		}
-		// Подстраховка: если RawPayload неполон — заполняем из колонок
-		if acc.ID == 0 {
-			acc.ID = int(r.ExternalAccountID)
-		}
-		if acc.Name == "" {
-			acc.Name = r.AccountName
-		}
-		if acc.Type == "" {
-			acc.Type = r.AccountType
-		}
-		if acc.AdminFullname == "" {
-			acc.AdminFullname = r.AdminFullname
-		}
-		if acc.Hierarchy == "" {
-			acc.Hierarchy = r.Hierarchy
-		}
-		if acc.ParentAccountName == "" {
-			acc.ParentAccountName = r.ParentAccountName
-		}
-		if acc.ObjectsTotal == 0 {
-			acc.ObjectsTotal = r.ObjectsTotal
-		}
-		if acc.ObjectsActive == 0 {
-			acc.ObjectsActive = r.ObjectsActive
-		}
-		if !acc.IsActive {
-			acc.IsActive = r.IsActive
-		}
-		if acc.CreationDatetime == "" && !r.CreatedAt.IsZero() {
-			acc.CreationDatetime = r.CreatedAt.Format(time.RFC3339)
-		}
-		results = append(results, acc)
+		results = append(results, accountFromSnapshotRow(r))
 	}
 
 	resp := &AccountsResponse{
@@ -908,9 +660,135 @@ func tryServeAccountsFromSnapshot(db *gorm.DB, page, perPage, ordering, search, 
 		Next:     nil,
 		Previous: nil,
 		Results:  results,
+		Degraded: stale,
 	}
-	fmt.Printf("⚡ Snapshot served: total=%d, page=%d, returned=%d (last_sync=%v)\n", total, pageNum, len(results), lastSync.Format(time.RFC3339))
+	fmt.Printf("⚡ Accounts snapshot served: total=%d, page=%d, returned=%d, degraded=%v (last_sync=%v)\n", total, pageNum, len(results), stale, lastSync.Format(time.RFC3339))
 	return resp, true
+}
+
+// accountFromSnapshotRow конвертирует одну строку axenta_account_snapshots в
+// формат Axenta API (Account). ЕДИНЫЙ источник маппинга для списка
+// (tryServeAccountsFromSnapshot) и детали (serveAccountFromSnapshot) — чтобы
+// карточка и строка списка не разъезжались (тот же принцип что фильтр-хелперы
+// Ф3-B B4). RawPayload (оригинальный JSON Axenta) — основной источник, колонки
+// — подстраховка при неполном payload.
+func accountFromSnapshotRow(r models.AxentaAccountSnapshot) Account {
+	var acc Account
+	if r.RawPayload != "" {
+		_ = json.Unmarshal([]byte(r.RawPayload), &acc)
+	}
+	if acc.ID == 0 {
+		acc.ID = int(r.ExternalAccountID)
+	}
+	if acc.Name == "" {
+		acc.Name = r.AccountName
+	}
+	if acc.Type == "" {
+		acc.Type = r.AccountType
+	}
+	if acc.AdminFullname == "" {
+		acc.AdminFullname = r.AdminFullname
+	}
+	if acc.Hierarchy == "" {
+		acc.Hierarchy = r.Hierarchy
+	}
+	if acc.ParentAccountName == "" {
+		acc.ParentAccountName = r.ParentAccountName
+	}
+	if acc.ObjectsTotal == 0 {
+		acc.ObjectsTotal = r.ObjectsTotal
+	}
+	if acc.ObjectsActive == 0 {
+		acc.ObjectsActive = r.ObjectsActive
+	}
+	if !acc.IsActive {
+		acc.IsActive = r.IsActive
+	}
+	if acc.CreationDatetime == "" && !r.CreatedAt.IsZero() {
+		acc.CreationDatetime = r.CreatedAt.Format(time.RFC3339)
+	}
+	return acc
+}
+
+// serveAccountFromSnapshot — Ф3-D #4: detail-read GetAccount читается из
+// локального snapshot, БЕЗ proxy в axenta.cloud по request-токену (после Ф1
+// request-токен = локальный JWT, для axenta.cloud невалиден → был бы 401).
+//
+// Контракт (производный от Ф3-B, адаптирован под by-id resource):
+//   - снапшот свежий + строка есть → 200 Account (как старый proxy: bare JSON,
+//     FE читает response.data напрямую);
+//   - снапшот есть, но устарел (>TTL) → ВСЁ РАВНО 200 Account (отдаём что
+//     есть, НЕ проксируем — принцип Ф3-B грабля #1), факт логируем;
+//   - снапшот свежий, строки для :id нет → 404 (честный resource-not-found,
+//     НЕ infra-сбой; FE catch это уже обрабатывает как раньше proxy-404);
+//   - tenantDB нет / таблицы нет / SQL-ошибка / снапшот ещё не наполнен →
+//     200 {degraded:true} (как Ф3-B list: не 5xx из-за отсутствия infra;
+//     этот edge практически недостижим — без списка нет клика в деталь).
+//
+// Никогда: 401/500 из-за proxy, обращение в axenta.cloud по request-токену.
+func serveAccountFromSnapshot(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil || id <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Invalid account ID"})
+		return
+	}
+
+	// snapshot живёт в tenant-схеме (tenant_<id>), НЕ в public.
+	// Ф3-D #4/Codex Q4: НЕТ fallback на database.DB (public). Если
+	// доверенный SetTenant не дал tenant_db — читать из public нельзя
+	// (там этой tenant-таблицы нет / search_path-quirk долга #15 →
+	// чужая/пустая выборка). Контракт: tenantDB nil → сразу degraded.
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB == nil {
+		c.JSON(http.StatusOK, gin.H{"degraded": true})
+		return
+	}
+
+	// Свежесть snapshot (как tryServeAccountsFromSnapshot). Пустой/недоступный
+	// snapshot → degraded (не 5xx). Устаревший — НЕ повод (отдаём ниже что есть).
+	var lastSync time.Time
+	if err := tenantDB.Model(&models.AxentaAccountSnapshot{}).
+		Select("MAX(last_synced_at)").Scan(&lastSync).Error; err != nil || lastSync.IsZero() {
+		c.JSON(http.StatusOK, gin.H{"degraded": true})
+		return
+	}
+
+	// Ф3-D #4/Codex Q2: composite-unique (admin_account_id, external_account_id)
+	// → в одной tenant-схеме теоретически >1 строки с одним external_account_id.
+	// НЕ добавляем admin-фильтр: GetTrustedAdminAccountID=company.ID ≠
+	// legacy-sync firstCompany.ID (закрытый долг #2) → admin-фильтр дал бы
+	// 0 строк. Дубли в проде = транзиентный orphan от смены axetna_login,
+	// чистится 7д orphan-cleanup (долг #2). Детерминизм: берём свежайшую по
+	// last_synced_at (= строка актуального admin'а, не протухший orphan) —
+	// стабильный, предсказуемый выбор; расхождение со списком (он Find'ит
+	// все, pre-existing list-показ-дублей вне scope #4) ограничено и
+	// само-исцеляется.
+	var row models.AxentaAccountSnapshot
+	if err := tenantDB.Where("external_account_id = ?", int64(id)).
+		Order("last_synced_at DESC").
+		Order("id ASC"). // явный tiebreak при равном last_synced_at (mass-sync = один timestamp) — ORM-независимый детерминизм (Codex Q2 minor)
+		First(&row).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			// snapshot наполнен, но этой учётки в нём нет — честный not-found
+			c.JSON(http.StatusNotFound, gin.H{
+				"status": "error",
+				"error":  "Учётная запись не найдена в snapshot",
+			})
+			return
+		}
+		// SQL-ошибка — деградируем, НЕ 500 (контракт Ф3-B)
+		fmt.Printf("⚠️ serveAccountFromSnapshot query failed (id=%d): %v\n", id, err)
+		c.JSON(http.StatusOK, gin.H{"degraded": true})
+		return
+	}
+
+	if time.Since(lastSync) > SnapshotTTL {
+		fmt.Printf("⏰ GetAccount snapshot устарел (id=%d, last_sync=%v, age=%v > TTL=%v) — отдаём из snapshot без proxy\n",
+			id, lastSync.Format(time.RFC3339), time.Since(lastSync).Round(time.Second), SnapshotTTL)
+	}
+
+	c.JSON(http.StatusOK, accountFromSnapshotRow(row))
 }
 
 // snapshotOrderClause маппит ordering из фронта (camelCase, опционально с минусом) на SQL ORDER BY для snapshot
@@ -948,55 +826,29 @@ func snapshotOrderClause(ordering string) string {
 //
 // GET /api/auth/accounts/stats → { total, active, blocked, clients, partners }
 //
-// Если snapshot пуст / устарел >60м — fallback на 4 проксированных запроса к Axenta (старое поведение).
+// Ф3-E/Codex: РАНЬШЕ при пустом/устаревшем snapshot — fallback на 4
+// проксированных запроса к axenta.cloud (proxyAccountsCount). После Ф1
+// request-токен невалиден → 401/мусор → KPI accounts-экрана сломан
+// (та же дыра Ф3-B что list, найдена на staging Ф3-E). Теперь
+// snapshot-only, ноль request-token proxy, контракт как у list:
+//   - свежий → реальные цифры (degraded=false);
+//   - устарел (>TTL) → последние известные + degraded:true;
+//   - нет БД / пусто / SQL-ошибка → нули + degraded:true. НЕ 4xx/5xx.
 func (h *AccountsHandler) GetAccountsStats(c *gin.Context) {
-	authHeader := c.GetHeader("Authorization")
-	if authHeader == "" {
-		authHeader = c.GetHeader("authorization")
-	}
-	if authHeader == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": "Authorization header is required"})
-		return
-	}
-
+	// snapshot живёт в tenant-схеме; nil tenantDB → degraded, public не трогаем
+	// (симметрия с GetAccounts / GetAccount #4).
 	tenantDB := middleware.GetTenantDB(c)
-	if tenantDB == nil {
-		tenantDB = database.DB
-	}
-
-	if stats, ok := computeAccountsStatsFromSnapshot(tenantDB); ok {
-		c.JSON(http.StatusOK, stats)
-		return
-	}
-
-	// Fallback: дёргаем /accounts proxy с разными фильтрами параллельно (старая логика, но в одном handler'е)
-	type result struct {
-		key string
-		val int
-	}
-	out := make(chan result, 4)
-	go func() { out <- result{"total", proxyAccountsCount(authHeader, c.GetHeader("X-Tenant-ID"), "")} }()
-	go func() {
-		out <- result{"active", proxyAccountsCount(authHeader, c.GetHeader("X-Tenant-ID"), "is_active=true&active=true&status=active")}
-	}()
-	go func() {
-		out <- result{"clients", proxyAccountsCount(authHeader, c.GetHeader("X-Tenant-ID"), "type=client")}
-	}()
-	go func() {
-		out <- result{"partners", proxyAccountsCount(authHeader, c.GetHeader("X-Tenant-ID"), "type=partner")}
-	}()
-
-	stats := gin.H{}
-	for i := 0; i < 4; i++ {
-		r := <-out
-		stats[r.key] = r.val
-	}
-	if total, ok := stats["total"].(int); ok {
-		if active, ok := stats["active"].(int); ok {
-			stats["blocked"] = total - active
+	if tenantDB != nil {
+		if stats, ok := computeAccountsStatsFromSnapshot(tenantDB); ok {
+			c.JSON(http.StatusOK, stats)
+			return
 		}
 	}
-	c.JSON(http.StatusOK, stats)
+	// Нет данных — нули + degraded (НЕ proxy, после Ф1 = 401).
+	c.JSON(http.StatusOK, gin.H{
+		"total": 0, "active": 0, "blocked": 0, "clients": 0, "partners": 0,
+		"degraded": true,
+	})
 }
 
 // computeAccountsStatsFromSnapshot — один SELECT с COUNT FILTER (...) на snapshot. Быстрее чем 4 отдельных запроса.
@@ -1005,14 +857,14 @@ func computeAccountsStatsFromSnapshot(db *gorm.DB) (gin.H, bool) {
 		return nil, false
 	}
 
-	// Проверяем свежесть snapshot (TTL общая константа SnapshotTTL)
+	// Ф3-E/Codex Q2: stale → НЕ false (иначе caller проксировал бы / отдал
+	// нули). Считаем по snapshot и помечаем degraded. false только при
+	// реальном отсутствии данных (нет БД / пустой snapshot / SQL-ошибка).
 	var lastSync time.Time
 	if err := db.Model(&models.AxentaAccountSnapshot{}).Select("MAX(last_synced_at)").Scan(&lastSync).Error; err != nil || lastSync.IsZero() {
 		return nil, false
 	}
-	if time.Since(lastSync) > SnapshotTTL {
-		return nil, false
-	}
+	stale := time.Since(lastSync) > SnapshotTTL
 
 	type counts struct {
 		Total    int64
@@ -1035,42 +887,20 @@ func computeAccountsStatsFromSnapshot(db *gorm.DB) (gin.H, bool) {
 		return nil, false
 	}
 
-	return gin.H{
+	out := gin.H{
 		"total":    c.Total,
 		"active":   c.Active,
 		"blocked":  c.Total - c.Active,
 		"clients":  c.Clients,
 		"partners": c.Partners,
-	}, true
+	}
+	if stale {
+		out["degraded"] = true
+		fmt.Printf("⏰ accounts/stats snapshot устарел (last_sync=%v) — отдаём + degraded (без proxy)\n", lastSync.Format(time.RFC3339))
+	}
+	return out, true
 }
 
-// proxyAccountsCount — fallback для случая когда snapshot недоступен. Дёргает Axenta API per_page=1, парсит count.
-func proxyAccountsCount(authHeader, tenantID, extraQuery string) int {
-	url := "https://axenta.cloud/api/cms/accounts/?page=1&per_page=1&ordering=name"
-	if extraQuery != "" {
-		url += "&" + extraQuery
-	}
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return 0
-	}
-	req.Header.Set("Authorization", authHeader)
-	if tenantID != "" {
-		req.Header.Set("X-Tenant-ID", tenantID)
-	}
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return 0
-	}
-	var ar AccountsResponse
-	if err := json.Unmarshal(body, &ar); err != nil {
-		return 0
-	}
-	return ar.Count
-}
+// Ф3-E: proxyAccountsCount удалён — был request-token fallback к
+// axenta.cloud для accounts/stats (после Ф1 = 401). Снапшот-only, см.
+// computeAccountsStatsFromSnapshot / GetAccountsStats.

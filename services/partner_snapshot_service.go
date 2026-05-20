@@ -1452,9 +1452,13 @@ func AutoCalculateBillingForAllPartners() {
 			return
 		}
 
-		// Проверяем наличие снимков во всех компаниях
+		// Проверяем наличие снимков во всех компаниях.
+		// Ф3-F-followup/Codex Q2: ORDER BY id ASC для детерминизма
+		// companies[0]=firstCompany (синхронно с axenta_sync_service.go:63 и
+		// api/partner_snapshots.go snapshotAdminKey=MIN(id)). Без ORDER —
+		// heap-order, потенциальный mismatch tenant-схемы snapshot_settings.
 		var companies []models.Company
-		if err := mainDB.Table("public.companies").Where("is_active = ?", true).Find(&companies).Error; err != nil {
+		if err := mainDB.Table("public.companies").Where("is_active = ?", true).Order("id ASC").Find(&companies).Error; err != nil {
 			log.Printf("⚠️ Автоматический расчет биллинга: ошибка получения компаний: %v", err)
 			return
 		}

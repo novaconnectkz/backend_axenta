@@ -13,306 +13,277 @@ import (
 	"gorm.io/gorm"
 )
 
-// setupJWTServiceTestDB создает тестовую базу данных для JWT сервиса
+// setupJWTServiceTestDB создает тестовую БД (sqlite in-memory).
 func setupJWTServiceTestDB(t *testing.T) *gorm.DB {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 
-	// Мигрируем модели
-	err = db.AutoMigrate(
-		&models.LocalUser{},
-		&models.RefreshToken{},
-	)
+	err = db.AutoMigrate(&models.LocalUser{}, &models.RefreshToken{})
 	require.NoError(t, err)
 
-	// Устанавливаем глобальную БД
 	database.DB = db
-
 	return db
 }
 
-// setupJWTService создает JWT сервис для тестов
 func setupJWTService(_ *testing.T, db *gorm.DB) *JWTService {
-	// Сохраняем оригинальное значение
-	originalSecret := os.Getenv("JWT_SECRET")
-	defer os.Setenv("JWT_SECRET", originalSecret)
-
-	// Устанавливаем тестовый секрет
 	os.Setenv("JWT_SECRET", "test-secret-key-for-testing-only")
-
+	os.Setenv("REFRESH_PEPPER", "test-refresh-pepper-for-testing-only")
 	return NewJWTService(db)
 }
 
-// TestNewJWTService тестирует создание нового JWT сервиса
+// makeUser создаёт и сохраняет пользователя (ValidateAccessToken делает
+// lookup в БД для сверки token_version/is_active).
+func makeUser(t *testing.T, db *gorm.DB) *models.LocalUser {
+	u := &models.LocalUser{
+		Username:     "testuser",
+		PasswordHash: "x",
+		CompanyID:    "123",
+		Role:         "admin",
+		IsActive:     true,
+		TokenVersion: 1,
+	}
+	require.NoError(t, db.Create(u).Error)
+	return u
+}
+
 func TestNewJWTService(t *testing.T) {
 	db := setupJWTServiceTestDB(t)
 	service := setupJWTService(t, db)
 
 	assert.NotNil(t, service)
 	assert.NotNil(t, service.secretKey)
+	assert.NotEmpty(t, service.refreshPepper)
 	assert.NotEmpty(t, service.accessTokenTTL)
 	assert.NotEmpty(t, service.refreshTokenTTL)
 }
 
-// TestJWTService_GenerateAccessToken тестирует генерацию access токена
-func TestJWTService_GenerateAccessToken(t *testing.T) {
+func TestGenerateAndValidateAccessToken(t *testing.T) {
 	db := setupJWTServiceTestDB(t)
 	service := setupJWTService(t, db)
-
-	// Создаем тестового пользователя
-	user := &models.LocalUser{
-		ID:        1,
-		Username:  "testuser",
-		CompanyID: "123",
-		Role:      "admin",
-	}
+	user := makeUser(t, db)
 
 	token, err := service.GenerateAccessToken(user)
 	require.NoError(t, err)
 	assert.NotEmpty(t, token)
-}
 
-// TestJWTService_ValidateAccessToken_ValidToken тестирует валидацию валидного токена
-func TestJWTService_ValidateAccessToken_ValidToken(t *testing.T) {
-	db := setupJWTServiceTestDB(t)
-	service := setupJWTService(t, db)
-
-	// Создаем тестового пользователя
-	user := &models.LocalUser{
-		ID:        1,
-		Username:  "testuser",
-		CompanyID: "123",
-		Role:      "admin",
-	}
-
-	// Генерируем токен
-	token, err := service.GenerateAccessToken(user)
-	require.NoError(t, err)
-
-	// Валидируем токен
 	claims, err := service.ValidateAccessToken(token)
 	require.NoError(t, err)
-	assert.NotNil(t, claims)
-	assert.Equal(t, uint(1), claims.UserID)
+	assert.Equal(t, user.ID, claims.UserID)
 	assert.Equal(t, "123", claims.CompanyID)
-	assert.Equal(t, "admin", claims.Role)
-	assert.Equal(t, "testuser", claims.Username)
+	assert.Equal(t, 1, claims.TokenVersion)
 }
 
-// TestJWTService_ValidateAccessToken_InvalidToken тестирует валидацию неверного токена
-func TestJWTService_ValidateAccessToken_InvalidToken(t *testing.T) {
+// B7: смена TokenVersion в БД мгновенно инвалидирует уже выданный JWT.
+func TestValidateAccessToken_TokenVersionMismatch(t *testing.T) {
 	db := setupJWTServiceTestDB(t)
 	service := setupJWTService(t, db)
+	user := makeUser(t, db)
 
-	claims, err := service.ValidateAccessToken("invalid-token")
-	assert.Error(t, err)
-	assert.Nil(t, claims)
-}
-
-// TestJWTService_ValidateAccessToken_ExpiredToken тестирует валидацию истекшего токена
-func TestJWTService_ValidateAccessToken_ExpiredToken(t *testing.T) {
-	db := setupJWTServiceTestDB(t)
-
-	// Создаем сервис с очень коротким TTL
-	originalSecret := os.Getenv("JWT_SECRET")
-	defer os.Setenv("JWT_SECRET", originalSecret)
-	os.Setenv("JWT_SECRET", "test-secret-key-for-testing-only")
-	os.Setenv("JWT_ACCESS_TTL", "0") // 0 часов = истекший токен
-
-	service := NewJWTService(db)
-
-	user := &models.LocalUser{
-		ID:        1,
-		Username:  "testuser",
-		CompanyID: "123",
-		Role:      "admin",
-	}
-
-	// Генерируем токен (он будет истекшим)
 	token, err := service.GenerateAccessToken(user)
 	require.NoError(t, err)
 
-	// Ждем немного, чтобы токен точно истек
-	time.Sleep(100 * time.Millisecond)
+	require.NoError(t, db.Model(&models.LocalUser{}).
+		Where("id = ?", user.ID).UpdateColumn("token_version", 2).Error)
 
-	// Валидируем токен
-	claims, err := service.ValidateAccessToken(token)
-	assert.Error(t, err)
-	assert.Nil(t, claims)
+	_, err = service.ValidateAccessToken(token)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "revoked")
 }
 
-// TestJWTService_GenerateRefreshToken тестирует генерацию refresh токена
-func TestJWTService_GenerateRefreshToken(t *testing.T) {
+// B7: неактивный пользователь — access отклоняется.
+func TestValidateAccessToken_InactiveUser(t *testing.T) {
 	db := setupJWTServiceTestDB(t)
 	service := setupJWTService(t, db)
+	user := makeUser(t, db)
 
-	// Создаем тестового пользователя
-	user := &models.LocalUser{
-		ID:        1,
-		Username:  "testuser",
-		CompanyID: "123",
-		Role:      "admin",
-	}
-
-	token, err := service.GenerateRefreshToken(user)
+	token, err := service.GenerateAccessToken(user)
 	require.NoError(t, err)
-	assert.NotEmpty(t, token)
 
-	// Проверяем, что токен сохранен в БД
-	var refreshToken models.RefreshToken
-	err = db.Where("user_id = ? AND token = ?", user.ID, token).First(&refreshToken).Error
-	require.NoError(t, err)
-	assert.Equal(t, user.ID, refreshToken.UserID)
-	assert.Equal(t, token, refreshToken.Token)
+	require.NoError(t, db.Model(&models.LocalUser{}).
+		Where("id = ?", user.ID).UpdateColumn("is_active", false).Error)
+
+	_, err = service.ValidateAccessToken(token)
+	require.Error(t, err)
 }
 
-// TestJWTService_ValidateRefreshToken_ValidToken тестирует валидацию валидного refresh токена
-func TestJWTService_ValidateRefreshToken_ValidToken(t *testing.T) {
+// B6: сырой refresh-токен в БД не хранится — только HMAC-хэш (64 hex).
+func TestRefreshTokenNotStoredPlaintext(t *testing.T) {
 	db := setupJWTServiceTestDB(t)
 	service := setupJWTService(t, db)
+	user := makeUser(t, db)
 
-	// Создаем тестового пользователя
-	user := &models.LocalUser{
-		ID:        1,
-		Username:  "testuser",
-		CompanyID: "123",
-		Role:      "admin",
-	}
-
-	// Генерируем refresh токен
-	token, err := service.GenerateRefreshToken(user)
+	_, refresh, err := service.GenerateTokenPair(user)
 	require.NoError(t, err)
+	assert.NotEmpty(t, refresh)
 
-	// Валидируем токен
-	refreshToken, err := service.ValidateRefreshToken(token)
-	require.NoError(t, err)
-	assert.NotNil(t, refreshToken)
-	assert.Equal(t, user.ID, refreshToken.UserID)
-	assert.Equal(t, token, refreshToken.Token)
+	var rt models.RefreshToken
+	require.NoError(t, db.First(&rt).Error)
+	assert.NotEqual(t, refresh, rt.TokenHash, "в БД должен лежать хэш, не сырой токен")
+	assert.Len(t, rt.TokenHash, 64, "HMAC-SHA256 hex = 64 символа")
+	assert.Equal(t, service.hashRefresh(refresh), rt.TokenHash)
+	assert.NotEmpty(t, rt.FamilyID)
 }
 
-// TestJWTService_ValidateRefreshToken_InvalidToken тестирует валидацию неверного refresh токена
-func TestJWTService_ValidateRefreshToken_InvalidToken(t *testing.T) {
+// Штатная ротация: новый токен валиден, старый — мёртв.
+func TestRotateRefreshToken_Rotates(t *testing.T) {
 	db := setupJWTServiceTestDB(t)
 	service := setupJWTService(t, db)
+	user := makeUser(t, db)
 
-	refreshToken, err := service.ValidateRefreshToken("invalid-token")
-	assert.Error(t, err)
-	assert.Nil(t, refreshToken)
+	_, refresh, err := service.GenerateTokenPair(user)
+	require.NoError(t, err)
+
+	newAccess, newRefresh, err := service.RotateRefreshToken(refresh)
+	require.NoError(t, err)
+	assert.NotEmpty(t, newAccess)
+	assert.NotEmpty(t, newRefresh)
+	assert.NotEqual(t, refresh, newRefresh)
+
+	// Старый помечен ротированным+отозванным.
+	var old models.RefreshToken
+	require.NoError(t, db.Where("token_hash = ?", service.hashRefresh(refresh)).First(&old).Error)
+	assert.True(t, old.IsRevoked)
+	assert.NotNil(t, old.RotatedAt)
+
+	// Новый валиден.
+	claims, err := service.ValidateAccessToken(newAccess)
+	require.NoError(t, err)
+	assert.Equal(t, user.ID, claims.UserID)
 }
 
-// TestJWTService_ValidateRefreshToken_ExpiredToken тестирует валидацию истекшего refresh токена
-func TestJWTService_ValidateRefreshToken_ExpiredToken(t *testing.T) {
+// B1: гонка нормального клиента — повторный refresh тем же токеном в
+// пределах grace-окна НЕ отзывает семью, отдаёт рабочий токен.
+func TestRotateRefreshToken_GraceWindow(t *testing.T) {
 	db := setupJWTServiceTestDB(t)
 	service := setupJWTService(t, db)
+	user := makeUser(t, db)
 
-	// Создаем тестового пользователя
-	user := &models.LocalUser{
-		ID:        1,
-		Username:  "testuser",
-		CompanyID: "123",
-		Role:      "admin",
-	}
+	_, refresh, err := service.GenerateTokenPair(user)
+	require.NoError(t, err)
 
-	// Создаем истекший refresh токен вручную
-	expiredToken := &models.RefreshToken{
-		UserID:    user.ID,
-		Token:     "expired-token",
-		ExpiresAt: time.Now().Add(-1 * time.Hour), // Истек час назад
-	}
-	db.Create(expiredToken)
+	_, r1, err := service.RotateRefreshToken(refresh)
+	require.NoError(t, err)
+	assert.NotEmpty(t, r1)
 
-	// Валидируем токен
-	refreshToken, err := service.ValidateRefreshToken("expired-token")
-	assert.Error(t, err)
-	assert.Nil(t, refreshToken)
+	// BLK1: догоняющий запрос тем же старым токеном в grace-окне
+	// (легитимная гонка ИЛИ вор украденного R0) → ErrRefreshRace:
+	// НИКАКОГО нового токена не выдаём, семью НЕ отзываем.
+	_, r2, err := service.RotateRefreshToken(refresh)
+	require.ErrorIs(t, err, ErrRefreshRace)
+	assert.Empty(t, r2, "BLK1: в grace-окне токен предъявителю не выдаём")
+
+	// Семья жива (нет ложного массового логаута, B1) — победивший r1
+	// остаётся валиден и ротируем.
+	var total, revoked int64
+	db.Model(&models.RefreshToken{}).Count(&total)
+	db.Model(&models.RefreshToken{}).Where("is_revoked = ?", true).Count(&revoked)
+	assert.Less(t, revoked, total, "семья не должна быть отозвана на гонке")
+	_, _, err = service.RotateRefreshToken(r1)
+	require.NoError(t, err, "победивший токен r1 должен оставаться рабочим")
 }
 
-// TestJWTService_GenerateTokenPair тестирует генерацию пары токенов
-func TestJWTService_GenerateTokenPair(t *testing.T) {
+// BLK2: CleanupExpiredTokens НЕ удаляет отозванные-но-не-истёкшие
+// (rotated-предшественники) — иначе reuse старого токена после чистки
+// даёт «not found» вместо revoke-family, кража не детектится.
+func TestCleanupKeepsRevokedUnexpired(t *testing.T) {
 	db := setupJWTServiceTestDB(t)
 	service := setupJWTService(t, db)
+	user := makeUser(t, db)
 
-	// Создаем тестового пользователя
-	user := &models.LocalUser{
-		ID:        1,
-		Username:  "testuser",
-		CompanyID: "123",
-		Role:      "admin",
-	}
-
-	accessToken, refreshToken, err := service.GenerateTokenPair(user)
+	_, refresh, err := service.GenerateTokenPair(user)
 	require.NoError(t, err)
-	assert.NotEmpty(t, accessToken)
-	assert.NotEmpty(t, refreshToken)
-
-	// Проверяем, что access токен валиден
-	claims, err := service.ValidateAccessToken(accessToken)
+	_, _, err = service.RotateRefreshToken(refresh) // refresh → revoked, не истёк
 	require.NoError(t, err)
-	assert.NotNil(t, claims)
 
-	// Проверяем, что refresh токен валиден
-	refreshTokenModel, err := service.ValidateRefreshToken(refreshToken)
-	require.NoError(t, err)
-	assert.NotNil(t, refreshTokenModel)
+	require.NoError(t, service.CleanupExpiredTokens())
+
+	var old models.RefreshToken
+	err = db.Where("token_hash = ?", service.hashRefresh(refresh)).First(&old).Error
+	require.NoError(t, err, "BLK2: отозванный-но-не-истёкший предок должен сохраниться")
+	assert.True(t, old.IsRevoked)
+
+	// И reuse после grace всё ещё детектится (предок на месте).
+	past := time.Now().Add(-2 * refreshGraceWindow)
+	require.NoError(t, db.Model(&models.RefreshToken{}).
+		Where("token_hash = ?", service.hashRefresh(refresh)).
+		UpdateColumn("rotated_at", past).Error)
+	_, _, err = service.RotateRefreshToken(refresh)
+	require.ErrorIs(t, err, ErrRefreshReuse)
 }
 
-// TestJWTService_RevokeRefreshToken тестирует отзыв refresh токена
-func TestJWTService_RevokeRefreshToken(t *testing.T) {
+// B1: предъявление мёртвого токена ВНЕ grace-окна → reuse → отзыв семьи.
+func TestRotateRefreshToken_ReuseAfterGrace(t *testing.T) {
 	db := setupJWTServiceTestDB(t)
 	service := setupJWTService(t, db)
+	user := makeUser(t, db)
 
-	// Создаем тестового пользователя
-	user := &models.LocalUser{
-		ID:        1,
-		Username:  "testuser",
-		CompanyID: "123",
-		Role:      "admin",
-	}
-
-	// Генерируем refresh токен
-	token, err := service.GenerateRefreshToken(user)
+	_, refresh, err := service.GenerateTokenPair(user)
 	require.NoError(t, err)
 
-	// Отзываем токен
-	err = service.RevokeRefreshToken(token)
+	_, _, err = service.RotateRefreshToken(refresh)
 	require.NoError(t, err)
 
-	// Проверяем, что токен больше не валиден
-	refreshToken, err := service.ValidateRefreshToken(token)
-	assert.Error(t, err)
-	assert.Nil(t, refreshToken)
+	// Бэкдейтим rotated_at старого токена за пределы grace-окна.
+	past := time.Now().Add(-2 * refreshGraceWindow)
+	require.NoError(t, db.Model(&models.RefreshToken{}).
+		Where("token_hash = ?", service.hashRefresh(refresh)).
+		UpdateColumn("rotated_at", past).Error)
+
+	_, _, err = service.RotateRefreshToken(refresh)
+	require.ErrorIs(t, err, ErrRefreshReuse)
+
+	// Вся семья отозвана.
+	var total, revoked int64
+	db.Model(&models.RefreshToken{}).Count(&total)
+	db.Model(&models.RefreshToken{}).Where("is_revoked = ?", true).Count(&revoked)
+	assert.Equal(t, total, revoked, "после reuse вся семья должна быть отозвана")
 }
 
-// TestJWTService_RevokeAllUserTokens тестирует отзыв всех токенов пользователя
-func TestJWTService_RevokeAllUserTokens(t *testing.T) {
+// BLK2: украденный R0, предъявленный ПОСЛЕ своего истечения, всё
+// равно должен дать reuse-detection (revoke family), а не «expired».
+func TestRotateRefreshToken_ReuseAfterExpiry(t *testing.T) {
 	db := setupJWTServiceTestDB(t)
 	service := setupJWTService(t, db)
+	user := makeUser(t, db)
 
-	// Создаем тестового пользователя
-	user := &models.LocalUser{
-		ID:        1,
-		Username:  "testuser",
-		CompanyID: "123",
-		Role:      "admin",
-	}
-
-	// Генерируем несколько refresh токенов
-	token1, err := service.GenerateRefreshToken(user)
+	_, refresh, err := service.GenerateTokenPair(user)
 	require.NoError(t, err)
-	token2, err := service.GenerateRefreshToken(user)
+	_, _, err = service.RotateRefreshToken(refresh)
 	require.NoError(t, err)
 
-	// Отзываем все токены пользователя
-	err = service.RevokeAllUserTokens(user.ID)
+	// R0: ротирован И истёк (вне grace).
+	past := time.Now().Add(-2 * refreshGraceWindow)
+	expired := time.Now().Add(-time.Hour)
+	require.NoError(t, db.Model(&models.RefreshToken{}).
+		Where("token_hash = ?", service.hashRefresh(refresh)).
+		Updates(map[string]any{"rotated_at": past, "expires_at": expired}).Error)
+
+	_, _, err = service.RotateRefreshToken(refresh)
+	require.ErrorIs(t, err, ErrRefreshReuse, "истёкший ротированный R0 → reuse, не expired")
+
+	var total, revoked int64
+	db.Model(&models.RefreshToken{}).Count(&total)
+	db.Model(&models.RefreshToken{}).Where("is_revoked = ?", true).Count(&revoked)
+	require.Equal(t, total, revoked, "семья отозвана")
+}
+
+// B7: RevokeAllUserTokens отзывает refresh и поднимает TokenVersion,
+// делая все ранее выданные access-JWT невалидными.
+func TestRevokeAllUserTokens_BumpsVersion(t *testing.T) {
+	db := setupJWTServiceTestDB(t)
+	service := setupJWTService(t, db)
+	user := makeUser(t, db)
+
+	access, refresh, err := service.GenerateTokenPair(user)
+	require.NoError(t, err)
+	_, err = service.ValidateAccessToken(access)
 	require.NoError(t, err)
 
-	// Проверяем, что токены больше не валидны
-	refreshToken1, err := service.ValidateRefreshToken(token1)
-	assert.Error(t, err)
-	assert.Nil(t, refreshToken1)
+	require.NoError(t, service.RevokeAllUserTokens(user.ID))
 
-	refreshToken2, err := service.ValidateRefreshToken(token2)
-	assert.Error(t, err)
-	assert.Nil(t, refreshToken2)
+	_, err = service.ValidateAccessToken(access)
+	require.Error(t, err, "старый access должен отвалиться по token_version")
+
+	_, _, err = service.RotateRefreshToken(refresh)
+	require.Error(t, err, "refresh отозван")
 }

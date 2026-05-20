@@ -565,9 +565,13 @@ func (s *PartnerSnapshotScheduler) createDailySnapshotsForDate(snapshotDate time
 
 	// Подсчитываем из созданных снимков
 	for _, company := range companies {
-		tenantDB := database.DB.Session(&gorm.Session{})
-		if err := tenantDB.Exec(fmt.Sprintf("SET search_path TO tenant_%d, public", company.ID)).Error; err != nil {
-			log.Printf("⚠️ Не удалось переключиться на схему tenant_%d для подсчета объектов: %v", company.ID, err)
+		// Долг #15: НЕ мутируем search_path общего пула — этот код
+		// крутится в фоновом cron'е конкурентно с request-serving,
+		// pooled-conn утёк бы в tenant-схему для чужих запросов.
+		// Берём отдельный per-schema пул (search_path в DSN).
+		tenantDB, err := database.ConnectToTenant(fmt.Sprintf("tenant_%d", company.ID))
+		if err != nil {
+			log.Printf("⚠️ Не удалось подключиться к схеме tenant_%d для подсчета объектов: %v", company.ID, err)
 			continue
 		}
 

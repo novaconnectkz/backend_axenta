@@ -1190,22 +1190,11 @@ type UserActivateRequest struct {
 	State bool `json:"state"`
 }
 
+// Ф3-C-defer: НЕ зарегистрирован ни на одном роуте (grep пусто) — мёртвый.
+// Рерайт на server-token сделан для консистентности, но handler не достижим;
+// фронтовый /cms/users/:id/activate backend-роута не имеет (pre-existing).
 // ActivateUser активирует/деактивирует пользователя через прокси к Axenta Cloud API
 func ActivateUser(c *gin.Context) {
-	// Получаем токен из заголовка
-	authHeader := c.GetHeader("Authorization")
-	if authHeader == "" {
-		authHeader = c.GetHeader("authorization")
-	}
-
-	if authHeader == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"status": "error",
-			"error":  "Authorization header is required",
-		})
-		return
-	}
-
 	// Получаем ID пользователя из параметров URL
 	idStr := c.Param("id")
 	if idStr == "" {
@@ -1226,68 +1215,59 @@ func ActivateUser(c *gin.Context) {
 		return
 	}
 
-	// Строим URL для Axenta API
-	axentaURL := fmt.Sprintf("https://axenta.cloud/api/cms/users/%s/activate/", idStr)
+	// Ф3-C: server-side Axenta-токен (креды компании), НЕ request-токен —
+	// после Ф1 логин = локальный JWT, невалиден для axenta.cloud.
+	// X-Tenant-ID больше не форвардим: server-токен уже привязан к компании.
+	axToken, ok := axentaServerTokenFor(c)
+	if !ok {
+		return
+	}
 
-	// Создаем HTTP клиент
+	axentaURL := fmt.Sprintf("https://axenta.cloud/api/cms/users/%s/activate/", idStr)
 	client := &http.Client{
 		Timeout: 30 * time.Second,
 	}
 
-	// Создаем запрос
-	req, err := http.NewRequest("POST", axentaURL, bytes.NewBuffer(body))
+	doReq := func(token string) (int, []byte, error) {
+		httpReq, e := http.NewRequest("POST", axentaURL, bytes.NewBuffer(body))
+		if e != nil {
+			return 0, nil, e
+		}
+		httpReq.Header.Set("Authorization", "Token "+token)
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Accept", "application/json")
+		rsp, e := client.Do(httpReq)
+		if e != nil {
+			return 0, nil, e
+		}
+		defer rsp.Body.Close()
+		b, e := io.ReadAll(rsp.Body)
+		return rsp.StatusCode, b, e
+	}
+
+	status, respBody, err := doReq(axToken)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to create request: " + err.Error(),
-		})
+		axentaMutationUnavailable(c, err)
 		return
 	}
 
-	// Добавляем заголовки авторизации
-	req.Header.Set("Authorization", authHeader)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	// Добавляем X-Tenant-ID если есть
-	tenantID := c.GetHeader("X-Tenant-ID")
-	if tenantID != "" {
-		req.Header.Set("X-Tenant-ID", tenantID)
+	// Downstream 401/403 — server-токен компании отозван: сброс + 1 retry.
+	if isAxentaAuthError(status) {
+		invalidateAxentaServerToken(c)
+		axToken2, ok2 := axentaServerTokenFor(c)
+		if !ok2 {
+			return
+		}
+		status, respBody, err = doReq(axToken2)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error",
+				"error":  "Failed to connect to Axenta API: " + err.Error(),
+			})
+			return
+		}
 	}
 
-	// Логируем запрос
-	fmt.Printf("🔄 Proxy POST request to Axenta API: %s\n", axentaURL)
-	authHeaderPreview := authHeader
-	if len(authHeader) > 20 {
-		authHeaderPreview = authHeader[:20] + "..."
-	}
-	fmt.Printf("📋 Headers: Authorization=%s, X-Tenant-ID=%s\n", authHeaderPreview, tenantID)
-	fmt.Printf("📦 Body: %s\n", string(body))
-
-	// Выполняем запрос
-	resp, err := client.Do(req)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to connect to Axenta API: " + err.Error(),
-		})
-		return
-	}
-	defer resp.Body.Close()
-
-	// Читаем ответ
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to read response from Axenta API: " + err.Error(),
-		})
-		return
-	}
-
-	// Логируем ответ
-	fmt.Printf("📥 Response from Axenta API: Status=%d, Body=%s\n", resp.StatusCode, string(respBody))
-
-	// Возвращаем ответ от Axenta API
-	c.Data(resp.StatusCode, "application/json", respBody)
+	fmt.Printf("📥 ActivateUser via server-token: Status=%d\n", status)
+	c.Data(status, "application/json", respBody)
 }

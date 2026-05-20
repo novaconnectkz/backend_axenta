@@ -465,6 +465,7 @@ func GetCmsUser(c *gin.Context) {
 }
 
 // TestCreateUserInAxenta тестовый endpoint для создания пользователя в Axenta Cloud без проверки токена
+// Ф3-C-defer: Ф1-broken (request-токен невалиден), НЕ frontend-reachable — не рерайтим на server-token.
 func TestCreateUserInAxenta(c *gin.Context) {
 	db := database.GetTenantDB(c)
 	if db == nil {
@@ -601,6 +602,7 @@ func TestCreateUserInAxenta(c *gin.Context) {
 }
 
 // CreateUserDirectly создает пользователя напрямую в локальной базе (без проверки токена)
+// Ф3-C-defer: Ф1-broken (request-токен невалиден), НЕ frontend-reachable — не рерайтим на server-token.
 func CreateUserDirectly(c *gin.Context) {
 	db := database.GetTenantDB(c)
 	if db == nil {
@@ -830,66 +832,16 @@ func CreateCmsUserWithCurrentToken(c *gin.Context) {
 		return
 	}
 
-	// Получаем токен из заголовка Authorization для идентификации пользователя
-	authHeader := c.GetHeader("Authorization")
-	if authHeader == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"status": "error",
-			"error":  "Authorization header is required",
-		})
+	// Ф3-C: server-side Axenta-токен (креды компании), НЕ request/saved-token.
+	// После Ф1 логин = локальный JWT, идентификация по user_tokens больше не
+	// работает. Локальный юзер создаётся независимо ниже; Axenta-create идёт
+	// в фоне ЭТИМ токеном (best-effort: при ошибке юзер помечается local,
+	// подхватится следующим AxentaSync). ok=false → degraded-ответ записан.
+	axToken, ok := axentaServerTokenFor(c)
+	if !ok {
 		return
 	}
-
-	// Извлекаем токен из заголовка "Token <token>"
-	var requestToken string
-	if strings.HasPrefix(authHeader, "Token ") {
-		requestToken = strings.TrimPrefix(authHeader, "Token ")
-	} else {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"status": "error",
-			"error":  "Invalid authorization header format. Expected 'Token <token>'",
-		})
-		return
-	}
-
-	// Получаем account_id из токена для фильтрации
-	accountID := getAccountIDFromToken(requestToken)
-
-	// Создаем сервис для работы с токенами пользователей
-	userTokenService := services.NewUserTokenService(db)
-
-	// Находим пользователя по токену из заголовка с фильтрацией по account_id
-	var currentUser models.User
-	if accountID > 0 {
-		if err := db.Where("id IN (SELECT user_id FROM user_tokens WHERE token = ? AND is_active = ? AND account_id = ?)", requestToken, true, accountID).First(&currentUser).Error; err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"status": "error",
-				"error":  "User not found or token invalid",
-			})
-			return
-		}
-	} else {
-		if err := db.Where("id IN (SELECT user_id FROM user_tokens WHERE token = ? AND is_active = ?)", requestToken, true).First(&currentUser).Error; err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"status": "error",
-				"error":  "User not found or token invalid",
-			})
-			return
-		}
-	}
-
-	// Получаем сохраненный токен пользователя для Axenta Cloud
-	userToken, err := userTokenService.GetUserToken(currentUser.ID)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"status": "error",
-			"error":  "No valid Axenta token found for user",
-		})
-		return
-	}
-
-	// Используем сохраненный токен для создания пользователя в Axenta Cloud
-	currentToken := userToken.Token
+	currentToken := axToken
 
 	// Получаем accountId из переменной окружения (используем для создания пользователя в Axenta)
 	defaultAccountID := os.Getenv("AXENTA_DEFAULT_ACCOUNT_ID")
@@ -1087,29 +1039,14 @@ func CreateUserInAxentaCloud(c *gin.Context) {
 		return
 	}
 
-	// Получаем токен из заголовка Authorization
-	authHeader := c.GetHeader("Authorization")
-	if authHeader == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"status": "error",
-			"error":  "Authorization header is required",
-		})
+	// Ф3-C: server-side Axenta-токен (креды компании), НЕ request-токен —
+	// после Ф1 логин = локальный JWT, невалиден для axenta.cloud.
+	// ok=false → degraded-ответ уже записан, мутацию НЕ делаем.
+	axToken, ok := axentaServerTokenFor(c)
+	if !ok {
 		return
 	}
 
-	// Извлекаем токен из заголовка "Token <token>"
-	var adminToken string
-	if strings.HasPrefix(authHeader, "Token ") {
-		adminToken = strings.TrimPrefix(authHeader, "Token ")
-	} else {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"status": "error",
-			"error":  "Invalid authorization header format. Expected 'Token <token>'",
-		})
-		return
-	}
-
-	// Создаем пользователя в Axenta Cloud напрямую
 	client := &http.Client{
 		Timeout: 30 * time.Second,
 	}
@@ -1139,39 +1076,45 @@ func CreateUserInAxentaCloud(c *gin.Context) {
 	}
 
 	axentaURL := "https://axenta.cloud/api/users/"
-	httpReq, err := http.NewRequest("POST", axentaURL, bytes.NewBuffer(jsonData))
+	doReq := func(token string) (int, []byte, error) {
+		httpReq, e := http.NewRequest("POST", axentaURL, bytes.NewBuffer(jsonData))
+		if e != nil {
+			return 0, nil, e
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Authorization", "Token "+token)
+		rsp, e := client.Do(httpReq)
+		if e != nil {
+			return 0, nil, e
+		}
+		defer rsp.Body.Close()
+		b, e := io.ReadAll(rsp.Body)
+		return rsp.StatusCode, b, e
+	}
+
+	status, body, err := doReq(axToken)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to create request to Axenta Cloud",
-		})
+		axentaMutationUnavailable(c, err)
 		return
 	}
 
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Token "+adminToken)
-
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to connect to Axenta Cloud",
-		})
-		return
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to read response from Axenta Cloud",
-		})
-		return
+	// Downstream 401/403 — server-токен компании отозван раньше срока:
+	// сброс кэша + единственный retry свежим токеном.
+	if isAxentaAuthError(status) {
+		invalidateAxentaServerToken(c)
+		axToken2, ok2 := axentaServerTokenFor(c)
+		if !ok2 {
+			return
+		}
+		status, body, err = doReq(axToken2)
+		if err != nil {
+			axentaMutationUnavailable(c, err)
+			return
+		}
 	}
 
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		c.JSON(resp.StatusCode, gin.H{
+	if status != http.StatusCreated && status != http.StatusOK {
+		c.JSON(status, gin.H{
 			"status":  "error",
 			"error":   "Axenta Cloud request failed",
 			"details": string(body),
@@ -1190,7 +1133,7 @@ func CreateUserInAxentaCloud(c *gin.Context) {
 
 	// Триггерим резинк snapshot'ов чтобы новый юзер появился в /unified/users
 	// и в creator-полях /unified/objects без ожидания scheduled cron.
-	if adminID, err := middleware.GetAdminAccountID(c); err == nil {
+	if adminID := middleware.GetTrustedAdminAccountID(c); adminID != 0 {
 		services.GetSnapshotInvalidator().Invalidate(adminID, "user.create")
 	}
 
@@ -1203,6 +1146,7 @@ func CreateUserInAxentaCloud(c *gin.Context) {
 }
 
 // CreateCmsUserWithAdminToken создает пользователя CMS используя токен администратора
+// Ф3-C-defer: Ф1-broken (request-токен невалиден), НЕ frontend-reachable — не рерайтим на server-token.
 func CreateCmsUserWithAdminToken(c *gin.Context) {
 	var req CmsUserCreateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1317,6 +1261,7 @@ type CmsLoginAsResponse struct {
 }
 
 // LoginAs позволяет войти как другой пользователь CMS
+// Ф3-C-defer: Ф1-broken (request-токен невалиден), НЕ frontend-reachable — не рерайтим на server-token.
 func LoginAs(c *gin.Context) {
 	var req CmsLoginAsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
