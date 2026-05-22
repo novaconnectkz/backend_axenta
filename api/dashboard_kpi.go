@@ -89,7 +89,7 @@ func buildActiveObjectsKPI(db *gorm.DB, _ time.Time) KPIMetric {
 	// Раньше SQL дублировался здесь и в partner_snapshot_scheduler.go.
 	analytics := services.NewAnalyticsService(db)
 
-	latestDate, ok := analytics.GetLatestSnapshotDate()
+	_, ok := analytics.GetLatestSnapshotDate()
 	if !ok {
 		return KPIMetric{
 			ID: "active_objects", Title: "Активные объекты",
@@ -99,8 +99,11 @@ func buildActiveObjectsKPI(db *gorm.DB, _ time.Time) KPIMetric {
 		}
 	}
 
-	curActive := analytics.GetActiveCountForDate(latestDate)
-	prevActive := analytics.GetActiveCountForDate(latestDate.AddDate(0, 0, -7))
+	// Per-source latest: каждый источник (axenta/skif/...) на свою последнюю дату.
+	// Единая latestDate недосчитывала бы источники без снимка на этот день
+	// (разная частота снимков). latestDate оставляем только для «as of»-метки.
+	curActive := analytics.GetActiveCountLatestPerSource(0)
+	prevActive := analytics.GetActiveCountLatestPerSource(-7)
 
 	delta := curActive - prevActive
 	dir, deltaText := formatCountDelta(delta, "за неделю")

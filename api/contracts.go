@@ -174,11 +174,27 @@ func getPartnerObjectsCountFromSnapshot(partnerCompanyID uint, adminAccountID ui
 		return 0
 	}
 
-	// Ищем снимок аккаунта
+	// Ищем снимок аккаунта по точному admin_account_id
 	var snapshot models.AxentaAccountSnapshot
-	if err := tenantDB.Where("external_account_id = ? AND admin_account_id = ?", int64(partnerCompanyID), adminAccountID).
+	err := tenantDB.Where("external_account_id = ? AND admin_account_id = ?", int64(partnerCompanyID), adminAccountID).
 		Order("last_synced_at DESC").
-		First(&snapshot).Error; err != nil {
+		Order("id ASC"). // детерминированный tiebreaker при равном last_synced_at
+		First(&snapshot).Error
+
+	// Fallback: снимки пишутся под admin_account_id=firstCompany.ID (см. SyncAllAdmins),
+	// который может не совпадать с contract.admin_account_id (tenant company_id).
+	// Снимок партнёра уникален по external_account_id в пределах тенанта,
+	// поэтому при промахе по admin берём самый свежий по external_account_id.
+	// Без этого сумма партнёрского договора = 0 в local-auth (нет Axenta-токена
+	// для API-пути, остаётся только snapshot).
+	if err == gorm.ErrRecordNotFound {
+		err = tenantDB.Where("external_account_id = ?", int64(partnerCompanyID)).
+			Order("last_synced_at DESC").
+			Order("id ASC"). // детерминированный tiebreaker при равном last_synced_at
+			First(&snapshot).Error
+	}
+
+	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			log.Printf("🔍 getPartnerObjectsCountFromSnapshot: No snapshot found for external account ID %d (admin %d)", partnerCompanyID, adminAccountID)
 		} else {
@@ -717,8 +733,10 @@ func GetContracts(c *gin.Context) {
 					}
 				}
 
-				// Если сумма договора = 0, но есть объекты, пересчитываем сумму
-				if contracts[i].TotalAmount.IsZero() && objectsCount > 0 && contracts[i].TariffPlanID != nil {
+				// Партнёрская сумма всегда производная (объекты × тариф × месяцы),
+				// пересчитываем всегда при наличии объектов и тарифа (не только при IsZero —
+				// иначе при ранее сохранённом ненулевом total_amount сумма не обновлялась).
+				if objectsCount > 0 && contracts[i].TariffPlanID != nil {
 					if plan, ok := tariffPlansMap[*contracts[i].TariffPlanID]; ok && !plan.Price.IsZero() {
 						// Рассчитываем количество месяцев
 						months := 1
@@ -736,13 +754,17 @@ func GetContracts(c *gin.Context) {
 						// Пересчитываем сумму: количество объектов × цена тарифа за месяц × количество месяцев
 						totalAmount := plan.Price.Mul(decimal.NewFromInt(int64(objectsCount))).Mul(decimal.NewFromInt(int64(months)))
 
-						// Обновляем сумму в БД
-						contracts[i].TotalAmount = totalAmount
-						if err := tenantDB.Model(&contracts[i]).Update("total_amount", totalAmount).Error; err != nil {
-							log.Printf("⚠️ Ошибка обновления total_amount договора %d: %v", contracts[i].ID, err)
-						} else {
-							log.Printf("✅ Автоматически пересчитана сумма договора %d: %s (объектов: %d, месяцев: %d, цена/мес: %s)",
-								contracts[i].ID, totalAmount.String(), objectsCount, months, plan.Price.String())
+						// Персистим ТОЛЬКО при фактическом изменении и через UpdateColumn
+						// (без bump updated_at). Иначе каждый GET /contracts писал бы строку
+						// и поднимал updated_at на списке до 10000 — write-on-read storm.
+						if !contracts[i].TotalAmount.Equal(totalAmount) {
+							contracts[i].TotalAmount = totalAmount
+							if err := tenantDB.Model(&contracts[i]).UpdateColumn("total_amount", totalAmount).Error; err != nil {
+								log.Printf("⚠️ Ошибка обновления total_amount договора %d: %v", contracts[i].ID, err)
+							} else {
+								log.Printf("✅ Автоматически пересчитана сумма договора %d: %s (объектов: %d, месяцев: %d, цена/мес: %s)",
+									contracts[i].ID, totalAmount.String(), objectsCount, months, plan.Price.String())
+							}
 						}
 					} else {
 						log.Printf("⚠️ Не удалось найти тарифный план для договора %d (TariffPlanID=%v)", contracts[i].ID, contracts[i].TariffPlanID)
@@ -752,8 +774,9 @@ func GetContracts(c *gin.Context) {
 				}
 			} else {
 				contracts[i].Objects = make([]models.Object, 0)
-				// Если объектов нет, но сумма = 0, пробуем получить из snapshot (snapshot не требует userToken)
-				if contracts[i].TotalAmount.IsZero() && contracts[i].PartnerCompanyID != nil {
+				// Объекты не загружены через API — берём из snapshot (не требует userToken).
+				// Без гейта по IsZero: партнёрская сумма производная, пересчитываем всегда.
+				if contracts[i].PartnerCompanyID != nil {
 					log.Printf("🔍 Партнерский договор ID=%d: объекты не загружены, пробуем snapshot (PartnerCompanyID=%d)",
 						contracts[i].ID, *contracts[i].PartnerCompanyID)
 					snapshotCount := getPartnerObjectsCountFromSnapshot(*contracts[i].PartnerCompanyID, adminAccountID, tenantDB)
@@ -786,12 +809,15 @@ func GetContracts(c *gin.Context) {
 								}
 
 								totalAmount := plan.Price.Mul(decimal.NewFromInt(int64(snapshotCount))).Mul(decimal.NewFromInt(int64(months)))
-								contracts[i].TotalAmount = totalAmount
-								if err := tenantDB.Model(&contracts[i]).Update("total_amount", totalAmount).Error; err != nil {
-									log.Printf("⚠️ Ошибка обновления total_amount договора %d: %v", contracts[i].ID, err)
-								} else {
-									log.Printf("✅ Автоматически пересчитана сумма договора %d из snapshot: %s (объектов: %d, месяцев: %d, цена/мес: %s)",
-										contracts[i].ID, totalAmount.String(), snapshotCount, months, plan.Price.String())
+								// Персистим только при изменении + UpdateColumn (без updated_at bump), см. блок выше.
+								if !contracts[i].TotalAmount.Equal(totalAmount) {
+									contracts[i].TotalAmount = totalAmount
+									if err := tenantDB.Model(&contracts[i]).UpdateColumn("total_amount", totalAmount).Error; err != nil {
+										log.Printf("⚠️ Ошибка обновления total_amount договора %d: %v", contracts[i].ID, err)
+									} else {
+										log.Printf("✅ Автоматически пересчитана сумма договора %d из snapshot: %s (объектов: %d, месяцев: %d, цена/мес: %s)",
+											contracts[i].ID, totalAmount.String(), snapshotCount, months, plan.Price.String())
+									}
 								}
 							} else {
 								log.Printf("⚠️ Не удалось найти тарифный план для договора %d (TariffPlanID=%v)", contracts[i].ID, contracts[i].TariffPlanID)
@@ -1201,7 +1227,12 @@ type CreateContractRequestRaw struct {
 
 	// Тип договора
 	ContractType     string `json:"contract_type"`      // client или partner
-	PartnerCompanyID *uint  `json:"partner_company_id"` // Для партнерских договоров
+	PartnerCompanyID *uint  `json:"partner_company_id"` // Для партнерских договоров (Axenta back-compat)
+
+	// Мульти-системный партнёр (Ф0): источник + ключ партнёра.
+	PartnerSource       string `json:"partner_source"`        // axenta|wialon|skif|gelios (пусто → axenta)
+	PartnerConnectionID *uint  `json:"partner_connection_id"` // connection для wialon/skif/gelios
+	PartnerExternalID   string `json:"partner_external_id"`   // стабильный ключ партнёра в системе
 
 	// Клиент
 	ClientType      string `json:"client_type"` // individual или organization
@@ -1252,6 +1283,13 @@ type CreateContractRequestRaw struct {
 	IsAutoRenew          *bool  `json:"is_auto_renew"`
 	ContractPeriodMonths *int   `json:"contract_period_months"`
 	Notes                string `json:"notes"`
+
+	// Скидки (для партнёрских договоров). Указатели — чтобы отличить «не передано»
+	// от нуля и не затирать дефолты модели.
+	DiscountType          string           `json:"discount_type"`
+	ManualDiscountPercent *decimal.Decimal `json:"manual_discount_percent"`
+	ManualDiscountFixed   *decimal.Decimal `json:"manual_discount_fixed"`
+	UseAutoDiscount       *bool            `json:"use_auto_discount"`
 
 	AccountID *uint `json:"account_id"` // ID учетной записи Axenta для автоматической привязки объектов
 }
@@ -1346,12 +1384,40 @@ func CreateContract(c *gin.Context) {
 
 	// Валидация для партнерских договоров
 	if contractType == "partner" {
-		if rawRequest.PartnerCompanyID == nil {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"status": "error",
-				"error":  "Для партнерского договора необходимо указать partner_company_id",
-			})
-			return
+		// Ф0: нормализуем источник партнёра. Пусто → axenta (back-compat).
+		if rawRequest.PartnerSource == "" {
+			rawRequest.PartnerSource = "axenta"
+		}
+
+		if rawRequest.PartnerSource == "axenta" {
+			// Axenta: ключ партнёра = partner_company_id (как раньше).
+			if rawRequest.PartnerCompanyID == nil {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"status": "error",
+					"error":  "Для партнерского договора Axenta необходимо указать partner_company_id",
+				})
+				return
+			}
+			// external_id зеркалит partner_company_id (единый ключ для биллинга/снимков).
+			if rawRequest.PartnerExternalID == "" {
+				rawRequest.PartnerExternalID = fmt.Sprintf("%d", *rawRequest.PartnerCompanyID)
+			}
+		} else {
+			// Не-Axenta (wialon/skif/gelios): ключ = (source, connection_id, external_id).
+			if rawRequest.PartnerExternalID == "" {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"status": "error",
+					"error":  "Для не-Axenta партнёра необходимо указать partner_external_id",
+				})
+				return
+			}
+			if rawRequest.PartnerConnectionID == nil {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"status": "error",
+					"error":  "Для не-Axenta партнёра необходимо указать partner_connection_id",
+				})
+				return
+			}
 		}
 		if rawRequest.TariffPlanID == nil {
 			c.JSON(http.StatusBadRequest, gin.H{
@@ -1360,7 +1426,20 @@ func CreateContract(c *gin.Context) {
 			})
 			return
 		}
-		log.Printf("📋 Создание партнерского договора для компании %d", *rawRequest.PartnerCompanyID)
+		log.Printf("📋 Создание партнёрского договора: source=%s external_id=%s conn=%v",
+			rawRequest.PartnerSource, rawRequest.PartnerExternalID, rawRequest.PartnerConnectionID)
+
+		// Партнёрский договор биллингуется по объектам (дневным снимкам) × тариф ×
+		// auto-скидка, без подписки by design. Поэтому он активен сразу при создании.
+		// Иначе остался бы в draft навсегда (нет подписки, которая активирует), а
+		// partner_snapshot_scheduler фильтрует status='active' → договор не привязался
+		// бы к снимкам → orphan-снимки без скидки. FE по умолчанию шлёт status='draft',
+		// поэтому форсим инвариант «партнёр не бывает draft» независимо от запроса.
+		// Явный конечный статус (terminated/expired) не трогаем.
+		if contractStatus == "" || contractStatus == "draft" {
+			contractStatus = "active"
+			log.Printf("✅ Партнёрский договор: статус установлен active (биллинг по объектам, без подписки)")
+		}
 
 		// Для партнерских договоров автоматически устанавливаем период
 		// Начало: текущая дата
@@ -1376,20 +1455,22 @@ func CreateContract(c *gin.Context) {
 	}
 
 	contract := models.Contract{
-		Number:           rawRequest.Number,
-		Title:            rawRequest.Title,
-		Description:      rawRequest.Description,
-		CompanyID:        rawRequest.CompanyID,
-		ContractType:     contractType,
-		PartnerCompanyID: rawRequest.PartnerCompanyID,
-		ClientType:       rawRequest.ClientType,
-		ClientName:       rawRequest.ClientName,
-		ClientShortName:  rawRequest.ClientShortName, // Сокращенное название с ОПФ
-		ClientINN:        rawRequest.ClientINN,
-		ClientKPP:        rawRequest.ClientKPP,
-		ClientEmail:      rawRequest.ClientEmail,
-		ClientPhone:      rawRequest.ClientPhone,
-		ClientAddress:    rawRequest.ClientAddress,
+		Number:            rawRequest.Number,
+		Title:             rawRequest.Title,
+		Description:       rawRequest.Description,
+		CompanyID:         rawRequest.CompanyID,
+		ContractType:      contractType,
+		PartnerCompanyID:  rawRequest.PartnerCompanyID,
+		PartnerSource:     rawRequest.PartnerSource,
+		PartnerExternalID: rawRequest.PartnerExternalID,
+		ClientType:        rawRequest.ClientType,
+		ClientName:        rawRequest.ClientName,
+		ClientShortName:   rawRequest.ClientShortName, // Сокращенное название с ОПФ
+		ClientINN:         rawRequest.ClientINN,
+		ClientKPP:         rawRequest.ClientKPP,
+		ClientEmail:       rawRequest.ClientEmail,
+		ClientPhone:       rawRequest.ClientPhone,
+		ClientAddress:     rawRequest.ClientAddress,
 		// Дополнительные поля для организаций
 		ClientLegalAddress:  rawRequest.ClientLegalAddress,
 		ClientPostalAddress: rawRequest.ClientPostalAddress,
@@ -1432,6 +1513,27 @@ func CreateContract(c *gin.Context) {
 	// Устанавливаем ContractPeriodMonths, если передан и больше 0
 	if rawRequest.ContractPeriodMonths != nil && *rawRequest.ContractPeriodMonths > 0 {
 		contract.ContractPeriodMonths = rawRequest.ContractPeriodMonths
+	}
+
+	// Connection партнёра (Ф0, для wialon/skif/gelios; axenta = 0).
+	if rawRequest.PartnerConnectionID != nil {
+		contract.PartnerConnectionID = *rawRequest.PartnerConnectionID
+	}
+
+	// Скидки (для партнёрских договоров). Раньше CreateContract их не читал →
+	// любой новый партнёр создавался с discount_type='none' независимо от UI →
+	// auto-скидка не применялась в снимках. Указатели разделяют «не передано» и ноль.
+	if rawRequest.DiscountType != "" {
+		contract.DiscountType = rawRequest.DiscountType
+	}
+	if rawRequest.ManualDiscountPercent != nil {
+		contract.ManualDiscountPercent = *rawRequest.ManualDiscountPercent
+	}
+	if rawRequest.ManualDiscountFixed != nil {
+		contract.ManualDiscountFixed = *rawRequest.ManualDiscountFixed
+	}
+	if rawRequest.UseAutoDiscount != nil {
+		contract.UseAutoDiscount = *rawRequest.UseAutoDiscount
 	}
 
 	request := CreateContractRequest{
@@ -2281,6 +2383,24 @@ func UpdateContract(c *gin.Context) {
 	// Загружаем Appendices через Preload (если таблица существует)
 	if err := tenantDB.Preload("Appendices").First(&contract, contract.ID).Error; err != nil {
 		log.Printf("⚠️ Не удалось загрузить обновленные данные договора %d: %v", contract.ID, err)
+	}
+
+	// Партнёрский договор не использует подписки → не должен застревать в draft
+	// (см. CreateContract). Если после обновления остался draft — активируем.
+	// Атомарный conditional UPDATE с WHERE status='draft': если конкурентный запрос
+	// между reload и здесь выставил иной статус (suspended/cancelled) — не затираем,
+	// RowsAffected=0. Иначе partner_snapshot_scheduler (фильтр status='active') его
+	// пропустит и снимки уйдут в orphan без скидки.
+	if contract.ContractType == "partner" && contract.PartnerCompanyID != nil && contract.Status == "draft" {
+		res := tenantDB.Model(&models.Contract{}).
+			Where("id = ? AND status = ?", contract.ID, "draft").
+			Update("status", "active")
+		if res.Error != nil {
+			log.Printf("⚠️ Не удалось активировать партнёрский договор %d: %v", contract.ID, res.Error)
+		} else if res.RowsAffected > 0 {
+			contract.Status = "active"
+			log.Printf("✅ Партнёрский договор %d активирован (draft→active)", contract.ID)
+		}
 	}
 
 	// Получаем токен пользователя для загрузки названий объектов

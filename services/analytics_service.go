@@ -7,6 +7,13 @@ import (
 	"gorm.io/gorm"
 )
 
+// billingSnapshotSources — системы, чьи partner_daily_snapshots учитываются в KPI.
+// Ф0: только axenta. Ф1: +skif (реальный per-date биллинг дилеров). По мере
+// готовности Ф2/Ф3 добавятся wialon/gelios. Разные системы = разные объекты,
+// SUM по ним не задваивает (Codex F2: фильтр обязателен, чтобы «сырые» источники
+// без снимков не попадали раньше времени).
+var billingSnapshotSources = []string{"axenta", "skif"}
+
 // AnalyticsService — единый источник для агрегатов из partner_daily_snapshots.
 //
 // Зачем: ранее SUM(active_objects_count) считался в 3+ местах
@@ -33,6 +40,7 @@ func (s *AnalyticsService) GetLatestSnapshotDate() (time.Time, bool) {
 	}
 	res := s.db.Table("partner_daily_snapshots").
 		Select("snapshot_date").
+		Where("partner_source IN ?", billingSnapshotSources). // Ф1: axenta+skif
 		Order("snapshot_date DESC").
 		Limit(1).
 		Scan(&row)
@@ -55,9 +63,37 @@ func (s *AnalyticsService) GetTotalAndActiveForDate(date time.Time) (SnapshotAgg
 	var agg SnapshotAggregate
 	err := s.db.Model(&models.PartnerDailySnapshot{}).
 		Where("DATE(snapshot_date AT TIME ZONE 'UTC') = ?", date.Format("2006-01-02")).
+		Where("partner_source IN ?", billingSnapshotSources). // Ф1: axenta+skif
 		Select("COALESCE(SUM(total_objects_count), 0) as total, COALESCE(SUM(active_objects_count), 0) as active").
 		Row().Scan(&agg.Total, &agg.Active)
 	return agg, err
+}
+
+// GetActiveCountLatestPerSource — сумма active по КАЖДОМУ billing-источнику на
+// его СОБСТВЕННУЮ последнюю дату снимка (+offsetDays для delta). Источники
+// снимаются с разной частотой (Axenta cron 00:30, SKIF 00:45, на staging Axenta
+// вообще stale при выключенном scheduler) → единая «последняя дата» недосчитывала
+// бы источники без снимка на этот день. offsetDays=0 — текущее, -7 — неделю назад.
+func (s *AnalyticsService) GetActiveCountLatestPerSource(offsetDays int) int64 {
+	var total int64
+	for _, src := range billingSnapshotSources {
+		var latest time.Time
+		s.db.Table("partner_daily_snapshots").
+			Select("snapshot_date").
+			Where("partner_source = ?", src).
+			Order("snapshot_date DESC").Limit(1).Scan(&latest)
+		if latest.IsZero() {
+			continue
+		}
+		target := latest.AddDate(0, 0, offsetDays)
+		var active int64
+		s.db.Table("partner_daily_snapshots").
+			Select("COALESCE(SUM(active_objects_count), 0)").
+			Where("DATE(snapshot_date) = DATE(?) AND partner_source = ?", target, src).
+			Scan(&active)
+		total += active
+	}
+	return total
 }
 
 // GetActiveCountForDate — упрощённая версия GetTotalAndActiveForDate если
@@ -69,6 +105,7 @@ func (s *AnalyticsService) GetActiveCountForDate(date time.Time) int64 {
 	s.db.Table("partner_daily_snapshots").
 		Select("COALESCE(SUM(active_objects_count), 0) as active").
 		Where("DATE(snapshot_date) = DATE(?)", date).
+		Where("partner_source IN ?", billingSnapshotSources). // Ф1: axenta+skif
 		Scan(&row)
 	return row.Active
 }

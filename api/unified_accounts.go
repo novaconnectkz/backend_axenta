@@ -97,6 +97,8 @@ func GetUnifiedAccounts(c *gin.Context) {
 	activeStr := c.Query("is_active")
 	ordering := c.DefaultQuery("ordering", "-creationDatetime")
 	parent := strings.TrimSpace(c.Query("parent"))
+	// Ф0: режим выбора партнёра в дропдауне — обходим TTL-гейт Axenta для полноты списка.
+	pickerMode := c.Query("for") == "picker"
 
 	if page < 1 {
 		page = 1
@@ -121,7 +123,7 @@ func GetUnifiedAccounts(c *gin.Context) {
 			defer wg.Done()
 			tenantDB := middleware.GetTenantDB(c)
 			t0 := time.Now()
-			items, total, active, clients, partners := fetchAxentaAccountsForUnified(tenantDB, search, accountType, activeStr, parent)
+			items, total, active, clients, partners := fetchAxentaAccountsForUnified(tenantDB, search, accountType, activeStr, parent, pickerMode)
 			log.Printf("🔍 unified/accounts axenta: %d items за %s", len(items), time.Since(t0).Round(time.Millisecond))
 			mu.Lock()
 			allAccounts = append(allAccounts, items...)
@@ -227,19 +229,23 @@ func GetUnifiedAccounts(c *gin.Context) {
 
 // fetchAxentaAccountsForUnified читает axenta_account_snapshots с фильтрами.
 // Возвращает: items, total, active, clients, partners.
-func fetchAxentaAccountsForUnified(db *gorm.DB, search, accountType, activeStr, parent string) ([]UnifiedAccount, int, int, int, int) {
+func fetchAxentaAccountsForUnified(db *gorm.DB, search, accountType, activeStr, parent string, ignoreTTL bool) ([]UnifiedAccount, int, int, int, int) {
 	if db == nil {
 		return nil, 0, 0, 0, 0
 	}
 
-	// TTL check
+	// TTL check.
+	// ignoreTTL=true (режим ?for=picker) обходит гейт «снимок устарел → пусто»:
+	// для дропдауна выбора партнёра нам важна ПОЛНОТА списка (даже по устаревшему
+	// снимку), а не свежесть. Основная страница /accounts (ignoreTTL=false) сохраняет
+	// строгий TTL, чтобы не показывать протухшие данные.
 	var lastSync time.Time
 	if err := db.Model(&models.AxentaAccountSnapshot{}).
 		Select("MAX(last_synced_at)").
 		Scan(&lastSync).Error; err != nil || lastSync.IsZero() {
 		return nil, 0, 0, 0, 0
 	}
-	if time.Since(lastSync) > SnapshotTTL {
+	if !ignoreTTL && time.Since(lastSync) > SnapshotTTL {
 		log.Printf("⏰ unified/accounts: snapshot устарел (last=%v), результат пустой", lastSync)
 		return nil, 0, 0, 0, 0
 	}

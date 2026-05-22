@@ -2112,6 +2112,7 @@ func (s *SkifService) SyncCompanyStatuses(conn *models.SkifConnection) (int, err
 			Name       string `json:"name"`
 			Units      int    `json:"units"`
 			UsersCount int    `json:"users_count"`
+			DealerID   string `json:"dealer_id"` // Ф1: UUID дилера-владельца (для partner billing)
 			Billing    struct {
 				CompanyStatus     string `json:"company_status"`
 				TerminalBlockType string `json:"terminal_block_type"`
@@ -2134,6 +2135,7 @@ func (s *SkifService) SyncCompanyStatuses(conn *models.SkifConnection) (int, err
 			CompanyName:       c.Name,
 			CompanyStatus:     c.Billing.CompanyStatus,
 			TerminalBlockType: c.Billing.TerminalBlockType,
+			SkifDealerID:      c.DealerID,
 			UnitsCount:        c.Units,
 			UsersCount:        c.UsersCount,
 			LastSyncedAt:      now,
@@ -2144,6 +2146,7 @@ func (s *SkifService) SyncCompanyStatuses(conn *models.SkifConnection) (int, err
 				"company_name":        c.Name,
 				"company_status":      c.Billing.CompanyStatus,
 				"terminal_block_type": c.Billing.TerminalBlockType,
+				"skif_dealer_id":      c.DealerID,
 				"units_count":         c.Units,
 				"users_count":         c.UsersCount,
 				"last_synced_at":      now,

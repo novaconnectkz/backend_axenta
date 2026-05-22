@@ -1,6 +1,7 @@
 package models
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -18,13 +19,22 @@ type PartnerDailySnapshot struct {
 	// Привязка
 	AdminAccountID uint `json:"admin_account_id" gorm:"not null;index:idx_partner_snapshots_admin"`
 	CompanyID      uint `json:"company_id" gorm:"not null;index:idx_partner_snapshots_company"`
-	ContractID     uint `json:"contract_id" gorm:"not null;index:idx_partner_snapshots_contract"`
+	ContractID     uint `json:"contract_id" gorm:"not null;index:idx_partner_snapshots_contract;uniqueIndex:idx_partner_snapshot_unique,priority:4"`
 
 	// Дата снимка (начало дня в UTC)
-	SnapshotDate time.Time `json:"snapshot_date" gorm:"not null;index:idx_partner_snapshots_date;uniqueIndex:idx_partner_snapshot_unique"`
+	SnapshotDate time.Time `json:"snapshot_date" gorm:"not null;index:idx_partner_snapshots_date;uniqueIndex:idx_partner_snapshot_unique,priority:5"`
 
 	// ID учетной записи партнера
 	PartnerCompanyID uint `json:"partner_company_id" gorm:"not null;index:idx_partner_snapshots_partner"`
+
+	// Мульти-системный партнёр (Ф0). Составной uniqueIndex idx_partner_snapshot_unique =
+	// (partner_source, connection_id, partner_external_id, contract_id, snapshot_date).
+	// Для Axenta: source='axenta', connection_id=0, partner_external_id=partner_company_id.
+	// NON-partial (GORM не умеет WHERE deleted_at) — данные чистые, soft-delete+recreate
+	// в штатном потоке не происходит (scheduler пропускает существующие через Unscoped).
+	PartnerSource     string `json:"partner_source" gorm:"type:varchar(20);not null;default:'axenta';uniqueIndex:idx_partner_snapshot_unique,priority:1"`
+	ConnectionID      uint   `json:"connection_id" gorm:"not null;default:0;uniqueIndex:idx_partner_snapshot_unique,priority:2"`
+	PartnerExternalID string `json:"partner_external_id" gorm:"type:varchar(128);not null;default:'';uniqueIndex:idx_partner_snapshot_unique,priority:3"`
 
 	// Тарифный план на момент снимка
 	TariffPlanID uint        `json:"tariff_plan_id" gorm:"not null"`
@@ -68,6 +78,16 @@ func (PartnerDailySnapshot) TableName() string {
 
 // BeforeCreate устанавливает дефолтные значения перед созданием
 func (s *PartnerDailySnapshot) BeforeCreate(tx *gorm.DB) error {
+	// Ф0: гарантируем заполнение мульти-системных полей на ВСЕХ путях создания.
+	// Без этого Axenta-снимки писались бы с partner_external_id='' → orphan-строки
+	// разных партнёров (contract_id=0) схлопнулись бы по составному unique-индексу.
+	if s.PartnerSource == "" {
+		s.PartnerSource = "axenta"
+	}
+	if s.PartnerExternalID == "" && s.PartnerCompanyID > 0 {
+		s.PartnerExternalID = fmt.Sprintf("%d", s.PartnerCompanyID)
+	}
+
 	// Для фиксированной скидки: применяем скидку к месячному тарифу, затем рассчитываем дневную цену
 	// Для процентной скидки: рассчитываем дневную цену из базового тарифа, затем применяем скидку к стоимости
 

@@ -21,6 +21,10 @@ type SkifCompanyStatus struct {
 	// TerminalBlockType — billing.terminal_block_type ("terminals_not_block" / "terminals_block").
 	TerminalBlockType string `json:"terminal_block_type" gorm:"type:varchar(32)"`
 
+	// SkifDealerID — UUID дилера-владельца компании (auth_admin_query → dealer_id).
+	// Ф1 partner billing: связь компания→дилер для агрегации объектов на дилера.
+	SkifDealerID string `json:"skif_dealer_id" gorm:"type:varchar(64);index"`
+
 	UnitsCount int `json:"units_count"`
 	UsersCount int `json:"users_count"`
 

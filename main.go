@@ -210,6 +210,14 @@ func main() {
 		} else {
 			log.Println("✅ Billing Snapshot Scheduler started (daily at 01:00 UTC / 04:00 MSK)")
 		}
+
+		// Ф1: SKIF partner snapshot scheduler (00:45 UTC) — снимки дилеров source=skif
+		skifPartnerSnapshotScheduler := services.NewSkifPartnerSnapshotService(database.DB)
+		if err := skifPartnerSnapshotScheduler.Start(); err != nil {
+			log.Printf("⚠️ SKIF Partner Snapshot Scheduler failed to start: %v", err)
+		} else {
+			log.Println("✅ SKIF Partner Snapshot Scheduler started (daily at 00:45 UTC)")
+		}
 	} else {
 		log.Println("⚠️ Планировщики снимков отключены (ENABLE_SNAPSHOT_SCHEDULER != true)")
 	}
@@ -991,6 +999,9 @@ func main() {
 	apiGroup.POST("/contracts/partner-snapshots/generate-all", api.GenerateAllPartnerSnapshotsForPeriod)
 	log.Println("✅ Зарегистрирован POST /api/auth/contracts/:contract_id/partner-snapshots/generate -> GeneratePartnerSnapshotsForPeriod")
 	log.Println("✅ Зарегистрирован POST /api/auth/contracts/partner-snapshots/generate-all -> GenerateAllPartnerSnapshotsForPeriod")
+
+	// Ф1 SKIF partner billing: ручной триггер снимков дилеров (source=skif)
+	apiGroup.POST("/skif/partner-snapshots/generate", api.GenerateSkifPartnerSnapshots)
 
 	// Расчет стоимости договора (специфичный маршрут - ПЕРЕД общими)
 	apiGroup.GET("/contracts/:contract_id/calculate", api.CalculateContractCost)

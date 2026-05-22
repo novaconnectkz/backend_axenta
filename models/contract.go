@@ -34,6 +34,13 @@ type Contract struct {
 	PartnerCompanyID *uint    `json:"partner_company_id" gorm:"index"`
 	PartnerCompany   *Company `json:"partner_company,omitempty" gorm:"foreignKey:PartnerCompanyID;constraint:-"`
 
+	// Мульти-системный партнёр (Ф0): из какой GPS-системы партнёр и его ключ.
+	// PartnerCompanyID остаётся для Axenta-совместимости (= PartnerExternalID для axenta).
+	// Идентичность партнёра = (PartnerSource, PartnerConnectionID, PartnerExternalID).
+	PartnerSource       string `json:"partner_source" gorm:"type:varchar(20);not null;default:'axenta';index"` // axenta|wialon|skif|gelios
+	PartnerConnectionID uint   `json:"partner_connection_id" gorm:"not null;default:0"`                        // connection для wialon/skif/gelios (0 для axenta)
+	PartnerExternalID   string `json:"partner_external_id" gorm:"type:varchar(128);not null;default:''"`       // стабильный ключ партнёра в системе (Axenta id / Wialon resource / SKIF dealer UUID / GELIOS user id)
+
 	// Клиент
 	ClientType      string `json:"client_type" gorm:"type:varchar(50)"` // organization, individual_entrepreneur, physical_person
 	ClientName      string `json:"client_name" gorm:"not null;type:varchar(200)"`
