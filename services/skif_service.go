@@ -179,7 +179,10 @@ type SkifUnitDTO struct {
 	IMEI        string          `json:"imei"`
 	Phone       string          `json:"phoneNumber"`
 	Model       string          `json:"model"`
-	IsActive    bool            `json:"isActive"`
+	// ВНИМАНИЕ: у юнита SKIF НЕТ поля isActive (реальные поля: id/name/imei/
+	// sensors/services/states/custom_fields). Раньше его запрашивали и мапили в
+	// skif_units.is_active → всегда false → дашборд показывал 0% активных.
+	// Активность по юниту SKIF не отдаёт; считаем синканутый живой юнит активным.
 	CompanyName string          `json:"companyName"`
 	States      []skifUnitState `json:"states"`
 }
@@ -442,7 +445,7 @@ func (s *SkifService) fetchUnitsForCompany(conn *models.SkifConnection, client *
 			"sortDesc":   "false",
 			"conditions": []interface{}{},
 			// "created" SKIF не отдаёт. Берём states[0].date_from как proxy.
-			"fields": []string{"name", "imei", "phoneNumber", "model", "isActive", "companyName", "states"},
+			"fields": []string{"name", "imei", "phoneNumber", "model", "companyName", "states"},
 		})
 		req, err := http.NewRequest("POST", strings.TrimRight(conn.BaseURL, "/")+"/api_v1/units/list", bytes.NewReader(body))
 		if err != nil {
@@ -474,7 +477,7 @@ func (s *SkifService) fetchUnitsForCompany(conn *models.SkifConnection, client *
 				IMEI:            u.IMEI,
 				Phone:           u.Phone,
 				Model:           u.Model,
-				IsActive:        u.IsActive,
+				IsActive:        true, // SKIF не отдаёт активность по юниту → живой юнит = активный
 				CompanyID:       conn.CompanyID,
 				SkifCompanyID:   comp.ID,
 				SkifCompany:     comp.Name,
