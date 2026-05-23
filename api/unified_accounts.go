@@ -58,6 +58,7 @@ type UnifiedAccountsStats struct {
 	WialonWHActive int `json:"wialon_wh_active"`
 	WialonWLTotal  int `json:"wialon_wl_total"`
 	WialonWLActive int `json:"wialon_wl_active"`
+	WialonPartners int `json:"wialon_partners"` // Ф2: дилеры (dealer_rights) из wialon_account_statuses
 	SkifTotal      int `json:"skif_total"`
 	SkifActive     int `json:"skif_active"`
 	GeliosTotal    int `json:"gelios_total"`
@@ -103,7 +104,16 @@ func GetUnifiedAccounts(c *gin.Context) {
 	if page < 1 {
 		page = 1
 	}
-	if perPage < 1 || perPage > 200 {
+	// Picker-режим (дропдаун выбора партнёра) требует ПОЛНЫЙ список — иначе при
+	// большом числе партнёров (напр. 330 Wialon-дилеров) cap отрезал бы хвост.
+	// Обычные страницы остаются с cap 200 (default 20).
+	if pickerMode {
+		if perPage < 1 {
+			perPage = 20
+		} else if perPage > 100000 {
+			perPage = 100000
+		}
+	} else if perPage < 1 || perPage > 200 {
 		perPage = 20
 	}
 
@@ -146,14 +156,27 @@ func GetUnifiedAccounts(c *gin.Context) {
 			t0 := time.Now()
 			items, wTotal, wActive, whTotal, whActive, wlTotal, wlActive := fetchWialonAccountsForUnified(companyID.(uint), search, accountType, activeStr, source, parent)
 			log.Printf("🔍 unified/accounts wialon: %d items за %s", len(items), time.Since(t0).Round(time.Millisecond))
+
+			// Ф2: Wialon-партнёры (дилеры) из wialon_account_statuses (DB, не Redis) —
+			// отдельными type=partner строками. Только при accountType=partner
+			// (запрос дропдауна договора): Redis-блок дилеров не отдаёт как partner,
+			// поэтому дублей нет. DB-источник → работает на staging (Redis холодный).
+			var partnerItems []UnifiedAccount
+			var wPartners int
+			if accountType == "partner" {
+				partnerItems, wPartners = fetchWialonPartnersForUnified(companyID.(uint), search, activeStr, parent)
+			}
+
 			mu.Lock()
 			allAccounts = append(allAccounts, items...)
+			allAccounts = append(allAccounts, partnerItems...)
 			stats.WialonTotal = wTotal
 			stats.WialonActive = wActive
 			stats.WialonWHTotal = whTotal
 			stats.WialonWHActive = whActive
 			stats.WialonWLTotal = wlTotal
 			stats.WialonWLActive = wlActive
+			stats.WialonPartners = wPartners
 			mu.Unlock()
 		}()
 	}
@@ -471,6 +494,59 @@ func fetchWialonAccountsForUnified(companyID uint, search, accountType, activeSt
 	}
 
 	return items, total, active, whTotal, whActive, wlTotal, wlActive
+}
+
+// fetchWialonPartnersForUnified — Wialon-дилеры (partner billing Ф2) из
+// wialon_account_statuses (DB, не Redis → работает на staging). Дилер =
+// dealer_rights=true. Per-account модель (A): дерево в Wialon-данных не строится
+// (нет bpact, crt схлопывается, общий мастер-ресурс) → биллинг по прямым units_count.
+//
+// Source="wialon" + ID=wialon_user_id → ключ дропдауна wialon|connID|userID,
+// partner_external_id=userID для снимков W4.
+func fetchWialonPartnersForUnified(companyID uint, search, activeStr, parent string) ([]UnifiedAccount, int) {
+	if parent != "" { // у Wialon-партнёров нет иерархии-родителя в этой модели
+		return nil, 0
+	}
+	var rows []models.WialonAccountStatus
+	if err := database.DB.
+		Joins("JOIN wialon_connections wc ON wc.id = wialon_account_statuses.connection_id").
+		Where("wc.company_id = ? AND wialon_account_statuses.dealer_rights = ?", companyID, true).
+		Find(&rows).Error; err != nil {
+		log.Printf("⚠️ unified/accounts wialon partners: %v", err)
+		return nil, 0
+	}
+
+	pattern := strings.ToLower(search)
+	items := make([]UnifiedAccount, 0, len(rows))
+	for _, r := range rows {
+		if pattern != "" && !strings.Contains(strings.ToLower(r.Name), pattern) {
+			continue
+		}
+		switch activeStr {
+		case "true", "1":
+			if !r.IsActive {
+				continue
+			}
+		case "false", "0":
+			if r.IsActive {
+				continue
+			}
+		}
+		connID := r.ConnectionID
+		items = append(items, UnifiedAccount{
+			ID:            int(r.WialonUserID),
+			Name:          r.Name,
+			Type:          "partner",
+			ObjectsTotal:  r.UnitsCount,
+			ObjectsActive: r.UnitsCount, // per-account: активные = прямые units
+			IsActive:      r.IsActive,
+			Source:        "wialon",
+			SourceLabel:   "Wialon",
+			ConnectionID:  &connID,
+			DealerRights:  true,
+		})
+	}
+	return items, len(items)
 }
 
 // loadWialonStatsForCompany читает wialon_object_stats для всех wialon-подключений

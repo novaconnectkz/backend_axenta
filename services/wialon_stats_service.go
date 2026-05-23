@@ -164,7 +164,99 @@ func (s *WialonStatsService) collectForConnection(conn models.WialonConnection) 
 		}
 	}
 
+	// Реестр Wialon-аккаунтов (parent_id + dealer_rights + units_count) для
+	// partner billing Ф2. Идёт после units/object_stats — units_count считается
+	// DB-джойном по уже свежим данным.
+	if accCount, aerr := s.collectAccountsForConnection(conn, loginResp.Eid); aerr != nil {
+		log.Printf("⚠️ WialonStats accounts: connection=%d не удалось собрать: %v", conn.ID, aerr)
+	} else {
+		log.Printf("🏢 WialonStats accounts: connection=%d, accounts=%d", conn.ID, accCount)
+	}
+
 	return len(upserts), nil
+}
+
+// collectAccountsForConnection — снимок Wialon-аккаунтов в wialon_account_statuses
+// для partner billing Ф2 (см. models.WialonAccountStatus).
+//
+// Источник: SearchUsersWithHost (avl_user) — даёт IsActive (fl&0x1),
+// DealerRights (fl&0x10), ParentId (crt — иерархия через создателя).
+// units_count — прямой счёт юнитов аккаунта DB-джойном: wialon_units.billing_id
+// → wialon_object_stats.resource_id → user_id (per connection). НЕ recursive.
+//
+// После цикла удаляет строки не обновлённые в этом проходе (исчезнувшие аккаунты).
+func (s *WialonStatsService) collectAccountsForConnection(conn models.WialonConnection, eid string) (int, error) {
+	cycleStart := time.Now()
+
+	accounts, err := s.wialonService.SearchUsersWithHost(conn.Host, eid)
+	if err != nil {
+		return 0, fmt.Errorf("search users: %w", err)
+	}
+	if len(accounts) == 0 {
+		return 0, nil
+	}
+
+	// units_count per user_id: unit → billing-resource → resource creator (user).
+	type userCount struct {
+		UserID int64
+		Cnt    int
+	}
+	var counts []userCount
+	// Явные public.*: collectForConnection вызывается с public search_path, но
+	// квалифицируем для устойчивости. ОШИБКУ возвращаем (не продолжаем с нулями):
+	// иначе upsert перезапишет units_count=0 всем → недобиллинг партнёров (Codex C1).
+	if err := s.db.Raw(`
+		SELECT s.user_id AS user_id, COUNT(DISTINCT u.unit_id) AS cnt
+		FROM public.wialon_units u
+		JOIN public.wialon_object_stats s
+		  ON s.resource_id = u.billing_id AND s.connection_id = u.connection_id
+		WHERE u.connection_id = ?
+		GROUP BY s.user_id`, conn.ID).Scan(&counts).Error; err != nil {
+		return 0, fmt.Errorf("units_count join conn=%d: %w", conn.ID, err)
+	}
+	countByUser := make(map[int64]int, len(counts))
+	for _, c := range counts {
+		countByUser[c.UserID] = c.Cnt
+	}
+
+	batch := make([]models.WialonAccountStatus, 0, len(accounts))
+	for _, a := range accounts {
+		batch = append(batch, models.WialonAccountStatus{
+			ConnectionID:    conn.ID,
+			WialonUserID:    a.ID,
+			Name:            a.Name,
+			ParentUserID:    a.ParentId,
+			DealerRights:    a.DealerRights,
+			IsActive:        a.IsActive,
+			UnitsCount:      countByUser[a.ID],
+			LastCollectedAt: cycleStart,
+		})
+	}
+
+	const chunkSize = 500
+	for i := 0; i < len(batch); i += chunkSize {
+		end := i + chunkSize
+		if end > len(batch) {
+			end = len(batch)
+		}
+		if err := s.db.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "connection_id"}, {Name: "wialon_user_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"name", "parent_user_id", "dealer_rights", "is_active",
+				"units_count", "last_collected_at", "updated_at",
+			}),
+		}).Create(batch[i:end]).Error; err != nil {
+			return 0, fmt.Errorf("upsert accounts chunk [%d:%d]: %w", i, end, err)
+		}
+	}
+
+	// Чистим исчезнувшие аккаунты (не обновлены в этом проходе).
+	if err := s.db.Where("connection_id = ? AND last_collected_at < ?", conn.ID, cycleStart).
+		Delete(&models.WialonAccountStatus{}).Error; err != nil {
+		log.Printf("⚠️ WialonStats accounts: cleanup stale conn=%d: %v", conn.ID, err)
+	}
+
+	return len(batch), nil
 }
 
 // collectSummaryForConnection — точные счётчики объектов из главного resource юзера (user.bact).

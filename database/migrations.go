@@ -142,6 +142,12 @@ func GetAllMigrations() []MigrationInfo {
 			IsGlobal:    true,
 		},
 		{
+			TableName:   "wialon_account_statuses",
+			Model:       &models.WialonAccountStatus{},
+			Description: "Снимок Wialon-аккаунтов (parent_id+dealer_rights+units_count) для partner billing Ф2",
+			IsGlobal:    true,
+		},
+		{
 			TableName:   "skif_connections",
 			Model:       &models.SkifConnection{},
 			Description: "Подключения к SKIF.PRO (cookie-session auth, multi-tenant)",

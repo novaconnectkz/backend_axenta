@@ -218,6 +218,15 @@ func main() {
 		} else {
 			log.Println("✅ SKIF Partner Snapshot Scheduler started (daily at 00:45 UTC)")
 		}
+
+		// Ф2: Wialon partner snapshot scheduler (00:50 UTC) — снимки дилеров source=wialon
+		// (per-account: прямой units_count, без дерева — см. wialon-partner-billing-ph2).
+		wialonPartnerSnapshotScheduler := services.NewWialonPartnerSnapshotService(database.DB)
+		if err := wialonPartnerSnapshotScheduler.Start(); err != nil {
+			log.Printf("⚠️ Wialon Partner Snapshot Scheduler failed to start: %v", err)
+		} else {
+			log.Println("✅ Wialon Partner Snapshot Scheduler started (daily at 00:50 UTC)")
+		}
 	} else {
 		log.Println("⚠️ Планировщики снимков отключены (ENABLE_SNAPSHOT_SCHEDULER != true)")
 	}
@@ -1002,6 +1011,9 @@ func main() {
 
 	// Ф1 SKIF partner billing: ручной триггер снимков дилеров (source=skif)
 	apiGroup.POST("/skif/partner-snapshots/generate", api.GenerateSkifPartnerSnapshots)
+
+	// Ф2 Wialon partner billing: ручной триггер снимков дилеров (source=wialon)
+	apiGroup.POST("/wialon/partner-snapshots/generate", api.GenerateWialonPartnerSnapshots)
 
 	// Расчет стоимости договора (специфичный маршрут - ПЕРЕД общими)
 	apiGroup.GET("/contracts/:contract_id/calculate", api.CalculateContractCost)
