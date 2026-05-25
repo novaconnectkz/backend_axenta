@@ -164,10 +164,14 @@ func (s *WialonStatsService) collectForConnection(conn models.WialonConnection) 
 		}
 	}
 
-	// Реестр Wialon-аккаунтов (parent_id + dealer_rights + units_count) для
-	// partner billing Ф2. Идёт после units/object_stats — units_count считается
-	// DB-джойном по уже свежим данным.
-	if accCount, aerr := s.collectAccountsForConnection(conn, loginResp.Eid); aerr != nil {
+	// Реестр Wialon-аккаунтов (parent_id + dealer_rights + units_count + is_direct_dealer)
+	// для partner billing Ф2. Идёт после units/object_stats — units_count считается
+	// DB-джойном по уже свежим данным. ownerUserID нужен для is_direct_dealer.
+	ownerUserID := int64(0)
+	if loginResp.User != nil {
+		ownerUserID = loginResp.User.ID
+	}
+	if accCount, aerr := s.collectAccountsForConnection(conn, loginResp.Eid, ownerUserID); aerr != nil {
 		log.Printf("⚠️ WialonStats accounts: connection=%d не удалось собрать: %v", conn.ID, aerr)
 	} else {
 		log.Printf("🏢 WialonStats accounts: connection=%d, accounts=%d", conn.ID, accCount)
@@ -185,7 +189,7 @@ func (s *WialonStatsService) collectForConnection(conn models.WialonConnection) 
 // → wialon_object_stats.resource_id → user_id (per connection). НЕ recursive.
 //
 // После цикла удаляет строки не обновлённые в этом проходе (исчезнувшие аккаунты).
-func (s *WialonStatsService) collectAccountsForConnection(conn models.WialonConnection, eid string) (int, error) {
+func (s *WialonStatsService) collectAccountsForConnection(conn models.WialonConnection, eid string, ownerUserID int64) (int, error) {
 	cycleStart := time.Now()
 
 	accounts, err := s.wialonService.SearchUsersWithHost(conn.Host, eid)
@@ -195,6 +199,21 @@ func (s *WialonStatsService) collectAccountsForConnection(conn models.WialonConn
 	if len(accounts) == 0 {
 		return 0, nil
 	}
+
+	// Аккаунт интеграции (токен-овнер) = его bact (resource). Прямой дилер =
+	// тот, чей parentAccountId == ownerBact. ownerBact=0 (сбой resolve) → is_direct
+	// неопределим → НЕ перезаписываем прежнее значение (см. known/unknown ниже).
+	ownerBact := int64(0)
+	if ownerUserID > 0 {
+		if b, berr := s.ResolveBactForUser(conn.Host, eid, ownerUserID); berr != nil {
+			log.Printf("⚠️ WialonStats accounts: ResolveBactForUser(owner=%d) conn=%d: %v", ownerUserID, conn.ID, berr)
+		} else {
+			ownerBact = b
+		}
+	}
+
+	// parentAccountId по дилерам (account/get_account_data, батчами).
+	parentByUser := s.fetchDealerParentAccounts(conn.Host, eid, accounts)
 
 	// units_count per user_id: unit → billing-resource → resource creator (user).
 	type userCount struct {
@@ -219,35 +238,42 @@ func (s *WialonStatsService) collectAccountsForConnection(conn models.WialonConn
 		countByUser[c.UserID] = c.Cnt
 	}
 
-	batch := make([]models.WialonAccountStatus, 0, len(accounts))
+	// Делим на «known»/«unknown» по определимости is_direct_dealer.
+	// Определимо когда: НЕ дилер (is_direct всегда false) ИЛИ
+	// (ownerBact известен И parentAccountId дилера разрезолвлен).
+	// Неопределимые НЕ перезаписывают parent_account_id/is_direct_dealer
+	// (preserve prior) — иначе transient-сбой ResolveBactForUser (ownerBact=0,
+	// Codex B2) или item-error get_account_data (Codex SF1) молча обнулит
+	// дропдаун партнёров на следующем синке.
+	known := make([]models.WialonAccountStatus, 0, len(accounts))
+	unknown := make([]models.WialonAccountStatus, 0)
 	for _, a := range accounts {
-		batch = append(batch, models.WialonAccountStatus{
+		parentAcc, resolved := parentByUser[a.ID]
+		rec := models.WialonAccountStatus{
 			ConnectionID:    conn.ID,
 			WialonUserID:    a.ID,
 			Name:            a.Name,
 			ParentUserID:    a.ParentId,
 			DealerRights:    a.DealerRights,
+			ParentAccountID: parentAcc,
+			IsDirectDealer:  a.DealerRights && ownerBact != 0 && resolved && parentAcc == ownerBact,
 			IsActive:        a.IsActive,
 			UnitsCount:      countByUser[a.ID],
 			LastCollectedAt: cycleStart,
-		})
+		}
+		directKnown := !a.DealerRights || (ownerBact != 0 && resolved)
+		if directKnown {
+			known = append(known, rec)
+		} else {
+			unknown = append(unknown, rec)
+		}
 	}
 
-	const chunkSize = 500
-	for i := 0; i < len(batch); i += chunkSize {
-		end := i + chunkSize
-		if end > len(batch) {
-			end = len(batch)
-		}
-		if err := s.db.Clauses(clause.OnConflict{
-			Columns: []clause.Column{{Name: "connection_id"}, {Name: "wialon_user_id"}},
-			DoUpdates: clause.AssignmentColumns([]string{
-				"name", "parent_user_id", "dealer_rights", "is_active",
-				"units_count", "last_collected_at", "updated_at",
-			}),
-		}).Create(batch[i:end]).Error; err != nil {
-			return 0, fmt.Errorf("upsert accounts chunk [%d:%d]: %w", i, end, err)
-		}
+	if err := s.upsertAccountBatch(known, true); err != nil {
+		return 0, err
+	}
+	if err := s.upsertAccountBatch(unknown, false); err != nil {
+		return 0, err
 	}
 
 	// Чистим исчезнувшие аккаунты (не обновлены в этом проходе).
@@ -256,7 +282,115 @@ func (s *WialonStatsService) collectAccountsForConnection(conn models.WialonConn
 		log.Printf("⚠️ WialonStats accounts: cleanup stale conn=%d: %v", conn.ID, err)
 	}
 
-	return len(batch), nil
+	return len(known) + len(unknown), nil
+}
+
+// upsertAccountBatch — upsert чанками по wialon_account_statuses. withDirect=false
+// исключает parent_account_id/is_direct_dealer из DoUpdates → существующие строки
+// сохраняют прежнее значение (не обнуляем при неопределимом is_direct_dealer).
+func (s *WialonStatsService) upsertAccountBatch(batch []models.WialonAccountStatus, withDirect bool) error {
+	if len(batch) == 0 {
+		return nil
+	}
+	cols := []string{"name", "parent_user_id", "dealer_rights", "is_active", "units_count", "last_collected_at", "updated_at"}
+	if withDirect {
+		cols = append(cols, "parent_account_id", "is_direct_dealer")
+	}
+	const chunkSize = 500
+	for i := 0; i < len(batch); i += chunkSize {
+		end := i + chunkSize
+		if end > len(batch) {
+			end = len(batch)
+		}
+		if err := s.db.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "connection_id"}, {Name: "wialon_user_id"}},
+			DoUpdates: clause.AssignmentColumns(cols),
+		}).Create(batch[i:end]).Error; err != nil {
+			return fmt.Errorf("upsert accounts chunk [%d:%d]: %w", i, end, err)
+		}
+	}
+	return nil
+}
+
+// CollectAccountsForConnectionFull — публичная обёртка для one-off populate (cmd):
+// логин + collectAccountsForConnection (units_count + dealer_rights + parentAccountId
+// + is_direct_dealer). units/object_stats должны быть уже наполнены (scheduler).
+func (s *WialonStatsService) CollectAccountsForConnectionFull(conn models.WialonConnection) (int, error) {
+	login, err := s.wialonService.LoginWithHost(conn.Host, conn.Token)
+	if err != nil {
+		return 0, fmt.Errorf("login: %w", err)
+	}
+	defer func() { _ = s.wialonService.LogoutWithHost(conn.Host, login.Eid) }()
+	ownerID := int64(0)
+	if login.User != nil {
+		ownerID = login.User.ID
+	}
+	return s.collectAccountsForConnection(conn, login.Eid, ownerID)
+}
+
+// fetchDealerParentAccounts — parentAccountId по дилерам через
+// account/get_account_data (type:1), батчами по 100. Возвращает
+// map[wialon_user_id]parentAccountId. Только дилеры (dealer_rights) — у клиентов
+// родитель для дропдауна не нужен. Ошибки батча логируются и пропускаются
+// (parentAccountId=0 → is_direct_dealer=false, дилер просто не попадёт в дропдаун).
+func (s *WialonStatsService) fetchDealerParentAccounts(host, eid string, accounts []WialonAccount) map[int64]int64 {
+	result := make(map[int64]int64)
+
+	type dealerRef struct{ userID, bact int64 }
+	dealers := make([]dealerRef, 0)
+	for _, a := range accounts {
+		if a.DealerRights && a.BillingAccountID > 0 {
+			dealers = append(dealers, dealerRef{a.ID, a.BillingAccountID})
+		}
+	}
+	if len(dealers) == 0 {
+		return result
+	}
+
+	// callBatch шлёт весь payload в URL query → большой батч даёт 414 (<html>).
+	// 25 get_account_data ≈ 5KB URL, безопасно.
+	const batchSize = 25
+	for i := 0; i < len(dealers); i += batchSize {
+		end := i + batchSize
+		if end > len(dealers) {
+			end = len(dealers)
+		}
+		chunk := dealers[i:end]
+		calls := make([]map[string]interface{}, 0, len(chunk))
+		for _, d := range chunk {
+			calls = append(calls, map[string]interface{}{
+				"svc":    "account/get_account_data",
+				"params": map[string]interface{}{"itemId": d.bact, "type": 1},
+			})
+		}
+		results, err := s.wialonService.callBatch(host, eid, calls)
+		if err != nil {
+			log.Printf("⚠️ WialonStats accounts: get_account_data batch [%d:%d]: %v", i, end, err)
+			continue
+		}
+		for j, raw := range results {
+			if j >= len(chunk) {
+				break
+			}
+			var data struct {
+				ParentAccountID int64 `json:"parentAccountId"`
+				Error           int   `json:"error"`
+			}
+			if err := json.Unmarshal(raw, &data); err != nil {
+				log.Printf("⚠️ WialonStats accounts: get_account_data unmarshal user=%d: %v", chunk[j].userID, err)
+				continue
+			}
+			// Wialon при ошибке item'а отдаёт {"error":N} — НЕ трактуем как parentAccountId=0,
+			// иначе дилер тихо станет не-прямым. Пропускаем → останется неразрезолвленным.
+			if data.Error != 0 {
+				log.Printf("⚠️ WialonStats accounts: get_account_data error=%d user=%d", data.Error, chunk[j].userID)
+				continue
+			}
+			// Присутствие в map = разрезолвлен (даже parentAccountId=0 — валидный «нет родителя»).
+			result[chunk[j].userID] = data.ParentAccountID
+		}
+	}
+	return result
 }
 
 // collectSummaryForConnection — точные счётчики объектов из главного resource юзера (user.bact).

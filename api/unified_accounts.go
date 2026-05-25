@@ -508,9 +508,11 @@ func fetchWialonPartnersForUnified(companyID uint, search, activeStr, parent str
 		return nil, 0
 	}
 	var rows []models.WialonAccountStatus
+	// Только ПРЯМЫЕ дилеры под интеграционной у/з (is_direct_dealer): дилеры-дилеров
+	// глубже по иерархии в дропдаун не выводим (parentAccountId != bact интеграции).
 	if err := database.DB.
 		Joins("JOIN wialon_connections wc ON wc.id = wialon_account_statuses.connection_id").
-		Where("wc.company_id = ? AND wialon_account_statuses.dealer_rights = ?", companyID, true).
+		Where("wc.company_id = ? AND wialon_account_statuses.dealer_rights = ? AND wialon_account_statuses.is_direct_dealer = ?", companyID, true, true).
 		Find(&rows).Error; err != nil {
 		log.Printf("⚠️ unified/accounts wialon partners: %v", err)
 		return nil, 0

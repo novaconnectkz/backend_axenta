@@ -38,6 +38,15 @@ type WialonAccountStatus struct {
 	// DealerRights — sys_account_enable_parent=1 (флаг дилера в Wialon).
 	DealerRights bool `json:"dealer_rights" gorm:"index;default:false"`
 
+	// ParentAccountID — родительская у/з (account/get_account_data.parentAccountId,
+	// resource id). НЕ crt и НЕ bact-owner — реальный billing-родитель Wialon.
+	ParentAccountID int64 `json:"parent_account_id" gorm:"index;default:0"`
+
+	// IsDirectDealer — дилер ПРЯМО под интеграционной у/з (parentAccountId =
+	// bact токен-овнера). Для дропдауна партнёрских договоров: дилеры-дилеров
+	// (глубже по иерархии) исключаются. Считается в синке через get_account_data.
+	IsDirectDealer bool `json:"is_direct_dealer" gorm:"index;default:false"`
+
 	IsActive bool `json:"is_active" gorm:"index;default:true"`
 
 	// UnitsCount — прямой счёт юнитов аккаунта (не recursive).
