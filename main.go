@@ -1458,7 +1458,17 @@ func main() {
 	// ИЛИ рерайт email-хендлеров на user_id) — отдельная задача со своим
 	// Codex-раундом, ВНЕ cutover-scope (email ≠ страница «Внешние интеграции»).
 	emailAuthGroup := r.Group("/api/auth/email")
-	emailAuthGroup.Use(authMiddleware.RequireAuth()) // Auth middleware для проверки токена
+	// Ф3-G follow-up 2026-05-26: AUTH_MODE-aware (зеркало integrationsGroup).
+	// Раньше hardcoded authMiddleware → AUTH_MODE=local давал 401 на login,
+	// /api/auth/email/config валился на Settings.vue mount. LocalAuthMW
+	// теперь ставит compat-shim c.Set("user", map{id,...}) что нужно
+	// email.go (read-only c.Get("user")).
+	if authMode == "axenta" {
+		emailAuthGroup.Use(authMiddleware.RequireAuth())
+	} else {
+		emailLocalMW := middleware.NewLocalAuthMiddleware(jwtService)
+		emailAuthGroup.Use(emailLocalMW.RequireAuth())
+	}
 	emailAuthGroup.Use(tenantMiddleware.SetTenant()) // Tenant middleware для установки company_id
 	emailAuthGroup.POST("/setup", api.SetupEmailIntegration)
 	emailAuthGroup.PUT("/setup", api.UpdateEmailIntegration)

@@ -66,6 +66,19 @@ func (m *LocalAuthMiddleware) RequireAuth() gin.HandlerFunc {
 		c.Set("is_superadmin", claims.IsSuperadmin)
 		c.Set("jwt_claims", claims)
 
+		// Compat-shim для legacy-хендлеров, которые ждут c.Get("user")
+		// как map[string]interface{} (email.go, и т.п.). LocalAuthMW
+		// ставит user_id/role/etc. отдельными ключами — этот map даёт
+		// прежний shape без переписывания хендлеров.
+		c.Set("user", map[string]interface{}{
+			"id":            claims.UserID,
+			"username":      claims.Username,
+			"email":         "", // в JWT не передаётся; legacy email.go использует только id
+			"company_id":    claims.CompanyID,
+			"role":          claims.Role,
+			"is_superadmin": claims.IsSuperadmin,
+		})
+
 		// auth_company_id — ДОВЕРЕННЫЙ tenant из подписанного JWT.
 		// TenantMiddleware обязан брать схему отсюда, НЕ из клиентского
 		// X-Tenant-ID (риск B5: horizontal privilege escalation между
