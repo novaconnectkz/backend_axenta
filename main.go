@@ -541,6 +541,11 @@ func main() {
 	controlGroup.Use(operatorMW.RequireOperator())
 	controlGroup.GET("/me", operatorAuthAPI.CurrentOperator)
 	controlPlaneAPI.RegisterRoutes(controlGroup) // S3: CRUD пакетов/фич/подписок/provisioning
+
+	// Глобальный SMTP-конфиг (control-plane) для системных email'ов:
+	// forgot-password / invites / нотификации оператору. Singleton в public.
+	operatorSMTPAPI := api.NewOperatorSMTPAPI(database.DB)
+	operatorSMTPAPI.RegisterRoutes(controlGroup)
 	log.Println("✅ Control-plane (operator) контур включён: /api/control/*")
 
 	// === WEBSOCKET С АВТОРИЗАЦИЕЙ ===

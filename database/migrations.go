@@ -283,6 +283,12 @@ func GetAllMigrations() []MigrationInfo {
 			IsGlobal:    true,
 		},
 		{
+			TableName:   "operator_smtp_config",
+			Model:       &models.OperatorSMTPConfig{},
+			Description: "Глобальный SMTP-конфиг ACRM-платформы (control-plane, singleton)",
+			IsGlobal:    true,
+		},
+		{
 			TableName:   "notification_settings",
 			Model:       &models.NotificationSettings{},
 			Description: "Настройки уведомлений компаний (Email, Telegram, MAX)",
