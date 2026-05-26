@@ -509,6 +509,79 @@ func (h *AccountsHandler) ToggleAccountStatus(c *gin.Context) {
 	c.Data(statusCode, "application/json", respBody)
 }
 
+// PatchAccount — proxy PATCH /api/cms/accounts/:id в Axenta Cloud (через
+// server-токен компании). Используется FE для частичных правок снимка
+// (clearBlockingDatetime, name, comment и т.п.) — раньше FE ходил напрямую
+// в axenta.cloud, после AUTH_MODE=local cutover это 401.
+//
+// Body: произвольный JSON (передаём как есть). Axenta вернёт обновлённый
+// объект. После успеха триггерим SnapshotInvalidator чтоб snapshot не
+// отставал.
+func (h *AccountsHandler) PatchAccount(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "ID не указан"})
+		return
+	}
+
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Failed to read request body: " + err.Error()})
+		return
+	}
+
+	axToken, ok := axentaServerTokenFor(c)
+	if !ok {
+		return
+	}
+
+	axentaURL := fmt.Sprintf("https://axenta.cloud/api/cms/accounts/%s/", id)
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	doReq := func(tk string) (int, []byte, error) {
+		httpReq, e := http.NewRequest("PATCH", axentaURL, bytes.NewBuffer(body))
+		if e != nil {
+			return 0, nil, e
+		}
+		httpReq.Header.Set("Authorization", "Token "+tk)
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Accept", "application/json")
+		rsp, e := client.Do(httpReq)
+		if e != nil {
+			return 0, nil, e
+		}
+		defer rsp.Body.Close()
+		b, e := io.ReadAll(rsp.Body)
+		return rsp.StatusCode, b, e
+	}
+
+	statusCode, respBody, err := doReq(axToken)
+	if err != nil {
+		axentaMutationUnavailable(c, err)
+		return
+	}
+	if isAxentaAuthError(statusCode) {
+		invalidateAxentaServerToken(c)
+		tk2, ok2 := axentaServerTokenFor(c)
+		if !ok2 {
+			return
+		}
+		statusCode, respBody, err = doReq(tk2)
+		if err != nil {
+			axentaMutationUnavailable(c, err)
+			return
+		}
+	}
+
+	if statusCode < 400 {
+		if adminID := middleware.GetTrustedAdminAccountID(c); adminID > 0 {
+			services.GetSnapshotInvalidator().Invalidate(adminID, "account.patch")
+		}
+	}
+
+	c.Data(statusCode, "application/json", respBody)
+}
+
 // RefreshSingleAccount — manual точечный refresh учётки по ID. Полезно когда
 // пользователь поменял статус в Axenta CMS снаружи и хочет увидеть актуальные
 // данные в ACRM не дожидаясь cron (10 мин).

@@ -844,6 +844,9 @@ func main() {
 	cmsGroup.POST("/accounts/change_account", accountsHandler.MoveAccount)
 	// Toggle activate/deactivate — proxy в Axenta + триггер SnapshotInvalidator
 	cmsGroup.POST("/accounts/:id/activate", accountsHandler.ToggleAccountStatus)
+	// PATCH /api/cms/accounts/:id — proxy в Axenta (clearBlockingDatetime, edits)
+	cmsGroup.PATCH("/accounts/:id", accountsHandler.PatchAccount)
+	cmsGroup.PATCH("/accounts/:id/", accountsHandler.PatchAccount)
 	log.Println("✅ CMS endpoints registered without Axenta authentication")
 
 	// Notification admin API (templates, test send, logs, stats)
