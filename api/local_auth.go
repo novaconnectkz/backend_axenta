@@ -1,6 +1,7 @@
 package api
 
 import (
+	"backend_axenta/audit"
 	"backend_axenta/middleware"
 	"backend_axenta/models"
 	"backend_axenta/services"
@@ -125,6 +126,27 @@ type RegisterRequest struct {
 	// юзера в чужом tenant). Берётся из JWT создателя.
 	CompanyID string `json:"company_id"`
 	Role      string `json:"role" binding:"required"`
+}
+
+// localUserAudit — пишет событие в audit_logs. action: 'local_user.<event>'.
+// target_user_id + target_username в details чтобы UI мог фильтровать
+// по конкретному юзеру (GET /local/users/:id/history).
+func localUserAudit(c *gin.Context, action string, targetID uint, targetUsername string, success bool, details map[string]interface{}) {
+	if details == nil {
+		details = map[string]interface{}{}
+	}
+	details["target_user_id"] = targetID
+	details["target_username"] = targetUsername
+	full := "local_user." + action
+	if c != nil {
+		if success {
+			audit.LogSuccess(c, full, details)
+		} else {
+			audit.LogFromContext(c, full, details)
+		}
+	} else {
+		audit.Log("", full, details)
+	}
 }
 
 // generateTempPassword — крипто-стойкий временный пароль (12 символов,
@@ -404,6 +426,11 @@ func (api *LocalAuthAPI) RegisterLocalUser(c *gin.Context) {
 		return
 	}
 
+	localUserAudit(c, "created", user.ID, user.Username, true, map[string]interface{}{
+		"role":  req.Role,
+		"email": req.Email,
+	})
+
 	// Шлём welcome email с креденшалами. Если SMTP не настроен или письмо
 	// не ушло — пользователь создан, но в response пишем emailed=false,
 	// чтобы админ увидел проблему и мог переотправить через UI.
@@ -413,6 +440,14 @@ func (api *LocalAuthAPI) RegisterLocalUser(c *gin.Context) {
 		emailed = false
 		emailErr = smtpErr.Error()
 		log.Printf("⚠️ welcome email failed for %s: %v", req.Username, smtpErr)
+		localUserAudit(c, "welcome_email_failed", user.ID, user.Username, false, map[string]interface{}{
+			"email": req.Email,
+			"error": emailErr,
+		})
+	} else {
+		localUserAudit(c, "welcome_email_sent", user.ID, user.Username, true, map[string]interface{}{
+			"email": req.Email,
+		})
 	}
 
 	logLocalAuthOperation("user_registered", req.Username, itoa(user.ID), req.CompanyID, map[string]interface{}{
@@ -535,6 +570,9 @@ func (api *LocalAuthAPI) DeleteLocalUser(c *gin.Context) {
 		return
 	}
 
+	localUserAudit(c, "deleted", target.ID, target.Username, true, map[string]interface{}{
+		"role": target.Role,
+	})
 	logLocalAuthOperation("user_deleted", target.Username, itoa(target.ID), callerCompany, map[string]interface{}{
 		"status": "success", "deleted_by": itoa(callerID),
 	})
@@ -625,8 +663,12 @@ func (api *LocalAuthAPI) UpdateLocalUser(c *gin.Context) {
 		return
 	}
 
+	updatedFields := keys(updates)
+	localUserAudit(c, "updated", target.ID, target.Username, true, map[string]interface{}{
+		"fields": updatedFields,
+	})
 	logLocalAuthOperation("user_updated", target.Username, itoa(target.ID), callerCompany, map[string]interface{}{
-		"status": "success", "updated_by": itoa(callerID), "fields": fmt.Sprintf("%v", keys(updates)),
+		"status": "success", "updated_by": itoa(callerID), "fields": fmt.Sprintf("%v", updatedFields),
 	})
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": target.ToPublicUser()})
 }
@@ -638,6 +680,42 @@ func keys(m map[string]interface{}) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// GetLocalUserHistory — таймлайн событий по конкретному local-юзеру.
+// Берётся из общей таблицы audit_logs где action LIKE 'local_user.%'
+// AND details->>'target_user_id' = :id. admin+superadmin only.
+func (api *LocalAuthAPI) GetLocalUserHistory(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil || id == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Неверный ID"})
+		return
+	}
+
+	callerCompany, ok := middleware.GetCurrentCompanyID(c)
+	if !ok || callerCompany == "" {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "Компания не определена"})
+		return
+	}
+
+	publicDB := api.getPublicDB()
+	// Проверка существования юзера + cross-tenant защита.
+	var target models.LocalUser
+	if err := publicDB.Where("id = ? AND company_id = ?", id, callerCompany).First(&target).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "Пользователь не найден"})
+		return
+	}
+
+	var rows []audit.AuditLog
+	// PostgreSQL JSONB: details::jsonb->>'target_user_id' дает строку.
+	if err := publicDB.Where("action LIKE ? AND (details::jsonb->>'target_user_id')::int = ?", "local_user.%", id).
+		Order("timestamp DESC").Limit(200).Find(&rows).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "Ошибка чтения истории"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": rows})
 }
 
 // ResetLocalUserPasswordRequest — тело POST /local/users/:id/reset-password.
@@ -688,6 +766,9 @@ func (api *LocalAuthAPI) ResetLocalUserPassword(c *gin.Context) {
 	// Все refresh-токены тоже выкидываем.
 	publicDB.Exec("DELETE FROM public.refresh_tokens WHERE user_id = ?", target.ID)
 
+	localUserAudit(c, "password_reset_by_admin", target.ID, target.Username, true, map[string]interface{}{
+		"reset_by_id": callerID,
+	})
 	logLocalAuthOperation("password_reset", target.Username, itoa(target.ID), callerCompany, map[string]interface{}{
 		"status": "success", "reset_by": itoa(callerID),
 	})
@@ -744,6 +825,7 @@ func (api *LocalAuthAPI) ChangePassword(c *gin.Context) {
 	// Очищаем refresh-токены — все сессии этого юзера умирают.
 	publicDB.Exec("DELETE FROM public.refresh_tokens WHERE user_id = ?", user.ID)
 
+	localUserAudit(c, "password_changed", user.ID, user.Username, true, nil)
 	logLocalAuthOperation("password_changed", user.Username, itoa(user.ID), user.CompanyID, map[string]interface{}{
 		"status": "success",
 	})
@@ -807,8 +889,20 @@ func (api *LocalAuthAPI) ForgotPassword(c *gin.Context) {
 <p style="color:#888;font-size:12px">Если вы не запрашивали сброс — проигнорируйте письмо.</p>
 </body></html>`, escapeHTML(user.Name), escapeHTML(user.Username), resetURL, resetURL)
 
+		emailedOk := true
+		emailErr := ""
 		if smtpErr := SendSystemEmail(publicDB, user.Email, subject, body); smtpErr != nil {
+			emailedOk = false
+			emailErr = smtpErr.Error()
 			log.Printf("⚠️ forgot-password: email send failed for %s: %v", user.Email, smtpErr)
+		}
+
+		auditDetails := map[string]interface{}{"email": user.Email}
+		if !emailedOk {
+			auditDetails["error"] = emailErr
+			localUserAudit(c, "reset_email_failed", user.ID, user.Username, false, auditDetails)
+		} else {
+			localUserAudit(c, "reset_requested", user.ID, user.Username, true, auditDetails)
 		}
 
 		logLocalAuthOperation("password_reset_requested", user.Username, itoa(user.ID), user.CompanyID, map[string]interface{}{
@@ -879,6 +973,7 @@ func (api *LocalAuthAPI) ResetPasswordByToken(c *gin.Context) {
 	rec.UsedAt = &now
 	publicDB.Save(&rec)
 
+	localUserAudit(c, "reset_completed", user.ID, user.Username, true, nil)
 	logLocalAuthOperation("password_reset_completed", user.Username, itoa(user.ID), user.CompanyID, map[string]interface{}{
 		"status": "success",
 	})
@@ -912,6 +1007,7 @@ func (api *LocalAuthAPI) RegisterRoutes(router *gin.RouterGroup) {
 		{
 			adminOnly.POST("/local/register", api.RegisterLocalUser)
 			adminOnly.GET("/local/users", api.ListLocalUsers)
+			adminOnly.GET("/local/users/:id/history", api.GetLocalUserHistory)
 			// Edit разрешён admin+superadmin (но изменить можно только
 			// email/name/is_active; роль/username/company_id — иммутабельны).
 			adminOnly.PATCH("/local/users/:id", api.UpdateLocalUser)
