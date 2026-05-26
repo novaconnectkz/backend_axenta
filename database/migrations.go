@@ -4,13 +4,20 @@ import (
 	"fmt"
 	"log"
 	"reflect"
+	"regexp"
 	"strings"
 	"time"
 
 	"backend_axenta/models"
 
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 )
+
+// tenantSchemaNameRegex — строгая валидация имени tenant-схемы.
+// Применяется ОДИНАКОВО к companies.database_schema и к именам из
+// information_schema, чтобы исключить SQL-injection в SET search_path.
+var tenantSchemaNameRegex = regexp.MustCompile(`^tenant_[a-zA-Z0-9_]+$`)
 
 // MigrationInfo содержит информацию о миграции
 type MigrationInfo struct {
@@ -952,23 +959,86 @@ func RunAllMigrations(globalOnly bool) error {
 	// Выполняем тенантные миграции для всех компаний
 	log.Println("📋 Выполняем миграции тенантных таблиц")
 
+	// Собираем целевые схемы из ДВУХ источников, чтобы исключить schema-drift:
+	//   1) companies (active) — основной путь
+	//   2) information_schema.schemata WHERE schema_name LIKE 'tenant_%' —
+	//      физически существующие tenant-схемы (включая tenant_default и
+	//      схемы неактивных компаний). Без этого расширения routing-фикс в
+	//      Login + любые новые добавления колонок будут накапливать drift,
+	//      см. инцидент 2026-05-26.
+	type targetSchema struct {
+		Name   string // имя схемы (например, tenant_186 или tenant_default)
+		Label  string // удобочитаемая метка для логов
+		Source string // "company" / "physical"
+	}
+
+	targets := make([]targetSchema, 0, 32)
+	seen := make(map[string]bool, 32)
+
 	var companies []models.Company
-	err := DB.Find(&companies).Error
-	if err != nil {
+	if err := DB.Find(&companies).Error; err != nil {
 		log.Printf("⚠️ Не удалось получить список компаний: %v", err)
-		log.Println("Пропускаем тенантные миграции")
 	} else {
 		for _, company := range companies {
 			if !company.IsActive {
 				continue
 			}
+			if company.DatabaseSchema == "" || seen[company.DatabaseSchema] {
+				continue
+			}
+			// Та же строгая валидация что и для physical — companies.database_schema
+			// может содержать что угодно если кто-то правил БД вручную.
+			if !tenantSchemaNameRegex.MatchString(company.DatabaseSchema) {
+				log.Printf("⚠️ Пропускаем company.database_schema=%q (не проходит tenant_%%-валидацию)", company.DatabaseSchema)
+				continue
+			}
+			seen[company.DatabaseSchema] = true
+			targets = append(targets, targetSchema{
+				Name:   company.DatabaseSchema,
+				Label:  fmt.Sprintf("компании %s", company.Name),
+				Source: "company",
+			})
+		}
+	}
 
-			log.Printf("🏢 Выполняем миграции для компании: %s (схема: %s)", company.Name, company.DatabaseSchema)
+	// Подбираем остальные физические tenant_% схемы (default + неактивные).
+	var physical []string
+	if err := DB.Raw(`
+		SELECT schema_name
+		FROM information_schema.schemata
+		WHERE schema_name LIKE 'tenant_%'
+		  AND schema_name ~ '^tenant_[a-zA-Z0-9_]+$'
+		ORDER BY schema_name
+	`).Scan(&physical).Error; err != nil {
+		log.Printf("⚠️ Не удалось получить список tenant_%% схем: %v", err)
+	} else {
+		for _, schema := range physical {
+			if seen[schema] {
+				continue
+			}
+			seen[schema] = true
+			targets = append(targets, targetSchema{
+				Name:   schema,
+				Label:  fmt.Sprintf("схемы %s (без записи в companies)", schema),
+				Source: "physical",
+			})
+		}
+	}
 
-			// Переключаемся на схему компании
-			tenantDB := DB.Exec(fmt.Sprintf("SET search_path TO %s", company.DatabaseSchema))
+	if len(targets) == 0 {
+		log.Println("ℹ️ Нет tenant-схем для миграции")
+	} else {
+		log.Printf("📋 Tenant-схем для миграции: %d (из companies + physical)", len(targets))
+		for _, target := range targets {
+			log.Printf("🏢 Выполняем миграции для %s (схема: %s, источник: %s)", target.Label, target.Name, target.Source)
+
+			// Имя схемы прошло regex-валидацию выше (оба источника).
+			// pq.QuoteIdentifier — корректное Postgres identifier quoting
+			// (двойные кавычки, удвоение внутренних — на случай если regex
+			// когда-то ослабят).
+			tenantDB := DB.Exec("SET search_path TO " + pq.QuoteIdentifier(target.Name))
 			if tenantDB.Error != nil {
-				log.Printf("❌ Ошибка переключения на схему %s: %v", company.DatabaseSchema, tenantDB.Error)
+				log.Printf("❌ Ошибка переключения на схему %s: %v", target.Name, tenantDB.Error)
 				continue
 			}
 
@@ -979,7 +1049,7 @@ func RunAllMigrations(globalOnly bool) error {
 					results = append(results, result)
 
 					if result.Error != nil {
-						log.Printf("❌ Ошибка миграции %s для компании %s: %v", migration.TableName, company.Name, result.Error)
+						log.Printf("❌ Ошибка миграции %s для %s: %v", migration.TableName, target.Label, result.Error)
 						// Продолжаем с другими таблицами
 					}
 				}

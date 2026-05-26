@@ -308,6 +308,14 @@ func Login(c *gin.Context) {
 		return
 	}
 
+	// userDB — БД для tenant-таблиц (users, user_tokens, roles). Резолвится
+	// только когда tenant-схема найдена ДОСТОВЕРНО (company.ID известна
+	// и GetTenantDBByID вернул не глобальный fallback). Иначе остаёмся в
+	// no-persist режиме — Sync/Save в public НЕ делаем (источник schema-drift,
+	// см. инцидент 2026-05-26).
+	var userDB *gorm.DB
+	var resolvedCompanyID string
+
 	if axentaUser.AccountID > 0 {
 		company, created, ensureErr := ensureCompanyExists(db, axentaUser, req.Username)
 		if ensureErr != nil {
@@ -322,20 +330,54 @@ func Login(c *gin.Context) {
 			if created {
 				event = "company_created"
 			}
-			logAuthOperation(event, req.Username, "", fmt.Sprintf("%d", company.ID), map[string]interface{}{
+			resolvedCompanyID = fmt.Sprintf("%d", company.ID)
+			logAuthOperation(event, req.Username, "", resolvedCompanyID, map[string]interface{}{
 				"status":       "success",
 				"account_id":   axentaUser.AccountID,
 				"account_name": axentaUser.AccountName,
 				"schema":       company.DatabaseSchema,
 			})
+
+			// Резолвим tenant-DB. GetTenantDBByID возвращает глобальный DB как
+			// fallback при ошибке → проверяем pointer-identity. Без достоверного
+			// tenantDB остаёмся в no-persist режиме (Codex review 2026-05-26).
+			if tenantDB := database.GetTenantDBByID(company.ID); tenantDB != nil && tenantDB != db {
+				userDB = tenantDB
+			} else {
+				log.Printf("⚠️ Routing: tenantDB для company=%d не получен, login в no-persist режиме", company.ID)
+			}
 		}
 	}
 
-	// Создаем сервис для работы с пользователями Axenta
-	axentaUserService := services.NewAxentaUserService(db)
+	// Если tenant-DB достоверно не получен — отдаём fallback-пользователя из
+	// данных Axenta без обращения к БД (никаких записей в public). Это путь:
+	//   - AccountID == 0 (Axenta-пользователь без аккаунта)
+	//   - ensureCompanyExists вернул error
+	//   - GetTenantDBByID вернул fallback (схемы нет)
+	if userDB == nil {
+		fallbackUser := buildAxentaFallbackUser(axentaUser)
+		logAuthOperation("login_success_fallback_no_tenant", req.Username, fmt.Sprintf("%d", axentaUser.ID), resolvedCompanyID, map[string]interface{}{
+			"status":        "success",
+			"fallback_mode": true,
+			"reason":        "tenant_db_unavailable",
+			"account_type":  axentaUser.AccountType,
+			"account_id":    axentaUser.AccountID,
+		})
+		c.JSON(200, gin.H{
+			"status": "success",
+			"data": gin.H{
+				"token": axentaLogin.Token,
+				"user":  fallbackUser,
+			},
+		})
+		return
+	}
 
-	// Создаем сервис для работы с токенами пользователей
-	userTokenService := services.NewUserTokenService(db)
+	// Создаем сервис для работы с пользователями Axenta (на tenant-схеме)
+	axentaUserService := services.NewAxentaUserService(userDB)
+
+	// Создаем сервис для работы с токенами пользователей (на tenant-схеме)
+	userTokenService := services.NewUserTokenService(userDB)
 
 	// Убеждаемся, что роли по умолчанию существуют
 	if err := axentaUserService.EnsureDefaultRoles(); err != nil {
@@ -346,7 +388,7 @@ func Login(c *gin.Context) {
 	user, err := axentaUserService.SyncUserWithAxenta(axentaLogin.Token, req.Username)
 	if err != nil {
 		userIDStr := fmt.Sprintf("%d", axentaUser.ID)
-		logAuthOperation("user_sync_error", req.Username, userIDStr, "", map[string]interface{}{
+		logAuthOperation("user_sync_error", req.Username, userIDStr, resolvedCompanyID, map[string]interface{}{
 			"status":       "error",
 			"account_type": axentaUser.AccountType,
 			"error":        err.Error(),
@@ -373,14 +415,14 @@ func Login(c *gin.Context) {
 		// Пытаемся назначить роль, если возможно
 		if roleID, roleErr := axentaUserService.GetRoleIDForAxentaUserType(axentaUser.AccountType); roleErr == nil {
 			user.RoleID = &roleID
-			// Пытаемся загрузить роль для отображения
+			// Пытаемся загрузить роль для отображения (из той же tenant-схемы, что и сервис)
 			var role models.Role
-			if db.First(&role, roleID).Error == nil {
+			if userDB.First(&role, roleID).Error == nil {
 				user.Role = &role
 			}
 		}
 
-		logAuthOperation("login_success_fallback_sync", req.Username, userIDStr, "", map[string]interface{}{
+		logAuthOperation("login_success_fallback_sync", req.Username, userIDStr, resolvedCompanyID, map[string]interface{}{
 			"status":           "success",
 			"fallback_mode":    true,
 			"reason":           "user_sync_failed",
@@ -409,7 +451,7 @@ func Login(c *gin.Context) {
 
 	// Успешное получение данных пользователя
 	userIDStr := fmt.Sprintf("%d", user.ID)
-	logAuthOperation("login_success_full", req.Username, userIDStr, "", map[string]interface{}{
+	logAuthOperation("login_success_full", req.Username, userIDStr, resolvedCompanyID, map[string]interface{}{
 		"status":           "success",
 		"account_type":     axentaUser.AccountType,
 		"account_name":     axentaUser.AccountName,
@@ -554,6 +596,32 @@ func createFallbackUser(username string) gin.H {
 		"creatorName":             "Unknown",
 		"lastLogin":               time.Now().Format(time.RFC3339),
 		"accountBlockingDatetime": "",
+		"company_id":              "",
+	}
+}
+
+// buildAxentaFallbackUser — Axenta-данные → user-response без БД-записи.
+// Используется когда tenant-схема недоступна и tenant-таблицы (users,
+// user_tokens) трогать нельзя (иначе drift в public). Token из Axenta
+// фронт всё равно получает — обращения в Axenta Cloud работают.
+func buildAxentaFallbackUser(axentaUser AxentaUserResponse) gin.H {
+	return gin.H{
+		"id":                      fmt.Sprintf("%d", axentaUser.ID),
+		"username":                axentaUser.Username,
+		"name":                    axentaUser.Name,
+		"email":                   axentaUser.Email,
+		"accountName":             axentaUser.AccountName,
+		"accountType":             axentaUser.AccountType,
+		"accountId":               axentaUser.AccountID,
+		"creatorName":             axentaUser.CreatorName,
+		"isActive":                axentaUser.IsActive,
+		"isAdmin":                 axentaUser.IsAdmin,
+		"lastLogin":               axentaUser.LastLogin,
+		"accountBlockingDatetime": axentaUser.AccountBlockingDatetime,
+		"isAxentaUser":            true,
+		"externalSource":          "axenta",
+		"externalID":              fmt.Sprintf("%d", axentaUser.ID),
+		"fallback_mode":           true,
 		"company_id":              "",
 	}
 }
