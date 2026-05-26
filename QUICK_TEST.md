@@ -45,7 +45,7 @@
 ## 🔐 Основные данные
 
 **Продакшен:**
-- SSH: `ssh -i id_rsa.key root@194.87.143.169`
+- SSH: `ssh axenta-production`
 - API: `https://api.acrm.su`
 - Frontend: `https://acrm.su`
 
@@ -62,7 +62,7 @@
 
 ### 1. Проверить статус сервера
 ```bash
-ssh -i id_rsa.key root@194.87.143.169 "cd /var/www/app/backend_axenta && ps aux | grep 'go run main.go' | grep -v grep"
+ssh axenta-production "cd /var/www/app/backend_axenta && ps aux | grep 'go run main.go' | grep -v grep"
 ```
 
 ### 2. Тест авторизации
@@ -108,24 +108,24 @@ curl -X GET https://api.acrm.su/api/drivers/ \
 
 ### 7. Проверить результат
 ```bash
-ssh -i id_rsa.key root@194.87.143.169 "sudo -u postgres psql -d axenta_db -c \"SET search_path TO tenant_default; SELECT id, name, username, email FROM users ORDER BY created_at DESC LIMIT 3;\""
+ssh axenta-production "sudo -u postgres psql -d axenta_db -c \"SET search_path TO tenant_default; SELECT id, name, username, email FROM users ORDER BY created_at DESC LIMIT 3;\""
 ```
 
 ## 🚨 Быстрые исправления
 
 ### Очистить токены
 ```bash
-ssh -i id_rsa.key root@194.87.143.169 "sudo -u postgres psql -d axenta_db -c \"DELETE FROM user_tokens; ALTER SEQUENCE user_tokens_id_seq RESTART WITH 1;\""
+ssh axenta-production "sudo -u postgres psql -d axenta_db -c \"DELETE FROM user_tokens; ALTER SEQUENCE user_tokens_id_seq RESTART WITH 1;\""
 ```
 
 ### Перезапустить сервер
 ```bash
-ssh -i id_rsa.key root@194.87.143.169 "cd /var/www/app/backend_axenta && pkill -f 'go run main.go' && sleep 2 && nohup go run main.go > server.log 2>&1 &"
+ssh axenta-production "cd /var/www/app/backend_axenta && pkill -f 'go run main.go' && sleep 2 && nohup go run main.go > server.log 2>&1 &"
 ```
 
 ### Проверить логи
 ```bash
-ssh -i id_rsa.key root@194.87.143.169 "cd /var/www/app/backend_axenta && tail -20 server.log"
+ssh axenta-production "cd /var/www/app/backend_axenta && tail -20 server.log"
 ```
 
 ## 🏠 Локальное тестирование

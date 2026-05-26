@@ -104,3 +104,4 @@ coverage.html
 
 # Deployment archives
 axenta_deploy_*.tar.gz
+id_rsa.key
