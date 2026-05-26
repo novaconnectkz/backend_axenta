@@ -194,6 +194,46 @@ func (api *OperatorSMTPAPI) Test(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{"sent_to": req.To}})
 }
 
+// LoadOperatorSMTP — публичный helper: читает singleton + дешифрует
+// пароль. Используется системными email-flows (welcome / forgot-password
+// reset / invites).
+//
+// Если конфиг ещё не задан (host пуст) — возвращает ошибку "SMTP не настроен".
+func LoadOperatorSMTP(db *gorm.DB) (*models.OperatorSMTPConfig, string, error) {
+	var cfg models.OperatorSMTPConfig
+	if err := db.Where("singleton = ?", true).First(&cfg).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, "", fmt.Errorf("SMTP не настроен — задайте конфиг в /control-plane/SMTP")
+		}
+		return nil, "", err
+	}
+	if cfg.Host == "" || cfg.FromEmail == "" {
+		return nil, "", fmt.Errorf("SMTP не настроен (пустой host или from_email)")
+	}
+	password := ""
+	if cfg.PasswordEnc != "" {
+		p, derr := utils.DecryptString(cfg.PasswordEnc)
+		if derr != nil {
+			return nil, "", fmt.Errorf("дешифрование SMTP-пароля: %w", derr)
+		}
+		password = p
+	}
+	return &cfg, password, nil
+}
+
+// SendSystemEmail — public-helper для системных email'ов (welcome,
+// reset-password, invite). Дёргает SMTP-config из БД и шлёт. Кейсы пустого
+// конфига логируются и возвращают ошибку — caller решает что делать
+// (например, register может игнорировать ошибку отправки и не блокировать
+// создание юзера).
+func SendSystemEmail(db *gorm.DB, to, subject, htmlBody string) error {
+	cfg, password, err := LoadOperatorSMTP(db)
+	if err != nil {
+		return err
+	}
+	return sendOperatorSMTP(cfg, password, to, subject, htmlBody)
+}
+
 // sendOperatorSMTP — низкоуровневая отправка через текущий
 // OperatorSMTPConfig. Зеркало services/notification_email.go но
 // принимает operator-конфиг и расшифрованный пароль.

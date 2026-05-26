@@ -5,7 +5,9 @@ import (
 	"backend_axenta/models"
 	"backend_axenta/services"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -111,16 +113,34 @@ type LocalLoginRequest struct {
 	Password string `json:"password" binding:"required,min=3,max=128"`
 }
 
-// RegisterRequest структура запроса для регистрации (legacy admin endpoint)
+// RegisterRequest структура запроса для регистрации (admin endpoint).
+// Password больше НЕ принимается — BE генерит автоматически и шлёт юзеру
+// email с креденшалами (см. RegisterLocalUser). Юзер сам меняет пароль
+// через change-password endpoint после первого входа.
 type RegisterRequest struct {
 	Username string `json:"username" binding:"required,min=3,max=64"`
-	Password string `json:"password" binding:"required,min=10,max=128"`
 	Email    string `json:"email" binding:"required,email"`
 	Name     string `json:"name" binding:"required,min=1,max=255"`
 	// CompanyID из тела ИГНОРИРУЕТСЯ (риск BLK3: иначе admin создал бы
 	// юзера в чужом tenant). Берётся из JWT создателя.
 	CompanyID string `json:"company_id"`
 	Role      string `json:"role" binding:"required"`
+}
+
+// generateTempPassword — крипто-стойкий временный пароль (12 символов,
+// a-zA-Z0-9). Длины достаточно для anti-bruteforce + ограничения 10+
+// модели LocalUser.
+func generateTempPassword() (string, error) {
+	const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	buf := make([]byte, 12)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	out := make([]byte, len(buf))
+	for i, b := range buf {
+		out[i] = alphabet[int(b)%len(alphabet)]
+	}
+	return string(out), nil
 }
 
 func logLocalAuthOperation(operation, username, userID, companyID string, details map[string]interface{}) {
@@ -359,6 +379,13 @@ func (api *LocalAuthAPI) RegisterLocalUser(c *gin.Context) {
 		return
 	}
 
+	// Генерируем временный пароль (юзер сменит через change-password).
+	tempPassword, err := generateTempPassword()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "Ошибка генерации пароля"})
+		return
+	}
+
 	user := models.LocalUser{
 		Username:     req.Username,
 		Email:        req.Email,
@@ -368,7 +395,7 @@ func (api *LocalAuthAPI) RegisterLocalUser(c *gin.Context) {
 		IsActive:     true,
 		TokenVersion: 1,
 	}
-	if err := user.SetPassword(req.Password); err != nil {
+	if err := user.SetPassword(tempPassword); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "Ошибка хеширования пароля"})
 		return
 	}
@@ -377,10 +404,63 @@ func (api *LocalAuthAPI) RegisterLocalUser(c *gin.Context) {
 		return
 	}
 
+	// Шлём welcome email с креденшалами. Если SMTP не настроен или письмо
+	// не ушло — пользователь создан, но в response пишем emailed=false,
+	// чтобы админ увидел проблему и мог переотправить через UI.
+	emailed := true
+	emailErr := ""
+	if smtpErr := sendWelcomeEmail(publicDB, req.Email, req.Name, req.Username, tempPassword); smtpErr != nil {
+		emailed = false
+		emailErr = smtpErr.Error()
+		log.Printf("⚠️ welcome email failed for %s: %v", req.Username, smtpErr)
+	}
+
 	logLocalAuthOperation("user_registered", req.Username, itoa(user.ID), req.CompanyID, map[string]interface{}{
-		"status": "success", "role": req.Role,
+		"status": "success", "role": req.Role, "emailed": emailed,
 	})
-	c.JSON(http.StatusCreated, gin.H{"status": "success", "data": user.ToPublicUser()})
+	resp := gin.H{
+		"status":  "success",
+		"data":    user.ToPublicUser(),
+		"emailed": emailed,
+	}
+	if !emailed {
+		resp["email_error"] = emailErr
+	}
+	c.JSON(http.StatusCreated, resp)
+}
+
+// sendWelcomeEmail — отправляет приветственное письмо с креденшалами
+// новому local-user'у через operator-SMTP. caller — RegisterLocalUser.
+func sendWelcomeEmail(db *gorm.DB, to, name, username, tempPassword string) error {
+	subject := "Добро пожаловать в ACRM — данные для входа"
+	body := fmt.Sprintf(`<html><body style="font-family:-apple-system,Segoe UI,sans-serif;color:#222">
+<h2>Добро пожаловать в ACRM</h2>
+<p>Здравствуйте, %s!</p>
+<p>Для вас создана учётная запись в системе. Данные для входа:</p>
+<table style="border-collapse:collapse;margin:16px 0">
+  <tr><td style="padding:6px 14px 6px 0"><b>Логин:</b></td><td><code style="background:#f5f5f7;padding:4px 8px;border-radius:4px">%s</code></td></tr>
+  <tr><td style="padding:6px 14px 6px 0"><b>Временный пароль:</b></td><td><code style="background:#f5f5f7;padding:4px 8px;border-radius:4px">%s</code></td></tr>
+</table>
+<p><a href="https://acrm.su/login" style="display:inline-block;background:#1f6feb;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none">Войти в ACRM</a></p>
+<p style="color:#555;font-size:14px">После входа смените пароль в разделе «Профиль» — это нужно для безопасности.</p>
+<hr style="border:none;border-top:1px solid #eee;margin:20px 0">
+<p style="color:#888;font-size:12px">Если вы не запрашивали учётную запись — проигнорируйте письмо.</p>
+</body></html>`, escapeHTML(name), escapeHTML(username), escapeHTML(tempPassword))
+
+	return SendSystemEmail(db, to, subject, body)
+}
+
+// escapeHTML — минимальный escape для HTML-вставки (логин/имя/пароль
+// в письме). Полный html/template overkill для одного шаблона.
+func escapeHTML(s string) string {
+	r := strings.NewReplacer(
+		"&", "&amp;",
+		"<", "&lt;",
+		">", "&gt;",
+		`"`, "&quot;",
+		"'", "&#39;",
+	)
+	return r.Replace(s)
 }
 
 // ListLocalUsers — список локальных пользователей текущей компании
@@ -614,6 +694,197 @@ func (api *LocalAuthAPI) ResetLocalUserPassword(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{"user_id": target.ID, "token_version": target.TokenVersion}})
 }
 
+// ChangePasswordRequest — тело POST /api/auth/change-password.
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password" binding:"required"`
+	NewPassword     string `json:"new_password" binding:"required,min=10,max=128"`
+}
+
+// ChangePassword — смена пароля авторизованным юзером. Требует current
+// для подтверждения, чтобы XSS-токен не мог перезаписать без знания
+// текущего пароля. Все JWT инвалидируются (token_version+1) — все сессии
+// кроме текущей (тоже мёртвая по факту, юзеру redirect на login).
+func (api *LocalAuthAPI) ChangePassword(c *gin.Context) {
+	userID, ok := middleware.GetCurrentUserID(c)
+	if !ok || userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": "Не авторизован"})
+		return
+	}
+
+	var req ChangePasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Новый пароль минимум 10 символов"})
+		return
+	}
+
+	publicDB := api.getPublicDB()
+	var user models.LocalUser
+	if err := publicDB.Where("id = ?", userID).First(&user).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "Пользователь не найден"})
+		return
+	}
+
+	if !user.CheckPassword(req.CurrentPassword) {
+		logLocalAuthOperation("change_password_bad_current", user.Username, itoa(user.ID), user.CompanyID, map[string]interface{}{
+			"status": "failed",
+		})
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "Неверный текущий пароль"})
+		return
+	}
+
+	if err := user.SetPassword(req.NewPassword); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "Ошибка хеширования"})
+		return
+	}
+	user.TokenVersion = user.TokenVersion + 1
+	if err := publicDB.Save(&user).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "Ошибка сохранения"})
+		return
+	}
+	// Очищаем refresh-токены — все сессии этого юзера умирают.
+	publicDB.Exec("DELETE FROM public.refresh_tokens WHERE user_id = ?", user.ID)
+
+	logLocalAuthOperation("password_changed", user.Username, itoa(user.ID), user.CompanyID, map[string]interface{}{
+		"status": "success",
+	})
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{"user_id": user.ID}})
+}
+
+// ForgotPasswordRequest — тело POST /api/auth/forgot-password.
+type ForgotPasswordRequest struct {
+	Email string `json:"email" binding:"required,email"`
+}
+
+// ForgotPassword — anti-enumeration: всегда 200, чтобы атакующий не
+// мог проверить какие email зарегистрированы. Если email найден —
+// создаём single-use токен (TTL 1 час) и шлём reset-ссылку. Иначе тихий
+// no-op.
+func (api *LocalAuthAPI) ForgotPassword(c *gin.Context) {
+	var req ForgotPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		// 200 даже на bad input — anti-enum
+		c.JSON(http.StatusOK, gin.H{"status": "success", "message": "Если email зарегистрирован — письмо отправлено"})
+		return
+	}
+
+	publicDB := api.getPublicDB()
+	var user models.LocalUser
+	err := publicDB.Where("LOWER(email) = LOWER(?)", strings.TrimSpace(req.Email)).First(&user).Error
+	if err == nil && user.IsActive {
+		// Генерим plaintext-токен (32 байт = 64 hex). В БД храним sha256-hex.
+		rawBytes := make([]byte, 32)
+		if _, rerr := rand.Read(rawBytes); rerr != nil {
+			// Без CSPRNG не делаем reset
+			log.Printf("⚠️ forgot-password: rand.Read failed: %v", rerr)
+			c.JSON(http.StatusOK, gin.H{"status": "success", "message": "Если email зарегистрирован — письмо отправлено"})
+			return
+		}
+		token := hex.EncodeToString(rawBytes)
+		sum := sha256.Sum256([]byte(token))
+		tokenHash := hex.EncodeToString(sum[:])
+
+		rec := models.LocalPasswordResetToken{
+			UserID:    user.ID,
+			TokenHash: tokenHash,
+			ExpiresAt: time.Now().Add(1 * time.Hour),
+		}
+		if cerr := publicDB.Create(&rec).Error; cerr != nil {
+			log.Printf("⚠️ forgot-password: db create token failed: %v", cerr)
+			c.JSON(http.StatusOK, gin.H{"status": "success", "message": "Если email зарегистрирован — письмо отправлено"})
+			return
+		}
+
+		// Шлём email со ссылкой. Best-effort: ошибка не блокирует ответ.
+		resetURL := fmt.Sprintf("https://acrm.su/reset-password/%s", token)
+		subject := "Сброс пароля ACRM"
+		body := fmt.Sprintf(`<html><body style="font-family:-apple-system,Segoe UI,sans-serif;color:#222">
+<h2>Сброс пароля</h2>
+<p>Здравствуйте, %s!</p>
+<p>Для сброса пароля учётной записи <code style="background:#f5f5f7;padding:2px 6px;border-radius:4px">%s</code> перейдите по ссылке (действует 1 час):</p>
+<p><a href="%s" style="display:inline-block;background:#1f6feb;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none">Установить новый пароль</a></p>
+<p style="color:#555;font-size:14px">Если ссылка не открывается — скопируйте в браузер:<br><code style="font-size:11px;color:#888">%s</code></p>
+<hr style="border:none;border-top:1px solid #eee;margin:20px 0">
+<p style="color:#888;font-size:12px">Если вы не запрашивали сброс — проигнорируйте письмо.</p>
+</body></html>`, escapeHTML(user.Name), escapeHTML(user.Username), resetURL, resetURL)
+
+		if smtpErr := SendSystemEmail(publicDB, user.Email, subject, body); smtpErr != nil {
+			log.Printf("⚠️ forgot-password: email send failed for %s: %v", user.Email, smtpErr)
+		}
+
+		logLocalAuthOperation("password_reset_requested", user.Username, itoa(user.ID), user.CompanyID, map[string]interface{}{
+			"status": "success",
+		})
+	}
+
+	// Всегда 200 — anti-enumeration.
+	c.JSON(http.StatusOK, gin.H{"status": "success", "message": "Если email зарегистрирован — письмо отправлено"})
+}
+
+// ResetByTokenRequest — тело POST /api/auth/reset-password-by-token.
+type ResetByTokenRequest struct {
+	Token       string `json:"token" binding:"required"`
+	NewPassword string `json:"new_password" binding:"required,min=10,max=128"`
+}
+
+// ResetPasswordByToken — финализация forgot-flow. Single-use токен;
+// после использования помечается used_at. Инвалидирует все JWT юзера
+// (token_version+1) + удаляет refresh_tokens.
+func (api *LocalAuthAPI) ResetPasswordByToken(c *gin.Context) {
+	var req ResetByTokenRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Новый пароль минимум 10 символов"})
+		return
+	}
+
+	sum := sha256.Sum256([]byte(req.Token))
+	tokenHash := hex.EncodeToString(sum[:])
+
+	publicDB := api.getPublicDB()
+	var rec models.LocalPasswordResetToken
+	if err := publicDB.Where("token_hash = ?", tokenHash).First(&rec).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Ссылка недействительна"})
+		return
+	}
+	if rec.UsedAt != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Ссылка уже использована"})
+		return
+	}
+	if time.Now().After(rec.ExpiresAt) {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Срок действия ссылки истёк"})
+		return
+	}
+
+	var user models.LocalUser
+	if err := publicDB.Where("id = ?", rec.UserID).First(&user).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "Пользователь не найден"})
+		return
+	}
+	if !user.IsActive {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "Учётная запись отключена"})
+		return
+	}
+
+	if err := user.SetPassword(req.NewPassword); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "Ошибка хеширования"})
+		return
+	}
+	user.TokenVersion = user.TokenVersion + 1
+	if err := publicDB.Save(&user).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "Ошибка сохранения"})
+		return
+	}
+	publicDB.Exec("DELETE FROM public.refresh_tokens WHERE user_id = ?", user.ID)
+
+	now := time.Now()
+	rec.UsedAt = &now
+	publicDB.Save(&rec)
+
+	logLocalAuthOperation("password_reset_completed", user.Username, itoa(user.ID), user.CompanyID, map[string]interface{}{
+		"status": "success",
+	})
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{"user_id": user.ID}})
+}
+
 // RegisterRoutes регистрирует /local/* (публичные login/refresh/logout +
 // защищённые). Главные алиасы /api/auth/{login,refresh,logout} навешивает
 // main.go в cutover (Task #6).
@@ -622,11 +893,19 @@ func (api *LocalAuthAPI) RegisterRoutes(router *gin.RouterGroup) {
 	router.POST("/local/refresh", api.RefreshToken)
 	router.POST("/local/logout", api.LocalLogout)
 
+	// Публичные endpoints для забытого пароля. anti-enumeration в
+	// ForgotPassword (всегда 200). Rate-limit добавляется middleware на
+	// main.go-уровне (см. там).
+	router.POST("/local/forgot-password", api.ForgotPassword)
+	router.POST("/local/reset-password-by-token", api.ResetPasswordByToken)
+
 	authMiddleware := middleware.NewLocalAuthMiddleware(api.jwtService)
 	protected := router.Group("")
 	protected.Use(authMiddleware.RequireAuth())
 	{
 		protected.GET("/local/current_user", api.LocalCurrentUser)
+		// Юзер сам меняет свой пароль.
+		protected.POST("/local/change-password", api.ChangePassword)
 
 		adminOnly := protected.Group("")
 		adminOnly.Use(authMiddleware.RequireRole(models.RoleAdmin, models.RoleSuperadmin))

@@ -510,6 +510,10 @@ func main() {
 		// refresh/logout аутентифицируются cookie → нужен CSRF (риск B4).
 		r.POST("/api/auth/refresh", originGuard, middleware.CSRFDoubleSubmit(), middleware.StrictRateLimit(), localAuthAPI.RefreshToken)
 		r.POST("/api/auth/logout", originGuard, middleware.CSRFDoubleSubmit(), localAuthAPI.LocalLogout)
+		// Публичные password-recovery endpoints (anti-enum 200 + rate-limit
+		// чтобы не флудить почтовый сервер бесполезными письмами).
+		r.POST("/api/auth/forgot-password", originGuard, middleware.StrictRateLimit(), localAuthAPI.ForgotPassword)
+		r.POST("/api/auth/reset-password-by-token", originGuard, middleware.StrictRateLimit(), localAuthAPI.ResetPasswordByToken)
 		log.Println("✅ AUTH_MODE=local — локальная авторизация (Axenta отвязана от входа)")
 	}
 

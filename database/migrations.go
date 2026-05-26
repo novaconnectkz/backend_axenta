@@ -289,6 +289,12 @@ func GetAllMigrations() []MigrationInfo {
 			IsGlobal:    true,
 		},
 		{
+			TableName:   "local_password_reset_tokens",
+			Model:       &models.LocalPasswordResetToken{},
+			Description: "Single-use токены сброса пароля local-auth юзеров (TTL 1 час)",
+			IsGlobal:    true,
+		},
+		{
 			TableName:   "notification_settings",
 			Model:       &models.NotificationSettings{},
 			Description: "Настройки уведомлений компаний (Email, Telegram, MAX)",
