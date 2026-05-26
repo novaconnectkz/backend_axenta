@@ -8,10 +8,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -434,6 +436,14 @@ func (api *LocalAuthAPI) DeleteLocalUser(c *gin.Context) {
 		return
 	}
 
+	// Суперадмин неудалим — система гарантирует ровно одного (bootstrap
+	// singleton). Удаление = блокировка доступа без возможности
+	// восстановить. Edit/reset-password — допустимо.
+	if target.Role == models.RoleSuperadmin || target.IsSuperadmin {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "Суперадмина нельзя удалить (см. правило: 1 суперадмин, только редактирование)"})
+		return
+	}
+
 	// Cleanup refresh_tokens (cascade-aware). DELETE local_users — затем
 	// никаких orphan refresh-токенов не остаётся.
 	if err := publicDB.Exec("DELETE FROM public.refresh_tokens WHERE user_id = ?", target.ID).Error; err != nil {
@@ -449,6 +459,105 @@ func (api *LocalAuthAPI) DeleteLocalUser(c *gin.Context) {
 		"status": "success", "deleted_by": itoa(callerID),
 	})
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{"deleted_id": target.ID}})
+}
+
+// UpdateLocalUserRequest — частичный апдейт локального пользователя.
+// Меняем ТОЛЬКО безопасные поля: email/name/is_active. username/role/
+// company_id/password — отдельными endpoint-ами (reset-password) либо
+// неизменяемы (username/role/company — chain-of-trust из bootstrap).
+type UpdateLocalUserRequest struct {
+	Email    *string `json:"email"`
+	Name     *string `json:"name"`
+	IsActive *bool   `json:"is_active"`
+}
+
+// UpdateLocalUser — partial update локального пользователя
+// (admin+superadmin). superadmin может редактировать самого себя.
+// Деактивация superadmin запрещена (риск самоблокировки системы).
+func (api *LocalAuthAPI) UpdateLocalUser(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil || id == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Неверный ID"})
+		return
+	}
+
+	var req UpdateLocalUserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Неверный формат запроса"})
+		return
+	}
+
+	callerID, _ := middleware.GetCurrentUserID(c)
+	callerCompany, ok := middleware.GetCurrentCompanyID(c)
+	if !ok || callerCompany == "" {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "Компания не определена"})
+		return
+	}
+
+	publicDB := api.getPublicDB()
+	var target models.LocalUser
+	if err := publicDB.Where("id = ? AND company_id = ?", id, callerCompany).First(&target).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "Пользователь не найден"})
+		return
+	}
+
+	updates := map[string]interface{}{}
+	if req.Email != nil {
+		// Минимальная валидация: пустую строку или невалидный email отвергаем.
+		em := strings.TrimSpace(*req.Email)
+		if em == "" || !strings.Contains(em, "@") {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Невалидный email"})
+			return
+		}
+		updates["email"] = em
+	}
+	if req.Name != nil {
+		nm := strings.TrimSpace(*req.Name)
+		if nm == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Имя не может быть пустым"})
+			return
+		}
+		updates["name"] = nm
+	}
+	if req.IsActive != nil {
+		// superadmin'а нельзя деактивировать (риск самоблокировки системы).
+		if !*req.IsActive && (target.Role == models.RoleSuperadmin || target.IsSuperadmin) {
+			c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "Суперадмина нельзя деактивировать"})
+			return
+		}
+		updates["is_active"] = *req.IsActive
+	}
+
+	if len(updates) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Нет полей для обновления"})
+		return
+	}
+
+	if err := publicDB.Model(&target).Updates(updates).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "Ошибка обновления"})
+		return
+	}
+
+	// Перечитываем для актуального ToPublicUser
+	if err := publicDB.Where("id = ?", target.ID).First(&target).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "Ошибка чтения после обновления"})
+		return
+	}
+
+	logLocalAuthOperation("user_updated", target.Username, itoa(target.ID), callerCompany, map[string]interface{}{
+		"status": "success", "updated_by": itoa(callerID), "fields": fmt.Sprintf("%v", keys(updates)),
+	})
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": target.ToPublicUser()})
+}
+
+// keys возвращает ключи map (для логирования).
+func keys(m map[string]interface{}) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
 
 // ResetLocalUserPasswordRequest — тело POST /local/users/:id/reset-password.
@@ -524,10 +633,14 @@ func (api *LocalAuthAPI) RegisterRoutes(router *gin.RouterGroup) {
 		{
 			adminOnly.POST("/local/register", api.RegisterLocalUser)
 			adminOnly.GET("/local/users", api.ListLocalUsers)
+			// Edit разрешён admin+superadmin (но изменить можно только
+			// email/name/is_active; роль/username/company_id — иммутабельны).
+			adminOnly.PATCH("/local/users/:id", api.UpdateLocalUser)
 		}
 
 		// Delete + reset-password — superadmin only (риск массовой
-		// инвалидации сессий + удаления коллег).
+		// инвалидации сессий + удаления коллег). superadmin-target
+		// заблокирован на handler-level (1 superadmin, неудалим).
 		superadminOnly := protected.Group("")
 		superadminOnly.Use(authMiddleware.RequireRole(models.RoleSuperadmin))
 		{
