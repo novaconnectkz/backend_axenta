@@ -381,6 +381,130 @@ func (api *LocalAuthAPI) RegisterLocalUser(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"status": "success", "data": user.ToPublicUser()})
 }
 
+// ListLocalUsers — список локальных пользователей текущей компании
+// (admin+superadmin). Без password_hash в ответе.
+func (api *LocalAuthAPI) ListLocalUsers(c *gin.Context) {
+	callerCompany, ok := middleware.GetCurrentCompanyID(c)
+	if !ok || callerCompany == "" {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "Компания создателя не определена"})
+		return
+	}
+
+	publicDB := api.getPublicDB()
+	var users []models.LocalUser
+	// Cross-tenant запрет: видим ТОЛЬКО юзеров своей компании. Superadmin
+	// в Ф1 не исключение (cross-tenant — Ф2 invites/RBAC).
+	if err := publicDB.Where("company_id = ?", callerCompany).Order("id ASC").Find(&users).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "Ошибка получения пользователей"})
+		return
+	}
+
+	out := make([]gin.H, 0, len(users))
+	for _, u := range users {
+		out = append(out, u.ToPublicUser())
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": out})
+}
+
+// DeleteLocalUser — удаление локального пользователя (superadmin only).
+// superadmin не может удалить сам себя (риск самоблокировки админа).
+func (api *LocalAuthAPI) DeleteLocalUser(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil || id == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Неверный ID"})
+		return
+	}
+
+	callerID, _ := middleware.GetCurrentUserID(c)
+	callerCompany, ok := middleware.GetCurrentCompanyID(c)
+	if !ok || callerCompany == "" {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "Компания создателя не определена"})
+		return
+	}
+	if uint64(callerID) == id {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "Нельзя удалить себя"})
+		return
+	}
+
+	publicDB := api.getPublicDB()
+	var target models.LocalUser
+	if err := publicDB.Where("id = ? AND company_id = ?", id, callerCompany).First(&target).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "Пользователь не найден"})
+		return
+	}
+
+	// Cleanup refresh_tokens (cascade-aware). DELETE local_users — затем
+	// никаких orphan refresh-токенов не остаётся.
+	if err := publicDB.Exec("DELETE FROM public.refresh_tokens WHERE user_id = ?", target.ID).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "Ошибка очистки refresh_tokens"})
+		return
+	}
+	if err := publicDB.Unscoped().Delete(&target).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "Ошибка удаления пользователя"})
+		return
+	}
+
+	logLocalAuthOperation("user_deleted", target.Username, itoa(target.ID), callerCompany, map[string]interface{}{
+		"status": "success", "deleted_by": itoa(callerID),
+	})
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{"deleted_id": target.ID}})
+}
+
+// ResetLocalUserPasswordRequest — тело POST /local/users/:id/reset-password.
+type ResetLocalUserPasswordRequest struct {
+	NewPassword string `json:"new_password" binding:"required,min=10,max=128"`
+}
+
+// ResetLocalUserPassword — сброс пароля локального пользователя
+// (superadmin only). Инвалидирует все JWT через инкремент token_version.
+func (api *LocalAuthAPI) ResetLocalUserPassword(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil || id == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Неверный ID"})
+		return
+	}
+
+	var req ResetLocalUserPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Пароль минимум 10 символов"})
+		return
+	}
+
+	callerID, _ := middleware.GetCurrentUserID(c)
+	callerCompany, ok := middleware.GetCurrentCompanyID(c)
+	if !ok || callerCompany == "" {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "Компания создателя не определена"})
+		return
+	}
+
+	publicDB := api.getPublicDB()
+	var target models.LocalUser
+	if err := publicDB.Where("id = ? AND company_id = ?", id, callerCompany).First(&target).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "Пользователь не найден"})
+		return
+	}
+
+	if err := target.SetPassword(req.NewPassword); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "Ошибка хеширования пароля"})
+		return
+	}
+	// token_version+1 — все existing JWT с прежним claim становятся невалидными.
+	target.TokenVersion = target.TokenVersion + 1
+	if err := publicDB.Save(&target).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "Ошибка сохранения пароля"})
+		return
+	}
+	// Все refresh-токены тоже выкидываем.
+	publicDB.Exec("DELETE FROM public.refresh_tokens WHERE user_id = ?", target.ID)
+
+	logLocalAuthOperation("password_reset", target.Username, itoa(target.ID), callerCompany, map[string]interface{}{
+		"status": "success", "reset_by": itoa(callerID),
+	})
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{"user_id": target.ID, "token_version": target.TokenVersion}})
+}
+
 // RegisterRoutes регистрирует /local/* (публичные login/refresh/logout +
 // защищённые). Главные алиасы /api/auth/{login,refresh,logout} навешивает
 // main.go в cutover (Task #6).
@@ -399,6 +523,16 @@ func (api *LocalAuthAPI) RegisterRoutes(router *gin.RouterGroup) {
 		adminOnly.Use(authMiddleware.RequireRole(models.RoleAdmin, models.RoleSuperadmin))
 		{
 			adminOnly.POST("/local/register", api.RegisterLocalUser)
+			adminOnly.GET("/local/users", api.ListLocalUsers)
+		}
+
+		// Delete + reset-password — superadmin only (риск массовой
+		// инвалидации сессий + удаления коллег).
+		superadminOnly := protected.Group("")
+		superadminOnly.Use(authMiddleware.RequireRole(models.RoleSuperadmin))
+		{
+			superadminOnly.DELETE("/local/users/:id", api.DeleteLocalUser)
+			superadminOnly.POST("/local/users/:id/reset-password", api.ResetLocalUserPassword)
 		}
 	}
 }
