@@ -1249,10 +1249,18 @@ func CreateCmsUserWithAdminToken(c *gin.Context) {
 	})
 }
 
-// CmsLoginAsRequest структура запроса для входа как другой пользователь
+// CmsLoginAsRequest структура запроса для входа как другой пользователь.
+//
+// Impersonation — соответствует пункту Axenta UI "Войти в мониторинг
+// (полный доступ)". Если true, Axenta Cloud возвращает redirectUrl с
+// дополнительным query-param `full_access=<JWT>` — JWT с claims
+// {impersonator_id, impersonator_username, impersonated_user_id,
+// impersonated_account_id, exp, iat}, который мониторинг принимает как
+// токен повышенных прав.
 type CmsLoginAsRequest struct {
-	UserID int    `json:"userId" binding:"required"`
-	Type   string `json:"type" binding:"required,oneof=monitoring cms"`
+	UserID        int    `json:"userId" binding:"required"`
+	Type          string `json:"type" binding:"required,oneof=monitoring cms"`
+	Impersonation bool   `json:"impersonation,omitempty"`
 }
 
 // CmsLoginAsResponse структура ответа для входа как другой пользователь
@@ -1260,8 +1268,13 @@ type CmsLoginAsResponse struct {
 	RedirectURL string `json:"redirectUrl"`
 }
 
-// LoginAs позволяет войти как другой пользователь CMS
-// Ф3-C-defer: Ф1-broken (request-токен невалиден), НЕ frontend-reachable — не рерайтим на server-token.
+// LoginAs позволяет войти как другой пользователь CMS / в мониторинг.
+//
+// Ф3-D (was Ф3-C-defer): после AUTH_MODE=local request-токен Axenta
+// больше не приходит → ходим в axenta.cloud через AxentaServerToken
+// (per-company кред из Company.AxetnaLogin/AxetnaPassword), а не из
+// токена пользователя. Семантика та же: redirectUrl выдаётся от имени
+// компании-владельца кред (creator/audit в Axenta = компания).
 func LoginAs(c *gin.Context) {
 	var req CmsLoginAsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1272,74 +1285,19 @@ func LoginAs(c *gin.Context) {
 		return
 	}
 
-	// Получаем токен из заголовка Authorization
-	authHeader := c.GetHeader("Authorization")
-	if authHeader == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"status": "error",
-			"error":  "Authorization header is required",
-		})
+	axentaToken, ok := axentaServerTokenFor(c)
+	if !ok {
 		return
 	}
 
-	// Извлекаем токен из заголовка "Token <token>"
-	var requestToken string
-	if strings.HasPrefix(authHeader, "Token ") {
-		requestToken = strings.TrimPrefix(authHeader, "Token ")
-	} else {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"status": "error",
-			"error":  "Invalid authorization header format. Expected 'Token <token>'",
-		})
-		return
-	}
-
-	// Получаем базу данных
-	db := database.DB
-
-	// Получаем account_id из токена для фильтрации
-	accountID := getAccountIDFromToken(requestToken)
-
-	// Создаем сервис для работы с токенами пользователей
-	userTokenService := services.NewUserTokenService(db)
-
-	// Находим пользователя по токену из заголовка с фильтрацией по account_id
-	var currentUser models.User
-	var err error
-	if accountID > 0 {
-		err = db.Where("id IN (SELECT user_id FROM user_tokens WHERE token = ? AND is_active = ? AND account_id = ?)", requestToken, true, accountID).First(&currentUser).Error
-	} else {
-		err = db.Where("id IN (SELECT user_id FROM user_tokens WHERE token = ? AND is_active = ?)", requestToken, true).First(&currentUser).Error
-	}
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"status": "error",
-			"error":  "User not found or token invalid",
-		})
-		return
-	}
-
-	// Получаем сохраненный токен пользователя для Axenta Cloud
-	userToken, err := userTokenService.GetUserToken(currentUser.ID)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"status": "error",
-			"error":  "No valid Axenta token found for user",
-		})
-		return
-	}
-
-	// Используем сохраненный токен для запроса к Axenta Cloud
-	axentaToken := userToken.Token
-
-	// Отправляем запрос к Axenta Cloud для получения токена другого пользователя
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-	}
-
+	// Axenta CMS Angular использует snake_case user_id; camelCase userId
+	// исторически тоже принимается, но шлём канонический ключ.
 	loginAsData := map[string]interface{}{
-		"userId": req.UserID,
-		"type":   req.Type,
+		"user_id": req.UserID,
+		"type":    req.Type,
+	}
+	if req.Impersonation {
+		loginAsData["impersonation"] = true
 	}
 
 	jsonData, err := json.Marshal(loginAsData)
@@ -1352,35 +1310,44 @@ func LoginAs(c *gin.Context) {
 	}
 
 	axentaURL := "https://axenta.cloud/api/cms/users/login_as/"
-	httpReq, err := http.NewRequest("POST", axentaURL, bytes.NewBuffer(jsonData))
+	doRequest := func(token string) (*http.Response, []byte, error) {
+		client := &http.Client{Timeout: 30 * time.Second}
+		httpReq, rerr := http.NewRequest("POST", axentaURL, bytes.NewBuffer(jsonData))
+		if rerr != nil {
+			return nil, nil, rerr
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Authorization", "Token "+token)
+		resp, rerr := client.Do(httpReq)
+		if rerr != nil {
+			return nil, nil, rerr
+		}
+		defer resp.Body.Close()
+		body, rerr := io.ReadAll(resp.Body)
+		if rerr != nil {
+			return resp, nil, rerr
+		}
+		return resp, body, nil
+	}
+
+	resp, body, err := doRequest(axentaToken)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to create request to Axenta Cloud",
-		})
+		axentaMutationUnavailable(c, err)
 		return
 	}
 
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Token "+axentaToken)
-
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to connect to Axenta Cloud",
-		})
-		return
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error",
-			"error":  "Failed to read response from Axenta Cloud",
-		})
-		return
+	// Retry один раз при 401/403 (server-токен мог протухнуть)
+	if isAxentaAuthError(resp.StatusCode) {
+		invalidateAxentaServerToken(c)
+		axentaToken, ok = axentaServerTokenFor(c)
+		if !ok {
+			return
+		}
+		resp, body, err = doRequest(axentaToken)
+		if err != nil {
+			axentaMutationUnavailable(c, err)
+			return
+		}
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -1401,9 +1368,8 @@ func LoginAs(c *gin.Context) {
 		return
 	}
 
-	// Извлекаем redirectUrl из ответа
-	redirectURL, ok := axentaResponse["redirectUrl"].(string)
-	if !ok {
+	redirectURL, rok := axentaResponse["redirectUrl"].(string)
+	if !rok {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  "No redirectUrl in Axenta Cloud response",
@@ -1411,13 +1377,8 @@ func LoginAs(c *gin.Context) {
 		return
 	}
 
-	// Возвращаем ответ
-	response := CmsLoginAsResponse{
-		RedirectURL: redirectURL,
-	}
-
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
-		"data":   response,
+		"data":   CmsLoginAsResponse{RedirectURL: redirectURL},
 	})
 }
