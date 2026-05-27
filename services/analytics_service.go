@@ -9,10 +9,11 @@ import (
 
 // billingSnapshotSources — системы, чьи partner_daily_snapshots учитываются в KPI.
 // Ф0: только axenta. Ф1: +skif (реальный per-date биллинг дилеров). Ф2: +wialon
-// (per-account прямой units_count, без дерева). Ф3 добавит gelios. Разные системы
-// = разные объекты, SUM по ним не задваивает (Codex F2: фильтр обязателен, чтобы
-// «сырые» источники без снимков не попадали раньше времени).
-var billingSnapshotSources = []string{"axenta", "skif", "wialon"}
+// (per-account прямой units_count, без дерева). Ф3: +gelios (per-account
+// gelios_users.units_count + force-sync). Разные системы = разные объекты,
+// SUM по ним не задваивает (Codex F2: фильтр обязателен, чтобы «сырые»
+// источники без снимков не попадали раньше времени).
+var billingSnapshotSources = []string{"axenta", "skif", "wialon", "gelios"}
 
 // AnalyticsService — единый источник для агрегатов из partner_daily_snapshots.
 //
