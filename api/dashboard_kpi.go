@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -424,8 +425,32 @@ func formatRublesDelta(current, delta, prev decimal.Decimal, suffix string) (dir
 	}
 }
 
+// formatRublesValue форматирует число с пробелами-разделителями тысяч
+// (русская типография). 583634 → "583 634 ₽".
 func formatRublesValue(d decimal.Decimal) string {
-	return d.Round(0).String() + " ₽"
+	n := d.Round(0).IntPart()
+	sign := ""
+	if n < 0 {
+		sign = "-"
+		n = -n
+	}
+	s := fmt.Sprintf("%d", n)
+	if len(s) <= 3 {
+		return sign + s + " ₽"
+	}
+	var b strings.Builder
+	pre := len(s) % 3
+	if pre > 0 {
+		b.WriteString(s[:pre])
+		b.WriteByte(' ')
+	}
+	for i := pre; i < len(s); i += 3 {
+		b.WriteString(s[i : i+3])
+		if i+3 < len(s) {
+			b.WriteByte(' ')
+		}
+	}
+	return sign + b.String() + " ₽"
 }
 
 func rublesAsFloat(d decimal.Decimal) float64 {
