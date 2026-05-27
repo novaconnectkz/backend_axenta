@@ -262,7 +262,7 @@ func searchAcrmCompanies(db *gorm.DB, pattern string, limit int) []SearchResultI
 			Type:     "client",
 			Title:    r.Name,
 			Subtitle: "ACRM · учётная запись",
-			URL:      "/accounts?search=" + r.Name,
+			URL:      "/accounts?search=" + r.Name + "&source=axenta",
 		})
 	}
 	return out
@@ -297,7 +297,7 @@ func searchAxentaAccounts(db *gorm.DB, pattern string, limit int) []SearchResult
 			Type:     "client",
 			Title:    r.AccountName,
 			Subtitle: subtitle,
-			URL:      "/accounts?search=" + r.AccountName,
+			URL:      "/accounts?search=" + r.AccountName + "&source=axenta",
 		})
 	}
 	return out
@@ -337,7 +337,7 @@ func searchGeliosAccounts(db *gorm.DB, companyID uint, pattern string, limit int
 			Type:     "client",
 			Title:    title,
 			Subtitle: subtitle,
-			URL:      "/accounts?search=" + r.Login,
+			URL:      "/accounts?search=" + r.Login + "&source=gelios",
 		})
 	}
 	return out
@@ -369,7 +369,7 @@ func searchSkifDealers(db *gorm.DB, companyID uint, pattern string, limit int) [
 			Type:     "client",
 			Title:    r.Name,
 			Subtitle: subtitle,
-			URL:      "/accounts?search=" + r.Name,
+			URL:      "/accounts?search=" + r.Name + "&source=skif",
 		})
 	}
 	return out
@@ -400,7 +400,7 @@ func searchWialonAccounts(db *gorm.DB, companyID uint, pattern string, limit int
 			Type:     "client",
 			Title:    r.Name,
 			Subtitle: subtitle,
-			URL:      "/accounts?search=" + r.Name,
+			URL:      "/accounts?search=" + r.Name + "&source=wialon",
 		})
 	}
 	return out
@@ -466,7 +466,7 @@ func searchLocalUsers(db *gorm.DB, companyID uint, pattern string, limit int) []
 			Type:     "user",
 			Title:    title,
 			Subtitle: subtitle,
-			URL:      "/users?search=" + r.Username,
+			URL:      "/users?search=" + r.Username + "&source=axenta",
 		})
 	}
 	return out
@@ -506,7 +506,7 @@ func searchAxentaUsers(db *gorm.DB, pattern string, limit int) []SearchResultIte
 			Type:     "user",
 			Title:    title,
 			Subtitle: subtitle,
-			URL:      "/users?search=" + r.Username,
+			URL:      "/users?search=" + r.Username + "&source=axenta",
 		})
 	}
 	return out
@@ -546,7 +546,7 @@ func searchGeliosUsers(db *gorm.DB, companyID uint, pattern string, limit int) [
 			Type:     "user",
 			Title:    title,
 			Subtitle: subtitle,
-			URL:      "/users?search=" + r.Login,
+			URL:      "/users?search=" + r.Login + "&source=gelios",
 		})
 	}
 	return out
@@ -589,7 +589,7 @@ func searchSkifUsers(db *gorm.DB, companyID uint, pattern string, limit int) []S
 			Type:     "user",
 			Title:    title,
 			Subtitle: subtitle,
-			URL:      "/users?search=" + r.Email,
+			URL:      "/users?search=" + r.Email + "&source=skif",
 		})
 	}
 	return out
@@ -629,7 +629,7 @@ func searchWialonUsers(db *gorm.DB, companyID uint, pattern string, limit int) [
 			Type:     "user",
 			Title:    title,
 			Subtitle: subtitle,
-			URL:      "/users?search=" + title,
+			URL:      "/users?search=" + title + "&source=wialon",
 		})
 	}
 	return out
