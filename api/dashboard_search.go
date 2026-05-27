@@ -190,7 +190,7 @@ func searchContracts(db *gorm.DB, pattern string, limit int) []SearchResultItem 
 			Type:     "contract",
 			Title:    r.Number,
 			Subtitle: r.ClientName,
-			URL:      "/contracts?search=" + r.Number,
+			URL:      "/contracts/edit/" + strconv.FormatUint(uint64(r.ID), 10),
 		})
 	}
 	return out
