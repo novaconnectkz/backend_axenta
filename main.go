@@ -227,6 +227,17 @@ func main() {
 		} else {
 			log.Println("✅ Wialon Partner Snapshot Scheduler started (daily at 00:50 UTC)")
 		}
+
+		// Ф3: GELIOS partner snapshot scheduler (00:55 UTC) — снимки дилеров source=gelios
+		// (per-account: прямой gelios_users.units_count + force-sync per-conn для свежих
+		// данных, ВСЕГДА пишет строку с warning при отсутствии данных — см.
+		// gelios-partner-billing-ph3).
+		geliosPartnerSnapshotScheduler := services.NewGeliosPartnerSnapshotService(database.DB)
+		if err := geliosPartnerSnapshotScheduler.Start(); err != nil {
+			log.Printf("⚠️ GELIOS Partner Snapshot Scheduler failed to start: %v", err)
+		} else {
+			log.Println("✅ GELIOS Partner Snapshot Scheduler started (daily at 00:55 UTC)")
+		}
 	} else {
 		log.Println("⚠️ Планировщики снимков отключены (ENABLE_SNAPSHOT_SCHEDULER != true)")
 	}
@@ -1026,6 +1037,9 @@ func main() {
 
 	// Ф2 Wialon partner billing: ручной триггер снимков дилеров (source=wialon)
 	apiGroup.POST("/wialon/partner-snapshots/generate", api.GenerateWialonPartnerSnapshots)
+
+	// Ф3 GELIOS partner billing: ручной триггер снимков дилеров (source=gelios)
+	apiGroup.POST("/gelios/partner-snapshots/generate", api.GenerateGeliosPartnerSnapshots)
 
 	// Расчет стоимости договора (специфичный маршрут - ПЕРЕД общими)
 	apiGroup.GET("/contracts/:contract_id/calculate", api.CalculateContractCost)

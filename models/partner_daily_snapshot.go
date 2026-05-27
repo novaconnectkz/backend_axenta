@@ -90,6 +90,14 @@ func (s *PartnerDailySnapshot) BeforeCreate(tx *gorm.DB) error {
 
 	// Для фиксированной скидки: применяем скидку к месячному тарифу, затем рассчитываем дневную цену
 	// Для процентной скидки: рассчитываем дневную цену из базового тарифа, затем применяем скидку к стоимости
+	//
+	// daily_price = monthly_price / days_in_month(snapshot_date). Делитель —
+	// фактическое число дней в месяце snapshot'а (28/29/30/31), не хардкод 30.
+	// Гарантирует Σ(daily_cost за месяц) == monthly_price * active_objects (точно).
+	// monthly_price (договорная цена) НЕ меняется.
+	daysInMonth := decimal.NewFromInt(int64(time.Date(
+		s.SnapshotDate.Year(), s.SnapshotDate.Month()+1, 0, 0, 0, 0, 0, time.UTC,
+	).Day()))
 
 	var effectiveDailyPrice decimal.Decimal
 
@@ -101,16 +109,16 @@ func (s *PartnerDailySnapshot) BeforeCreate(tx *gorm.DB) error {
 			effectiveMonthlyPrice = decimal.Zero
 		}
 		// Рассчитываем эффективную дневную цену
-		effectiveDailyPrice = effectiveMonthlyPrice.Div(decimal.NewFromInt(30)).Round(4)
+		effectiveDailyPrice = effectiveMonthlyPrice.Div(daysInMonth).Round(4)
 		s.DailyPrice = effectiveDailyPrice
 
 		// Стоимость = эффективная дневная цена * количество объектов
-		s.CostBeforeDiscount = s.MonthlyPrice.Div(decimal.NewFromInt(30)).Mul(decimal.NewFromInt(int64(s.ActiveObjectsCount))).Round(2)
-		s.DiscountAmount = s.DiscountFixed.Div(decimal.NewFromInt(30)).Mul(decimal.NewFromInt(int64(s.ActiveObjectsCount))).Round(2)
+		s.CostBeforeDiscount = s.MonthlyPrice.Div(daysInMonth).Mul(decimal.NewFromInt(int64(s.ActiveObjectsCount))).Round(2)
+		s.DiscountAmount = s.DiscountFixed.Div(daysInMonth).Mul(decimal.NewFromInt(int64(s.ActiveObjectsCount))).Round(2)
 		s.DailyCost = effectiveDailyPrice.Mul(decimal.NewFromInt(int64(s.ActiveObjectsCount))).Round(2)
 	} else {
 		// Базовая дневная цена (без скидки)
-		baseDailyPrice := s.MonthlyPrice.Div(decimal.NewFromInt(30)).Round(4)
+		baseDailyPrice := s.MonthlyPrice.Div(daysInMonth).Round(4)
 		s.DailyPrice = baseDailyPrice
 
 		// Стоимость до скидки
