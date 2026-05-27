@@ -14,29 +14,58 @@ import (
 // SearchResultItem — один элемент в результатах глобального поиска.
 type SearchResultItem struct {
 	ID       string `json:"id"`       // составной ID для key=
-	Type     string `json:"type"`     // object, client, contract, invoice
+	Type     string `json:"type"`     // object, client, contract, invoice, user, installation
 	Title    string `json:"title"`    // основная строка
 	Subtitle string `json:"subtitle"` // вторичный контекст
 	URL      string `json:"url"`      // куда переходить по клику
 }
 
 // SearchResponse — группы результатов по типу.
-// Контракты и счета пока скрыты — расширим scope позже.
 type SearchResponse struct {
-	Objects []SearchResultItem `json:"objects"`
-	Clients []SearchResultItem `json:"clients"`
-	Query   string             `json:"query"`
+	Objects       []SearchResultItem `json:"objects"`
+	Clients       []SearchResultItem `json:"clients"`
+	Contracts     []SearchResultItem `json:"contracts"`
+	Invoices      []SearchResultItem `json:"invoices"`
+	Users         []SearchResultItem `json:"users"`
+	Installations []SearchResultItem `json:"installations"`
+	Query         string             `json:"query"`
 }
 
-// GetGlobalSearch — глобальный поиск по объектам, клиентам, контрактам, счетам.
+// validScopes — допустимые значения scope-фильтра (Б24-style chips).
+var validScopes = map[string]struct{}{
+	"objects":       {},
+	"clients":       {},
+	"contracts":     {},
+	"invoices":      {},
+	"users":         {},
+	"installations": {},
+}
+
+// parseScope разбирает CSV scope-параметр в map. Пустой scope = все группы.
+func parseScope(raw string) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, s := range strings.Split(raw, ",") {
+		s = strings.TrimSpace(strings.ToLower(s))
+		if _, ok := validScopes[s]; ok {
+			out[s] = struct{}{}
+		}
+	}
+	return out
+}
+
+// inScope — true если scope пустой (всё) или содержит ключ.
+func inScope(scope map[string]struct{}, key string) bool {
+	if len(scope) == 0 {
+		return true
+	}
+	_, ok := scope[key]
+	return ok
+}
+
+// GetGlobalSearch — глобальный поиск по объектам, клиентам, контрактам, счетам,
+// пользователям и монтажам с опциональным scope-фильтром (Б24-style).
 //
-// GET /api/auth/search?q=<term>&limit=10
-//
-// Источники:
-//   - axenta_object_snapshots (tenant) — object_name, unique_id, account_name
-//   - contracts (tenant) — number, client_name
-//   - companies (public) — name (для клиентов partner-аккаунта)
-//   - invoices (public) — number, по company_id текущей компании
+// GET /api/auth/search?q=<term>&limit=10&scope=objects,contracts
 func GetGlobalSearch(c *gin.Context) {
 	tenantDB := middleware.GetTenantDB(c)
 	if tenantDB == nil {
@@ -60,13 +89,29 @@ func GetGlobalSearch(c *gin.Context) {
 		limit = l
 	}
 
+	scope := parseScope(c.Query("scope"))
 	publicDB := publicDBOrTenant(tenantDB)
 	pattern := "%" + q + "%"
+	companyID := middleware.GetCompanyID(c)
 
-	resp := SearchResponse{
-		Query:   q,
-		Objects: searchObjects(tenantDB, pattern, limit),
-		Clients: searchClients(publicDB, pattern, limit),
+	resp := SearchResponse{Query: q}
+	if inScope(scope, "objects") {
+		resp.Objects = searchObjects(tenantDB, pattern, limit)
+	}
+	if inScope(scope, "clients") {
+		resp.Clients = searchClients(publicDB, pattern, limit)
+	}
+	if inScope(scope, "contracts") {
+		resp.Contracts = searchContracts(tenantDB, pattern, limit)
+	}
+	if inScope(scope, "invoices") {
+		resp.Invoices = searchInvoices(publicDB, companyID, pattern, limit)
+	}
+	if inScope(scope, "users") {
+		resp.Users = searchUsers(publicDB, companyID, pattern, limit)
+	}
+	if inScope(scope, "installations") {
+		resp.Installations = searchInstallations(tenantDB, pattern, limit)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -135,7 +180,7 @@ func searchContracts(db *gorm.DB, pattern string, limit int) []SearchResultItem 
 			Type:     "contract",
 			Title:    r.Number,
 			Subtitle: r.ClientName,
-			URL:      "/contracts/" + strconv.FormatUint(uint64(r.ID), 10),
+			URL:      "/contracts/edit/" + strconv.FormatUint(uint64(r.ID), 10),
 		})
 	}
 	return out
@@ -162,7 +207,7 @@ func searchInvoices(db *gorm.DB, companyID uint, pattern string, limit int) []Se
 			Type:     "invoice",
 			Title:    r.Number,
 			Subtitle: "Счёт · " + r.Status,
-			URL:      "/billing/invoices/" + strconv.FormatUint(uint64(r.ID), 10),
+			URL:      "/billing?tab=invoices",
 		})
 	}
 	return out
@@ -189,6 +234,96 @@ func searchClients(db *gorm.DB, pattern string, limit int) []SearchResultItem {
 			Title:    r.Name,
 			Subtitle: "Учётная запись",
 			URL:      "/accounts?search=" + r.Name,
+		})
+	}
+	return out
+}
+
+// searchUsers — по local_users (username, email, name) для текущей компании.
+func searchUsers(db *gorm.DB, companyID uint, pattern string, limit int) []SearchResultItem {
+	type row struct {
+		ID       uint
+		Username string
+		Email    string
+		Name     string
+		Role     string
+		IsActive bool
+	}
+	var rows []row
+	db.Table(publicTable(db, "local_users")).
+		Select("id, username, email, name, role, is_active").
+		Where("company_id = ? AND (username ILIKE ? OR email ILIKE ? OR name ILIKE ?) AND deleted_at IS NULL",
+			strconv.FormatUint(uint64(companyID), 10), pattern, pattern, pattern).
+		Limit(limit).
+		Scan(&rows)
+
+	out := make([]SearchResultItem, 0, len(rows))
+	for _, r := range rows {
+		title := r.Name
+		if title == "" {
+			title = r.Username
+		}
+		subtitle := r.Username
+		if r.Email != "" {
+			subtitle += " · " + r.Email
+		}
+		if r.Role != "" {
+			subtitle += " · " + r.Role
+		}
+		if !r.IsActive {
+			subtitle += " · неактивен"
+		}
+		out = append(out, SearchResultItem{
+			ID:       "user:" + strconv.FormatUint(uint64(r.ID), 10),
+			Type:     "user",
+			Title:    title,
+			Subtitle: subtitle,
+			URL:      "/users?search=" + r.Username,
+		})
+	}
+	return out
+}
+
+// searchInstallations — по installations (description, address, client_contact).
+func searchInstallations(db *gorm.DB, pattern string, limit int) []SearchResultItem {
+	type row struct {
+		ID            uint
+		Type          string
+		Status        string
+		Description   string
+		Address       string
+		ClientContact string
+	}
+	var rows []row
+	db.Table("installations").
+		Select("id, type, status, description, address, client_contact").
+		Where("(description ILIKE ? OR address ILIKE ? OR client_contact ILIKE ?) AND deleted_at IS NULL",
+			pattern, pattern, pattern).
+		Limit(limit).
+		Scan(&rows)
+
+	out := make([]SearchResultItem, 0, len(rows))
+	for _, r := range rows {
+		title := r.Description
+		if title == "" {
+			title = r.Address
+		}
+		if title == "" {
+			title = "Монтаж #" + strconv.FormatUint(uint64(r.ID), 10)
+		}
+		subtitle := r.Type
+		if r.Status != "" {
+			subtitle += " · " + r.Status
+		}
+		if r.Address != "" && r.Address != title {
+			subtitle += " · " + r.Address
+		}
+		out = append(out, SearchResultItem{
+			ID:       "installation:" + strconv.FormatUint(uint64(r.ID), 10),
+			Type:     "installation",
+			Title:    title,
+			Subtitle: subtitle,
+			URL:      "/installations",
 		})
 	}
 	return out
