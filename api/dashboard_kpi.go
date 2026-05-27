@@ -159,7 +159,7 @@ func buildMonthlyRevenueKPI(_ *gorm.DB, tenantDB *gorm.DB, _ uint, now time.Time
 
 	return KPIMetric{
 		ID:              "monthly_revenue",
-		Title:           "Выручка за месяц",
+		Title:           "Начислено за месяц",
 		Value:           formatRublesValue(current),
 		RawValue:        rublesAsFloat(current),
 		Delta:           deltaText,
