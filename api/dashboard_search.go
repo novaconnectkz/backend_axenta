@@ -99,7 +99,7 @@ func GetGlobalSearch(c *gin.Context) {
 		resp.Objects = searchObjects(tenantDB, pattern, limit)
 	}
 	if inScope(scope, "clients") {
-		resp.Clients = searchClients(publicDB, pattern, limit)
+		resp.Clients = searchClients(publicDB, tenantDB, companyID, pattern, limit)
 	}
 	if inScope(scope, "contracts") {
 		resp.Contracts = searchContracts(tenantDB, pattern, limit)
@@ -213,8 +213,27 @@ func searchInvoices(db *gorm.DB, companyID uint, pattern string, limit int) []Se
 	return out
 }
 
-// searchClients — по companies.name (учётные записи / клиенты).
-func searchClients(db *gorm.DB, pattern string, limit int) []SearchResultItem {
+// searchClients — объединённый поиск «учётных записей» по 5 источникам:
+//   - companies (public) — ACRM
+//   - axenta_account_snapshots (tenant) — Axenta
+//   - gelios_users (public, is_admin OR units_count>0) — GELIOS играет роль аккаунта
+//   - skif_dealers (public, JOIN skif_connections.company_id) — SKIF
+//   - wialon_account_statuses (public, JOIN wialon_connections.company_id) — Wialon
+func searchClients(publicDB, tenantDB *gorm.DB, companyID uint, pattern string, limit int) []SearchResultItem {
+	perSource := limit/2 + 1
+	out := make([]SearchResultItem, 0, limit*3)
+	out = append(out, searchAcrmCompanies(publicDB, pattern, perSource)...)
+	out = append(out, searchAxentaAccounts(tenantDB, pattern, perSource)...)
+	out = append(out, searchGeliosAccounts(publicDB, companyID, pattern, perSource)...)
+	out = append(out, searchSkifDealers(publicDB, companyID, pattern, perSource)...)
+	out = append(out, searchWialonAccounts(publicDB, companyID, pattern, perSource)...)
+	if len(out) > limit*3 {
+		out = out[:limit*3]
+	}
+	return out
+}
+
+func searchAcrmCompanies(db *gorm.DB, pattern string, limit int) []SearchResultItem {
 	type row struct {
 		ID   uint
 		Name string
@@ -229,10 +248,148 @@ func searchClients(db *gorm.DB, pattern string, limit int) []SearchResultItem {
 	out := make([]SearchResultItem, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, SearchResultItem{
-			ID:       "client:" + strconv.FormatUint(uint64(r.ID), 10),
+			ID:       "client-acrm:" + strconv.FormatUint(uint64(r.ID), 10),
 			Type:     "client",
 			Title:    r.Name,
-			Subtitle: "Учётная запись",
+			Subtitle: "ACRM · учётная запись",
+			URL:      "/accounts?search=" + r.Name,
+		})
+	}
+	return out
+}
+
+func searchAxentaAccounts(db *gorm.DB, pattern string, limit int) []SearchResultItem {
+	type row struct {
+		ID            uint
+		AccountName   string
+		AdminFullname string
+		IsActive      bool
+	}
+	var rows []row
+	db.Table("axenta_account_snapshots").
+		Select("id, account_name, admin_fullname, is_active").
+		Where("(account_name ILIKE ? OR admin_fullname ILIKE ?) AND deleted_at IS NULL",
+			pattern, pattern).
+		Limit(limit).
+		Scan(&rows)
+
+	out := make([]SearchResultItem, 0, len(rows))
+	for _, r := range rows {
+		subtitle := "Axenta"
+		if r.AdminFullname != "" {
+			subtitle += " · " + r.AdminFullname
+		}
+		if !r.IsActive {
+			subtitle += " · неактивен"
+		}
+		out = append(out, SearchResultItem{
+			ID:       "client-axenta:" + strconv.FormatUint(uint64(r.ID), 10),
+			Type:     "client",
+			Title:    r.AccountName,
+			Subtitle: subtitle,
+			URL:      "/accounts?search=" + r.AccountName,
+		})
+	}
+	return out
+}
+
+func searchGeliosAccounts(db *gorm.DB, companyID uint, pattern string, limit int) []SearchResultItem {
+	type row struct {
+		ID        uint
+		Login     string
+		Email     string
+		LegalName string
+		IsBlock   bool
+	}
+	var rows []row
+	db.Table(publicTable(db, "gelios_users")).
+		Select("id, login, email, legal_name, is_block").
+		Where("company_id = ? AND (is_admin = true OR units_count > 0) AND (login ILIKE ? OR email ILIKE ? OR legal_name ILIKE ?) AND gelios_deleted_at IS NULL",
+			companyID, pattern, pattern, pattern).
+		Limit(limit).
+		Scan(&rows)
+
+	out := make([]SearchResultItem, 0, len(rows))
+	for _, r := range rows {
+		title := r.LegalName
+		if title == "" {
+			title = r.Login
+		}
+		subtitle := "GELIOS · учётная запись"
+		if r.Login != "" && r.Login != title {
+			subtitle += " · " + r.Login
+		}
+		if r.IsBlock {
+			subtitle += " · заблокирован"
+		}
+		out = append(out, SearchResultItem{
+			ID:       "client-gelios:" + strconv.FormatUint(uint64(r.ID), 10),
+			Type:     "client",
+			Title:    title,
+			Subtitle: subtitle,
+			URL:      "/accounts?search=" + r.Login,
+		})
+	}
+	return out
+}
+
+func searchSkifDealers(db *gorm.DB, companyID uint, pattern string, limit int) []SearchResultItem {
+	type row struct {
+		ID    uint
+		Name  string
+		Email string
+	}
+	var rows []row
+	db.Table(publicTable(db, "skif_dealers")+" AS sd").
+		Joins("JOIN "+publicTable(db, "skif_connections")+" AS sc ON sc.id = sd.connection_id").
+		Select("sd.id, sd.name, sd.email").
+		Where("sc.company_id = ? AND sd.hidden = false AND (sd.name ILIKE ? OR sd.email ILIKE ?)",
+			companyID, pattern, pattern).
+		Limit(limit).
+		Scan(&rows)
+
+	out := make([]SearchResultItem, 0, len(rows))
+	for _, r := range rows {
+		subtitle := "SKIF · дилер"
+		if r.Email != "" {
+			subtitle += " · " + r.Email
+		}
+		out = append(out, SearchResultItem{
+			ID:       "client-skif:" + strconv.FormatUint(uint64(r.ID), 10),
+			Type:     "client",
+			Title:    r.Name,
+			Subtitle: subtitle,
+			URL:      "/accounts?search=" + r.Name,
+		})
+	}
+	return out
+}
+
+func searchWialonAccounts(db *gorm.DB, companyID uint, pattern string, limit int) []SearchResultItem {
+	type row struct {
+		ID       uint
+		Name     string
+		IsActive bool
+	}
+	var rows []row
+	db.Table(publicTable(db, "wialon_account_statuses")+" AS was").
+		Joins("JOIN "+publicTable(db, "wialon_connections")+" AS wc ON wc.id = was.connection_id").
+		Select("was.id, was.name, was.is_active").
+		Where("wc.company_id = ? AND was.name ILIKE ?", companyID, pattern).
+		Limit(limit).
+		Scan(&rows)
+
+	out := make([]SearchResultItem, 0, len(rows))
+	for _, r := range rows {
+		subtitle := "Wialon · учётная запись"
+		if !r.IsActive {
+			subtitle += " · неактивен"
+		}
+		out = append(out, SearchResultItem{
+			ID:       "client-wialon:" + strconv.FormatUint(uint64(r.ID), 10),
+			Type:     "client",
+			Title:    r.Name,
+			Subtitle: subtitle,
 			URL:      "/accounts?search=" + r.Name,
 		})
 	}
