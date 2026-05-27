@@ -108,7 +108,7 @@ func GetGlobalSearch(c *gin.Context) {
 		resp.Invoices = searchInvoices(publicDB, companyID, pattern, limit)
 	}
 	if inScope(scope, "users") {
-		resp.Users = searchUsers(publicDB, companyID, pattern, limit)
+		resp.Users = searchUsers(publicDB, tenantDB, companyID, pattern, limit)
 	}
 	if inScope(scope, "installations") {
 		resp.Installations = searchInstallations(tenantDB, pattern, limit)
@@ -239,8 +239,29 @@ func searchClients(db *gorm.DB, pattern string, limit int) []SearchResultItem {
 	return out
 }
 
-// searchUsers — по local_users (username, email, name) для текущей компании.
-func searchUsers(db *gorm.DB, companyID uint, pattern string, limit int) []SearchResultItem {
+// searchUsers — объединённый поиск по 5 источникам:
+//   - local_users (public, company_id фильтр)
+//   - axenta_user_snapshots (tenant)
+//   - gelios_users (public, company_id)
+//   - skif_users (public, company_id)
+//   - wialon_users (public, JOIN wialon_connections по company_id)
+//
+// Каждый источник возвращает до limit/2 результатов, чтобы UI не перегружать.
+func searchUsers(publicDB, tenantDB *gorm.DB, companyID uint, pattern string, limit int) []SearchResultItem {
+	perSource := limit/2 + 1
+	out := make([]SearchResultItem, 0, limit*3)
+	out = append(out, searchLocalUsers(publicDB, companyID, pattern, perSource)...)
+	out = append(out, searchAxentaUsers(tenantDB, pattern, perSource)...)
+	out = append(out, searchGeliosUsers(publicDB, companyID, pattern, perSource)...)
+	out = append(out, searchSkifUsers(publicDB, companyID, pattern, perSource)...)
+	out = append(out, searchWialonUsers(publicDB, companyID, pattern, perSource)...)
+	if len(out) > limit*3 {
+		out = out[:limit*3]
+	}
+	return out
+}
+
+func searchLocalUsers(db *gorm.DB, companyID uint, pattern string, limit int) []SearchResultItem {
 	type row struct {
 		ID       uint
 		Username string
@@ -263,7 +284,7 @@ func searchUsers(db *gorm.DB, companyID uint, pattern string, limit int) []Searc
 		if title == "" {
 			title = r.Username
 		}
-		subtitle := r.Username
+		subtitle := "ACRM · " + r.Username
 		if r.Email != "" {
 			subtitle += " · " + r.Email
 		}
@@ -274,11 +295,174 @@ func searchUsers(db *gorm.DB, companyID uint, pattern string, limit int) []Searc
 			subtitle += " · неактивен"
 		}
 		out = append(out, SearchResultItem{
-			ID:       "user:" + strconv.FormatUint(uint64(r.ID), 10),
+			ID:       "user-local:" + strconv.FormatUint(uint64(r.ID), 10),
 			Type:     "user",
 			Title:    title,
 			Subtitle: subtitle,
 			URL:      "/users?search=" + r.Username,
+		})
+	}
+	return out
+}
+
+func searchAxentaUsers(db *gorm.DB, pattern string, limit int) []SearchResultItem {
+	type row struct {
+		ID       uint
+		Username string
+		Name     string
+		Email    string
+		IsActive bool
+	}
+	var rows []row
+	db.Table("axenta_user_snapshots").
+		Select("id, username, name, email, is_active").
+		Where("(username ILIKE ? OR name ILIKE ? OR email ILIKE ?) AND deleted_at IS NULL",
+			pattern, pattern, pattern).
+		Limit(limit).
+		Scan(&rows)
+
+	out := make([]SearchResultItem, 0, len(rows))
+	for _, r := range rows {
+		title := r.Name
+		if title == "" {
+			title = r.Username
+		}
+		subtitle := "Axenta · " + r.Username
+		if r.Email != "" {
+			subtitle += " · " + r.Email
+		}
+		if !r.IsActive {
+			subtitle += " · неактивен"
+		}
+		out = append(out, SearchResultItem{
+			ID:       "user-axenta:" + strconv.FormatUint(uint64(r.ID), 10),
+			Type:     "user",
+			Title:    title,
+			Subtitle: subtitle,
+			URL:      "/users?search=" + r.Username,
+		})
+	}
+	return out
+}
+
+func searchGeliosUsers(db *gorm.DB, companyID uint, pattern string, limit int) []SearchResultItem {
+	type row struct {
+		ID        uint
+		Login     string
+		Email     string
+		LegalName string
+		IsBlock   bool
+	}
+	var rows []row
+	db.Table(publicTable(db, "gelios_users")).
+		Select("id, login, email, legal_name, is_block").
+		Where("company_id = ? AND (login ILIKE ? OR email ILIKE ? OR legal_name ILIKE ?) AND gelios_deleted_at IS NULL",
+			companyID, pattern, pattern, pattern).
+		Limit(limit).
+		Scan(&rows)
+
+	out := make([]SearchResultItem, 0, len(rows))
+	for _, r := range rows {
+		title := r.LegalName
+		if title == "" {
+			title = r.Login
+		}
+		subtitle := "GELIOS · " + r.Login
+		if r.Email != "" {
+			subtitle += " · " + r.Email
+		}
+		if r.IsBlock {
+			subtitle += " · заблокирован"
+		}
+		out = append(out, SearchResultItem{
+			ID:       "user-gelios:" + strconv.FormatUint(uint64(r.ID), 10),
+			Type:     "user",
+			Title:    title,
+			Subtitle: subtitle,
+			URL:      "/users?search=" + r.Login,
+		})
+	}
+	return out
+}
+
+func searchSkifUsers(db *gorm.DB, companyID uint, pattern string, limit int) []SearchResultItem {
+	type row struct {
+		ID       uint
+		Name     string
+		Email    string
+		RoleKey  string
+		IsActive bool
+	}
+	var rows []row
+	db.Table(publicTable(db, "skif_users")).
+		Select("id, name, email, role_key, is_active").
+		Where("company_id = ? AND (name ILIKE ? OR email ILIKE ?) AND skif_deleted_at IS NULL",
+			companyID, pattern, pattern).
+		Limit(limit).
+		Scan(&rows)
+
+	out := make([]SearchResultItem, 0, len(rows))
+	for _, r := range rows {
+		title := r.Name
+		if title == "" {
+			title = r.Email
+		}
+		subtitle := "SKIF"
+		if r.Email != "" {
+			subtitle += " · " + r.Email
+		}
+		if r.RoleKey != "" {
+			subtitle += " · " + r.RoleKey
+		}
+		if !r.IsActive {
+			subtitle += " · неактивен"
+		}
+		out = append(out, SearchResultItem{
+			ID:       "user-skif:" + strconv.FormatUint(uint64(r.ID), 10),
+			Type:     "user",
+			Title:    title,
+			Subtitle: subtitle,
+			URL:      "/users?search=" + r.Email,
+		})
+	}
+	return out
+}
+
+func searchWialonUsers(db *gorm.DB, companyID uint, pattern string, limit int) []SearchResultItem {
+	type row struct {
+		ID        uint
+		Name      string
+		ShortName string
+		IsActive  bool
+	}
+	var rows []row
+	db.Table(publicTable(db, "wialon_users")+" AS wu").
+		Joins("JOIN "+publicTable(db, "wialon_connections")+" AS wc ON wc.id = wu.connection_id").
+		Select("wu.id, wu.name, wu.short_name, wu.is_active").
+		Where("wc.company_id = ? AND (wu.name ILIKE ? OR wu.short_name ILIKE ?)",
+			companyID, pattern, pattern).
+		Limit(limit).
+		Scan(&rows)
+
+	out := make([]SearchResultItem, 0, len(rows))
+	for _, r := range rows {
+		title := r.Name
+		if title == "" {
+			title = r.ShortName
+		}
+		subtitle := "Wialon"
+		if r.ShortName != "" && r.ShortName != title {
+			subtitle += " · " + r.ShortName
+		}
+		if !r.IsActive {
+			subtitle += " · неактивен"
+		}
+		out = append(out, SearchResultItem{
+			ID:       "user-wialon:" + strconv.FormatUint(uint64(r.ID), 10),
+			Type:     "user",
+			Title:    title,
+			Subtitle: subtitle,
+			URL:      "/users?search=" + title,
 		})
 	}
 	return out
