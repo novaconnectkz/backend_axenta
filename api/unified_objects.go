@@ -53,6 +53,7 @@ type UnifiedObjectsStats struct {
 	AxentaDegraded bool `json:"axenta_degraded"`
 	WialonTotal    int  `json:"wialon_total"`
 	WialonActive   int  `json:"wialon_active"`
+	WialonInactive int  `json:"wialon_inactive"`
 	WialonWHTotal  int  `json:"wialon_wh_total"`
 	WialonWHActive int  `json:"wialon_wh_active"`
 	WialonWLTotal  int  `json:"wialon_wl_total"`
@@ -154,6 +155,7 @@ func GetUnifiedObjects(c *gin.Context) {
 			stats.WialonWLActive = wlActive
 			stats.WialonTotal = whTotal + wlTotal
 			stats.WialonActive = whActive + wlActive
+			stats.WialonInactive = (whTotal + wlTotal) - (whActive + wlActive)
 			mu.Unlock()
 		}()
 	}
