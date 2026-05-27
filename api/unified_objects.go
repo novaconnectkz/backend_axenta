@@ -35,7 +35,7 @@ type UnifiedObject struct {
 	PhoneNumbers        []string `json:"phoneNumbers,omitempty"`
 	CreatedAt           string   `json:"createdAt,omitempty"`
 	LastMessageDatetime string   `json:"lastMessageDatetime,omitempty"`
-	Source              string   `json:"source"`                 // "axenta" | "wh" | "wl"
+	Source              string   `json:"source"`                 // "axenta" | "wh" | "wl" | "gelios" | "skif"
 	SourceLabel         string   `json:"sourceLabel,omitempty"`  // "Axenta Cloud" | "WH(...)" | "WL(...)"
 	ConnectionID        *uint    `json:"connectionId,omitempty"` // только для wh/wl
 	ScheduledDelete     bool     `json:"scheduledDelete,omitempty"`
@@ -60,6 +60,9 @@ type UnifiedObjectsStats struct {
 	GeliosTotal    int  `json:"gelios_total"`
 	GeliosActive   int  `json:"gelios_active"`
 	GeliosInactive int  `json:"gelios_inactive"`
+	SkifTotal      int  `json:"skif_total"`
+	SkifActive     int  `json:"skif_active"`
+	SkifInactive   int  `json:"skif_inactive"`
 }
 
 // UnifiedObjectsResponse — формат ответа.
@@ -110,6 +113,7 @@ func GetUnifiedObjects(c *gin.Context) {
 	loadAxenta := source == "all" || source == "axenta"
 	loadWialon := source == "all" || source == "wialon" || source == "wh" || source == "wl"
 	loadGelios := source == "all" || source == "gelios"
+	loadSkif := source == "all" || source == "skif"
 
 	if loadAxenta {
 		wg.Add(1)
@@ -167,6 +171,23 @@ func GetUnifiedObjects(c *gin.Context) {
 			stats.GeliosTotal = gTotal
 			stats.GeliosActive = gActive
 			stats.GeliosInactive = gInactive
+			mu.Unlock()
+		}()
+	}
+
+	if sCompanyID, sOK := companyIDRaw.(uint); loadSkif && sOK {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			t0 := time.Now()
+			sObjects, sTotal, sActive, sInactive := fetchSkifObjectsFast(sCompanyID, search, activeStr)
+			log.Printf("🔍 unified/objects skif: %d за %s",
+				len(sObjects), time.Since(t0).Round(time.Millisecond))
+			mu.Lock()
+			all = append(all, sObjects...)
+			stats.SkifTotal = sTotal
+			stats.SkifActive = sActive
+			stats.SkifInactive = sInactive
 			mu.Unlock()
 		}()
 	}
@@ -707,6 +728,107 @@ func fetchGeliosObjectsFast(companyID uint, search, active string) ([]UnifiedObj
 			CreatedAt:           createdAt,
 			LastMessageDatetime: lastMsg,
 			Source:              "gelios",
+			SourceLabel:         sourceLabel,
+			ConnectionID:        &connID,
+		})
+	}
+	return out, int(totalCount), int(activeCount), int(totalCount) - int(activeCount)
+}
+
+// fetchSkifObjectsFast — объекты SKIF (skif_units) per company.
+// Зеркало fetchGeliosObjectsFast. active = is_active && skif_deleted_at IS NULL.
+// Возвращает: objects, total, active, inactive.
+func fetchSkifObjectsFast(companyID uint, search, active string) ([]UnifiedObject, int, int, int) {
+	var connections []models.SkifConnection
+	if err := database.DB.Where("company_id = ? AND is_active = ?", companyID, true).
+		Find(&connections).Error; err != nil {
+		log.Printf("⚠️ fetchSkifObjectsFast: connections: %v", err)
+		return nil, 0, 0, 0
+	}
+	if len(connections) == 0 {
+		return nil, 0, 0, 0
+	}
+	connByID := make(map[uint]string, len(connections))
+	connIDs := make([]uint, 0, len(connections))
+	for _, cn := range connections {
+		connByID[cn.ID] = cn.Name
+		connIDs = append(connIDs, cn.ID)
+	}
+
+	q := database.DB.Model(&models.SkifUnit{}).
+		Where("connection_id IN ? AND skif_deleted_at IS NULL", connIDs)
+
+	if search != "" {
+		terms := splitSearchTerms(search)
+		if len(terms) > 1 {
+			ph := make([]string, 0, len(terms)*3)
+			args := make([]any, 0, len(terms)*3)
+			for _, t := range terms {
+				p := "%" + strings.ToLower(t) + "%"
+				ph = append(ph, "LOWER(name) LIKE ?", "LOWER(imei) LIKE ?", "LOWER(phone) LIKE ?")
+				args = append(args, p, p, p)
+			}
+			q = q.Where(strings.Join(ph, " OR "), args...)
+		} else {
+			p := "%" + strings.ToLower(search) + "%"
+			q = q.Where("LOWER(name) LIKE ? OR LOWER(imei) LIKE ? OR LOWER(phone) LIKE ?", p, p, p)
+		}
+	}
+	if active == "true" || active == "1" {
+		q = q.Where("is_active = ?", true)
+	} else if active == "false" || active == "0" {
+		q = q.Where("is_active = ?", false)
+	}
+
+	var totalCount int64
+	if err := q.Count(&totalCount).Error; err != nil {
+		log.Printf("⚠️ fetchSkifObjectsFast count: %v", err)
+		return nil, 0, 0, 0
+	}
+	var activeCount int64
+	q.Session(&gorm.Session{}).Where("is_active = ?", true).Count(&activeCount)
+
+	var rows []models.SkifUnit
+	if err := q.Order("name ASC").Limit(5000).Find(&rows).Error; err != nil {
+		log.Printf("⚠️ fetchSkifObjectsFast find: %v", err)
+		return nil, 0, 0, 0
+	}
+
+	out := make([]UnifiedObject, 0, len(rows))
+	for _, r := range rows {
+		connName := connByID[r.ConnectionID]
+		sourceLabel := "SKIF"
+		if connName != "" {
+			sourceLabel = "SKIF(" + connName + ")"
+		}
+		createdAt := ""
+		if r.SkifCreatedAt != nil {
+			createdAt = r.SkifCreatedAt.Format(time.RFC3339)
+		}
+		phones := make([]string, 0, 1)
+		if r.Phone != "" {
+			phones = append(phones, r.Phone)
+		}
+		uniqueID := r.IMEI
+		if uniqueID == "" {
+			uniqueID = r.SkifUnitID
+		}
+		// Учетка = SKIF-компания, к которой относится юнит (дилерская привязка).
+		accountName := r.SkifCompany
+		connID := r.ConnectionID
+		out = append(out, UnifiedObject{
+			ID:                  int64(r.ID),
+			Name:                r.Name,
+			UniqueID:            uniqueID,
+			IMEI:                r.IMEI,
+			IsActive:            r.IsActive,
+			AccountName:         accountName,
+			CreatorName:         accountName,
+			DeviceTypeName:      r.Model,
+			PhoneNumbers:        phones,
+			CreatedAt:           createdAt,
+			LastMessageDatetime: "",
+			Source:              "skif",
 			SourceLabel:         sourceLabel,
 			ConnectionID:        &connID,
 		})
