@@ -91,7 +91,9 @@ func GetGlobalSearch(c *gin.Context) {
 
 	scope := parseScope(c.Query("scope"))
 	publicDB := publicDBOrTenant(tenantDB)
-	pattern := "%" + q + "%"
+	// Pattern в нижнем регистре — все SQL'и идут через LOWER(col COLLATE "und-x-icu")
+	// LIKE LOWER(?), иначе на prod PG (lc_collate=C) ILIKE не downcase'ит кириллицу.
+	pattern := "%" + strings.ToLower(q) + "%"
 	companyID := middleware.GetCompanyID(c)
 
 	// Все поля инициализируем пустыми слайсами — Go marshallит nil как null,
@@ -142,7 +144,7 @@ func searchObjects(db *gorm.DB, pattern string, limit int) []SearchResultItem {
 	var rows []row
 	db.Table("axenta_object_snapshots").
 		Select("external_object_id, object_name, unique_id, account_name, is_active").
-		Where("(object_name ILIKE ? OR unique_id ILIKE ? OR account_name ILIKE ?) AND deleted_at IS NULL",
+		Where(`(LOWER(object_name COLLATE "und-x-icu") LIKE ? OR LOWER(unique_id COLLATE "und-x-icu") LIKE ? OR LOWER(account_name COLLATE "und-x-icu") LIKE ?) AND deleted_at IS NULL`,
 			pattern, pattern, pattern).
 		Limit(limit).
 		Scan(&rows)
@@ -179,7 +181,7 @@ func searchContracts(db *gorm.DB, pattern string, limit int) []SearchResultItem 
 	var rows []row
 	db.Table("contracts").
 		Select("id, number, client_name").
-		Where("(number ILIKE ? OR client_name ILIKE ?) AND deleted_at IS NULL", pattern, pattern).
+		Where(`(LOWER(number COLLATE "und-x-icu") LIKE ? OR LOWER(client_name COLLATE "und-x-icu") LIKE ?) AND deleted_at IS NULL`, pattern, pattern).
 		Limit(limit).
 		Scan(&rows)
 
@@ -206,7 +208,7 @@ func searchInvoices(db *gorm.DB, companyID uint, pattern string, limit int) []Se
 	var rows []row
 	db.Table(publicTable(db, "invoices")).
 		Select("id, number, status").
-		Where("company_id = ? AND number ILIKE ? AND deleted_at IS NULL", companyID, pattern).
+		Where(`company_id = ? AND LOWER(number COLLATE "und-x-icu") LIKE ? AND deleted_at IS NULL`, companyID, pattern).
 		Limit(limit).
 		Scan(&rows)
 
@@ -251,7 +253,7 @@ func searchAcrmCompanies(db *gorm.DB, pattern string, limit int) []SearchResultI
 	var rows []row
 	db.Table(publicTable(db, "companies")).
 		Select("id, name").
-		Where("name ILIKE ? AND deleted_at IS NULL", pattern).
+		Where(`LOWER(name COLLATE "und-x-icu") LIKE ? AND deleted_at IS NULL`, pattern).
 		Limit(limit).
 		Scan(&rows)
 
@@ -278,7 +280,7 @@ func searchAxentaAccounts(db *gorm.DB, pattern string, limit int) []SearchResult
 	var rows []row
 	db.Table("axenta_account_snapshots").
 		Select("id, account_name, admin_fullname, is_active").
-		Where("(account_name ILIKE ? OR admin_fullname ILIKE ?) AND deleted_at IS NULL",
+		Where(`(LOWER(account_name COLLATE "und-x-icu") LIKE ? OR LOWER(admin_fullname COLLATE "und-x-icu") LIKE ?) AND deleted_at IS NULL`,
 			pattern, pattern).
 		Limit(limit).
 		Scan(&rows)
@@ -314,7 +316,7 @@ func searchGeliosAccounts(db *gorm.DB, companyID uint, pattern string, limit int
 	var rows []row
 	db.Table(publicTable(db, "gelios_users")).
 		Select("id, login, email, legal_name, is_block").
-		Where("company_id = ? AND (is_admin = true OR units_count > 0) AND (login ILIKE ? OR email ILIKE ? OR legal_name ILIKE ?) AND gelios_deleted_at IS NULL",
+		Where(`company_id = ? AND (is_admin = true OR units_count > 0) AND (LOWER(login COLLATE "und-x-icu") LIKE ? OR LOWER(email COLLATE "und-x-icu") LIKE ? OR LOWER(legal_name COLLATE "und-x-icu") LIKE ?) AND gelios_deleted_at IS NULL`,
 			companyID, pattern, pattern, pattern).
 		Limit(limit).
 		Scan(&rows)
@@ -353,7 +355,7 @@ func searchSkifDealers(db *gorm.DB, companyID uint, pattern string, limit int) [
 	db.Table(publicTable(db, "skif_dealers")+" AS sd").
 		Joins("JOIN "+publicTable(db, "skif_connections")+" AS sc ON sc.id = sd.connection_id").
 		Select("sd.id, sd.name, sd.email").
-		Where("sc.company_id = ? AND sd.hidden = false AND (sd.name ILIKE ? OR sd.email ILIKE ?)",
+		Where(`sc.company_id = ? AND sd.hidden = false AND (LOWER(sd.name COLLATE "und-x-icu") LIKE ? OR LOWER(sd.email COLLATE "und-x-icu") LIKE ?)`,
 			companyID, pattern, pattern).
 		Limit(limit).
 		Scan(&rows)
@@ -385,7 +387,7 @@ func searchWialonAccounts(db *gorm.DB, companyID uint, pattern string, limit int
 	db.Table(publicTable(db, "wialon_account_statuses")+" AS was").
 		Joins("JOIN "+publicTable(db, "wialon_connections")+" AS wc ON wc.id = was.connection_id").
 		Select("was.id, was.name, was.is_active").
-		Where("wc.company_id = ? AND was.name ILIKE ?", companyID, pattern).
+		Where(`wc.company_id = ? AND LOWER(was.name COLLATE "und-x-icu") LIKE ?`, companyID, pattern).
 		Limit(limit).
 		Scan(&rows)
 
@@ -440,7 +442,7 @@ func searchLocalUsers(db *gorm.DB, companyID uint, pattern string, limit int) []
 	var rows []row
 	db.Table(publicTable(db, "local_users")).
 		Select("id, username, email, name, role, is_active").
-		Where("company_id = ? AND (username ILIKE ? OR email ILIKE ? OR name ILIKE ?) AND deleted_at IS NULL",
+		Where(`company_id = ? AND (LOWER(username COLLATE "und-x-icu") LIKE ? OR LOWER(email COLLATE "und-x-icu") LIKE ? OR LOWER(name COLLATE "und-x-icu") LIKE ?) AND deleted_at IS NULL`,
 			strconv.FormatUint(uint64(companyID), 10), pattern, pattern, pattern).
 		Limit(limit).
 		Scan(&rows)
@@ -483,7 +485,7 @@ func searchAxentaUsers(db *gorm.DB, pattern string, limit int) []SearchResultIte
 	var rows []row
 	db.Table("axenta_user_snapshots").
 		Select("id, username, name, email, is_active").
-		Where("(username ILIKE ? OR name ILIKE ? OR email ILIKE ?) AND deleted_at IS NULL",
+		Where(`(LOWER(username COLLATE "und-x-icu") LIKE ? OR LOWER(name COLLATE "und-x-icu") LIKE ? OR LOWER(email COLLATE "und-x-icu") LIKE ?) AND deleted_at IS NULL`,
 			pattern, pattern, pattern).
 		Limit(limit).
 		Scan(&rows)
@@ -523,7 +525,7 @@ func searchGeliosUsers(db *gorm.DB, companyID uint, pattern string, limit int) [
 	var rows []row
 	db.Table(publicTable(db, "gelios_users")).
 		Select("id, login, email, legal_name, is_block").
-		Where("company_id = ? AND (login ILIKE ? OR email ILIKE ? OR legal_name ILIKE ?) AND gelios_deleted_at IS NULL",
+		Where(`company_id = ? AND (LOWER(login COLLATE "und-x-icu") LIKE ? OR LOWER(email COLLATE "und-x-icu") LIKE ? OR LOWER(legal_name COLLATE "und-x-icu") LIKE ?) AND gelios_deleted_at IS NULL`,
 			companyID, pattern, pattern, pattern).
 		Limit(limit).
 		Scan(&rows)
@@ -563,7 +565,7 @@ func searchSkifUsers(db *gorm.DB, companyID uint, pattern string, limit int) []S
 	var rows []row
 	db.Table(publicTable(db, "skif_users")).
 		Select("id, name, email, role_key, is_active").
-		Where("company_id = ? AND (name ILIKE ? OR email ILIKE ?) AND skif_deleted_at IS NULL",
+		Where(`company_id = ? AND (LOWER(name COLLATE "und-x-icu") LIKE ? OR LOWER(email COLLATE "und-x-icu") LIKE ?) AND skif_deleted_at IS NULL`,
 			companyID, pattern, pattern).
 		Limit(limit).
 		Scan(&rows)
@@ -606,7 +608,7 @@ func searchWialonUsers(db *gorm.DB, companyID uint, pattern string, limit int) [
 	db.Table(publicTable(db, "wialon_users")+" AS wu").
 		Joins("JOIN "+publicTable(db, "wialon_connections")+" AS wc ON wc.id = wu.connection_id").
 		Select("wu.id, wu.name, wu.short_name, wu.is_active").
-		Where("wc.company_id = ? AND (wu.name ILIKE ? OR wu.short_name ILIKE ?)",
+		Where(`wc.company_id = ? AND (LOWER(wu.name COLLATE "und-x-icu") LIKE ? OR LOWER(wu.short_name COLLATE "und-x-icu") LIKE ?)`,
 			companyID, pattern, pattern).
 		Limit(limit).
 		Scan(&rows)
@@ -648,7 +650,7 @@ func searchInstallations(db *gorm.DB, pattern string, limit int) []SearchResultI
 	var rows []row
 	db.Table("installations").
 		Select("id, type, status, description, address, client_contact").
-		Where("(description ILIKE ? OR address ILIKE ? OR client_contact ILIKE ?) AND deleted_at IS NULL",
+		Where(`(LOWER(description COLLATE "und-x-icu") LIKE ? OR LOWER(address COLLATE "und-x-icu") LIKE ? OR LOWER(client_contact COLLATE "und-x-icu") LIKE ?) AND deleted_at IS NULL`,
 			pattern, pattern, pattern).
 		Limit(limit).
 		Scan(&rows)
