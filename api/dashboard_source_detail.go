@@ -259,11 +259,13 @@ func buildSkifDetails(publicDB *gorm.DB, companyID uint, buckets []chartBucket) 
 	}
 	var conns []connRow
 	// Live total per connection — то же число что sources-stats (COUNT skif_units
-	// без time-filters), чтобы breakdown sum совпадал с card "ТЕКУЩЕЕ".
+	// с фильтром skif_deleted_at IS NULL), чтобы breakdown sum совпадал с
+	// card "ТЕКУЩЕЕ" и admin.skif.pro. Без фильтра считаются soft-deleted юниты
+	// (исчезли в SKIF, остались в local snapshot) — завышает на 5-10 единиц.
 	publicDB.Raw(`
 		SELECT sc.id, sc.name, COALESCE(COUNT(su.id), 0) AS live_total
 		FROM `+publicTable(publicDB, "skif_connections")+` sc
-		LEFT JOIN `+publicTable(publicDB, "skif_units")+` su ON su.connection_id = sc.id
+		LEFT JOIN `+publicTable(publicDB, "skif_units")+` su ON su.connection_id = sc.id AND su.skif_deleted_at IS NULL
 		WHERE sc.company_id = ?
 		GROUP BY sc.id, sc.name
 		ORDER BY sc.name
