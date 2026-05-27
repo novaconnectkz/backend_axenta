@@ -94,7 +94,17 @@ func GetGlobalSearch(c *gin.Context) {
 	pattern := "%" + q + "%"
 	companyID := middleware.GetCompanyID(c)
 
-	resp := SearchResponse{Query: q}
+	// Все поля инициализируем пустыми слайсами — Go marshallит nil как null,
+	// а FE падает на .length у не-возвращённой группы при scope-фильтре.
+	resp := SearchResponse{
+		Query:         q,
+		Objects:       []SearchResultItem{},
+		Clients:       []SearchResultItem{},
+		Contracts:     []SearchResultItem{},
+		Invoices:      []SearchResultItem{},
+		Users:         []SearchResultItem{},
+		Installations: []SearchResultItem{},
+	}
 	if inScope(scope, "objects") {
 		resp.Objects = searchObjects(tenantDB, pattern, limit)
 	}
