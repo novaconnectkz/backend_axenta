@@ -14,17 +14,27 @@ import (
 	"backend_axenta/services"
 )
 
+// SourceBreakdown — разбивка значения метрики по partner_source (axenta/skif/wialon/gelios).
+// Используется в monthly_revenue для отображения вклада каждой GPS-системы.
+type SourceBreakdown struct {
+	Source   string  `json:"source"`    // "axenta" | "skif" | "wialon" | "gelios"
+	Label    string  `json:"label"`     // "Axenta" | "SKIF" | "Wialon" | "GELIOS"
+	Amount   string  `json:"amount"`    // "145 100 ₽" — отформатировано
+	RawValue float64 `json:"raw_value"` // числовое для сортировки/процента
+}
+
 // KPIMetric — одна метрика верхнего бара дашборда с delta vs предыдущий период.
 type KPIMetric struct {
-	ID              string  `json:"id"`               // active_objects, monthly_revenue, today_installations, alert
-	Title           string  `json:"title"`            // "Активные объекты"
-	Value           string  `json:"value"`            // "9710" / "25 500 ₽" — отформатировано для UI
-	RawValue        float64 `json:"raw_value"`        // числовое значение для сортировки/чартов
-	Delta           string  `json:"delta"`            // "+12 за неделю" — текст для отображения
-	DeltaDirection  string  `json:"delta_direction"`  // up, down, flat — для цвета
-	DeltaValue      float64 `json:"delta_value"`      // числовая дельта (может быть отрицательной)
-	DeltaPercentage float64 `json:"delta_percentage"` // % изменения, если применимо
-	ActionURL       string  `json:"action_url"`       // CTA → frontend route
+	ID              string            `json:"id"`                  // active_objects, monthly_revenue, today_installations, alert
+	Title           string            `json:"title"`               // "Активные объекты"
+	Value           string            `json:"value"`               // "9710" / "25 500 ₽" — отформатировано для UI
+	RawValue        float64           `json:"raw_value"`           // числовое значение для сортировки/чартов
+	Delta           string            `json:"delta"`               // "+12 за неделю" — текст для отображения
+	DeltaDirection  string            `json:"delta_direction"`     // up, down, flat — для цвета
+	DeltaValue      float64           `json:"delta_value"`         // числовая дельта (может быть отрицательной)
+	DeltaPercentage float64           `json:"delta_percentage"`    // % изменения, если применимо
+	ActionURL       string            `json:"action_url"`          // CTA → frontend route
+	Breakdown       []SourceBreakdown `json:"breakdown,omitempty"` // Опциональная разбивка per partner_source (только monthly_revenue, >0)
 }
 
 // KPIResponse — payload ответа /api/auth/dashboard/kpi.
@@ -59,7 +69,7 @@ func GetDashboardKPI(c *gin.Context) {
 
 	metrics := []KPIMetric{
 		buildActiveObjectsKPI(tenantDB, now),
-		buildMonthlyRevenueKPI(publicDB, companyID, now),
+		buildMonthlyRevenueKPI(publicDB, tenantDB, companyID, now),
 		buildTodayInstallationsKPI(tenantDB, now),
 		buildAlertKPI(tenantDB, publicDB, companyID, now),
 	}
@@ -127,7 +137,7 @@ func buildActiveObjectsKPI(db *gorm.DB, _ time.Time) KPIMetric {
 // Сумма paid_amount по invoices с paid_at в текущем месяце. Delta vs
 // прошлый месяц (та же арифметика для предыдущего month-range).
 
-func buildMonthlyRevenueKPI(db *gorm.DB, companyID uint, now time.Time) KPIMetric {
+func buildMonthlyRevenueKPI(db *gorm.DB, tenantDB *gorm.DB, companyID uint, now time.Time) KPIMetric {
 	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 	prevMonthStart := monthStart.AddDate(0, -1, 0)
 
@@ -136,6 +146,10 @@ func buildMonthlyRevenueKPI(db *gorm.DB, companyID uint, now time.Time) KPIMetri
 
 	delta := current.Sub(prev)
 	dir, deltaText, pct := formatRublesDelta(current, delta, prev, "vs прошлый месяц")
+
+	// Per-source breakdown (для tooltip на FE). Σ amount должна совпадать с current.
+	// Скрываем нулевые источники — на UI tooltip покажет только non-zero.
+	breakdown := sumPaidPerSource(tenantDB, companyID, monthStart, monthStart.AddDate(0, 1, 0))
 
 	return KPIMetric{
 		ID:              "monthly_revenue",
@@ -147,6 +161,7 @@ func buildMonthlyRevenueKPI(db *gorm.DB, companyID uint, now time.Time) KPIMetri
 		DeltaValue:      rublesAsFloat(delta),
 		DeltaPercentage: pct,
 		ActionURL:       "/billing",
+		Breakdown:       breakdown,
 	}
 }
 
@@ -159,6 +174,65 @@ func sumPaid(db *gorm.DB, companyID uint, from, to time.Time) decimal.Decimal {
 		Where("company_id = ? AND paid_at >= ? AND paid_at < ?", companyID, from, to).
 		Scan(&row)
 	return row.Sum
+}
+
+// sourceLabels — отображаемые имена GPS-систем для UI breakdown.
+var sourceLabels = map[string]string{
+	"axenta": "Axenta",
+	"skif":   "SKIF",
+	"wialon": "Wialon",
+	"gelios": "GELIOS",
+}
+
+// sumPaidPerSource — разбивка sumPaid по partner_source через JOIN
+// public.invoices ↔ tenant.contracts (search_path tenantDB переключён на схему
+// текущего тенанта, contracts резолвится туда). Возвращает только источники с
+// amount > 0 (нулевые скрываются — для tooltip без UI-шума).
+//
+// Σ amount по результату должна совпадать с sumPaid за тот же период
+// (если paid_amount распределяется по contract_id; invoice'ы без contract_id
+// или без partner_source попадут в "other" — отбрасываются).
+func sumPaidPerSource(tenantDB *gorm.DB, companyID uint, from, to time.Time) []SourceBreakdown {
+	if tenantDB == nil {
+		return nil
+	}
+	type row struct {
+		PartnerSource string          `gorm:"column:partner_source"`
+		Sum           decimal.Decimal `gorm:"column:sum"`
+	}
+	var rows []row
+	// SQLite (тесты) не поддерживает кросс-schema JOIN с public-префиксом —
+	// при postgres JOIN public.invoices + contracts (резолвится из tenant
+	// search_path); при SQLite — обе таблицы в одной БД.
+	invoicesTable := publicTable(tenantDB, "invoices")
+	err := tenantDB.Table(invoicesTable+" AS i").
+		Select("c.partner_source AS partner_source, COALESCE(SUM(i.paid_amount), 0) AS sum").
+		Joins("JOIN contracts c ON c.id = i.contract_id").
+		Where("i.company_id = ? AND i.paid_at >= ? AND i.paid_at < ?", companyID, from, to).
+		Where("c.partner_source <> ''").
+		Group("c.partner_source").
+		Scan(&rows).Error
+	if err != nil {
+		return nil
+	}
+
+	out := make([]SourceBreakdown, 0, len(rows))
+	for _, r := range rows {
+		if !r.Sum.GreaterThan(decimal.Zero) {
+			continue
+		}
+		label, ok := sourceLabels[r.PartnerSource]
+		if !ok {
+			label = r.PartnerSource
+		}
+		out = append(out, SourceBreakdown{
+			Source:   r.PartnerSource,
+			Label:    label,
+			Amount:   formatRublesValue(r.Sum),
+			RawValue: rublesAsFloat(r.Sum),
+		})
+	}
+	return out
 }
 
 // =====================================================================
