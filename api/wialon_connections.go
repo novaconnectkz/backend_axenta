@@ -181,6 +181,37 @@ func (api *WialonConnectionAPI) GetConnections(c *gin.Context) {
 		return
 	}
 
+	// Live units_count из wialon_connection_summary (наполняется WialonStatsScheduler,
+	// те же числа что dashboard chart показывает per-connection). Поле connection.UnitsCount
+	// — stored snapshot, может быть stale между sync'ами; подменяем live данными для UI.
+	if len(connections) > 0 {
+		ids := make([]uint, len(connections))
+		for i := range connections {
+			ids[i] = connections[i].ID
+		}
+		type sumRow struct {
+			ConnectionID uint
+			ObjectsTotal int
+		}
+		var sums []sumRow
+		if err := database.DB.Raw(`
+			SELECT connection_id, COALESCE(SUM(objects_total), 0) AS objects_total
+			FROM wialon_connection_summary
+			WHERE connection_id IN ?
+			GROUP BY connection_id
+		`, ids).Scan(&sums).Error; err == nil {
+			byID := make(map[uint]int, len(sums))
+			for _, s := range sums {
+				byID[s.ConnectionID] = s.ObjectsTotal
+			}
+			for i := range connections {
+				if v, ok := byID[connections[i].ID]; ok && v > 0 {
+					connections[i].UnitsCount = v
+				}
+			}
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
