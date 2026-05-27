@@ -38,37 +38,10 @@ func GetSkifConnections(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-
-	// Live units_count из skif_units (то же что dashboard SKIF chart). Поле
-	// SkifConnection.UnitsCount — stored snapshot, может расходиться с live на
-	// 5-10 юнитов между sync'ами.
-	if len(conns) > 0 {
-		ids := make([]uint, len(conns))
-		for i := range conns {
-			ids[i] = conns[i].ID
-		}
-		type cntRow struct {
-			ConnectionID uint
-			Cnt          int
-		}
-		var rows []cntRow
-		if err := database.DB.Raw(`
-			SELECT connection_id, COUNT(*) AS cnt
-			FROM skif_units
-			WHERE connection_id IN ?
-			GROUP BY connection_id
-		`, ids).Scan(&rows).Error; err == nil {
-			byID := make(map[uint]int, len(rows))
-			for _, r := range rows {
-				byID[r.ConnectionID] = r.Cnt
-			}
-			for i := range conns {
-				if v, ok := byID[conns[i].ID]; ok && v > 0 {
-					conns[i].UnitsCount = v
-				}
-			}
-		}
-	}
+	// NB: SkifConnection.UnitsCount — stored snapshot из последнего sync, отражает
+	// реальное число юнитов в admin.skif.pro (truth). Локальная COUNT(skif_units)
+	// может быть завышена на soft-deleted строки (skif_deleted_at != NULL), которые
+	// исчезли в SKIF но остались в local snapshot до cleanup. НЕ подменять.
 
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": conns})
 }

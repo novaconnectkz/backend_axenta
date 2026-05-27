@@ -106,13 +106,16 @@ func buildSkifSourceStats(companyID uint) SourceStats {
 		Inactive int64
 	}
 	var oc objCounts
+	// Фильтр skif_deleted_at IS NULL — иначе считаем юниты которые исчезли в
+	// SKIF (soft-delete метка), завышая total на 5-10 между sync-cleanup'ами.
+	// admin.skif.pro показывает только живые.
 	if err := database.DB.Raw(`
 		SELECT
 			COUNT(*) AS total,
 			COUNT(*) FILTER (WHERE is_active = true) AS active,
 			COUNT(*) FILTER (WHERE is_active = false) AS inactive
 		FROM skif_units
-		WHERE company_id = ?
+		WHERE company_id = ? AND skif_deleted_at IS NULL
 	`, companyID).Scan(&oc).Error; err != nil {
 		log.Printf("⚠️ sources-stats skif objects: %v", err)
 	}
