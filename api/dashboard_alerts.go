@@ -276,6 +276,7 @@ func formatCount(n int64) string {
 }
 
 func formatRubles(d decimal.Decimal) string {
-	// Округляем до целых рублей для краткости.
-	return d.Round(0).String() + " ₽"
+	// Округляем до целых + пробелы-разделители тысяч (русская типография).
+	// Делегируем в formatRublesValue (dashboard_kpi.go) — один helper на пакет.
+	return formatRublesValue(d)
 }
