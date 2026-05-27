@@ -134,22 +134,28 @@ func buildActiveObjectsKPI(db *gorm.DB, _ time.Time) KPIMetric {
 // Метрика 2: Выручка за месяц
 // =====================================================================
 //
-// Сумма paid_amount по invoices с paid_at в текущем месяце. Delta vs
-// прошлый месяц (та же арифметика для предыдущего month-range).
+// Σ daily_cost из partner_daily_snapshots за текущий месяц — плановая выручка
+// (биллинг-начисления per-договор, наполняется partner-snapshot cron'ом
+// 00:30/00:45/00:50/00:55 UTC). Раньше брали paid_amount из invoices, но
+// на проде invoices не помечаются paid → tile всегда 0. Snapshot-источник
+// даёт осмысленное значение сразу.
+//
+// status='completed' — пропускаем warning-снимки (GELIOS Ф3: warning =
+// дилер исчез/нулевой). Delta vs прошлый месяц.
 
-func buildMonthlyRevenueKPI(db *gorm.DB, tenantDB *gorm.DB, companyID uint, now time.Time) KPIMetric {
+func buildMonthlyRevenueKPI(_ *gorm.DB, tenantDB *gorm.DB, _ uint, now time.Time) KPIMetric {
 	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 	prevMonthStart := monthStart.AddDate(0, -1, 0)
 
-	current := sumPaid(db, companyID, monthStart, monthStart.AddDate(0, 1, 0))
-	prev := sumPaid(db, companyID, prevMonthStart, monthStart)
+	current := sumBilledFromSnapshots(tenantDB, monthStart, monthStart.AddDate(0, 1, 0))
+	prev := sumBilledFromSnapshots(tenantDB, prevMonthStart, monthStart)
 
 	delta := current.Sub(prev)
 	dir, deltaText, pct := formatRublesDelta(current, delta, prev, "vs прошлый месяц")
 
-	// Per-source breakdown (для tooltip на FE). Σ amount должна совпадать с current.
-	// Скрываем нулевые источники — на UI tooltip покажет только non-zero.
-	breakdown := sumPaidPerSource(tenantDB, companyID, monthStart, monthStart.AddDate(0, 1, 0))
+	// Per-source breakdown (для tooltip). Σ amount совпадает с current.
+	// Скрываем нулевые источники — tooltip покажет только non-zero.
+	breakdown := sumBilledPerSource(tenantDB, monthStart, monthStart.AddDate(0, 1, 0))
 
 	return KPIMetric{
 		ID:              "monthly_revenue",
@@ -165,13 +171,19 @@ func buildMonthlyRevenueKPI(db *gorm.DB, tenantDB *gorm.DB, companyID uint, now 
 	}
 }
 
-func sumPaid(db *gorm.DB, companyID uint, from, to time.Time) decimal.Decimal {
+// sumBilledFromSnapshots — Σ daily_cost из partner_daily_snapshots за период.
+// status='completed' — без warning-снимков (нулевые/исчезнувшие дилеры).
+func sumBilledFromSnapshots(tenantDB *gorm.DB, from, to time.Time) decimal.Decimal {
+	if tenantDB == nil {
+		return decimal.Zero
+	}
 	var row struct {
 		Sum decimal.Decimal
 	}
-	db.Table(publicTable(db, "invoices")).
-		Select("COALESCE(SUM(paid_amount), 0) as sum").
-		Where("company_id = ? AND paid_at >= ? AND paid_at < ?", companyID, from, to).
+	tenantDB.Table("partner_daily_snapshots").
+		Select("COALESCE(SUM(daily_cost), 0) as sum").
+		Where("snapshot_date >= ? AND snapshot_date < ?", from, to).
+		Where("status = ?", "completed").
 		Scan(&row)
 	return row.Sum
 }
@@ -184,15 +196,10 @@ var sourceLabels = map[string]string{
 	"gelios": "GELIOS",
 }
 
-// sumPaidPerSource — разбивка sumPaid по partner_source через JOIN
-// public.invoices ↔ tenant.contracts (search_path tenantDB переключён на схему
-// текущего тенанта, contracts резолвится туда). Возвращает только источники с
-// amount > 0 (нулевые скрываются — для tooltip без UI-шума).
-//
-// Σ amount по результату должна совпадать с sumPaid за тот же период
-// (если paid_amount распределяется по contract_id; invoice'ы без contract_id
-// или без partner_source попадут в "other" — отбрасываются).
-func sumPaidPerSource(tenantDB *gorm.DB, companyID uint, from, to time.Time) []SourceBreakdown {
+// sumBilledPerSource — разбивка sumBilledFromSnapshots по partner_source.
+// tenant-scoped (snapshots в tenant schema), без cross-schema JOIN. Только
+// non-zero и status='completed'.
+func sumBilledPerSource(tenantDB *gorm.DB, from, to time.Time) []SourceBreakdown {
 	if tenantDB == nil {
 		return nil
 	}
@@ -201,16 +208,12 @@ func sumPaidPerSource(tenantDB *gorm.DB, companyID uint, from, to time.Time) []S
 		Sum           decimal.Decimal `gorm:"column:sum"`
 	}
 	var rows []row
-	// SQLite (тесты) не поддерживает кросс-schema JOIN с public-префиксом —
-	// при postgres JOIN public.invoices + contracts (резолвится из tenant
-	// search_path); при SQLite — обе таблицы в одной БД.
-	invoicesTable := publicTable(tenantDB, "invoices")
-	err := tenantDB.Table(invoicesTable+" AS i").
-		Select("c.partner_source AS partner_source, COALESCE(SUM(i.paid_amount), 0) AS sum").
-		Joins("JOIN contracts c ON c.id = i.contract_id").
-		Where("i.company_id = ? AND i.paid_at >= ? AND i.paid_at < ?", companyID, from, to).
-		Where("c.partner_source <> ''").
-		Group("c.partner_source").
+	err := tenantDB.Table("partner_daily_snapshots").
+		Select("partner_source, COALESCE(SUM(daily_cost), 0) AS sum").
+		Where("snapshot_date >= ? AND snapshot_date < ?", from, to).
+		Where("status = ?", "completed").
+		Where("partner_source <> ''").
+		Group("partner_source").
 		Scan(&rows).Error
 	if err != nil {
 		return nil
