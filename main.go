@@ -1034,6 +1034,13 @@ func main() {
 	apiGroup.GET("/contracts/:contract_id/objects", api.GetContractObjectsList)
 	log.Printf("✅ Зарегистрирован GET /api/auth/contracts/:contract_id/objects -> GetContractObjectsList")
 
+	// Лицевой счёт (ledger): баланс, история проводок, платёж без счёта, импорт реестра.
+	apiGroup.GET("/ledger/balance/:contract_id", api.GetLedgerBalance)
+	apiGroup.GET("/ledger/entries/:contract_id", api.GetLedgerEntries)
+	apiGroup.POST("/ledger/payment", api.PostLedgerPayment)
+	apiGroup.POST("/ledger/import", api.PostLedgerImport)
+	log.Println("✅ Зарегистрированы /api/auth/ledger/* (лицевой счёт)")
+
 	// Синхронизация договора с подпиской
 	apiGroup.POST("/contracts/:contract_id/sync-from-subscription", api.SyncContractFromSubscription)
 	log.Printf("✅ Зарегистрирован POST /api/auth/contracts/:contract_id/sync-from-subscription -> SyncContractFromSubscription")

@@ -364,9 +364,9 @@ func GetWcrmMigrationPreview(c *gin.Context) {
 		// Balance target
 		switch {
 		case r.Balance > 0:
-			cand.BalanceTarget = "billing_history (payment_received)"
+			cand.BalanceTarget = "лицевой счёт (предоплата)"
 		case r.Balance < 0:
-			cand.BalanceTarget = "billing_history (balance_debt)"
+			cand.BalanceTarget = "лицевой счёт (долг)"
 		default:
 			cand.BalanceTarget = "—"
 		}
@@ -577,6 +577,10 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 		// WCRM ax-объекты = Axenta Cloud; uid == axenta_object_snapshots.unique_id.
 		axentaObjMap := loadAxentaObjectMap(wcrmSchema())
 
+		// Все обработанные (created+updated) договоры ЭТОЙ компании — для привязки
+		// остатка к первому договору компании (не глобального min, который мог быть чужим).
+		processedContractIDs := make([]uint, 0, len(rec.Contracts))
+
 		for _, ct := range rec.Contracts {
 			extID := "wcrm:contract:" + strconv.FormatInt(ct.WcrmContractID, 10)
 
@@ -676,6 +680,7 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 				}
 				result.ContractsUpdated++
 			}
+				processedContractIDs = append(processedContractIDs, existing.ID)
 
 			// Включённые приложения (enabled=1) → Subscription. Выключенные пропускаем
 			// (договор уже отфильтрован на активность, но внутри могут быть disabled-приложения).
@@ -801,50 +806,49 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 			}
 		}
 
-		// Остаток средств → public.billing_history (одна запись per company).
-		// >0 предоплата (payment_received), <0 долг (balance_debt).
+		// Остаток средств → ledger (проводка migration_balance). amount знаковый:
+		// >0 предоплата (баланс в плюсе), <0 долг. balance договора = SUM(ledger).
 		if rec.Balance != 0 {
-			var primaryContractID *uint
-			if len(result.CreatedContractIDs) > 0 {
-				primaryContractID = &result.CreatedContractIDs[0]
-			} else {
-				// при повторном approve берём минимальный wcrm-договор компании
-				var cid uint
-				tx.Raw(`SELECT id FROM contracts WHERE external_id LIKE 'wcrm:contract:%' AND deleted_at IS NULL ORDER BY id LIMIT 1`).Scan(&cid)
-				if cid > 0 {
-					primaryContractID = &cid
-				}
+			// Остаток привязываем к первому договору ЭТОЙ компании (created или updated),
+			// а не к глобальному min wcrm-договору (мог быть чужой компании).
+			var primaryContractID uint
+			if len(processedContractIDs) > 0 {
+				primaryContractID = processedContractIDs[0]
 			}
-			op := "payment_received"
-			if rec.Balance < 0 {
-				op = "balance_debt"
+			if primaryContractID > 0 {
+				ledExtID := "wcrm:balance:" + strconv.FormatInt(companyID, 10)
+				amount := decimal.NewFromFloat(rec.Balance) // знаковый
+				var existsCount int64
+				tx.Model(&models.LedgerEntry{}).
+					Where("admin_account_id = ? AND company_id = ? AND source = 'migration' AND external_id = ? AND deleted_at IS NULL",
+						adminAccountID, wcrmTargetTenantID, ledExtID).Count(&existsCount)
+				if existsCount == 0 {
+					le := models.LedgerEntry{
+						AdminAccountID: adminAccountID,
+						CompanyID:      wcrmTargetTenantID,
+						ContractID:     primaryContractID,
+						EntryType:      "migration_balance",
+						Amount:         amount,
+						Currency:       "RUB",
+						Source:         "migration",
+						ExternalID:     ledExtID,
+						Description:    "Импорт остатка лицевого счёта из WCRM",
+						EntryDate:      time.Now().UTC(),
+						CreatedBy:      approvedBy,
+					}
+					if err := tx.Create(&le).Error; err != nil {
+						return fmt.Errorf("create ledger migration_balance: %w", err)
+					}
+				} else {
+					if err := tx.Model(&models.LedgerEntry{}).
+						Where("admin_account_id = ? AND company_id = ? AND source = 'migration' AND external_id = ? AND deleted_at IS NULL",
+							adminAccountID, wcrmTargetTenantID, ledExtID).
+						Update("amount", amount).Error; err != nil {
+						return fmt.Errorf("update ledger migration_balance: %w", err)
+					}
+				}
+				result.BalanceRecorded = true
 			}
-			amount := decimal.NewFromFloat(rec.Balance).Abs()
-			meta := fmt.Sprintf(`{"source":"wcrm_balance","wcrm_balance_company":"%d"}`, companyID)
-
-			var existsCount int64
-			tx.Raw(`SELECT COUNT(*) FROM billing_history WHERE (metadata::jsonb->>'wcrm_balance_company') = ? AND (metadata::jsonb->>'source') = 'wcrm_balance' AND deleted_at IS NULL`, strconv.FormatInt(companyID, 10)).Scan(&existsCount)
-			if existsCount == 0 {
-				bh := models.BillingHistory{
-					AdminAccountID: adminAccountID,
-					CompanyID:      wcrmTargetTenantID,
-					ContractID:     primaryContractID,
-					Operation:      op,
-					Amount:         amount,
-					Currency:       "RUB",
-					Description:    "Импорт остатка из WCRM",
-					Metadata:       meta,
-					Status:         "completed",
-				}
-				if err := tx.Create(&bh).Error; err != nil {
-					return fmt.Errorf("create billing_history: %w", err)
-				}
-			} else {
-				if err := tx.Exec(`UPDATE billing_history SET operation = ?, amount = ?, updated_at = now() WHERE (metadata::jsonb->>'wcrm_balance_company') = ? AND (metadata::jsonb->>'source') = 'wcrm_balance' AND deleted_at IS NULL`, op, amount, strconv.FormatInt(companyID, 10)).Error; err != nil {
-					return fmt.Errorf("update billing_history: %w", err)
-				}
-			}
-			result.BalanceRecorded = true
 		}
 
 		// Состояние

@@ -1184,6 +1184,7 @@ func CreateMissingGlobalTables() error {
 		&models.InvoiceItem{},
 		&models.Invoice{},
 		&models.BillingHistory{},
+		&models.LedgerEntry{}, // лицевой счёт (проводки)
 		// AxentaAccountSnapshot и AxentaObjectSnapshot теперь тенант-специфичны (IsGlobal: false)
 	}
 
