@@ -45,9 +45,13 @@ func allUnitsCacheKey(companyID uint) string {
 	return fmt.Sprintf("wialon:all-units:%d", companyID)
 }
 
-// allUnitsCacheTTL — длительность кэша списка объектов Wialon. 5 минут — компромисс между
-// свежестью (Wialon last_message обновляется часто) и нагрузкой (live-fetch может занимать секунды).
-const allUnitsCacheTTL = 5 * time.Minute
+// allUnitsCacheTTL — длительность кэша списка объектов Wialon. 15 минут (было 5):
+// holодный live-fetch может занимать 5-6 мин (хуже при параллельном Axenta-sync), и TTL
+// должен заметно превышать worst-case refresh, иначе stale-while-revalidate не работает —
+// кэш истекает раньше чем WialonAllUnitsScheduler успевает обновить → /objects снова
+// холодный. Список объектов меняется медленно, устаревание last_message на 15 мин для
+// табличного /objects приемлемо (Codex: TTL > worst-case refresh + interval).
+const allUnitsCacheTTL = 15 * time.Minute
 
 // invalidateAllUnitsCache удаляет кэш списка объектов для компании.
 func invalidateAllUnitsCache(companyID uint) {
@@ -651,6 +655,55 @@ func (api *WialonConnectionAPI) GetAllAccounts(c *gin.Context) {
 func BuildAndCacheAllAccountsForCompany(companyID uint, db *gorm.DB) ([]byte, error) {
 	connService := services.NewWialonConnectionService(db)
 	return buildAndCacheAllAccountsForCompany(companyID, connService)
+}
+
+// RefreshWialonAllUnitsCache прогревает Redis-кэш списка объектов Wialon (allUnitsCacheKey)
+// для компании. Live-fetch GetAllUnitsFromActiveConnectionsDetailed + SET в Redis —
+// тот же формат payload что пишет fetchWialonObjectsFast (api/unified_objects.go).
+//
+// Зачем scheduler: кэш all-units lazy (греется по первому /unified/objects), а холодный
+// live-fetch занимает секунды-минуты (хуже при параллельном Axenta-sync). После рестарта BE
+// кэш пуст → первый /objects висит дольше FE-timeout → пустой список. Планировщик держит
+// кэш тёплым, чтобы /objects всегда был cache-hit.
+//
+// При partial (упало хотя бы одно подключение) кэш НЕ пишем — иначе пользователь увидит
+// неполный список; вернётся ошибка, scheduler попробует на следующем тике.
+func RefreshWialonAllUnitsCache(companyID uint, db *gorm.DB) error {
+	if database.RedisClient == nil {
+		return fmt.Errorf("redis недоступен")
+	}
+	connService := services.NewWialonConnectionService(db)
+	connections, err := connService.GetActiveByCompany(companyID)
+	if err != nil {
+		return fmt.Errorf("получение активных подключений: %w", err)
+	}
+	if len(connections) == 0 {
+		return nil // нет активных подключений — нечего кэшировать
+	}
+
+	units, partial, err := connService.GetAllUnitsFromActiveConnectionsDetailed(companyID)
+	if err != nil {
+		return fmt.Errorf("live-fetch units: %w", err)
+	}
+	if partial {
+		return fmt.Errorf("partial fetch (упало подключение) — кэш не обновляем")
+	}
+
+	payload := gin.H{
+		"items":             units,
+		"total":             len(units),
+		"connections_count": len(connections),
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := database.RedisClient.Set(ctx, allUnitsCacheKey(companyID), encoded, allUnitsCacheTTL).Err(); err != nil {
+		return fmt.Errorf("redis set: %w", err)
+	}
+	return nil
 }
 
 // buildAndCacheAllAccountsForCompany — общая логика fetch-всех-connections + Redis SET. Используется и handler'ом и scheduler'ом.

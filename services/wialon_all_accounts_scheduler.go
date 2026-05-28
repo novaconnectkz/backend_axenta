@@ -4,6 +4,7 @@ import (
 	"backend_axenta/database"
 	"backend_axenta/models"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -25,19 +26,34 @@ type WialonAllAccountsScheduler struct {
 	refresh   WialonAllAccountsRefreshFunc
 	isRunning bool
 	entryID   cron.EntryID
+	name      string     // для логов: "WialonAllAccountsScheduler" / "WialonAllUnitsScheduler"
+	runMu     sync.Mutex // guard от пересечения первичного background-refresh и cron-тика
 }
 
 func NewWialonAllAccountsScheduler(intervalMinutes int, refresh WialonAllAccountsRefreshFunc) *WialonAllAccountsScheduler {
+	return NewWialonRefreshScheduler("WialonAllAccountsScheduler", intervalMinutes, refresh)
+}
+
+// NewWialonRefreshScheduler — generic-планировщик прогрева Redis-кэша Wialon.
+// name только для логов; логика идентична (итерирует active companies, дёргает refresh).
+func NewWialonRefreshScheduler(name string, intervalMinutes int, refresh WialonAllAccountsRefreshFunc) *WialonAllAccountsScheduler {
 	if intervalMinutes <= 0 {
 		intervalMinutes = 5
+	}
+	if name == "" {
+		name = "WialonRefreshScheduler"
 	}
 	return &WialonAllAccountsScheduler{
 		cron: cron.New(
 			cron.WithLocation(time.UTC),
-			cron.WithChain(cron.Recover(cron.DefaultLogger)),
+			// SkipIfStillRunning: если предыдущий refresh ещё идёт (холодный live-fetch
+			// может занять минуты), пропускаем тик вместо наложения (Codex: overlap →
+			// удвоение нагрузки на Wialon rate-limit).
+			cron.WithChain(cron.SkipIfStillRunning(cron.DefaultLogger), cron.Recover(cron.DefaultLogger)),
 		),
 		interval: time.Duration(intervalMinutes) * time.Minute,
 		refresh:  refresh,
+		name:     name,
 	}
 }
 
@@ -46,7 +62,7 @@ func (s *WialonAllAccountsScheduler) Start() error {
 	id, err := s.cron.AddFunc(cronExpr, func() {
 		defer func() {
 			if r := recover(); r != nil {
-				log.Printf("❌ ПАНИКА в WialonAllAccountsScheduler: %v", r)
+				log.Printf("❌ ПАНИКА в %s: %v", s.name, r)
 			}
 		}()
 		s.refreshAll()
@@ -60,17 +76,17 @@ func (s *WialonAllAccountsScheduler) Start() error {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				log.Printf("❌ ПАНИКА в первичном WialonAllAccountsScheduler: %v", r)
+				log.Printf("❌ ПАНИКА в первичном %s: %v", s.name, r)
 			}
 		}()
 		time.Sleep(7 * time.Second) // ждём пока поднимутся остальные сервисы
-		log.Printf("🚀 WialonAllAccountsScheduler: первичный refresh (background)")
+		log.Printf("🚀 %s: первичный refresh (background)", s.name)
 		s.refreshAll()
 	}()
 
 	s.cron.Start()
 	s.isRunning = true
-	log.Printf("✅ WialonAllAccountsScheduler запущен (интервал %s)", s.interval)
+	log.Printf("✅ %s запущен (интервал %s)", s.name, s.interval)
 	return nil
 }
 
@@ -78,7 +94,7 @@ func (s *WialonAllAccountsScheduler) Stop() {
 	if s.cron != nil {
 		s.cron.Stop()
 		s.isRunning = false
-		log.Printf("🛑 WialonAllAccountsScheduler остановлен")
+		log.Printf("🛑 %s остановлен", s.name)
 	}
 }
 
@@ -88,9 +104,17 @@ func (s *WialonAllAccountsScheduler) IsRunning() bool { return s.isRunning }
 // Сериализует — чтобы не упереться в Wialon rate limit (5 concurrent sessions per token).
 func (s *WialonAllAccountsScheduler) refreshAll() {
 	if s.refresh == nil {
-		log.Printf("⚠️ WialonAllAccountsScheduler: refresh callback не зарегистрирован")
+		log.Printf("⚠️ %s: refresh callback не зарегистрирован", s.name)
 		return
 	}
+
+	// Anti-overlap: первичный background-refresh и cron-тик не должны идти параллельно
+	// (cron.SkipIfStillRunning покрывает только cron-тики между собой).
+	if !s.runMu.TryLock() {
+		log.Printf("ℹ️ %s: предыдущий refresh ещё идёт — пропускаем", s.name)
+		return
+	}
+	defer s.runMu.Unlock()
 
 	t0 := time.Now()
 	// Берём уникальные company_id из активных wialon_connections — компании без подключений не нужны
@@ -99,22 +123,22 @@ func (s *WialonAllAccountsScheduler) refreshAll() {
 		Where("is_active = ?", true).
 		Distinct("company_id").
 		Pluck("company_id", &companyIDs).Error; err != nil {
-		log.Printf("⚠️ WialonAllAccountsScheduler: ошибка получения company_ids: %v", err)
+		log.Printf("⚠️ %s: ошибка получения company_ids: %v", s.name, err)
 		return
 	}
 	if len(companyIDs) == 0 {
-		log.Printf("ℹ️ WialonAllAccountsScheduler: нет компаний с активными wialon connections")
+		log.Printf("ℹ️ %s: нет компаний с активными wialon connections", s.name)
 		return
 	}
 
 	ok, fail := 0, 0
 	for _, cid := range companyIDs {
 		if err := s.refresh(cid); err != nil {
-			log.Printf("⚠️ WialonAllAccountsScheduler: refresh company=%d: %v", cid, err)
+			log.Printf("⚠️ %s: refresh company=%d: %v", s.name, cid, err)
 			fail++
 			continue
 		}
 		ok++
 	}
-	log.Printf("✅ WialonAllAccountsScheduler: %d/%d ok, fail=%d, за %s", ok, len(companyIDs), fail, time.Since(t0))
+	log.Printf("✅ %s: %d/%d ok, fail=%d, за %s", s.name, ok, len(companyIDs), fail, time.Since(t0))
 }

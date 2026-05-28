@@ -332,6 +332,28 @@ func main() {
 		log.Println("⚠️ WialonAllAccountsScheduler отключён (DISABLE_WIALON_ACCOUNTS_SCHEDULER=true)")
 	}
 
+	// Wialon all-units scheduler — прогрев Redis-кэша списка объектов (allUnitsCacheKey).
+	// Интервал 10 мин < TTL 15 мин (stale-while-revalidate: старый кэш переживает refresh).
+	// Закрывает окно пустого /objects после рестарта BE (холодный кэш + долгий live-fetch
+	// дольше FE-timeout). SkipIfStillRunning + mutex не дают тикам наложиться (Wialon rate-limit).
+	wialonUnitsInterval := 10
+	if v := os.Getenv("WIALON_UNITS_REFRESH_INTERVAL_MIN"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			wialonUnitsInterval = n
+		}
+	}
+	if os.Getenv("DISABLE_WIALON_UNITS_SCHEDULER") != "true" {
+		wialonUnitsRefresh := func(companyID uint) error {
+			return api.RefreshWialonAllUnitsCache(companyID, database.DB)
+		}
+		wialonUnitsScheduler := services.NewWialonRefreshScheduler("WialonAllUnitsScheduler", wialonUnitsInterval, wialonUnitsRefresh)
+		if err := wialonUnitsScheduler.Start(); err != nil {
+			log.Printf("⚠️ WialonAllUnitsScheduler failed to start: %v", err)
+		}
+	} else {
+		log.Println("⚠️ WialonAllUnitsScheduler отключён (DISABLE_WIALON_UNITS_SCHEDULER=true)")
+	}
+
 	// Инициализируем систему уведомлений (Phase 1+2: email/telegram/max каналы).
 	// Telegram и MAX-сервисы созданы выше через api.InitTelegramService/InitMaxService.
 	notifCache := services.NewCacheService(database.RedisClient, log.New(log.Writer(), "[Notif_Cache] ", log.LstdFlags))
