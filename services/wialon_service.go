@@ -1254,7 +1254,7 @@ func (s *WialonService) SearchUnitsWithHost(host string, token string) ([]Wialon
 				"itemsType":     "avl_unit",
 				"propName":      "sys_name",
 				"propValueMask": "*",
-				"sortType":      "sys_name", // combined sort (sys_name,sys_id) вис на больших аккаунтах (timeout); дедуп по id ниже страхует от дублей/пропусков без tie-breaker
+				"sortType":      "sys_id", // уникальная стабильная сортировка: combined (sys_name,sys_id) вис timeout, простой sys_name терял объекты на границе страниц (равные имена). sys_id — один столбец, уникальный → нет пропусков/дублей, нет combined-timeout
 			},
 			"force": forceVal,
 			"flags": flags,
