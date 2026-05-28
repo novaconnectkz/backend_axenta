@@ -725,6 +725,9 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 					nextBase = now
 				}
 				nextPay := time.Date(nextBase.Year(), nextBase.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, 1, 0)
+				// Автопродление: ежемесячные приложения (WCRM period=1) продлеваются
+				// каждый месяц. Прочие периоды (год и т.п.) — без автопродления.
+				autoRenew := ap.Period == 1
 				var subID uint
 				var exSub models.Subscription
 				sErr := tx.Table("public.subscriptions").Where("external_id = ?", subExtID).First(&exSub).Error
@@ -737,7 +740,7 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 						StartDate:       apStart,
 						EndDate:         apEndPtr,
 						Status:          "active",
-						IsAutoRenew:     false,
+						IsAutoRenew:     autoRenew,
 						NextPaymentDate: &nextPay,
 						ExternalID:      subExtID,
 					}
@@ -745,6 +748,11 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 						return fmt.Errorf("create subscription %d: %w", ap.WcrmAttachmentID, err)
 					}
 					subID = ns.ID
+					// Явный апдейт is_auto_renew: GORM default:true глотает zero-value false.
+					if err := tx.Table("public.subscriptions").Where("id = ?", subID).
+						Update("is_auto_renew", autoRenew).Error; err != nil {
+						return fmt.Errorf("set sub auto_renew %d: %w", ap.WcrmAttachmentID, err)
+					}
 					result.SubscriptionsCreated++
 				} else if sErr != nil {
 					return fmt.Errorf("lookup subscription %s: %w", subExtID, sErr)
@@ -757,6 +765,7 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 						"end_date":        apEndPtr,
 						"status":          "active",
 						"next_payment_date": nextPay,
+						"is_auto_renew":     autoRenew,
 					}).Error; err != nil {
 						return fmt.Errorf("update subscription %s: %w", subExtID, err)
 					}
