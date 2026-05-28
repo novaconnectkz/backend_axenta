@@ -1,0 +1,854 @@
+package api
+
+import (
+	"backend_axenta/database"
+	"backend_axenta/models"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"hash/fnv"
+	"net/http"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/shopspring/decimal"
+	"gorm.io/gorm"
+)
+
+// ============================================================================
+// WCRM → ACRM миграция Axenta-договоров (временная фича, super_admin only).
+//
+// Источник: JSON snapshot /var/imports/wcrm-axenta-import-<date>.json (Этап A).
+// Цель: tenant_186.contracts/contract_appendices + public.billing_history (остаток).
+//
+// UX: GET /preview показывает что и куда мигрируется (per-company), POST /approve
+// импортирует одну компанию атомарно. Идемпотентность через external_id-индексы
+// (миграция 0069) и metadata для billing_history.
+// ============================================================================
+
+const (
+	wcrmImportDefaultPath = "/var/imports/wcrm-axenta-import-2026-05-28.json"
+	wcrmTargetTenantID    = 186
+)
+
+// wcrmImportPath — путь к snapshot (override через env WCRM_IMPORT_PATH).
+func wcrmImportPath() string {
+	if p := os.Getenv("WCRM_IMPORT_PATH"); p != "" {
+		return p
+	}
+	return wcrmImportDefaultPath
+}
+
+// ---- Структуры JSON snapshot ----
+
+type wcrmCompany struct {
+	Name           string `json:"name"`
+	Name1          string `json:"name1"`
+	Type           int    `json:"type"`
+	INN            string `json:"inn"`
+	KPP            string `json:"kpp"`
+	BIK            string `json:"bik"`
+	BankName       string `json:"bank_name"`
+	CurA           string `json:"cur_a"`
+	CorA           string `json:"cor_a"`
+	OGRN           string `json:"ogrn"`
+	OKPO           string `json:"okpo"`
+	OKVED          string `json:"okved"`
+	AddressU       string `json:"address_u"`
+	AddressF       string `json:"address_f"`
+	AddressP       string `json:"address_p"`
+	HeadName       string `json:"head_name"`
+	AccountantName string `json:"accountant_name"`
+	Email          string `json:"email"`
+	Phone          string `json:"phone"`
+	Description    string `json:"description"`
+}
+
+type wcrmObject struct {
+	WcrmObjectID int64  `json:"wcrm_object_id"`
+	Name         string `json:"name"`
+	UID          string `json:"uid"`
+	WID          int64  `json:"wid"`
+}
+
+type wcrmAppendix struct {
+	WcrmAttachmentID int64        `json:"wcrm_attachment_id"`
+	StartDate        string       `json:"start_date"`
+	EndDate          string       `json:"end_date"`
+	Price            float64      `json:"price"`
+	Type             int          `json:"type"`
+	Period           int          `json:"period"`
+	Daycount         *int         `json:"daycount"`
+	Name             *string      `json:"name"`
+	Enabled          int          `json:"enabled"`
+	Objects          []wcrmObject `json:"objects"`
+}
+
+type wcrmContract struct {
+	WcrmContractID int64          `json:"wcrm_contract_id"`
+	Number         string         `json:"number"`
+	StartDate      string         `json:"start_date"`
+	EndDate        *string        `json:"end_date"`
+	Postpaid       int            `json:"postpaid"`
+	Appendices     []wcrmAppendix `json:"appendices"`
+}
+
+type wcrmRecord struct {
+	WcrmCompanyID int64          `json:"wcrm_company_id"`
+	Company       wcrmCompany    `json:"company"`
+	Balance       float64        `json:"balance"`
+	Contracts     []wcrmContract `json:"contracts"`
+}
+
+// ---- Preview-ответ ----
+
+type wcrmPreviewAppendix struct {
+	WcrmAttachmentID int64    `json:"wcrm_attachment_id"`
+	Title            string   `json:"title"`
+	Price            string   `json:"price"`
+	Period           int      `json:"period"`
+	Enabled          bool     `json:"enabled"`
+	ObjectCount      int      `json:"object_count"`
+	ObjectNames      []string `json:"object_names"` // имена для показа (до 50)
+}
+
+type wcrmPreviewContract struct {
+	WcrmContractID int64                 `json:"wcrm_contract_id"`
+	SourceNumber   string                `json:"source_number"`
+	TargetNumber   string                `json:"target_number"` // с суффиксом если конфликт
+	NumberConflict bool                  `json:"number_conflict"`
+	StartDate      string                `json:"start_date"`
+	EndDate        string                `json:"end_date"`
+	Status         string                `json:"status"`
+	AppendixCount  int                   `json:"appendix_count"`
+	BadDates       int                   `json:"bad_dates"` // приложений с невалидными датами
+	ObjectCount    int                   `json:"object_count"`
+	Appendices     []wcrmPreviewAppendix `json:"appendices"`
+}
+
+type wcrmPreviewCandidate struct {
+	WcrmCompanyID  int64                 `json:"wcrm_company_id"`
+	ClientName     string                `json:"client_name"`
+	ClientINN      string                `json:"client_inn"`
+	ClientType     string                `json:"client_type"`      // organization|individual_entrepreneur|physical_person
+	ClientTypeNote string                `json:"client_type_note"` // "manual_review" если не определён
+	ContractsCount int                   `json:"contracts_count"`
+	AppendixCount  int                   `json:"appendix_count"`
+	ObjectCount    int                   `json:"object_count"`
+	Balance        string                `json:"balance"`
+	BalanceTarget  string                `json:"balance_target"` // billing_history(payment_received|balance_debt) или "—"
+	Contracts      []wcrmPreviewContract `json:"contracts"`
+	AlreadyImported bool                 `json:"already_imported"`
+	Status         string                `json:"status"` // pending|approved|skipped|error (из state)
+	HasIssues      bool                  `json:"has_issues"`
+}
+
+type wcrmPreviewResponse struct {
+	SnapshotSHA256 string                 `json:"snapshot_sha256"`
+	GeneratedAt    string                 `json:"generated_at"`
+	TotalCompanies int                    `json:"total_companies"`
+	TotalContracts int                    `json:"total_contracts"`
+	TotalAppendix  int                    `json:"total_appendix"`
+	Approved       int                    `json:"approved"`
+	Skipped        int                    `json:"skipped"`
+	Conflicts      int                    `json:"conflicts"`
+	Candidates     []wcrmPreviewCandidate `json:"candidates"`
+}
+
+// ---- Вспомогательные ----
+
+// loadWcrmSnapshot читает + парсит JSON, возвращает записи и sha256 файла.
+func loadWcrmSnapshot() ([]wcrmRecord, string, error) {
+	raw, err := os.ReadFile(wcrmImportPath())
+	if err != nil {
+		return nil, "", fmt.Errorf("чтение snapshot: %w", err)
+	}
+	sum := sha256.Sum256(raw)
+	sha := hex.EncodeToString(sum[:])
+	var recs []wcrmRecord
+	if err := json.Unmarshal(raw, &recs); err != nil {
+		return nil, sha, fmt.Errorf("парсинг snapshot: %w", err)
+	}
+	return recs, sha, nil
+}
+
+// resolveClientType определяет тип клиента. Возвращает (type, needsManualReview).
+//
+// В WCRM ИНН/КПП/ОГРН у Axenta-клиентов почти везде пусты (ИНН заполнен у ~4 из 207),
+// поэтому основной сигнал — суффикс/форма в названии. ИНН используется как уточнение.
+//   - ИНН 10 цифр → organization (точно)
+//   - ИНН 12 цифр → individual_entrepreneur (точно)
+//   - иначе по названию: ООО/АО/ПАО/... → organization; "ИП"/"предприниматель" → ИП;
+//     ФИО (нет орг-формы) → physical_person; пустое имя → manual_review.
+func resolveClientType(c wcrmCompany) (string, bool) {
+	inn := strings.TrimSpace(c.INN)
+	switch len(inn) {
+	case 10:
+		return "organization", false
+	case 12:
+		return "individual_entrepreneur", false
+	}
+
+	name := strings.ToLower(strings.TrimSpace(c.Name1))
+	if name == "" {
+		name = strings.ToLower(strings.TrimSpace(c.Name))
+	}
+	if name == "" {
+		return "organization", true // нет данных — ручной выбор
+	}
+
+	// Орг-формы юрлица
+	for _, f := range []string{"ооо", "оао", "зао", "пао", "ао ", " ао", "нко", "тоо", "общество с ограниченной", "акционерное общество"} {
+		if strings.Contains(name, f) {
+			return "organization", false
+		}
+	}
+	// ИП
+	if strings.Contains(name, "индивидуальный предприниматель") ||
+		strings.HasPrefix(name, "ип ") || strings.Contains(name, " ип ") ||
+		strings.HasSuffix(name, " ип") {
+		return "individual_entrepreneur", false
+	}
+	// ФИО из 2-3 слов без цифр и форм → физлицо
+	words := strings.Fields(name)
+	hasDigit := strings.ContainsAny(name, "0123456789")
+	if (len(words) == 2 || len(words) == 3) && !hasDigit {
+		return "physical_person", false
+	}
+
+	// Неоднозначно — по умолчанию организация, без блокировки (юзер approve вручную,
+	// видит тип и может переопределить в селекторе).
+	return "organization", false
+}
+
+// mapClientName выбирает полное имя клиента (name1 приоритетнее короткого name).
+func mapClientName(c wcrmCompany) string {
+	if strings.TrimSpace(c.Name1) != "" {
+		return c.Name1
+	}
+	return c.Name
+}
+
+// parseWcrmDate парсит WCRM timestamp "2025-05-21 06:04:04".
+// Возвращает (time, ok). '0000-00-00...' и пустые → ok=false.
+func parseWcrmDate(s string) (time.Time, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" || strings.HasPrefix(s, "0000-00-00") {
+		return time.Time{}, false
+	}
+	for _, layout := range []string{"2006-01-02 15:04:05", "2006-01-02T15:04:05Z07:00", "2006-01-02"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}
+
+// deriveContractStatus: active если end_date пуст или в будущем, иначе expired.
+func deriveContractStatus(endStr *string) (string, bool) {
+	if endStr == nil {
+		return "active", true
+	}
+	end, ok := parseWcrmDate(*endStr)
+	if !ok {
+		return "active", true
+	}
+	if time.Now().After(end) {
+		return "expired", false
+	}
+	return "active", true
+}
+
+// advisoryKey — стабильный int64-ключ для pg_try_advisory_xact_lock.
+func advisoryKey(companyID int64) int64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte("wcrm:" + strconv.FormatInt(companyID, 10)))
+	return int64(h.Sum64() >> 1) // >>1 чтобы влезло в signed bigint без переполнения
+}
+
+// requireSuperadmin — guard: только is_superadmin claim из доверенного JWT.
+// Обычный admin НЕ допускается (миграция данных = высший привилегированный доступ).
+func requireSuperadmin(c *gin.Context) bool {
+	v, _ := c.Get("is_superadmin")
+	if b, ok := v.(bool); ok && b {
+		return true
+	}
+	c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+		"status": "error",
+		"error":  "Доступ только для суперадминистратора",
+	})
+	return false
+}
+
+// ---- Endpoints ----
+
+// GetWcrmMigrationPreview — GET /api/auth/migration/wcrm/preview
+// Показывает что и куда мигрируется (read-only).
+func GetWcrmMigrationPreview(c *gin.Context) {
+	if !requireSuperadmin(c) {
+		return
+	}
+	recs, sha, err := loadWcrmSnapshot()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
+
+	if database.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "БД недоступна"})
+		return
+	}
+	schema := wcrmSchema()
+
+	// Существующие WCRM-импортированные external_id (для already_imported).
+	// Fully-qualified имена — не зависим от search_path / connection pooling.
+	existingExtIDs := map[string]bool{}
+	var existing []struct{ ExternalID string }
+	database.DB.Raw(fmt.Sprintf(`SELECT external_id FROM %s.contracts WHERE external_id LIKE 'wcrm:contract:%%' AND deleted_at IS NULL`, schema)).Scan(&existing)
+	for _, e := range existing {
+		existingExtIDs[e.ExternalID] = true
+	}
+
+	// Существующие НЕ-wcrm номера договоров (для конфликтов).
+	existingNumbers := map[string]bool{}
+	var nums []struct{ Number string }
+	database.DB.Raw(fmt.Sprintf(`SELECT number FROM %s.contracts WHERE deleted_at IS NULL AND (external_id IS NULL OR external_id NOT LIKE 'wcrm:contract:%%')`, schema)).Scan(&nums)
+	for _, n := range nums {
+		existingNumbers[n.Number] = true
+	}
+
+	// Состояние из wcrm_migration_state.
+	stateByCompany := map[int64]string{}
+	var states []struct {
+		WcrmCompanyID int64
+		Status        string
+	}
+	database.DB.Raw(fmt.Sprintf(`SELECT wcrm_company_id, status FROM %s.wcrm_migration_state`, schema)).Scan(&states)
+	for _, s := range states {
+		stateByCompany[s.WcrmCompanyID] = s.Status
+	}
+
+	resp := wcrmPreviewResponse{
+		SnapshotSHA256: sha,
+		GeneratedAt:    time.Now().UTC().Format(time.RFC3339),
+		TotalCompanies: len(recs),
+	}
+
+	for _, r := range recs {
+		ctype, manual := resolveClientType(r.Company)
+		cand := wcrmPreviewCandidate{
+			WcrmCompanyID:  r.WcrmCompanyID,
+			ClientName:     mapClientName(r.Company),
+			ClientINN:      r.Company.INN,
+			ClientType:     ctype,
+			ContractsCount: len(r.Contracts),
+			Balance:        decimal.NewFromFloat(r.Balance).StringFixed(2),
+			Status:         stateByCompany[r.WcrmCompanyID],
+		}
+		if manual {
+			cand.ClientTypeNote = "manual_review"
+			cand.HasIssues = true
+		}
+
+		// Balance target
+		switch {
+		case r.Balance > 0:
+			cand.BalanceTarget = "billing_history (payment_received)"
+		case r.Balance < 0:
+			cand.BalanceTarget = "billing_history (balance_debt)"
+		default:
+			cand.BalanceTarget = "—"
+		}
+
+		allImported := len(r.Contracts) > 0
+		for _, ct := range r.Contracts {
+			extID := "wcrm:contract:" + strconv.FormatInt(ct.WcrmContractID, 10)
+			if !existingExtIDs[extID] {
+				allImported = false
+			}
+			resp.TotalContracts++
+
+			status, _ := deriveContractStatus(ct.EndDate)
+			target := ct.Number
+			conflict := false
+			if existingNumbers[ct.Number] {
+				conflict = true
+				target = ct.Number + " (WCRM #" + strconv.FormatInt(ct.WcrmContractID, 10) + ")"
+				resp.Conflicts++
+				cand.HasIssues = true
+			}
+
+			badDates := 0
+			ctObjCount := 0
+			previewAppendices := make([]wcrmPreviewAppendix, 0, len(ct.Appendices))
+			for _, ap := range ct.Appendices {
+				resp.TotalAppendix++
+				cand.AppendixCount++
+				_, okS := parseWcrmDate(ap.StartDate)
+				_, okE := parseWcrmDate(ap.EndDate)
+				if !okS || !okE {
+					badDates++
+				}
+				apTitle := "Приложение"
+				if ap.Name != nil && strings.TrimSpace(*ap.Name) != "" {
+					apTitle = *ap.Name
+				}
+				names := make([]string, 0, len(ap.Objects))
+				for _, ob := range ap.Objects {
+					if len(names) < 50 {
+						names = append(names, ob.Name)
+					}
+				}
+				ctObjCount += len(ap.Objects)
+				cand.ObjectCount += len(ap.Objects)
+				previewAppendices = append(previewAppendices, wcrmPreviewAppendix{
+					WcrmAttachmentID: ap.WcrmAttachmentID,
+					Title:            apTitle,
+					Price:            decimal.NewFromFloat(ap.Price).StringFixed(2),
+					Period:           ap.Period,
+					Enabled:          ap.Enabled != 0,
+					ObjectCount:      len(ap.Objects),
+					ObjectNames:      names,
+				})
+			}
+
+			endStr := ""
+			if ct.EndDate != nil {
+				endStr = *ct.EndDate
+			}
+			cand.Contracts = append(cand.Contracts, wcrmPreviewContract{
+				WcrmContractID: ct.WcrmContractID,
+				SourceNumber:   ct.Number,
+				TargetNumber:   target,
+				NumberConflict: conflict,
+				StartDate:      ct.StartDate,
+				EndDate:        endStr,
+				Status:         status,
+				AppendixCount:  len(ct.Appendices),
+				BadDates:       badDates,
+				ObjectCount:    ctObjCount,
+				Appendices:     previewAppendices,
+			})
+		}
+
+		cand.AlreadyImported = allImported && len(r.Contracts) > 0
+		if st := stateByCompany[r.WcrmCompanyID]; st == "approved" {
+			resp.Approved++
+		} else if st == "skipped" {
+			resp.Skipped++
+		}
+		resp.Candidates = append(resp.Candidates, cand)
+	}
+
+	// Сортировка: сначала с issues, потом по имени.
+	sort.SliceStable(resp.Candidates, func(i, j int) bool {
+		if resp.Candidates[i].HasIssues != resp.Candidates[j].HasIssues {
+			return resp.Candidates[i].HasIssues
+		}
+		return resp.Candidates[i].ClientName < resp.Candidates[j].ClientName
+	})
+
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": resp})
+}
+
+// wcrmSchema — имя целевой tenant-схемы.
+func wcrmSchema() string {
+	return "tenant_" + strconv.Itoa(wcrmTargetTenantID)
+}
+
+// ---- Approve / Skip / Undo / Status ----
+
+type wcrmApproveRequest struct {
+	SnapshotSHA256    string `json:"snapshot_sha256"`
+	ClientTypeOverride string `json:"client_type_override"` // для manual_review
+}
+
+type wcrmApproveResult struct {
+	WcrmCompanyID       int64   `json:"wcrm_company_id"`
+	ContractsInserted   int     `json:"contracts_inserted"`
+	ContractsUpdated    int     `json:"contracts_updated"`
+	AppendicesInserted  int     `json:"appendices_inserted"`
+	AppendicesUpdated   int     `json:"appendices_updated"`
+	BalanceRecorded     bool    `json:"balance_recorded"`
+	CreatedContractIDs  []uint  `json:"created_contract_ids"`
+}
+
+// PostWcrmMigrationApprove — POST /api/auth/migration/wcrm/approve/:wcrm_company_id
+// Атомарно импортирует одну WCRM-компанию (договоры + приложения + остаток).
+func PostWcrmMigrationApprove(c *gin.Context) {
+	if !requireSuperadmin(c) {
+		return
+	}
+	companyID, err := strconv.ParseInt(c.Param("wcrm_company_id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "некорректный wcrm_company_id"})
+		return
+	}
+	var req wcrmApproveRequest
+	_ = c.ShouldBindJSON(&req)
+
+	recs, sha, err := loadWcrmSnapshot()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
+	// Защита от рассинхрона preview↔approve (snapshot подменили).
+	if req.SnapshotSHA256 != "" && req.SnapshotSHA256 != sha {
+		c.JSON(http.StatusConflict, gin.H{"status": "error", "error": "snapshot изменился — обновите preview", "current_sha256": sha})
+		return
+	}
+
+	var rec *wcrmRecord
+	for i := range recs {
+		if recs[i].WcrmCompanyID == companyID {
+			rec = &recs[i]
+			break
+		}
+	}
+	if rec == nil {
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "компания не найдена в snapshot"})
+		return
+	}
+
+	adminAccountID := currentUserIDForWcrm(c)
+	username, _ := c.Get("username")
+	approvedBy, _ := username.(string)
+
+	ctype, manual := resolveClientType(rec.Company)
+	if manual {
+		if req.ClientTypeOverride == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "client_type не определён по ИНН — требуется client_type_override"})
+			return
+		}
+		ctype = req.ClientTypeOverride
+	}
+
+	result := wcrmApproveResult{WcrmCompanyID: companyID}
+
+	txErr := database.DB.Transaction(func(tx *gorm.DB) error {
+		// Изоляция схемы + защита от параллельного approve той же компании.
+		if err := tx.Exec(fmt.Sprintf("SET LOCAL search_path TO %s, public", wcrmSchema())).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec("SET LOCAL lock_timeout = '5s'").Error; err != nil {
+			return err
+		}
+		var locked bool
+		if err := tx.Raw("SELECT pg_try_advisory_xact_lock(?)", advisoryKey(companyID)).Scan(&locked).Error; err != nil {
+			return err
+		}
+		if !locked {
+			return errWcrmLocked
+		}
+
+		clientName := mapClientName(rec.Company)
+
+		for _, ct := range rec.Contracts {
+			extID := "wcrm:contract:" + strconv.FormatInt(ct.WcrmContractID, 10)
+
+			// Резолв номера: конфликт с НЕ-wcrm договором → детерминированный суффикс.
+			targetNumber := ct.Number
+			var conflictCount int64
+			tx.Raw(`SELECT COUNT(*) FROM contracts WHERE number = ? AND deleted_at IS NULL AND (external_id IS NULL OR external_id <> ?)`, ct.Number, extID).Scan(&conflictCount)
+			if conflictCount > 0 {
+				targetNumber = ct.Number + " (WCRM #" + strconv.FormatInt(ct.WcrmContractID, 10) + ")"
+			}
+
+			// is_active по факту (для справки), но status НЕ 'active':
+			// импортированные договоры без TariffPlanID не должны попадать в
+			// AutoGenerateInvoicesForMonth (упал бы на nil тарифе — Codex guardrail).
+			// Используем 'suspended' = договор перенесён, биллинг не настроен.
+			_, isActive := deriveContractStatus(ct.EndDate)
+			status := "suspended"
+			var startPtr, endPtr *time.Time
+			if t, ok := parseWcrmDate(ct.StartDate); ok {
+				startPtr = &t
+			}
+			if ct.EndDate != nil {
+				if t, ok := parseWcrmDate(*ct.EndDate); ok {
+					endPtr = &t
+				}
+			}
+
+			var existing models.Contract
+			findErr := tx.Where("external_id = ?", extID).First(&existing).Error
+			if findErr == gorm.ErrRecordNotFound {
+				nc := models.Contract{
+					Number:          targetNumber,
+					AdminAccountID:  adminAccountID,
+					CompanyID:       wcrmTargetTenantID,
+					ContractType:    "client",
+					ClientType:      ctype,
+					ClientName:      clientName,
+					ClientShortName: rec.Company.Name,
+					ClientINN:       rec.Company.INN,
+					ClientKPP:       rec.Company.KPP,
+					ClientEmail:     rec.Company.Email,
+					ClientPhone:     rec.Company.Phone,
+					ClientAddress:   rec.Company.AddressU,
+					ClientLegalAddress:  rec.Company.AddressU,
+					ClientPostalAddress: rec.Company.AddressP,
+					ClientOGRN:      rec.Company.OGRN,
+					ClientOKPO:      rec.Company.OKPO,
+					ClientDirector:  rec.Company.HeadName,
+					ClientBankName:  rec.Company.BankName,
+					ClientBankBIK:   rec.Company.BIK,
+					ClientBankCorrespondentAccount: rec.Company.CorA,
+					ClientBankAccount: rec.Company.CurA,
+					StartDate:       startPtr,
+					EndDate:         endPtr,
+					Status:          status,
+					IsActive:        isActive,
+					Currency:        "RUB",
+					NotifyBefore:    30,
+					ExternalID:      extID,
+				}
+				if err := tx.Create(&nc).Error; err != nil {
+					return fmt.Errorf("create contract %s: %w", ct.Number, err)
+				}
+				result.ContractsInserted++
+				result.CreatedContractIDs = append(result.CreatedContractIDs, nc.ID)
+				existing = nc
+			} else if findErr != nil {
+				return fmt.Errorf("lookup contract %s: %w", extID, findErr)
+			} else {
+				// UPDATE только import-owned поля (не трогаем ручные правки вне allowlist).
+				if err := tx.Model(&existing).Updates(map[string]interface{}{
+					"number":            targetNumber,
+					"client_type":       ctype,
+					"client_name":       clientName,
+					"client_short_name": rec.Company.Name,
+					"client_inn":        rec.Company.INN,
+					"client_kpp":        rec.Company.KPP,
+					"client_director":   rec.Company.HeadName,
+					"start_date":        startPtr,
+					"end_date":          endPtr,
+					"status":            status,
+					"is_active":         isActive,
+				}).Error; err != nil {
+					return fmt.Errorf("update contract %s: %w", extID, err)
+				}
+				result.ContractsUpdated++
+			}
+
+			// Приложения
+			for _, ap := range ct.Appendices {
+				apExtID := "wcrm:b.attachments:" + strconv.FormatInt(ap.WcrmAttachmentID, 10)
+				apStart, okS := parseWcrmDate(ap.StartDate)
+				apEnd, okE := parseWcrmDate(ap.EndDate)
+				// Fallback к датам договора (ContractAppendix.StartDate/EndDate NOT NULL).
+				if !okS {
+					if startPtr != nil {
+						apStart = *startPtr
+					} else {
+						apStart = time.Now()
+					}
+				}
+				if !okE {
+					if endPtr != nil {
+						apEnd = *endPtr
+					} else {
+						apEnd = apStart.AddDate(1, 0, 0)
+					}
+				}
+				apTitle := "Приложение"
+				if ap.Name != nil && strings.TrimSpace(*ap.Name) != "" {
+					apTitle = *ap.Name
+				}
+				apStatus := "active"
+				if ap.Enabled == 0 {
+					apStatus = "cancelled"
+				}
+				// Объекты WCRM (b.objects_map) сохраняем в описание как историческую
+				// справку — ContractObject не создаём: WCRM-объекты в Wialon-пространстве
+				// (wid), ACRM-объекты в Axenta (external_object_id), общего ключа нет.
+				apDesc := fmt.Sprintf("WCRM тип=%d, период=%d", ap.Type, ap.Period)
+				if len(ap.Objects) > 0 {
+					names := make([]string, 0, len(ap.Objects))
+					for _, ob := range ap.Objects {
+						names = append(names, ob.Name)
+					}
+					apDesc += fmt.Sprintf("\nОбъекты (%d): %s", len(ap.Objects), strings.Join(names, ", "))
+				}
+
+				var exAp models.ContractAppendix
+				fErr := tx.Where("external_id = ?", apExtID).First(&exAp).Error
+				if fErr == gorm.ErrRecordNotFound {
+					na := models.ContractAppendix{
+						AdminAccountID: adminAccountID,
+						ContractID:     existing.ID,
+						Number:         strconv.FormatInt(ap.WcrmAttachmentID, 10),
+						Title:          apTitle,
+						Description:    apDesc,
+						StartDate:      apStart,
+						EndDate:        apEnd,
+						Amount:         decimal.NewFromFloat(ap.Price),
+						Currency:       "RUB",
+						Status:         apStatus,
+						IsActive:       ap.Enabled != 0,
+						ExternalID:     apExtID,
+					}
+					if err := tx.Create(&na).Error; err != nil {
+						return fmt.Errorf("create appendix %d: %w", ap.WcrmAttachmentID, err)
+					}
+					result.AppendicesInserted++
+				} else if fErr != nil {
+					return fmt.Errorf("lookup appendix %s: %w", apExtID, fErr)
+				} else {
+					if err := tx.Model(&exAp).Updates(map[string]interface{}{
+						"contract_id": existing.ID,
+						"title":       apTitle,
+						"description": apDesc,
+						"start_date":  apStart,
+						"end_date":    apEnd,
+						"amount":      decimal.NewFromFloat(ap.Price),
+						"status":      apStatus,
+						"is_active":   ap.Enabled != 0,
+					}).Error; err != nil {
+						return fmt.Errorf("update appendix %s: %w", apExtID, err)
+					}
+					result.AppendicesUpdated++
+				}
+			}
+		}
+
+		// Остаток средств → public.billing_history (одна запись per company).
+		// >0 предоплата (payment_received), <0 долг (balance_debt).
+		if rec.Balance != 0 {
+			var primaryContractID *uint
+			if len(result.CreatedContractIDs) > 0 {
+				primaryContractID = &result.CreatedContractIDs[0]
+			} else {
+				// при повторном approve берём минимальный wcrm-договор компании
+				var cid uint
+				tx.Raw(`SELECT id FROM contracts WHERE external_id LIKE 'wcrm:contract:%' AND deleted_at IS NULL ORDER BY id LIMIT 1`).Scan(&cid)
+				if cid > 0 {
+					primaryContractID = &cid
+				}
+			}
+			op := "payment_received"
+			if rec.Balance < 0 {
+				op = "balance_debt"
+			}
+			amount := decimal.NewFromFloat(rec.Balance).Abs()
+			meta := fmt.Sprintf(`{"source":"wcrm_balance","wcrm_balance_company":"%d"}`, companyID)
+
+			var existsCount int64
+			tx.Raw(`SELECT COUNT(*) FROM billing_history WHERE (metadata::jsonb->>'wcrm_balance_company') = ? AND (metadata::jsonb->>'source') = 'wcrm_balance' AND deleted_at IS NULL`, strconv.FormatInt(companyID, 10)).Scan(&existsCount)
+			if existsCount == 0 {
+				bh := models.BillingHistory{
+					AdminAccountID: adminAccountID,
+					CompanyID:      wcrmTargetTenantID,
+					ContractID:     primaryContractID,
+					Operation:      op,
+					Amount:         amount,
+					Currency:       "RUB",
+					Description:    "Импорт остатка из WCRM",
+					Metadata:       meta,
+					Status:         "completed",
+				}
+				if err := tx.Create(&bh).Error; err != nil {
+					return fmt.Errorf("create billing_history: %w", err)
+				}
+			} else {
+				if err := tx.Exec(`UPDATE billing_history SET operation = ?, amount = ?, updated_at = now() WHERE (metadata::jsonb->>'wcrm_balance_company') = ? AND (metadata::jsonb->>'source') = 'wcrm_balance' AND deleted_at IS NULL`, op, amount, strconv.FormatInt(companyID, 10)).Error; err != nil {
+					return fmt.Errorf("update billing_history: %w", err)
+				}
+			}
+			result.BalanceRecorded = true
+		}
+
+		// Состояние
+		if err := tx.Exec(`INSERT INTO wcrm_migration_state (wcrm_company_id, status, snapshot_sha256, client_type_override, approved_by, approved_at, updated_at)
+			VALUES (?, 'approved', ?, ?, ?, now(), now())
+			ON CONFLICT (wcrm_company_id) DO UPDATE SET status='approved', snapshot_sha256=EXCLUDED.snapshot_sha256, client_type_override=EXCLUDED.client_type_override, approved_by=EXCLUDED.approved_by, approved_at=now(), updated_at=now()`,
+			companyID, sha, nullStr(req.ClientTypeOverride), approvedBy).Error; err != nil {
+			return fmt.Errorf("upsert state: %w", err)
+		}
+
+		return nil
+	})
+
+	if txErr == errWcrmLocked {
+		c.JSON(http.StatusConflict, gin.H{"status": "error", "error": "импорт этой компании уже выполняется"})
+		return
+	}
+	if txErr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": txErr.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": result})
+}
+
+// PostWcrmMigrationSkip — POST /api/auth/migration/wcrm/skip/:wcrm_company_id
+func PostWcrmMigrationSkip(c *gin.Context) {
+	if !requireSuperadmin(c) {
+		return
+	}
+	companyID, err := strconv.ParseInt(c.Param("wcrm_company_id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "некорректный wcrm_company_id"})
+		return
+	}
+	_, sha, _ := loadWcrmSnapshot()
+	username, _ := c.Get("username")
+	approvedBy, _ := username.(string)
+	if err := database.DB.Exec(fmt.Sprintf(`INSERT INTO %s.wcrm_migration_state (wcrm_company_id, status, snapshot_sha256, approved_by, updated_at)
+		VALUES (?, 'skipped', ?, ?, now())
+		ON CONFLICT (wcrm_company_id) DO UPDATE SET status='skipped', approved_by=EXCLUDED.approved_by, updated_at=now()`, wcrmSchema()),
+		companyID, sha, approvedBy).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success"})
+}
+
+// GetWcrmMigrationStatus — GET /api/auth/migration/wcrm/status
+func GetWcrmMigrationStatus(c *gin.Context) {
+	if !requireSuperadmin(c) {
+		return
+	}
+	schema := wcrmSchema()
+	var counts struct {
+		Approved int64
+		Skipped  int64
+		Pending  int64
+	}
+	database.DB.Raw(fmt.Sprintf(`SELECT
+		COUNT(*) FILTER (WHERE status='approved') AS approved,
+		COUNT(*) FILTER (WHERE status='skipped')  AS skipped,
+		COUNT(*) FILTER (WHERE status='pending')  AS pending
+		FROM %s.wcrm_migration_state`, schema)).Scan(&counts)
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": counts})
+}
+
+// currentUserIDForWcrm — admin_account_id для создаваемых записей (id суперадмина).
+func currentUserIDForWcrm(c *gin.Context) uint {
+	if v, ok := c.Get("user_id"); ok {
+		switch id := v.(type) {
+		case uint:
+			return id
+		case int:
+			return uint(id)
+		case int64:
+			return uint(id)
+		case float64:
+			return uint(id)
+		}
+	}
+	return 1
+}
+
+func nullStr(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+var errWcrmLocked = fmt.Errorf("wcrm company import locked")

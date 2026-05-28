@@ -1052,6 +1052,13 @@ func main() {
 	apiGroup.PUT("/contracts/:contract_id", api.UpdateContract)
 	apiGroup.DELETE("/contracts/:contract_id", api.DeleteContract)
 
+	// WCRM→ACRM миграция Axenta-договоров (временная фича, super_admin only).
+	apiGroup.GET("/migration/wcrm/preview", api.GetWcrmMigrationPreview)
+	apiGroup.GET("/migration/wcrm/status", api.GetWcrmMigrationStatus)
+	apiGroup.POST("/migration/wcrm/approve/:wcrm_company_id", api.PostWcrmMigrationApprove)
+	apiGroup.POST("/migration/wcrm/skip/:wcrm_company_id", api.PostWcrmMigrationSkip)
+	log.Println("✅ Зарегистрированы /api/auth/migration/wcrm/* (super_admin)")
+
 	// История задач создания снимков
 	apiGroup.GET("/snapshot-jobs", api.GetSnapshotJobs)
 	apiGroup.GET("/snapshot-jobs/stats", api.GetSnapshotJobStats)
