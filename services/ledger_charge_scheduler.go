@@ -248,7 +248,14 @@ func (s *LedgerChargeScheduler) chargeSubscription(tenantDB *gorm.DB, companyID 
 			continue
 		}
 
-		count := s.objectCountOnDay(tenantDB, sub.ID, day)
+		count, err := s.objectCountOnDay(tenantDB, sub.ID, day)
+		if err != nil {
+			// Ошибка БД — НЕ трактуем как 0 объектов. Останавливаем подписку,
+			// чтобы checkpoint не уехал за непросчитанный день (ретрай в след. прогон).
+			log.Printf("⚠️ LedgerCharge: sub %d день %s — ошибка подсчёта объектов, стоп подписки: %v",
+				sub.ID, day.Format("2006-01-02"), err)
+			return
+		}
 		if count == 0 {
 			continue
 		}
@@ -278,9 +285,11 @@ func (s *LedgerChargeScheduler) chargeSubscription(tenantDB *gorm.DB, companyID 
 		// Идемпотентность: уникальный (admin, company, source, external_id).
 		txErr := s.db.Transaction(func(tx *gorm.DB) error {
 			var cnt int64
-			tx.Model(&models.LedgerEntry{}).
+			if e := tx.Model(&models.LedgerEntry{}).
 				Where("admin_account_id = ? AND company_id = ? AND source = ? AND external_id = ? AND deleted_at IS NULL",
-					sub.AdminAccountID, companyID, "auto_charge", extID).Count(&cnt)
+					sub.AdminAccountID, companyID, "auto_charge", extID).Count(&cnt).Error; e != nil {
+				return e
+			}
 			if cnt > 0 {
 				return errChargeExists
 			}
@@ -292,7 +301,11 @@ func (s *LedgerChargeScheduler) chargeSubscription(tenantDB *gorm.DB, companyID 
 		case errChargeExists:
 			skipped++
 		default:
-			log.Printf("⚠️ LedgerCharge: sub %d день %s — ошибка: %v", sub.ID, day.Format("2006-01-02"), txErr)
+			// Сбой записи дня — стоп подписки, checkpoint не уезжает за непроведённый
+			// день (ретрай в след. прогон). Иначе MAX(entry_date) перепрыгнет дыру.
+			log.Printf("⚠️ LedgerCharge: sub %d день %s — ошибка записи, стоп подписки: %v",
+				sub.ID, day.Format("2006-01-02"), txErr)
+			return
 		}
 	}
 	return
@@ -314,21 +327,24 @@ func (s *LedgerChargeScheduler) lastChargeDate(subID uint) *time.Time {
 // objectCountOnDay — кол-во объектов подписки, биллящихся в указанный день.
 // Историческое состояние: запись существовала (created_at/deleted_at) И
 // привязка активна (start_date/end_date). status='active' — best-effort.
-func (s *LedgerChargeScheduler) objectCountOnDay(tenantDB *gorm.DB, subID uint, day time.Time) int {
+// Возвращает error: при сбое tenant-БД нельзя трактовать 0 как «нет объектов»
+// (иначе день тихо пропускается, а checkpoint MAX(entry_date) уезжает вперёд —
+// потерянное начисление навсегда). Вызывающий обязан остановить подписку.
+func (s *LedgerChargeScheduler) objectCountOnDay(tenantDB *gorm.DB, subID uint, day time.Time) (int, error) {
 	dayStart := dayFloor(day)
 	dayEnd := dayStart.AddDate(0, 0, 1)
 	var cnt int64
 	// Unscoped(): GORM иначе авто-фильтрует deleted_at IS NULL и объект,
 	// удалённый позже, не считался бы даже за дни ДО удаления. Историчность
 	// держим сами через created_at/deleted_at.
-	tenantDB.Unscoped().Model(&models.ContractObject{}).
+	err := tenantDB.Unscoped().Model(&models.ContractObject{}).
 		Where("subscription_id = ? AND status = ?", subID, "active").
 		Where("created_at < ?", dayEnd).
 		Where("deleted_at IS NULL OR deleted_at >= ?", dayStart).
 		Where("start_date < ?", dayEnd).
 		Where("end_date IS NULL OR end_date >= ?", dayStart).
-		Count(&cnt)
-	return int(cnt)
+		Count(&cnt).Error
+	return int(cnt), err
 }
 
 func (s *LedgerChargeScheduler) GetStatus() map[string]interface{} {

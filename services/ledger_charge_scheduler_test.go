@@ -101,10 +101,15 @@ func TestObjectCountOnDay_Historical(t *testing.T) {
 	// Объект D: status inactive — не биллится.
 	mk(jan(1), nil, jan(1), nil, "inactive")
 
+	cnt := func(day time.Time) int {
+		c, err := s.objectCountOnDay(db, subID, day)
+		assert.NoError(t, err)
+		return c
+	}
 	// 10-е: A + C активны (B ещё не добавлен, D inactive) = 2.
-	assert.Equal(t, 2, s.objectCountOnDay(db, subID, jan(10)))
+	assert.Equal(t, 2, cnt(jan(10)))
 	// 18-е: A + B + C = 3.
-	assert.Equal(t, 3, s.objectCountOnDay(db, subID, jan(18)))
+	assert.Equal(t, 3, cnt(jan(18)))
 	// 25-е: A + B (C удалён 20-го) = 2.
-	assert.Equal(t, 2, s.objectCountOnDay(db, subID, jan(25)))
+	assert.Equal(t, 2, cnt(jan(25)))
 }
