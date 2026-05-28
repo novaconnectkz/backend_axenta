@@ -242,6 +242,21 @@ func main() {
 		log.Println("⚠️ Планировщики снимков отключены (ENABLE_SNAPSHOT_SCHEDULER != true)")
 	}
 
+	// B1: Ledger charge scheduler — ежедневное авто-начисление по клиентским
+	// договорам в лицевой счёт (02:00 UTC). Включается ENABLE_LEDGER_CHARGE_SCHEDULER=true.
+	// cutoff backfill — env LEDGER_AUTO_CHARGE_START=YYYY-MM-DD (default вчера).
+	if os.Getenv("ENABLE_LEDGER_CHARGE_SCHEDULER") == "true" {
+		ledgerChargeScheduler := services.NewLedgerChargeScheduler()
+		api.SetLedgerChargeScheduler(ledgerChargeScheduler)
+		if err := ledgerChargeScheduler.Start(); err != nil {
+			log.Printf("⚠️ LedgerChargeScheduler failed to start: %v", err)
+		} else {
+			defer ledgerChargeScheduler.Stop()
+		}
+	} else {
+		log.Println("🔧 LedgerChargeScheduler отключён (для включения ENABLE_LEDGER_CHARGE_SCHEDULER=true)")
+	}
+
 	// Wialon stats scheduler — раз в N минут собирает usage объектов в public.wialon_object_stats.
 	// Endpoint /api/wialon/connections/:id/objects-stats читает из этой таблицы (live-запрос для
 	// WH с 3412 ресурсов занимает 6.5 минут). Включён всегда — это критично для UI.
@@ -1039,6 +1054,7 @@ func main() {
 	apiGroup.GET("/ledger/entries/:contract_id", api.GetLedgerEntries)
 	apiGroup.POST("/ledger/payment", api.PostLedgerPayment)
 	apiGroup.POST("/ledger/import", api.PostLedgerImport)
+	apiGroup.POST("/ledger/charge/run", api.PostLedgerChargeRun)
 	log.Println("✅ Зарегистрированы /api/auth/ledger/* (лицевой счёт)")
 
 	// Синхронизация договора с подпиской

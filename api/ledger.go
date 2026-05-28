@@ -4,6 +4,7 @@ import (
 	"backend_axenta/database"
 	"backend_axenta/middleware"
 	"backend_axenta/models"
+	"backend_axenta/services"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -14,6 +15,36 @@ import (
 	"gorm.io/gorm"
 )
 
+// ledgerChargeScheduler — глобальный экземпляр для ручного триггера.
+var ledgerChargeScheduler *services.LedgerChargeScheduler
+
+// SetLedgerChargeScheduler регистрирует scheduler (вызывается из main).
+func SetLedgerChargeScheduler(s *services.LedgerChargeScheduler) {
+	ledgerChargeScheduler = s
+}
+
+// PostLedgerChargeRun — POST /api/auth/ledger/charge/run
+// Ручной прогон авто-начисления (для теста). Body опц.: {"date":"YYYY-MM-DD"}
+// — начислить за все недостающие дни до этой даты включительно (default вчера).
+func PostLedgerChargeRun(c *gin.Context) {
+	if ledgerChargeScheduler == nil {
+		// Планировщик может быть выключен флагом — поднимаем разовый экземпляр.
+		ledgerChargeScheduler = services.NewLedgerChargeScheduler()
+	}
+	var req struct {
+		Date string `json:"date"`
+	}
+	_ = c.ShouldBindJSON(&req)
+	target := time.Now().UTC().AddDate(0, 0, -1)
+	if req.Date != "" {
+		if t, e := time.Parse("2006-01-02", req.Date); e == nil {
+			target = t.UTC()
+		}
+	}
+	ledgerChargeScheduler.RunUpToDate(target)
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": ledgerChargeScheduler.GetStatus()})
+}
+
 // ============================================================================
 // Лицевой счёт (ledger). Баланс договора = SUM(ledger_entries.amount).
 // payment(+)/charge(−). balance>0 переплата, balance<0 долг.
@@ -21,10 +52,12 @@ import (
 // ============================================================================
 
 // ledgerBalance считает баланс договора как сумму проводок (источник правды).
-func ledgerBalance(contractID uint) decimal.Decimal {
+// admin_account_id обязателен: ledger в public, contract_id из разных tenant
+// могут совпадать — без admin-фильтра балансы смешались бы между компаниями.
+func ledgerBalance(contractID, adminAccountID uint) decimal.Decimal {
 	var sum decimal.Decimal
 	database.DB.Model(&models.LedgerEntry{}).
-		Where("contract_id = ? AND deleted_at IS NULL", contractID).
+		Where("contract_id = ? AND admin_account_id = ? AND deleted_at IS NULL", contractID, adminAccountID).
 		Select("COALESCE(SUM(amount), 0)").Scan(&sum)
 	return sum
 }
@@ -37,12 +70,17 @@ func GetLedgerBalance(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "некорректный contract_id"})
 		return
 	}
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
 	var agg struct {
 		Charged decimal.Decimal
 		Paid    decimal.Decimal
 	}
 	database.DB.Model(&models.LedgerEntry{}).
-		Where("contract_id = ? AND deleted_at IS NULL", uint(contractID)).
+		Where("contract_id = ? AND admin_account_id = ? AND deleted_at IS NULL", uint(contractID), adminAccountID).
 		Select("COALESCE(SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END),0) AS charged, COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END),0) AS paid").
 		Scan(&agg)
 	balance := agg.Paid.Sub(agg.Charged)
@@ -68,8 +106,13 @@ func GetLedgerEntries(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "некорректный contract_id"})
 		return
 	}
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
 	var entries []models.LedgerEntry
-	database.DB.Where("contract_id = ? AND deleted_at IS NULL", uint(contractID)).
+	database.DB.Where("contract_id = ? AND admin_account_id = ? AND deleted_at IS NULL", uint(contractID), adminAccountID).
 		Order("entry_date DESC, id DESC").Limit(2000).Find(&entries)
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": entries})
 }
@@ -162,7 +205,7 @@ func PostLedgerPayment(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{
 		"entry_id":    entry.ID,
-		"new_balance": ledgerBalance(req.ContractID).StringFixed(2),
+		"new_balance": ledgerBalance(req.ContractID, adminAccountID).StringFixed(2),
 	}})
 }
 
