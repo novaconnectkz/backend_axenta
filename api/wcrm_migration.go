@@ -2,6 +2,7 @@ package api
 
 import (
 	"backend_axenta/database"
+	"backend_axenta/middleware"
 	"backend_axenta/models"
 	"crypto/sha256"
 	"encoding/hex"
@@ -515,7 +516,13 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 		return
 	}
 
-	adminAccountID := currentUserIDForWcrm(c)
+	// admin_account_id = account_id (как GetContracts фильтрует список), НЕ user_id.
+	// Иначе импортированные договоры невидимы в /billing (admin=186 vs user_id=3).
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil || adminAccountID == 0 {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "не удалось определить admin_account_id"})
+		return
+	}
 	username, _ := c.Get("username")
 	approvedBy, _ := username.(string)
 
@@ -608,7 +615,9 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 					NotifyBefore:    30,
 					ExternalID:      extID,
 				}
-				if err := tx.Create(&nc).Error; err != nil {
+				// Select("*"): форсим запись ВСЕХ полей включая is_active=false.
+				// Иначе GORM (default:true тег) пропускает zero-value bool → БД ставит true.
+				if err := tx.Select("*").Create(&nc).Error; err != nil {
 					return fmt.Errorf("create contract %s: %w", ct.Number, err)
 				}
 				result.ContractsInserted++
@@ -693,7 +702,9 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 						IsActive:       ap.Enabled != 0,
 						ExternalID:     apExtID,
 					}
-					if err := tx.Create(&na).Error; err != nil {
+					// Select("*"): форсим is_active=false для disabled-приложений
+					// (GORM default:true тег иначе пропускает zero-value bool → БД ставит true).
+					if err := tx.Select("*").Create(&na).Error; err != nil {
 						return fmt.Errorf("create appendix %d: %w", ap.WcrmAttachmentID, err)
 					}
 					result.AppendicesInserted++
@@ -825,23 +836,6 @@ func GetWcrmMigrationStatus(c *gin.Context) {
 		COUNT(*) FILTER (WHERE status='pending')  AS pending
 		FROM %s.wcrm_migration_state`, schema)).Scan(&counts)
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": counts})
-}
-
-// currentUserIDForWcrm — admin_account_id для создаваемых записей (id суперадмина).
-func currentUserIDForWcrm(c *gin.Context) uint {
-	if v, ok := c.Get("user_id"); ok {
-		switch id := v.(type) {
-		case uint:
-			return id
-		case int:
-			return uint(id)
-		case int64:
-			return uint(id)
-		case float64:
-			return uint(id)
-		}
-	}
-	return 1
 }
 
 func nullStr(s string) interface{} {
