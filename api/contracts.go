@@ -901,6 +901,73 @@ func GetContracts(c *gin.Context) {
 }
 
 // GetContractStats получает статистику объектов для конкретного договора (Progressive Loading)
+// GetContractObjectsList — GET /api/auth/contracts/:contract_id/objects
+// Реальные привязанные объекты договора с именами (резолв object_id=external_object_id
+// → axenta_object_snapshots.object_name). Заменяет fakeObjects "Object N" во фронте.
+func GetContractObjectsList(c *gin.Context) {
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
+	contractID, err := strconv.ParseUint(c.Param("contract_id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Неверный формат ID договора"})
+		return
+	}
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB == nil {
+		tenantDB = database.DB
+	}
+
+	var cos []models.ContractObject
+	if err := tenantDB.Where("contract_id = ? AND status = ?", uint(contractID), "active").Find(&cos).Error; err != nil {
+		c.JSON(http.StatusOK, gin.H{"status": "success", "data": []any{}})
+		return
+	}
+
+	// Резолв имён: object_id (= external_object_id) → axenta_object_snapshots.
+	nameByExtID := map[uint]struct{ Name, Account string }{}
+	if len(cos) > 0 {
+		ids := make([]uint, 0, len(cos))
+		for _, co := range cos {
+			ids = append(ids, co.ObjectID)
+		}
+		var snaps []struct {
+			ExternalObjectID uint
+			ObjectName       string
+			AccountName      string
+		}
+		tenantDB.Table("axenta_object_snapshots").
+			Select("external_object_id, object_name, account_name").
+			Where("external_object_id IN ?", ids).Scan(&snaps)
+		for _, s := range snaps {
+			nameByExtID[s.ExternalObjectID] = struct{ Name, Account string }{s.ObjectName, s.AccountName}
+		}
+	}
+
+	out := make([]gin.H, 0, len(cos))
+	for _, co := range cos {
+		name := ""
+		account := ""
+		if r, ok := nameByExtID[co.ObjectID]; ok {
+			name = r.Name
+			account = r.Account
+		}
+		if name == "" {
+			name = fmt.Sprintf("Объект #%d", co.ObjectID)
+		}
+		out = append(out, gin.H{
+			"object_id":    co.ObjectID,
+			"name":         name,
+			"account_name": account,
+			"object_schema": co.ObjectSchema,
+		})
+	}
+	_ = adminAccountID
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": out})
+}
+
 func GetContractStats(c *gin.Context) {
 	adminAccountID, err := middleware.GetAdminAccountID(c)
 	if err != nil {

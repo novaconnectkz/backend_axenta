@@ -1031,6 +1031,9 @@ func main() {
 	apiGroup.DELETE("/contracts/:contract_id/objects/:object_id", api.DetachObjectFromContract)
 	log.Printf("✅ Зарегистрирован DELETE /api/auth/contracts/:contract_id/objects/:object_id -> DetachObjectFromContract")
 
+	apiGroup.GET("/contracts/:contract_id/objects", api.GetContractObjectsList)
+	log.Printf("✅ Зарегистрирован GET /api/auth/contracts/:contract_id/objects -> GetContractObjectsList")
+
 	// Синхронизация договора с подпиской
 	apiGroup.POST("/contracts/:contract_id/sync-from-subscription", api.SyncContractFromSubscription)
 	log.Printf("✅ Зарегистрирован POST /api/auth/contracts/:contract_id/sync-from-subscription -> SyncContractFromSubscription")
