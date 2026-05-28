@@ -5,7 +5,6 @@ import (
 	"backend_axenta/middleware"
 	"backend_axenta/models"
 	"backend_axenta/services"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -274,75 +273,50 @@ func ExportObjectsToXLSX(c *gin.Context) {
 	log.Printf("📊 URL запроса: %s", c.Request.URL.String())
 	log.Printf("📊 Метод: %s", c.Request.Method)
 
-	// Ф3-B: экспорт из snapshot (axenta_object_snapshots), без live-proxy в
-	// axenta.cloud — после Ф1 логин = локальный JWT, request-токен невалиден
-	// для Axenta. Фильтры 1:1 со списком через applyObjectSnapshotFilters.
-	// Пустой/отсутствующий snapshot → валидный XLSX только с заголовками
-	// (не JSON-ошибка: фронтенд ждёт blob).
-	db := middleware.GetTenantDB(c)
-	if db == nil {
-		db = database.DB
+	// Экспорт из UNIFIED-источника (Axenta snapshot + Wialon + GELIOS + SKIF),
+	// 1:1 со списком /unified/objects. Раньше читался только axenta_object_snapshots,
+	// из-за чего экспорт при фильтре source=wialon/gelios/skif давал пустой XLSX.
+	// Переиспользуем те же fetch-функции что и GetUnifiedObjects.
+	search := c.Query("search")
+	activeStr := c.Query("is_active")
+	source := c.DefaultQuery("source", "all")
+	if source == "" {
+		source = "all"
 	}
 
-	var allObjects []AxentaCloudObject
-	if db != nil {
-		ordering := c.DefaultQuery("ordering", "name")
-		orderClause := "object_name"
-		switch strings.TrimPrefix(ordering, "-") {
-		case "name", "":
-			orderClause = "object_name"
-		case "createdAt", "created_at", "axenta_created_at":
-			orderClause = "axenta_created_at"
-		case "lastMessageDatetime", "last_communication_at":
-			orderClause = "last_communication_at"
-		case "uniqueId", "unique_id":
-			orderClause = "unique_id"
-		}
-		if strings.HasPrefix(ordering, "-") {
-			orderClause += " DESC NULLS LAST"
-		} else {
-			orderClause += " ASC NULLS LAST"
-		}
+	loadAxenta := source == "all" || source == "axenta"
+	loadWialon := source == "all" || source == "wialon" || source == "wh" || source == "wl"
+	loadGelios := source == "all" || source == "gelios"
+	loadSkif := source == "all" || source == "skif"
 
-		var rows []models.AxentaObjectSnapshot
-		if err := applyObjectSnapshotFilters(c, db).Order(orderClause).Find(&rows).Error; err != nil {
-			log.Printf("⚠️ ExportObjectsToXLSX snapshot find: %v", err)
+	companyIDRaw, _ := c.Get("company_id")
+
+	allObjects := make([]UnifiedObject, 0, 1024)
+	if loadAxenta {
+		tenantDB := middleware.GetTenantDB(c)
+		if tenantDB == nil {
+			tenantDB = database.DB
 		}
-		fmtTime := func(t *time.Time) string {
-			if t == nil {
-				return ""
-			}
-			return t.Format("2006-01-02 15:04:05")
+		axObjs, _, _ := fetchAxentaObjectsFast(tenantDB, search, activeStr)
+		allObjects = append(allObjects, axObjs...)
+	}
+	if cid, ok := companyIDRaw.(uint); ok {
+		if loadWialon {
+			wlObjs, _, _, _, _, _ := fetchWialonObjectsFast(cid, search, activeStr, source)
+			allObjects = append(allObjects, wlObjs...)
 		}
-		allObjects = make([]AxentaCloudObject, 0, len(rows))
-		for _, r := range rows {
-			var phones []string
-			if r.PhoneNumbers != nil && *r.PhoneNumbers != "" {
-				_ = json.Unmarshal([]byte(*r.PhoneNumbers), &phones)
-			}
-			creator := ""
-			if r.CreatorName != nil {
-				creator = *r.CreatorName
-			}
-			allObjects = append(allObjects, AxentaCloudObject{
-				ID:                  int(r.ExternalObjectID),
-				Name:                r.ObjectName,
-				UniqueID:            r.UniqueID,
-				CreatorName:         creator,
-				AccountName:         r.AccountName,
-				PhoneNumbers:        phones,
-				DeviceTypeName:      r.DeviceTypeName,
-				LastMessageDatetime: fmtTime(r.LastCommunicationAt),
-				CreatedAt:           fmtTime(r.AxentaCreatedAt),
-				DeletedAt:           fmtTime(r.AxentaDeletedAt),
-				IsActive:            r.IsActive,
-				CurrentUserAccess:   "",
-				// AccountType/CurrentUserAccess отсутствуют в object-snapshot — пусто.
-			})
+		if loadGelios {
+			gObjs, _, _, _ := fetchGeliosObjectsFast(cid, search, activeStr)
+			allObjects = append(allObjects, gObjs...)
+		}
+		if loadSkif {
+			sObjs, _, _, _ := fetchSkifObjectsFast(cid, search, activeStr)
+			allObjects = append(allObjects, sObjs...)
 		}
 	}
+	sortUnifiedObjects(allObjects, c.DefaultQuery("ordering", "name"))
 
-	log.Printf("📊 Получено объектов для экспорта из snapshot: %d", len(allObjects))
+	log.Printf("📊 Получено объектов для экспорта (unified, source=%s): %d", source, len(allObjects))
 
 	// Создаем новый Excel файл
 	f := excelize.NewFile()
@@ -362,14 +336,12 @@ func ExportObjectsToXLSX(c *gin.Context) {
 		"Уникальный ID",
 		"Тип устройства",
 		"Аккаунт",
-		"Тип аккаунта",
 		"Создатель",
 		"Телефоны",
 		"Последнее сообщение",
 		"Дата создания",
-		"Дата удаления",
 		"Активен",
-		"Права доступа",
+		"Система",
 	}
 
 	// Записываем заголовки
@@ -403,59 +375,43 @@ func ExportObjectsToXLSX(c *gin.Context) {
 	for rowIdx, obj := range allObjects {
 		row := rowIdx + 2 // Начинаем с 2 строки (после заголовков)
 
-		// Форматируем данные
 		phones := strings.Join(obj.PhoneNumbers, ", ")
-
-		// Обрабатываем CurrentUserAccess, который может быть []string или number
-		accessRights := ""
-		if accessArray, ok := obj.CurrentUserAccess.([]interface{}); ok {
-			strArray := make([]string, len(accessArray))
-			for i, v := range accessArray {
-				strArray[i] = fmt.Sprintf("%v", v)
-			}
-			accessRights = strings.Join(strArray, ", ")
-		} else if accessStr, ok := obj.CurrentUserAccess.(string); ok {
-			accessRights = accessStr
-		} else {
-			accessRights = fmt.Sprintf("%v", obj.CurrentUserAccess)
-		}
 
 		isActive := "Да"
 		if !obj.IsActive {
 			isActive = "Нет"
 		}
+		system := obj.SourceLabel
+		if system == "" {
+			system = obj.Source
+		}
 
-		// Записываем значения
 		_ = f.SetCellValue(sheetName, fmt.Sprintf("A%d", row), obj.ID)
 		_ = f.SetCellValue(sheetName, fmt.Sprintf("B%d", row), obj.Name)
 		_ = f.SetCellValue(sheetName, fmt.Sprintf("C%d", row), obj.UniqueID)
 		_ = f.SetCellValue(sheetName, fmt.Sprintf("D%d", row), obj.DeviceTypeName)
 		_ = f.SetCellValue(sheetName, fmt.Sprintf("E%d", row), obj.AccountName)
-		_ = f.SetCellValue(sheetName, fmt.Sprintf("F%d", row), obj.AccountType)
-		_ = f.SetCellValue(sheetName, fmt.Sprintf("G%d", row), obj.CreatorName)
-		_ = f.SetCellValue(sheetName, fmt.Sprintf("H%d", row), phones)
-		_ = f.SetCellValue(sheetName, fmt.Sprintf("I%d", row), obj.LastMessageDatetime)
-		_ = f.SetCellValue(sheetName, fmt.Sprintf("J%d", row), obj.CreatedAt)
-		_ = f.SetCellValue(sheetName, fmt.Sprintf("K%d", row), obj.DeletedAt)
-		_ = f.SetCellValue(sheetName, fmt.Sprintf("L%d", row), isActive)
-		_ = f.SetCellValue(sheetName, fmt.Sprintf("M%d", row), accessRights)
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("F%d", row), obj.CreatorName)
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("G%d", row), phones)
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("H%d", row), obj.LastMessageDatetime)
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("I%d", row), obj.CreatedAt)
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("J%d", row), isActive)
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("K%d", row), system)
 	}
 
 	// Устанавливаем ширину колонок
 	columnWidths := map[string]float64{
-		"A": 10, // ID
+		"A": 12, // ID
 		"B": 30, // Название
 		"C": 20, // Уникальный ID
 		"D": 20, // Тип устройства
 		"E": 25, // Аккаунт
-		"F": 15, // Тип аккаунта
-		"G": 20, // Создатель
-		"H": 25, // Телефоны
-		"I": 20, // Последнее сообщение
-		"J": 20, // Дата создания
-		"K": 20, // Дата удаления
-		"L": 10, // Активен
-		"M": 30, // Права доступа
+		"F": 20, // Создатель
+		"G": 25, // Телефоны
+		"H": 20, // Последнее сообщение
+		"I": 20, // Дата создания
+		"J": 10, // Активен
+		"K": 18, // Система
 	}
 
 	for col, width := range columnWidths {
@@ -464,7 +420,7 @@ func ExportObjectsToXLSX(c *gin.Context) {
 
 	// Добавляем автофильтр
 	if len(allObjects) > 0 {
-		endCell := fmt.Sprintf("M%d", len(allObjects)+1)
+		endCell := fmt.Sprintf("K%d", len(allObjects)+1)
 		if err := f.AutoFilter(sheetName, "A1:"+endCell, []excelize.AutoFilterOptions{}); err != nil {
 			log.Printf("⚠️ Ошибка добавления автофильтра: %v", err)
 		}
