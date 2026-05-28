@@ -1227,51 +1227,88 @@ func (s *WialonService) SearchUnitsWithHost(host string, token string) ([]Wialon
 		0x00000400 | // Последнее сообщение и местоположение
 		0x00002000 // Счетчики
 
-	searchParams := map[string]interface{}{
-		"spec": map[string]interface{}{
-			"itemsType":     "avl_unit",
-			"propName":      "sys_name",
-			"propValueMask": "*",
-			"sortType":      "sys_name",
-		},
-		"force": 1,
-		"flags": flags,
-		"from":  0,
-		"to":    10000, // Лимит для предотвращения таймаутов при больших аккаунтах (13k+ объектов)
-	}
+	// Пагинация: раньше был один запрос to:10000, который МОЛЧА обрезал большие
+	// аккаунты (conn 12188 объектов → 10000, терялось ~2200 + ломался uid-матч при
+	// миграции). Теперь идём страницами по pageSize пока не соберём totalItemsCount.
+	const pageSize = 5000
+	// Дедуп по id (Codex): offset-пагинация при изменении данных/равных sys_name
+	// может дать дубли/пропуски — собираем в map по item.id, порядок для uid-match неважен.
+	itemsByID := make(map[int64]map[string]interface{}, 1024)
+	total := -1
+	for from := 0; ; from += pageSize {
+		forceVal := 0
+		if from == 0 {
+			forceVal = 1 // новый поиск только на первой странице; дальше paging по нему
+		}
+		searchParams := map[string]interface{}{
+			"spec": map[string]interface{}{
+				"itemsType":     "avl_unit",
+				"propName":      "sys_name",
+				"propValueMask": "*",
+				"sortType":      "sys_name,sys_id", // tie-breaker sys_id для стабильного порядка
+			},
+			"force": forceVal,
+			"flags": flags,
+			"from":  from,
+			"to":    from + pageSize - 1, // Wialon: to включительно
+		}
+		paramsJSON, _ := json.Marshal(searchParams)
 
-	paramsJSON, _ := json.Marshal(searchParams)
+		params := url.Values{}
+		params.Set("svc", "core/search_items")
+		params.Set("sid", loginResp.Eid)
+		params.Set("params", string(paramsJSON))
 
-	params := url.Values{}
-	params.Set("svc", "core/search_items")
-	params.Set("sid", loginResp.Eid)
-	params.Set("params", string(paramsJSON))
+		resp, err := s.httpClient.Post(apiURL+"?"+params.Encode(), "application/x-www-form-urlencoded", nil)
+		if err != nil {
+			return nil, fmt.Errorf("ошибка поиска объектов (from=%d): %w", from, err)
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("ошибка чтения ответа (from=%d): %w", from, err)
+		}
 
-	resp, err := s.httpClient.Post(apiURL+"?"+params.Encode(), "application/x-www-form-urlencoded", nil)
-	if err != nil {
-		return nil, fmt.Errorf("ошибка поиска объектов: %w", err)
-	}
-	defer resp.Body.Close()
+		// Проверка Wialon error body (иначе error→0 items молча) — Codex.
+		var asError struct {
+			Error  int    `json:"error"`
+			Reason string `json:"reason"`
+		}
+		if err := json.Unmarshal(body, &asError); err == nil && asError.Error != 0 {
+			return nil, fmt.Errorf("wialon search_items error code=%d reason=%s (from=%d)", asError.Error, asError.Reason, from)
+		}
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("ошибка чтения ответа: %w", err)
-	}
-
-	var searchResult struct {
-		TotalItemsCount int                      `json:"totalItemsCount"`
-		Items           []map[string]interface{} `json:"items"`
-	}
-	if err := json.Unmarshal(body, &searchResult); err != nil {
-		return nil, fmt.Errorf("ошибка парсинга ответа: %w", err)
+		var page struct {
+			TotalItemsCount int                      `json:"totalItemsCount"`
+			Items           []map[string]interface{} `json:"items"`
+		}
+		if err := json.Unmarshal(body, &page); err != nil {
+			return nil, fmt.Errorf("ошибка парсинга ответа (from=%d): %w", from, err)
+		}
+		if total < 0 {
+			total = page.TotalItemsCount
+		}
+		for _, it := range page.Items {
+			if idf, ok := it["id"].(float64); ok {
+				itemsByID[int64(idf)] = it
+			}
+		}
+		// Стоп: пустая страница или собрали всё уникальных.
+		if len(page.Items) == 0 || len(itemsByID) >= total {
+			break
+		}
+		if from > 200000 {
+			log.Printf("⚠️ SearchUnitsWithHost: прерван пагинатор from=%d (total=%d, собрано=%d)", from, total, len(itemsByID))
+			break
+		}
 	}
 
 	// Получаем типы оборудования для названий
 	hwTypes, _ := s.GetHardwareTypesWithHost(host, loginResp.Eid)
 
 	// Преобразуем результаты в структуры
-	units := make([]WialonUnit, 0, len(searchResult.Items))
-	for _, item := range searchResult.Items {
+	units := make([]WialonUnit, 0, len(itemsByID))
+	for _, item := range itemsByID {
 		unit := WialonUnit{}
 
 		if id, ok := item["id"].(float64); ok {
