@@ -113,6 +113,8 @@ type wcrmPreviewAppendix struct {
 	Title            string   `json:"title"`
 	Price            string   `json:"price"`
 	Period           int      `json:"period"`
+	StartDate        string   `json:"start_date"` // дата начала приложения (YYYY-MM-DD), не договора
+	EndDate          string   `json:"end_date"`   // дата окончания приложения (YYYY-MM-DD)
 	Enabled          bool     `json:"enabled"`
 	ObjectCount      int      `json:"object_count"`
 	ObjectNames      []string `json:"object_names"` // имена для показа (до 50)
@@ -400,10 +402,23 @@ func GetWcrmMigrationPreview(c *gin.Context) {
 				if ap.Enabled != 0 {
 					ctAnyEnabled = true
 				}
-				_, okS := parseWcrmDate(ap.StartDate)
-				_, okE := parseWcrmDate(ap.EndDate)
-				if !okS || !okE {
+				apStartT, okS := parseWcrmDate(ap.StartDate)
+				apEndT, okE := parseWcrmDate(ap.EndDate)
+				// В WCRM end_date часто 0000-00-00 (хранится только start + period).
+				// Реальный срок приложения = start + period месяцев (как считает UI WCRM).
+				if !okE && okS && ap.Period > 0 {
+					apEndT = apStartT.AddDate(0, ap.Period, 0)
+					okE = true
+				}
+				if !okS {
 					badDates++
+				}
+				apStartStr, apEndStr := "", ""
+				if okS {
+					apStartStr = apStartT.Format("2006-01-02")
+				}
+				if okE {
+					apEndStr = apEndT.Format("2006-01-02")
 				}
 				apTitle := "Приложение"
 				if ap.Name != nil && strings.TrimSpace(*ap.Name) != "" {
@@ -425,6 +440,8 @@ func GetWcrmMigrationPreview(c *gin.Context) {
 					Title:            apTitle,
 					Price:            decimal.NewFromFloat(ap.Price).StringFixed(2),
 					Period:           ap.Period,
+					StartDate:        apStartStr,
+					EndDate:          apEndStr,
 					Enabled:          ap.Enabled != 0,
 					ObjectCount:      len(ap.Objects),
 					ObjectNames:      names,
@@ -698,6 +715,11 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 				}
 				var apEndPtr *time.Time
 				if e, okE := parseWcrmDate(ap.EndDate); okE {
+					apEndPtr = &e
+				} else if ap.Period > 0 {
+					// WCRM end_date = 0000-00-00 (хранит start + period). Реальный срок
+					// приложения = start + period месяцев (как считает UI WCRM).
+					e := apStart.AddDate(0, ap.Period, 0)
 					apEndPtr = &e
 				} else if endPtr != nil {
 					apEndPtr = endPtr
