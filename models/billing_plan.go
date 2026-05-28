@@ -74,6 +74,9 @@ type Subscription struct {
 	LastPaymentDate *time.Time `json:"last_payment_date"`
 	NextPaymentDate *time.Time `json:"next_payment_date"`
 	PaymentMethod   string     `json:"payment_method" gorm:"type:varchar(50)"`
+
+	// ID во внешних системах (для идемпотентного импорта, напр. 'wcrm:sub:<attachment_id>')
+	ExternalID string `json:"external_id" gorm:"type:varchar(100)"`
 }
 
 // TableName задает имя таблицы для модели Subscription

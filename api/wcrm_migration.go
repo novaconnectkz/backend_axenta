@@ -4,6 +4,7 @@ import (
 	"backend_axenta/database"
 	"backend_axenta/middleware"
 	"backend_axenta/models"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -129,6 +130,8 @@ type wcrmPreviewContract struct {
 	AppendixCount  int                   `json:"appendix_count"`
 	BadDates       int                   `json:"bad_dates"` // приложений с невалидными датами
 	ObjectCount    int                   `json:"object_count"`
+	ObjectsMatched int                   `json:"objects_matched"` // объектов найдено в ACRM по uid
+	WillSkip       bool                  `json:"will_skip"`       // нет включённых приложений → не мигрируется
 	Appendices     []wcrmPreviewAppendix `json:"appendices"`
 }
 
@@ -334,6 +337,9 @@ func GetWcrmMigrationPreview(c *gin.Context) {
 		stateByCompany[s.WcrmCompanyID] = s.Status
 	}
 
+	// uid → ACRM wialon object id (для подсчёта сматченных объектов в preview).
+	wialonUIDMap := loadWialonUIDMap(wcrmTargetTenantID)
+
 	resp := wcrmPreviewResponse{
 		SnapshotSHA256: sha,
 		GeneratedAt:    time.Now().UTC().Format(time.RFC3339),
@@ -386,10 +392,15 @@ func GetWcrmMigrationPreview(c *gin.Context) {
 
 			badDates := 0
 			ctObjCount := 0
+			ctObjMatched := 0
+			ctAnyEnabled := false
 			previewAppendices := make([]wcrmPreviewAppendix, 0, len(ct.Appendices))
 			for _, ap := range ct.Appendices {
 				resp.TotalAppendix++
 				cand.AppendixCount++
+				if ap.Enabled != 0 {
+					ctAnyEnabled = true
+				}
 				_, okS := parseWcrmDate(ap.StartDate)
 				_, okE := parseWcrmDate(ap.EndDate)
 				if !okS || !okE {
@@ -403,6 +414,9 @@ func GetWcrmMigrationPreview(c *gin.Context) {
 				for _, ob := range ap.Objects {
 					if len(names) < 50 {
 						names = append(names, ob.Name)
+					}
+					if _, ok := wialonUIDMap[ob.UID]; ok {
+						ctObjMatched++
 					}
 				}
 				ctObjCount += len(ap.Objects)
@@ -433,6 +447,8 @@ func GetWcrmMigrationPreview(c *gin.Context) {
 				AppendixCount:  len(ct.Appendices),
 				BadDates:       badDates,
 				ObjectCount:    ctObjCount,
+				ObjectsMatched: ctObjMatched,
+				WillSkip:       !ctAnyEnabled,
 				Appendices:     previewAppendices,
 			})
 		}
@@ -470,13 +486,16 @@ type wcrmApproveRequest struct {
 }
 
 type wcrmApproveResult struct {
-	WcrmCompanyID       int64   `json:"wcrm_company_id"`
-	ContractsInserted   int     `json:"contracts_inserted"`
-	ContractsUpdated    int     `json:"contracts_updated"`
-	AppendicesInserted  int     `json:"appendices_inserted"`
-	AppendicesUpdated   int     `json:"appendices_updated"`
-	BalanceRecorded     bool    `json:"balance_recorded"`
-	CreatedContractIDs  []uint  `json:"created_contract_ids"`
+	WcrmCompanyID        int64    `json:"wcrm_company_id"`
+	ContractsInserted    int      `json:"contracts_inserted"`
+	ContractsUpdated     int      `json:"contracts_updated"`
+	SubscriptionsCreated int      `json:"subscriptions_created"`
+	ObjectsLinked        int      `json:"objects_linked"`
+	ObjectsUnmatched     int      `json:"objects_unmatched"`
+	SkippedInactive      int      `json:"skipped_inactive"`     // договоров пропущено (все приложения disabled)
+	TariffNotFound       []string `json:"tariff_not_found"`     // цены без тарифа → подписка не создана
+	BalanceRecorded      bool     `json:"balance_recorded"`
+	CreatedContractIDs   []uint   `json:"created_contract_ids"`
 }
 
 // PostWcrmMigrationApprove — POST /api/auth/migration/wcrm/approve/:wcrm_company_id
@@ -555,8 +574,25 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 
 		clientName := mapClientName(rec.Company)
 
+		// uid → ACRM wialon object id (для привязки объектов подписки по uid-матчу).
+		// Грузим один раз из Redis-кэша wialon all-units целевой компании.
+		wialonUIDMap := loadWialonUIDMap(wcrmTargetTenantID)
+
 		for _, ct := range rec.Contracts {
 			extID := "wcrm:contract:" + strconv.FormatInt(ct.WcrmContractID, 10)
+
+			// Skip неактивных: договор без включённых приложений (все enabled=0) не мигрируем.
+			anyEnabled := false
+			for _, ap := range ct.Appendices {
+				if ap.Enabled != 0 {
+					anyEnabled = true
+					break
+				}
+			}
+			if !anyEnabled {
+				result.SkippedInactive++
+				continue
+			}
 
 			// Резолв номера: конфликт с НЕ-wcrm договором → детерминированный суффикс.
 			targetNumber := ct.Number
@@ -566,12 +602,9 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 				targetNumber = ct.Number + " (WCRM #" + strconv.FormatInt(ct.WcrmContractID, 10) + ")"
 			}
 
-			// is_active по факту (для справки), но status НЕ 'active':
-			// импортированные договоры без TariffPlanID не должны попадать в
-			// AutoGenerateInvoicesForMonth (упал бы на nil тарифе — Codex guardrail).
-			// Используем 'suspended' = договор перенесён, биллинг не настроен.
-			_, isActive := deriveContractStatus(ct.EndDate)
-			status := "suspended"
+			// Договор активен (есть включённое приложение, прошёл skip выше).
+			status := "active"
+			isActive := true
 			var startPtr, endPtr *time.Time
 			if t, ok := parseWcrmDate(ct.StartDate); ok {
 				startPtr = &t
@@ -645,17 +678,13 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 				result.ContractsUpdated++
 			}
 
-			// Приложения. anyEnabled → активность договора (WCRM: договор активен
-			// если есть хоть одно включённое приложение, а не по end_date).
-			anyEnabled := false
+			// Включённые приложения (enabled=1) → Subscription. Выключенные пропускаем
+			// (договор уже отфильтрован на активность, но внутри могут быть disabled-приложения).
 			for _, ap := range ct.Appendices {
-				if ap.Enabled != 0 {
-					anyEnabled = true
+				if ap.Enabled == 0 {
+					continue
 				}
-				apExtID := "wcrm:b.attachments:" + strconv.FormatInt(ap.WcrmAttachmentID, 10)
 				apStart, okS := parseWcrmDate(ap.StartDate)
-				apEnd, okE := parseWcrmDate(ap.EndDate)
-				// Fallback к датам договора (ContractAppendix.StartDate/EndDate NOT NULL).
 				if !okS {
 					if startPtr != nil {
 						apStart = *startPtr
@@ -663,86 +692,95 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 						apStart = time.Now()
 					}
 				}
-				if !okE {
-					if endPtr != nil {
-						apEnd = *endPtr
-					} else {
-						apEnd = apStart.AddDate(1, 0, 0)
-					}
-				}
-				apTitle := "Приложение"
-				if ap.Name != nil && strings.TrimSpace(*ap.Name) != "" {
-					apTitle = *ap.Name
-				}
-				apStatus := "active"
-				if ap.Enabled == 0 {
-					apStatus = "cancelled"
-				}
-				// Объекты WCRM (b.objects_map) сохраняем в описание как историческую
-				// справку — ContractObject не создаём: WCRM-объекты в Wialon-пространстве
-				// (wid), ACRM-объекты в Axenta (external_object_id), общего ключа нет.
-				apDesc := fmt.Sprintf("WCRM тип=%d, период=%d", ap.Type, ap.Period)
-				if len(ap.Objects) > 0 {
-					names := make([]string, 0, len(ap.Objects))
-					for _, ob := range ap.Objects {
-						names = append(names, ob.Name)
-					}
-					apDesc += fmt.Sprintf("\nОбъекты (%d): %s", len(ap.Objects), strings.Join(names, ", "))
+				var apEndPtr *time.Time
+				if e, okE := parseWcrmDate(ap.EndDate); okE {
+					apEndPtr = &e
+				} else if endPtr != nil {
+					apEndPtr = endPtr
 				}
 
-				var exAp models.ContractAppendix
-				fErr := tx.Where("external_id = ?", apExtID).First(&exAp).Error
-				if fErr == gorm.ErrRecordNotFound {
-					na := models.ContractAppendix{
-						AdminAccountID: adminAccountID,
-						ContractID:     existing.ID,
-						Number:         strconv.FormatInt(ap.WcrmAttachmentID, 10),
-						Title:          apTitle,
-						Description:    apDesc,
-						StartDate:      apStart,
-						EndDate:        apEnd,
-						Amount:         decimal.NewFromFloat(ap.Price),
-						Currency:       "RUB",
-						Status:         apStatus,
-						IsActive:       ap.Enabled != 0,
-						ExternalID:     apExtID,
+				// Тариф-матч: BillingPlan по (admin, price, billing_period). WCRM price =
+				// цена за объект (проверено: 600₽×48 объектов), совместимо с ACRM моделью.
+				// Тарифа нет → подписку не создаём, помечаем (оператор создаёт тариф вручную).
+				period := mapBillingPeriod(ap.Period)
+				var plan models.BillingPlan
+				planErr := tx.Table("public.billing_plans").
+					Where("admin_account_id = ? AND price = ? AND billing_period = ? AND is_active = true AND deleted_at IS NULL",
+						adminAccountID, decimal.NewFromFloat(ap.Price), period).
+					First(&plan).Error
+				if planErr == gorm.ErrRecordNotFound {
+					result.TariffNotFound = append(result.TariffNotFound,
+						decimal.NewFromFloat(ap.Price).StringFixed(2)+"₽/"+period)
+					continue
+				} else if planErr != nil {
+					return fmt.Errorf("lookup billing_plan price=%v: %w", ap.Price, planErr)
+				}
+
+				subExtID := "wcrm:sub:" + strconv.FormatInt(ap.WcrmAttachmentID, 10)
+				nextPay := apStart.AddDate(0, 1, 0)
+				var subID uint
+				var exSub models.Subscription
+				sErr := tx.Table("public.subscriptions").Where("external_id = ?", subExtID).First(&exSub).Error
+				if sErr == gorm.ErrRecordNotFound {
+					ns := models.Subscription{
+						AdminAccountID:  adminAccountID,
+						CompanyID:       wcrmTargetTenantID,
+						BillingPlanID:   plan.ID,
+						ContractID:      &existing.ID,
+						StartDate:       apStart,
+						EndDate:         apEndPtr,
+						Status:          "active",
+						IsAutoRenew:     false,
+						NextPaymentDate: &nextPay,
+						ExternalID:      subExtID,
 					}
-					if err := tx.Create(&na).Error; err != nil {
-						return fmt.Errorf("create appendix %d: %w", ap.WcrmAttachmentID, err)
+					if err := tx.Table("public.subscriptions").Create(&ns).Error; err != nil {
+						return fmt.Errorf("create subscription %d: %w", ap.WcrmAttachmentID, err)
 					}
-					// Явный апдейт is_active: GORM default:true тег глотает zero-value
-					// false при Create (и Select("*") оказался ненадёжен), поэтому
-					// форсим значение отдельным Update по PK.
-					if err := tx.Model(&models.ContractAppendix{}).Where("id = ?", na.ID).
-						Update("is_active", ap.Enabled != 0).Error; err != nil {
-						return fmt.Errorf("set appendix is_active %d: %w", ap.WcrmAttachmentID, err)
-					}
-					result.AppendicesInserted++
-				} else if fErr != nil {
-					return fmt.Errorf("lookup appendix %s: %w", apExtID, fErr)
+					subID = ns.ID
+					result.SubscriptionsCreated++
+				} else if sErr != nil {
+					return fmt.Errorf("lookup subscription %s: %w", subExtID, sErr)
 				} else {
-					if err := tx.Model(&exAp).Updates(map[string]interface{}{
-						"contract_id": existing.ID,
-						"title":       apTitle,
-						"description": apDesc,
-						"start_date":  apStart,
-						"end_date":    apEnd,
-						"amount":      decimal.NewFromFloat(ap.Price),
-						"status":      apStatus,
-						"is_active":   ap.Enabled != 0,
+					subID = exSub.ID
+					if err := tx.Table("public.subscriptions").Where("id = ?", subID).Updates(map[string]interface{}{
+						"billing_plan_id": plan.ID,
+						"contract_id":     existing.ID,
+						"start_date":      apStart,
+						"end_date":        apEndPtr,
+						"status":          "active",
 					}).Error; err != nil {
-						return fmt.Errorf("update appendix %s: %w", apExtID, err)
+						return fmt.Errorf("update subscription %s: %w", subExtID, err)
 					}
-					result.AppendicesUpdated++
 				}
-			}
 
-			// Активность договора = есть ли включённое приложение (WCRM-семантика).
-			// Договор без активных приложений (все enabled=0) → is_active=false,
-			// даже если бессрочный. Форсим явным Update (минуя GORM default:true).
-			if err := tx.Model(&models.Contract{}).Where("id = ?", existing.ID).
-				Update("is_active", anyEnabled).Error; err != nil {
-				return fmt.Errorf("set contract is_active %d: %w", ct.WcrmContractID, err)
+				// Объекты приложения → ContractObject (uid-матч WCRM↔ACRM wialon).
+				for _, ob := range ap.Objects {
+					acrmObjID, ok := wialonUIDMap[ob.UID]
+					if !ok {
+						result.ObjectsUnmatched++
+						continue
+					}
+					sid := subID
+					var existsCO int64
+					tx.Raw(`SELECT COUNT(*) FROM contract_objects WHERE subscription_id = ? AND object_id = ? AND deleted_at IS NULL`, subID, acrmObjID).Scan(&existsCO)
+					if existsCO == 0 {
+						co := models.ContractObject{
+							ContractID:      existing.ID,
+							SubscriptionID:  &sid,
+							ObjectID:        acrmObjID,
+							ObjectCompanyID: wcrmTargetTenantID,
+							ObjectSchema:    wcrmSchema(),
+							Status:          "active",
+							StartDate:       apStart,
+							EndDate:         apEndPtr,
+						}
+						if err := tx.Create(&co).Error; err != nil {
+							return fmt.Errorf("create contract_object uid=%s: %w", ob.UID, err)
+						}
+						result.ObjectsLinked++
+					}
+				}
 			}
 		}
 
@@ -854,6 +892,49 @@ func GetWcrmMigrationStatus(c *gin.Context) {
 		COUNT(*) FILTER (WHERE status='pending')  AS pending
 		FROM %s.wcrm_migration_state`, schema)).Scan(&counts)
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": counts})
+}
+
+// mapBillingPeriod конвертирует WCRM период приложения в ACRM billing_period.
+// WCRM period: 1=месяц (доминирует), 12=год; прочие → monthly (период в WCRM —
+// расчётная кратность, для тариф-матча достаточно monthly/yearly).
+func mapBillingPeriod(period int) string {
+	switch period {
+	case 12:
+		return "yearly"
+	default:
+		return "monthly"
+	}
+}
+
+// loadWialonUIDMap строит map uid(IMEI) → ACRM wialon object id из Redis-кэша
+// all-units компании. Используется для привязки объектов подписки по uid-матчу
+// (WCRM object.uid == ACRM wialon item.uid). Пустой map если кэша нет.
+func loadWialonUIDMap(companyID int) map[string]uint {
+	out := map[string]uint{}
+	if database.RedisClient == nil {
+		return out
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	raw, err := database.RedisClient.Get(ctx, allUnitsCacheKey(uint(companyID))).Bytes()
+	if err != nil || len(raw) == 0 {
+		return out
+	}
+	var payload struct {
+		Items []struct {
+			ID  int64  `json:"id"`
+			UID string `json:"uid"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return out
+	}
+	for _, it := range payload.Items {
+		if it.UID != "" && it.ID > 0 {
+			out[it.UID] = uint(it.ID)
+		}
+	}
+	return out
 }
 
 func nullStr(s string) interface{} {
