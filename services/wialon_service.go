@@ -10,7 +10,16 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
+
+// wialonAccountsSF дедуплицирует конкурентные тяжёлые fetch'и аккаунтов одного
+// Wialon-подключения. Package-level (не поле WialonService) — каждый scheduler/
+// handler создаёт свой NewWialonService(), а лимит сессий у Wialon на токен общий.
+// Ключ = host+token. После рестарта UI F5 + scheduler-тик по одному коннекту
+// (glomoskz ~2m) сольются в один реальный запрос, остальные подождут результат.
+var wialonAccountsSF singleflight.Group
 
 // WialonService сервис для работы с Wialon Remote API
 type WialonService struct {
@@ -2281,13 +2290,26 @@ func (s *WialonService) searchItemsPaginated(host, sid string, spec map[string]i
 	from := 0
 	for {
 		to := from + pageSize - 1
+		pageStart := time.Now()
 		params := url.Values{}
 		params.Set("svc", "core/search_items")
 		params.Set("sid", sid)
 
+		// force=1 только на первой странице: Wialon выполняет поиск и кэширует
+		// result-set в сессии (sid), force=0 переиспользует этот закэшированный set
+		// и дёшево отдаёт срез from/to. Раньше force=1 на каждой странице форсил
+		// полный re-search → O(N·страниц) серверной работы (glomoskz: ~12k объектов
+		// × ~8 страниц = 2m30s). В рамках одной sid result-set заморожен, поэтому
+		// пагинация с force=0 консистентна (без дублей/пропусков). При ошибке
+		// страницы from>0 НЕ re-force'им её (сдвинул бы offset) — возвращаем ошибку
+		// наверх, вызывающий делает полный повторный scan с новым login.
+		forceVal := 0
+		if from == 0 {
+			forceVal = 1
+		}
 		callParams := map[string]interface{}{
 			"spec":  spec,
-			"force": 1,
+			"force": forceVal,
 			"flags": flags,
 			"from":  from,
 			"to":    to,
@@ -2329,6 +2351,8 @@ func (s *WialonService) searchItemsPaginated(host, sid string, spec map[string]i
 			totalItemsCount = pageResp.TotalItemsCount
 		}
 		allItems = append(allItems, pageResp.Items...)
+		log.Printf("   ↳ page from=%d force=%d → %d items за %s (total=%d)",
+			from, forceVal, len(pageResp.Items), time.Since(pageStart).Round(time.Millisecond), totalItemsCount)
 
 		// Завершение: получили все либо страница вернула меньше pageSize.
 		if len(pageResp.Items) < pageSize || len(allItems) >= totalItemsCount {
@@ -2406,6 +2430,22 @@ func (s *WialonService) callBatch(host string, sid string, calls []map[string]in
 //
 // Round-trips к Wialon: было 6 (Login + 5×search), стало 3 (Login + batch + Logout).
 func (s *WialonService) GetAccountsBatchFromHost(host string, token string) ([]WialonAccount, error) {
+	// Дедуп конкурентных вызовов по одному коннекту (см. wialonAccountsSF).
+	key := host + "\x00" + token
+	v, err, shared := wialonAccountsSF.Do(key, func() (interface{}, error) {
+		return s.getAccountsBatchFromHostUncached(host, token)
+	})
+	if err != nil {
+		return nil, err
+	}
+	accs, _ := v.([]WialonAccount)
+	if shared {
+		log.Printf("⚡ Wialon BATCH: дедуп через singleflight (host=%s, %d аккаунтов)", host, len(accs))
+	}
+	return accs, nil
+}
+
+func (s *WialonService) getAccountsBatchFromHostUncached(host string, token string) ([]WialonAccount, error) {
 	loginResp, err := s.LoginWithHost(host, token)
 	if err != nil {
 		return nil, err
