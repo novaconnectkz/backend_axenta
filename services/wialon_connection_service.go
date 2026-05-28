@@ -307,35 +307,60 @@ func (s *WialonConnectionService) GetAllUnitsFromActiveConnectionsDetailed(compa
 	}
 
 	var allUnits []WialonUnitWithConnection
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	errs := make([]error, 0)
+	// pending — подключения, которые ещё нужно дотащить. Упавшие переезжают в retry-проход.
+	pending := connections
 
-	for _, conn := range connections {
-		wg.Add(1)
-		go func(connection models.WialonConnection) {
-			defer wg.Done()
+	// До 3 попыток: 1-я — параллельная, retry-проходы — ПОСЛЕДОВАТЕЛЬНО с backoff.
+	// Параллельный hammer всех connections разом упирается в лимит Wialon (5 sessions/token)
+	// → соединение рвётся на середине пагинации больших аккаунтов (glomoskz ~130k объектов).
+	// Последовательный retry упавших снимает session-контеншн и догревает кэш при флапе.
+	const maxAttempts = 3
+	for attempt := 1; attempt <= maxAttempts && len(pending) > 0; attempt++ {
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		failed := make([]models.WialonConnection, 0)
 
-			units, err := s.GetUnitsFromConnection(connection.ID)
-			if err != nil {
-				log.Printf("Ошибка получения объектов из подключения %s: %v", connection.Name, err)
+		// 1-й проход — все параллельно; retry — конкуренция 1 (фактически последовательно).
+		concurrency := 1
+		if attempt == 1 {
+			concurrency = len(pending)
+		}
+		sem := make(chan struct{}, concurrency)
+
+		for _, conn := range pending {
+			wg.Add(1)
+			go func(connection models.WialonConnection) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+
+				units, err := s.GetUnitsFromConnection(connection.ID)
+				if err != nil {
+					log.Printf("Ошибка получения объектов из подключения %s (попытка %d/%d): %v", connection.Name, attempt, maxAttempts, err)
+					mu.Lock()
+					failed = append(failed, connection)
+					mu.Unlock()
+					return
+				}
 				mu.Lock()
-				errs = append(errs, fmt.Errorf("%s: %w", connection.Name, err))
+				allUnits = append(allUnits, units...)
 				mu.Unlock()
-				return
-			}
+			}(conn)
+		}
+		wg.Wait()
 
-			mu.Lock()
-			allUnits = append(allUnits, units...)
-			mu.Unlock()
-		}(conn)
+		pending = failed
+		if len(pending) > 0 && attempt < maxAttempts {
+			backoff := time.Duration(attempt*3) * time.Second
+			log.Printf("🔁 wialon all-units: %d/%d подключений упали (попытка %d), retry последовательно через %s",
+				len(pending), len(connections), attempt, backoff)
+			time.Sleep(backoff)
+		}
 	}
 
-	wg.Wait()
-
-	partial := len(errs) > 0
+	partial := len(pending) > 0
 	if partial {
-		log.Printf("⚠️ wialon all-units partial (errors=%d/%d connections)", len(errs), len(connections))
+		log.Printf("⚠️ wialon all-units partial (errors=%d/%d connections, после %d попыток) — кэш не обновляем", len(pending), len(connections), maxAttempts)
 	}
 
 	return allUnits, partial, nil
