@@ -1245,7 +1245,7 @@ func (s *WialonService) SearchUnitsWithHost(host string, token string) ([]Wialon
 				"itemsType":     "avl_unit",
 				"propName":      "sys_name",
 				"propValueMask": "*",
-				"sortType":      "sys_name,sys_id", // tie-breaker sys_id для стабильного порядка
+				"sortType":      "sys_name", // combined sort (sys_name,sys_id) вис на больших аккаунтах (timeout); дедуп по id ниже страхует от дублей/пропусков без tie-breaker
 			},
 			"force": forceVal,
 			"flags": flags,
