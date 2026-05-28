@@ -1713,13 +1713,18 @@ func GetContractBillingBreakdown(c *gin.Context) {
 		return
 	}
 
-	// Проверяем наличие дат
-	if contract.StartDate == nil || contract.EndDate == nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status": "error",
-			"error":  "У договора не указаны даты начала и окончания",
-		})
-		return
+	// Бессрочные договоры (EndDate=nil — частый случай после миграции WCRM) и
+	// договоры без StartDate считаем за ТЕКУЩИЙ месяц вместо ошибки.
+	{
+		nowT := time.Now().UTC()
+		if contract.StartDate == nil {
+			s := time.Date(nowT.Year(), nowT.Month(), 1, 0, 0, 0, 0, time.UTC)
+			contract.StartDate = &s
+		}
+		if contract.EndDate == nil {
+			e := time.Date(nowT.Year(), nowT.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, 1, -1)
+			contract.EndDate = &e
+		}
 	}
 
 	// Загружаем все активные подписки для договора
