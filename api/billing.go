@@ -620,52 +620,35 @@ func GetSubscriptions(c *gin.Context) {
 		}
 	}
 
-	// Загружаем названия объектов из Axenta Cloud (batch)
+	// Резолв названий объектов из axenta_object_snapshots (batch)
 	objectNamesMap := make(map[ObjectKey]string)
 	if len(objectKeysSet) > 0 {
-		// Получаем токен пользователя для запроса к Axenta Cloud
-		authHeader := c.GetHeader("Authorization")
-		var userToken string
-		if strings.HasPrefix(authHeader, "Token ") {
-			userToken = strings.TrimPrefix(authHeader, "Token ")
-		} else if strings.HasPrefix(authHeader, "Bearer ") {
-			userToken = strings.TrimPrefix(authHeader, "Bearer ")
-		} else {
-			userToken = authHeader
-		}
-
-		// Группируем объекты по CompanyID для batch-запросов
-		objectsByCompany := make(map[uint][]uint)
+		// Резолв имён из axenta_object_snapshots (object_id = external_object_id).
+		// Раньше шли в Axenta Cloud API по userToken — после AUTH_MODE=local токен
+		// невалиден для Axenta (401) → placeholder. Snapshot всегда доступен.
+		allObjIDs := make([]uint, 0, len(objectKeysSet))
 		for key := range objectKeysSet {
-			objectsByCompany[key.CompanyID] = append(objectsByCompany[key.CompanyID], key.ObjectID)
+			allObjIDs = append(allObjIDs, key.ObjectID)
 		}
-
-		// Загружаем объекты по компаниям
-		if userToken != "" {
-			for companyID, objectIDs := range objectsByCompany {
-				if len(objectIDs) > 50 {
-					// Если объектов слишком много, берем только первые 50
-					objectIDs = objectIDs[:50]
-				}
-
-				axentaObjects, err := fetchObjectsFromAxentaCloud(userToken, int(companyID), objectIDs)
-				if err != nil {
-					log.Printf("⚠️ Не удалось загрузить названия объектов для компании %d: %v", companyID, err)
-					// Используем плейсхолдеры для этой компании
-					for _, objectID := range objectIDs {
-						objectNamesMap[ObjectKey{ObjectID: objectID, CompanyID: companyID}] = fmt.Sprintf("Объект #%d", objectID)
-					}
-				} else {
-					// Сохраняем названия в карту
-					for _, obj := range axentaObjects {
-						objectNamesMap[ObjectKey{ObjectID: uint(obj.ID), CompanyID: companyID}] = obj.Name
-					}
-					log.Printf("✅ Загружено %d названий объектов для компании %d", len(axentaObjects), companyID)
+		nameByExtID := map[uint]string{}
+		if len(allObjIDs) > 0 && tenantDB != nil {
+			var snaps []struct {
+				ExternalObjectID uint
+				ObjectName       string
+			}
+			tenantDB.Table("axenta_object_snapshots").
+				Select("external_object_id, object_name").
+				Where("external_object_id IN ?", allObjIDs).Scan(&snaps)
+			for _, s := range snaps {
+				if s.ObjectName != "" {
+					nameByExtID[s.ExternalObjectID] = s.ObjectName
 				}
 			}
-		} else {
-			log.Printf("⚠️ Токен пользователя не найден, используем плейсхолдеры для названий объектов")
-			for key := range objectKeysSet {
+		}
+		for key := range objectKeysSet {
+			if nm, ok := nameByExtID[key.ObjectID]; ok {
+				objectNamesMap[key] = nm
+			} else {
 				objectNamesMap[key] = fmt.Sprintf("Объект #%d", key.ObjectID)
 			}
 		}
