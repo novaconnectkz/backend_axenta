@@ -73,6 +73,13 @@ func (s *WialonStatsService) CollectForConnectionID(connectionID uint) (int, err
 
 // collectForConnection — реальная работа: login → GetUnitsCountWithHierarchy → upsert в БД.
 func (s *WialonStatsService) collectForConnection(conn models.WialonConnection) (int, error) {
+	// Лимит конкурентных тяжёлых операций на токен (anti-stampede, см. wialon_limiter.go).
+	release, ok := acquireWialonToken(conn.Token, "StatsCollect")
+	if !ok {
+		return 0, fmt.Errorf("wialon token busy (stats), пропуск")
+	}
+	defer release()
+
 	t0 := time.Now()
 	loginResp, err := s.wialonService.LoginWithHost(conn.Host, conn.Token)
 	if err != nil {

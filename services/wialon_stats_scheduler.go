@@ -57,6 +57,8 @@ func (s *WialonStatsScheduler) Start() error {
 				log.Printf("❌ ПАНИКА в первичном WialonStatsScheduler: %v", r)
 			}
 		}()
+		// Стартовый сдвиг (anti-stampede), см. wialon_limiter.go.
+		time.Sleep(wialonStartupDelay("WialonStatsScheduler"))
 		log.Printf("🚀 WialonStatsScheduler: первичный сбор статистики Wialon (background)")
 		if _, err := s.service.CollectAll(); err != nil {
 			log.Printf("⚠️ WialonStatsScheduler: ошибка первичного CollectAll: %v", err)

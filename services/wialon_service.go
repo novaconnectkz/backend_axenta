@@ -2446,6 +2446,13 @@ func (s *WialonService) GetAccountsBatchFromHost(host string, token string) ([]W
 }
 
 func (s *WialonService) getAccountsBatchFromHostUncached(host string, token string) ([]WialonAccount, error) {
+	// Лимит конкурентных тяжёлых операций на токен (anti-stampede, см. wialon_limiter.go).
+	release, ok := acquireWialonToken(token, "GetAccountsBatch")
+	if !ok {
+		return nil, fmt.Errorf("wialon token busy (all-accounts), пропуск")
+	}
+	defer release()
+
 	loginResp, err := s.LoginWithHost(host, token)
 	if err != nil {
 		return nil, err

@@ -84,6 +84,13 @@ func (s *WialonAccountService) SyncBillingPlans(connectionID uint) ([]WialonBill
 		return nil, fmt.Errorf("connection %d не найден: %w", connectionID, err)
 	}
 
+	// Лимит конкурентных тяжёлых операций на токен (anti-stampede, см. wialon_limiter.go).
+	release, ok := acquireWialonToken(conn.Token, "BillingPlansSync")
+	if !ok {
+		return nil, fmt.Errorf("wialon token busy (billing-plans), пропуск")
+	}
+	defer release()
+
 	loginResp, err := s.wialonService.LoginWithHost(conn.Host, conn.Token)
 	if err != nil {
 		return nil, fmt.Errorf("login: %w", err)

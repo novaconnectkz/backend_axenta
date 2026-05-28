@@ -79,7 +79,9 @@ func (s *WialonAllAccountsScheduler) Start() error {
 				log.Printf("❌ ПАНИКА в первичном %s: %v", s.name, r)
 			}
 		}()
-		time.Sleep(7 * time.Second) // ждём пока поднимутся остальные сервисы
+		// Стартовый сдвиг (anti-stampede): разносим первичные прогоны schedulers,
+		// чтобы после рестарта не бить один Wialon-токен одновременно. См. wialon_limiter.go.
+		time.Sleep(wialonStartupDelay(s.name))
 		log.Printf("🚀 %s: первичный refresh (background)", s.name)
 		s.refreshAll()
 	}()

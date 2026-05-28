@@ -57,6 +57,8 @@ func (s *WialonBillingPlansScheduler) Start() error {
 				log.Printf("❌ ПАНИКА в первичном WialonBillingPlansScheduler: %v", r)
 			}
 		}()
+		// Стартовый сдвиг (anti-stampede), см. wialon_limiter.go.
+		time.Sleep(wialonStartupDelay("WialonBillingPlansScheduler"))
 		log.Printf("🚀 WialonBillingPlansScheduler: первичный sync тарифов (background)")
 		s.syncAll()
 	}()
