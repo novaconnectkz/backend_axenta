@@ -726,9 +726,12 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 				}
 
 				// Тариф-матч: BillingPlan по (admin, price, billing_period). WCRM price =
-				// цена за объект (проверено: 600₽×48 объектов), совместимо с ACRM моделью.
-				// Тарифа нет → подписку не создаём, помечаем (оператор создаёт тариф вручную).
-				period := mapBillingPeriod(ap.Period)
+				// цена за объект/мес (проверено: 600₽×48, 500₽×3). WCRM ap.Period — это
+				// ДЛИТЕЛЬНОСТЬ приложения в месяцах (→ EndDate выше), а НЕ частота биллинга:
+				// в WCRM всё биллится помесячно per object. Поэтому тариф ищем всегда monthly
+				// (на проде есть 450/500/600 monthly; 500-yearly не существовало → подписка
+				// раньше не создавалась). Тарифа нет → пропуск, оператор создаёт вручную.
+				period := "monthly"
 				var plan models.BillingPlan
 				planErr := tx.Table("public.billing_plans").
 					Where("admin_account_id = ? AND price = ? AND billing_period = ? AND is_active = true AND deleted_at IS NULL",
@@ -935,18 +938,6 @@ func GetWcrmMigrationStatus(c *gin.Context) {
 		COUNT(*) FILTER (WHERE status='pending')  AS pending
 		FROM %s.wcrm_migration_state`, schema)).Scan(&counts)
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": counts})
-}
-
-// mapBillingPeriod конвертирует WCRM период приложения в ACRM billing_period.
-// WCRM period: 1=месяц (доминирует), 12=год; прочие → monthly (период в WCRM —
-// расчётная кратность, для тариф-матча достаточно monthly/yearly).
-func mapBillingPeriod(period int) string {
-	switch period {
-	case 12:
-		return "yearly"
-	default:
-		return "monthly"
-	}
 }
 
 // acrmObjectRef — ссылка на ACRM-объект для ContractObject.
