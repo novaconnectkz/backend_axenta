@@ -645,8 +645,13 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 				result.ContractsUpdated++
 			}
 
-			// Приложения
+			// Приложения. anyEnabled → активность договора (WCRM: договор активен
+			// если есть хоть одно включённое приложение, а не по end_date).
+			anyEnabled := false
 			for _, ap := range ct.Appendices {
+				if ap.Enabled != 0 {
+					anyEnabled = true
+				}
 				apExtID := "wcrm:b.attachments:" + strconv.FormatInt(ap.WcrmAttachmentID, 10)
 				apStart, okS := parseWcrmDate(ap.StartDate)
 				apEnd, okE := parseWcrmDate(ap.EndDate)
@@ -702,10 +707,15 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 						IsActive:       ap.Enabled != 0,
 						ExternalID:     apExtID,
 					}
-					// Select("*"): форсим is_active=false для disabled-приложений
-					// (GORM default:true тег иначе пропускает zero-value bool → БД ставит true).
-					if err := tx.Select("*").Create(&na).Error; err != nil {
+					if err := tx.Create(&na).Error; err != nil {
 						return fmt.Errorf("create appendix %d: %w", ap.WcrmAttachmentID, err)
+					}
+					// Явный апдейт is_active: GORM default:true тег глотает zero-value
+					// false при Create (и Select("*") оказался ненадёжен), поэтому
+					// форсим значение отдельным Update по PK.
+					if err := tx.Model(&models.ContractAppendix{}).Where("id = ?", na.ID).
+						Update("is_active", ap.Enabled != 0).Error; err != nil {
+						return fmt.Errorf("set appendix is_active %d: %w", ap.WcrmAttachmentID, err)
 					}
 					result.AppendicesInserted++
 				} else if fErr != nil {
@@ -725,6 +735,14 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 					}
 					result.AppendicesUpdated++
 				}
+			}
+
+			// Активность договора = есть ли включённое приложение (WCRM-семантика).
+			// Договор без активных приложений (все enabled=0) → is_active=false,
+			// даже если бессрочный. Форсим явным Update (минуя GORM default:true).
+			if err := tx.Model(&models.Contract{}).Where("id = ?", existing.ID).
+				Update("is_active", anyEnabled).Error; err != nil {
+				return fmt.Errorf("set contract is_active %d: %w", ct.WcrmContractID, err)
 			}
 		}
 
