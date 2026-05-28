@@ -4,7 +4,6 @@ import (
 	"backend_axenta/database"
 	"backend_axenta/middleware"
 	"backend_axenta/models"
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -337,8 +336,8 @@ func GetWcrmMigrationPreview(c *gin.Context) {
 		stateByCompany[s.WcrmCompanyID] = s.Status
 	}
 
-	// uid → ACRM wialon object id (для подсчёта сматченных объектов в preview).
-	wialonUIDMap := loadWialonUIDMap(wcrmTargetTenantID)
+	// uid → ACRM Axenta-объект (для подсчёта сматченных объектов в preview).
+	axentaObjMap := loadAxentaObjectMap(wcrmSchema())
 
 	resp := wcrmPreviewResponse{
 		SnapshotSHA256: sha,
@@ -415,7 +414,7 @@ func GetWcrmMigrationPreview(c *gin.Context) {
 					if len(names) < 50 {
 						names = append(names, ob.Name)
 					}
-					if _, ok := wialonUIDMap[ob.UID]; ok {
+					if _, ok := axentaObjMap[ob.UID]; ok {
 						ctObjMatched++
 					}
 				}
@@ -574,9 +573,9 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 
 		clientName := mapClientName(rec.Company)
 
-		// uid → ACRM wialon object id (для привязки объектов подписки по uid-матчу).
-		// Грузим один раз из Redis-кэша wialon all-units целевой компании.
-		wialonUIDMap := loadWialonUIDMap(wcrmTargetTenantID)
+		// uid → ACRM Axenta-объект (для привязки объектов подписки по uid-матчу).
+		// WCRM ax-объекты = Axenta Cloud; uid == axenta_object_snapshots.unique_id.
+		axentaObjMap := loadAxentaObjectMap(wcrmSchema())
 
 		for _, ct := range rec.Contracts {
 			extID := "wcrm:contract:" + strconv.FormatInt(ct.WcrmContractID, 10)
@@ -754,22 +753,22 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 					}
 				}
 
-				// Объекты приложения → ContractObject (uid-матч WCRM↔ACRM wialon).
+				// Объекты приложения → ContractObject (uid-матч WCRM↔ACRM Axenta).
 				for _, ob := range ap.Objects {
-					acrmObjID, ok := wialonUIDMap[ob.UID]
+					ref, ok := axentaObjMap[ob.UID]
 					if !ok {
 						result.ObjectsUnmatched++
 						continue
 					}
 					sid := subID
 					var existsCO int64
-					tx.Raw(`SELECT COUNT(*) FROM contract_objects WHERE subscription_id = ? AND object_id = ? AND deleted_at IS NULL`, subID, acrmObjID).Scan(&existsCO)
+					tx.Raw(`SELECT COUNT(*) FROM contract_objects WHERE subscription_id = ? AND object_id = ? AND deleted_at IS NULL`, subID, ref.ObjectID).Scan(&existsCO)
 					if existsCO == 0 {
 						co := models.ContractObject{
 							ContractID:      existing.ID,
 							SubscriptionID:  &sid,
-							ObjectID:        acrmObjID,
-							ObjectCompanyID: wcrmTargetTenantID,
+							ObjectID:        ref.ObjectID,
+							ObjectCompanyID: ref.CompanyID,
 							ObjectSchema:    wcrmSchema(),
 							Status:          "active",
 							StartDate:       apStart,
@@ -906,32 +905,33 @@ func mapBillingPeriod(period int) string {
 	}
 }
 
-// loadWialonUIDMap строит map uid(IMEI) → ACRM wialon object id из Redis-кэша
-// all-units компании. Используется для привязки объектов подписки по uid-матчу
-// (WCRM object.uid == ACRM wialon item.uid). Пустой map если кэша нет.
-func loadWialonUIDMap(companyID int) map[string]uint {
-	out := map[string]uint{}
-	if database.RedisClient == nil {
+// acrmObjectRef — ссылка на ACRM-объект для ContractObject.
+type acrmObjectRef struct {
+	ObjectID  uint // external_object_id (Axenta Cloud object id)
+	CompanyID uint // account_external_id (Axenta account id)
+}
+
+// loadAxentaObjectMap строит map unique_id → ACRM Axenta-объект из axenta_object_snapshots.
+// WCRM ax-объекты (companies.ax=1) — это объекты Axenta Cloud; их object.uid совпадает
+// с axenta_object_snapshots.unique_id (проверено: Газель uid 179191 = unique_id 179191,
+// wid 1000000195397 = external_object_id 195397). Для ContractObject: ObjectID =
+// external_object_id, ObjectCompanyID = account_external_id (как трактует billing API).
+func loadAxentaObjectMap(schema string) map[string]acrmObjectRef {
+	out := map[string]acrmObjectRef{}
+	if database.DB == nil {
 		return out
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	raw, err := database.RedisClient.Get(ctx, allUnitsCacheKey(uint(companyID))).Bytes()
-	if err != nil || len(raw) == 0 {
-		return out
+	var rows []struct {
+		UniqueID          string
+		ExternalObjectID  uint
+		AccountExternalID uint
 	}
-	var payload struct {
-		Items []struct {
-			ID  int64  `json:"id"`
-			UID string `json:"uid"`
-		} `json:"items"`
-	}
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return out
-	}
-	for _, it := range payload.Items {
-		if it.UID != "" && it.ID > 0 {
-			out[it.UID] = uint(it.ID)
+	database.DB.Raw(fmt.Sprintf(
+		`SELECT unique_id, external_object_id, account_external_id FROM %s.axenta_object_snapshots WHERE unique_id <> '' AND axenta_deleted_at IS NULL`, schema)).
+		Scan(&rows)
+	for _, r := range rows {
+		if r.UniqueID != "" && r.ExternalObjectID > 0 {
+			out[r.UniqueID] = acrmObjectRef{ObjectID: r.ExternalObjectID, CompanyID: r.AccountExternalID}
 		}
 	}
 	return out
