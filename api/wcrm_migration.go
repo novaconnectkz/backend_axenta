@@ -716,7 +716,15 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 				}
 
 				subExtID := "wcrm:sub:" + strconv.FormatInt(ap.WcrmAttachmentID, 10)
-				nextPay := apStart.AddDate(0, 1, 0)
+				// Следующий платёж = 1-е число следующего месяца. Дата начала приложения
+				// в WCRM может быть в прошлом (импорт старых договоров) — берём опорной
+				// max(now, apStart), иначе next_payment оказался бы в прошлом.
+				nextBase := apStart
+				now := time.Now().UTC()
+				if now.After(nextBase) {
+					nextBase = now
+				}
+				nextPay := time.Date(nextBase.Year(), nextBase.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, 1, 0)
 				var subID uint
 				var exSub models.Subscription
 				sErr := tx.Table("public.subscriptions").Where("external_id = ?", subExtID).First(&exSub).Error
@@ -748,6 +756,7 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 						"start_date":      apStart,
 						"end_date":        apEndPtr,
 						"status":          "active",
+						"next_payment_date": nextPay,
 					}).Error; err != nil {
 						return fmt.Errorf("update subscription %s: %w", subExtID, err)
 					}
