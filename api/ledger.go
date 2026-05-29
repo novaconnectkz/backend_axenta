@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
@@ -327,3 +328,117 @@ func PostLedgerImport(c *gin.Context) {
 }
 
 var errLedgerDuplicate = fmt.Errorf("ledger duplicate external_id")
+
+type ledgerTransferRequest struct {
+	FromContractID uint    `json:"from_contract_id" binding:"required"`
+	ToContractID   uint    `json:"to_contract_id" binding:"required"`
+	Amount         float64 `json:"amount" binding:"required"` // положительная сумма
+	Description    string  `json:"description"`
+}
+
+// PostLedgerTransfer — POST /api/auth/ledger/transfer
+// Перевод средств с лицевого счёта одного договора на другой. Атомарно: заголовок
+// LedgerTransfer + пара проводок (transfer_out у from, transfer_in у to) в одной tx.
+func PostLedgerTransfer(c *gin.Context) {
+	adminAccountID, err := middleware.GetAdminAccountID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
+	var req ledgerTransferRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "некорректные данные перевода"})
+		return
+	}
+	if req.Amount <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "сумма перевода должна быть > 0"})
+		return
+	}
+	if req.FromContractID == req.ToContractID {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "договор-источник и получатель совпадают"})
+		return
+	}
+	// Scoping менеджера: доступ к ОБОИМ договорам.
+	if !managerCanAccessContract(c, req.FromContractID) || !managerCanAccessContract(c, req.ToContractID) {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "договор вне вашего доступа"})
+		return
+	}
+
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB == nil {
+		tenantDB = database.DB
+	}
+	var from, to models.Contract
+	if err := tenantDB.Select("id, currency, company_id").First(&from, req.FromContractID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "договор-источник не найден"})
+		return
+	}
+	if err := tenantDB.Select("id, currency, company_id").First(&to, req.ToContractID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "договор-получатель не найден"})
+		return
+	}
+	fromCcy, toCcy := from.Currency, to.Currency
+	if fromCcy == "" {
+		fromCcy = "RUB"
+	}
+	if toCcy == "" {
+		toCcy = "RUB"
+	}
+	if fromCcy != toCcy {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "перевод между разными валютами пока не поддерживается"})
+		return
+	}
+
+	amount := decimal.NewFromFloat(req.Amount)
+	if ledgerBalance(req.FromContractID, adminAccountID).LessThan(amount) {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "недостаточно средств на лицевом счёте источника"})
+		return
+	}
+
+	username, _ := c.Get("username")
+	createdBy, _ := username.(string)
+	transferID := uuid.New().String()
+	now := time.Now().UTC()
+	metaOut := fmt.Sprintf(`{"transfer_id":"%s","counterparty_contract_id":%d}`, transferID, req.ToContractID)
+	metaIn := fmt.Sprintf(`{"transfer_id":"%s","counterparty_contract_id":%d}`, transferID, req.FromContractID)
+	desc := req.Description
+	if desc == "" {
+		desc = "Перевод между лицевыми счетами"
+	}
+
+	if err := database.DB.Transaction(func(tx *gorm.DB) error {
+		hdr := models.LedgerTransfer{
+			AdminAccountID: adminAccountID, CompanyID: from.CompanyID,
+			TransferID: transferID, FromContractID: req.FromContractID, ToContractID: req.ToContractID,
+			Amount: amount, Currency: fromCcy, Status: "completed", Description: desc, CreatedBy: createdBy,
+		}
+		if err := tx.Create(&hdr).Error; err != nil {
+			return err
+		}
+		out := models.LedgerEntry{
+			AdminAccountID: adminAccountID, CompanyID: from.CompanyID, ContractID: req.FromContractID,
+			EntryType: "transfer_out", Amount: amount.Neg(), Currency: fromCcy, Source: "transfer",
+			ExternalID: "transfer:" + transferID + ":out", Description: desc, EntryDate: now,
+			CreatedBy: createdBy, Metadata: &metaOut,
+		}
+		if err := tx.Create(&out).Error; err != nil {
+			return err
+		}
+		in := models.LedgerEntry{
+			AdminAccountID: adminAccountID, CompanyID: to.CompanyID, ContractID: req.ToContractID,
+			EntryType: "transfer_in", Amount: amount, Currency: toCcy, Source: "transfer",
+			ExternalID: "transfer:" + transferID + ":in", Description: desc, EntryDate: now,
+			CreatedBy: createdBy, Metadata: &metaIn,
+		}
+		return tx.Create(&in).Error
+	}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "ошибка перевода: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{
+		"transfer_id":  transferID,
+		"from_balance": ledgerBalance(req.FromContractID, adminAccountID).StringFixed(2),
+		"to_balance":   ledgerBalance(req.ToContractID, adminAccountID).StringFixed(2),
+	}})
+}
