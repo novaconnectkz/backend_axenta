@@ -288,14 +288,15 @@ func contractPeriodFromAppendices(ct wcrmContract, startOverrides map[int64]time
 			minStart = effSt
 		}
 		found = true
-		// Конец считаем от ОРИГИНАЛЬНОГО старта WCRM (длительность приложения неизменна).
+		// Конец: фикс-срок (period>1, напр. год) = ОРИГИНАЛЬНЫЙ старт + period − 1 день.
+		// Месячные (period==1) — авто-продление, БЕССРОЧНЫЕ (en=nil): WCRM end приложения =
+		// просто последний биллёный месяц (часто в прошлом), не реальный конец услуги.
 		var en *time.Time
 		if e, okE := parseWcrmDate(ap.EndDate); okE {
 			en = &e
-		} else if ap.Period > 0 {
-			// start + period — это граница СЛЕДУЮЩЕГО периода (WCRM хранит 0000-00-00).
-			// −1 день → последний день покрытия, иначе следующий месяц биллится лишним
-			// (period=12 с 2026-01-01 = янв–дек 2026, end 2026-12-31, НЕ 2027-01-01).
+		} else if ap.Period > 1 {
+			// start + period — граница СЛЕДУЮЩЕГО периода (WCRM хранит 0000-00-00).
+			// −1 день → последний день покрытия (period=12 с 2026-01-01 = end 2026-12-31).
 			e := st.AddDate(0, ap.Period, 0).AddDate(0, 0, -1)
 			en = &e
 		}
@@ -790,42 +791,49 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 			}
 				processedContractIDs = append(processedContractIDs, existing.ID)
 
-			// Включённые приложения (enabled=1) → Subscription. Выключенные пропускаем
-			// (договор уже отфильтрован на активность, но внутри могут быть disabled-приложения).
+			// Включённые приложения (enabled=1) ГРУППИРУЕМ по (тариф + длительность) →
+			// ОДНА подписка на группу. Кейс: один договор, несколько приложений с одинаковым
+			// тарифом и периодичностью → объединяем в одну подписку, объекты суммируются
+			// (N×цена). Разные условия (цена/период) → разные подписки. Disabled пропускаем.
+			type subGroup struct {
+				planID     uint
+				start      time.Time
+				startSet   bool
+				end        *time.Time
+				autoRenew  bool
+				firstAttID int64        // min attachment_id группы → стабильный external_id
+				objects    []wcrmObject // объединение объектов группы
+			}
+			groups := map[string]*subGroup{}
+			groupOrder := []string{}
 			for _, ap := range ct.Appendices {
 				if ap.Enabled == 0 {
 					continue
 				}
-				// Оригинальный старт WCRM — только для расчёта КОНЦА (длительности).
+				// Конец: фикс-срок (period>1) = ориг.старт + period − 1д. Месячные (period==1) —
+				// авто-продление, БЕССРОЧНЫЕ (nil): WCRM end месячного = последний биллёный
+				// месяц (часто в прошлом), не реальный конец.
 				origStart, okS := parseWcrmDate(ap.StartDate)
 				var apEndPtr *time.Time
 				if e, okE := parseWcrmDate(ap.EndDate); okE {
 					apEndPtr = &e
-				} else if ap.Period > 0 {
-					// WCRM end_date = 0000-00-00 (хранит start + period). start+period =
-					// граница следующего периода → −1 день = последний день покрытия.
+				} else if ap.Period > 1 {
 					base := origStart
 					if !okS {
 						base = autoStart
 					}
 					e := base.AddDate(0, ap.Period, 0).AddDate(0, 0, -1)
 					apEndPtr = &e
-				} else if endPtr != nil {
-					apEndPtr = endPtr
 				}
 				// Старт подписки: ручной override > авто (1-е число месяца миграции).
-				// Дата приложения в WCRM на старт подписки НЕ влияет.
 				apStart := autoStart
 				if ov, ok := startOverrides[ap.WcrmAttachmentID]; ok {
 					apStart = ov
 				}
 
 				// Тариф-матч: BillingPlan по (admin, price, billing_period). WCRM price =
-				// цена за объект/мес (проверено: 600₽×48, 500₽×3). WCRM ap.Period — это
-				// ДЛИТЕЛЬНОСТЬ приложения в месяцах (→ EndDate выше), а НЕ частота биллинга:
-				// в WCRM всё биллится помесячно per object. Поэтому тариф ищем всегда monthly
-				// (на проде есть 450/500/600 monthly; 500-yearly не существовало → подписка
-				// раньше не создавалась). Тарифа нет → пропуск, оператор создаёт вручную.
+				// цена за объект/мес. В WCRM всё биллится помесячно per object → тариф всегда
+				// monthly. Тарифа нет → пропуск, оператор создаёт вручную.
 				period := "monthly"
 				var plan models.BillingPlan
 				planErr := tx.Table("public.billing_plans").
@@ -840,19 +848,39 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 					return fmt.Errorf("lookup billing_plan price=%v: %w", ap.Price, planErr)
 				}
 
-				subExtID := "wcrm:sub:" + strconv.FormatInt(ap.WcrmAttachmentID, 10)
-				// Следующий платёж = 1-е число следующего месяца. Дата начала приложения
-				// в WCRM может быть в прошлом (импорт старых договоров) — берём опорной
-				// max(now, apStart), иначе next_payment оказался бы в прошлом.
-				nextBase := apStart
+				// Ключ группы: план (=цена+monthly) + длительность WCRM (ap.Period). Одинаковые
+				// тариф И срок → одна подписка. Разный period (мес vs год) → разные подписки.
+				gkey := fmt.Sprintf("%d|%d", plan.ID, ap.Period)
+				g := groups[gkey]
+				if g == nil {
+					g = &subGroup{planID: plan.ID, autoRenew: ap.Period == 1, firstAttID: ap.WcrmAttachmentID}
+					groups[gkey] = g
+					groupOrder = append(groupOrder, gkey)
+				}
+				if !g.startSet || apStart.Before(g.start) {
+					g.start = apStart
+					g.startSet = true
+				}
+				if apEndPtr != nil && (g.end == nil || apEndPtr.After(*g.end)) {
+					g.end = apEndPtr
+				}
+				if ap.WcrmAttachmentID < g.firstAttID {
+					g.firstAttID = ap.WcrmAttachmentID
+				}
+				g.objects = append(g.objects, ap.Objects...)
+			}
+
+			// Одна подписка на группу (start=min, end=max, объекты=объединение).
+			for _, gkey := range groupOrder {
+				g := groups[gkey]
+				subExtID := "wcrm:sub:" + strconv.FormatInt(g.firstAttID, 10)
+				// Следующий платёж = 1-е число следующего месяца от max(now, start).
+				nextBase := g.start
 				now := time.Now().UTC()
 				if now.After(nextBase) {
 					nextBase = now
 				}
 				nextPay := time.Date(nextBase.Year(), nextBase.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, 1, 0)
-				// Автопродление: ежемесячные приложения (WCRM period=1) продлеваются
-				// каждый месяц. Прочие периоды (год и т.п.) — без автопродления.
-				autoRenew := ap.Period == 1
 				var subID uint
 				var exSub models.Subscription
 				sErr := tx.Table("public.subscriptions").Where("external_id = ?", subExtID).First(&exSub).Error
@@ -860,23 +888,23 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 					ns := models.Subscription{
 						AdminAccountID:  adminAccountID,
 						CompanyID:       wcrmTargetTenantID,
-						BillingPlanID:   plan.ID,
+						BillingPlanID:   g.planID,
 						ContractID:      &existing.ID,
-						StartDate:       apStart,
-						EndDate:         apEndPtr,
+						StartDate:       g.start,
+						EndDate:         g.end,
 						Status:          "active",
-						IsAutoRenew:     autoRenew,
+						IsAutoRenew:     g.autoRenew,
 						NextPaymentDate: &nextPay,
 						ExternalID:      subExtID,
 					}
 					if err := tx.Table("public.subscriptions").Create(&ns).Error; err != nil {
-						return fmt.Errorf("create subscription %d: %w", ap.WcrmAttachmentID, err)
+						return fmt.Errorf("create subscription grp %s: %w", subExtID, err)
 					}
 					subID = ns.ID
 					// Явный апдейт is_auto_renew: GORM default:true глотает zero-value false.
 					if err := tx.Table("public.subscriptions").Where("id = ?", subID).
-						Update("is_auto_renew", autoRenew).Error; err != nil {
-						return fmt.Errorf("set sub auto_renew %d: %w", ap.WcrmAttachmentID, err)
+						Update("is_auto_renew", g.autoRenew).Error; err != nil {
+						return fmt.Errorf("set sub auto_renew %s: %w", subExtID, err)
 					}
 					result.SubscriptionsCreated++
 				} else if sErr != nil {
@@ -884,20 +912,20 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 				} else {
 					subID = exSub.ID
 					if err := tx.Table("public.subscriptions").Where("id = ?", subID).Updates(map[string]interface{}{
-						"billing_plan_id": plan.ID,
-						"contract_id":     existing.ID,
-						"start_date":      apStart,
-						"end_date":        apEndPtr,
-						"status":          "active",
+						"billing_plan_id":   g.planID,
+						"contract_id":       existing.ID,
+						"start_date":        g.start,
+						"end_date":          g.end,
+						"status":            "active",
 						"next_payment_date": nextPay,
-						"is_auto_renew":     autoRenew,
+						"is_auto_renew":     g.autoRenew,
 					}).Error; err != nil {
 						return fmt.Errorf("update subscription %s: %w", subExtID, err)
 					}
 				}
 
-				// Объекты приложения → ContractObject (uid-матч WCRM↔ACRM Axenta).
-				for _, ob := range ap.Objects {
+				// Объекты группы → ContractObject (uid-матч WCRM↔ACRM Axenta, объединение).
+				for _, ob := range g.objects {
 					ref, ok := axentaObjMap[ob.UID]
 					if !ok {
 						result.ObjectsUnmatched++
@@ -914,8 +942,8 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 							ObjectCompanyID: ref.CompanyID,
 							ObjectSchema:    wcrmSchema(),
 							Status:          "active",
-							StartDate:       apStart,
-							EndDate:         apEndPtr,
+							StartDate:       g.start,
+							EndDate:         g.end,
 						}
 						if err := tx.Create(&co).Error; err != nil {
 							return fmt.Errorf("create contract_object uid=%s: %w", ob.UID, err)
