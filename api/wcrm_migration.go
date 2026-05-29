@@ -260,7 +260,7 @@ func parseWcrmDate(s string) (time.Time, bool) {
 // ok=false если нет включённых приложений с валидной датой старта → caller берёт даты договора.
 // Период договора в WCRM (ct.StartDate) — дата подписания, не отражает реальный срок услуги;
 // пользователь хочет видеть период по приложению.
-func contractPeriodFromAppendices(ct wcrmContract) (time.Time, *time.Time, bool) {
+func contractPeriodFromAppendices(ct wcrmContract, startOverrides map[int64]time.Time) (time.Time, *time.Time, bool) {
 	var minStart time.Time
 	var maxEnd *time.Time
 	found := false
@@ -272,10 +272,16 @@ func contractPeriodFromAppendices(ct wcrmContract) (time.Time, *time.Time, bool)
 		if !okS {
 			continue
 		}
-		if !found || st.Before(minStart) {
-			minStart = st
+		// Эффективный старт (ручной override приоритетнее) — для НАЧАЛА периода договора.
+		effSt := st
+		if ov, ok := startOverrides[ap.WcrmAttachmentID]; ok {
+			effSt = ov
+		}
+		if !found || effSt.Before(minStart) {
+			minStart = effSt
 		}
 		found = true
+		// Конец считаем от ОРИГИНАЛЬНОГО старта (override не двигает end).
 		var en *time.Time
 		if e, okE := parseWcrmDate(ap.EndDate); okE {
 			en = &e
@@ -493,7 +499,7 @@ func GetWcrmMigrationPreview(c *gin.Context) {
 			}
 			// Период по приложениям (как при import), а не дата подписания договора.
 			ctStartStr, ctEndStr := ct.StartDate, endStr
-			if s, e, ok := contractPeriodFromAppendices(ct); ok {
+			if s, e, ok := contractPeriodFromAppendices(ct, nil); ok {
 				ctStartStr = s.Format("2006-01-02")
 				if e != nil {
 					ctEndStr = e.Format("2006-01-02")
@@ -548,6 +554,10 @@ func wcrmSchema() string {
 type wcrmApproveRequest struct {
 	SnapshotSHA256    string `json:"snapshot_sha256"`
 	ClientTypeOverride string `json:"client_type_override"` // для manual_review
+	// AppendixStartOverrides — ручной старт подписки на приложение: ключ = wcrm_attachment_id
+	// (строка), значение = YYYY-MM-DD. Нет записи → авто (дата старта приложения из WCRM).
+	// Override двигает ТОЛЬКО StartDate подписки; конец (end) считается от оригинального старта.
+	AppendixStartOverrides map[string]string `json:"appendix_start_overrides"`
 }
 
 type wcrmApproveResult struct {
@@ -619,6 +629,21 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 		ctype = req.ClientTypeOverride
 	}
 
+	// Ручные override старта подписок: wcrm_attachment_id → дата. Нет записи → авто.
+	startOverrides := map[int64]time.Time{}
+	for k, v := range req.AppendixStartOverrides {
+		if strings.TrimSpace(v) == "" {
+			continue
+		}
+		id, perr := strconv.ParseInt(k, 10, 64)
+		if perr != nil {
+			continue
+		}
+		if t, terr := time.Parse("2006-01-02", strings.TrimSpace(v)); terr == nil {
+			startOverrides[id] = t.UTC()
+		}
+	}
+
 	result := wcrmApproveResult{WcrmCompanyID: companyID}
 
 	txErr := database.DB.Transaction(func(tx *gorm.DB) error {
@@ -677,7 +702,7 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 			// Период договора = min/max по включённым приложениям (дата старта приложения,
 			// не дата подписания договора). Fallback на даты договора если приложений с датой нет.
 			var startPtr, endPtr *time.Time
-			if s, e, ok := contractPeriodFromAppendices(ct); ok {
+			if s, e, ok := contractPeriodFromAppendices(ct, startOverrides); ok {
 				startPtr = &s
 				endPtr = e
 			} else {
@@ -769,6 +794,7 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 						apStart = time.Now()
 					}
 				}
+				// Конец подписки считаем от ОРИГИНАЛЬНОГО старта (override его НЕ двигает).
 				var apEndPtr *time.Time
 				if e, okE := parseWcrmDate(ap.EndDate); okE {
 					apEndPtr = &e
@@ -780,6 +806,10 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 					apEndPtr = &e
 				} else if endPtr != nil {
 					apEndPtr = endPtr
+				}
+				// Ручной override старта подписки (после расчёта end) — авто, если не задан.
+				if ov, ok := startOverrides[ap.WcrmAttachmentID]; ok {
+					apStart = ov
 				}
 
 				// Тариф-матч: BillingPlan по (admin, price, billing_period). WCRM price =
