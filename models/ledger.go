@@ -38,9 +38,9 @@ type LedgerEntry struct {
 	Source     string `json:"source" gorm:"not null;type:varchar(30);index"`
 	ExternalID string `json:"external_id" gorm:"type:varchar(128)"` // идемпотентность импорта
 
-	Description string `json:"description" gorm:"type:text"`
+	Description string    `json:"description" gorm:"type:text"`
 	EntryDate   time.Time `json:"entry_date" gorm:"not null;index"` // дата операции (может отличаться от created_at)
-	CreatedBy   string `json:"created_by" gorm:"type:varchar(100)"`
+	CreatedBy   string    `json:"created_by" gorm:"type:varchar(100)"`
 
 	// Для reversal: ссылка на сторнируемую проводку.
 	ReversalOfID *uint   `json:"reversal_of_id" gorm:"index"`
@@ -48,3 +48,27 @@ type LedgerEntry struct {
 }
 
 func (LedgerEntry) TableName() string { return "ledger_entries" }
+
+// LedgerTransfer — заголовок перевода средств между лицевыми счетами договоров.
+// Связывает пару проводок ledger_entries (transfer_out у from, transfer_in у to),
+// созданных в одной транзакции. Reversal перевода — только парой (по transfer_id).
+type LedgerTransfer struct {
+	ID        uint           `json:"id" gorm:"primarykey"`
+	CreatedAt time.Time      `json:"created_at"`
+	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
+
+	AdminAccountID uint `json:"admin_account_id" gorm:"not null;index"`
+	CompanyID      uint `json:"company_id" gorm:"not null;index"`
+
+	TransferID     string          `json:"transfer_id" gorm:"not null;uniqueIndex;type:varchar(64)"`                                          // UUID, связь пары проводок
+	IdempotencyKey string          `json:"idempotency_key" gorm:"uniqueIndex:idx_transfer_idem,where:idempotency_key <> '';type:varchar(64)"` // клиентский ключ против дублей retry
+	FromContractID uint            `json:"from_contract_id" gorm:"not null;index"`
+	ToContractID   uint            `json:"to_contract_id" gorm:"not null;index"`
+	Amount         decimal.Decimal `json:"amount" gorm:"not null;type:decimal(15,2)"` // положительная сумма перевода
+	Currency       string          `json:"currency" gorm:"not null;default:'RUB';type:varchar(3)"`
+	Status         string          `json:"status" gorm:"not null;default:'completed';type:varchar(20)"` // completed | reversed
+	Description    string          `json:"description" gorm:"type:text"`
+	CreatedBy      string          `json:"created_by" gorm:"type:varchar(100)"`
+}
+
+func (LedgerTransfer) TableName() string { return "ledger_transfers" }

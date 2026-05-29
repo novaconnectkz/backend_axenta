@@ -1054,6 +1054,7 @@ func main() {
 	apiGroup.GET("/ledger/entries/:contract_id", api.GetLedgerEntries)
 	apiGroup.POST("/ledger/payment", api.PostLedgerPayment)
 	apiGroup.POST("/ledger/import", api.PostLedgerImport)
+	apiGroup.POST("/ledger/transfer", api.PostLedgerTransfer) // перевод между лицевыми счетами
 	apiGroup.POST("/ledger/charge/run", api.PostLedgerChargeRun)
 	log.Println("✅ Зарегистрированы /api/auth/ledger/* (лицевой счёт)")
 
