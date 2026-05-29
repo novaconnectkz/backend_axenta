@@ -249,9 +249,9 @@ func (s *AxentaSyncService) RefreshAccountsOnlyAllTenants() (int, error) {
 	// contention=0 (разные tables). Без лимита workers — практически
 	// активных тенантов единицы.
 	var (
-		mu      sync.Mutex
-		total   int
-		wg      sync.WaitGroup
+		mu    sync.Mutex
+		total int
+		wg    sync.WaitGroup
 	)
 	for _, company := range companies {
 		tenantDB := database.GetTenantDBByID(company.ID)
@@ -1178,25 +1178,25 @@ func (s *AxentaSyncService) syncAllObjectsWithDBAndProgress(adminAccountID uint,
 		result := db.Clauses(clause.OnConflict{
 			Columns: []clause.Column{{Name: "external_object_id"}},
 			DoUpdates: clause.Assignments(map[string]interface{}{
-				"admin_account_id":    snapshot.AdminAccountID,
-				"account_external_id": snapshot.AccountExternalID,
-				"object_name":         snapshot.ObjectName,
-				"unique_id":           snapshot.UniqueID,
-				"device_type_name":    snapshot.DeviceTypeName,
-				"account_name":        snapshot.AccountName,
-				"status":              snapshot.Status,
-				"is_active":           snapshot.IsActive,
-				"last_synced_at":      snapshot.LastSyncedAt,
-				"raw_payload":         snapshot.RawPayload,
+				"admin_account_id":      snapshot.AdminAccountID,
+				"account_external_id":   snapshot.AccountExternalID,
+				"object_name":           snapshot.ObjectName,
+				"unique_id":             snapshot.UniqueID,
+				"device_type_name":      snapshot.DeviceTypeName,
+				"account_name":          snapshot.AccountName,
+				"status":                snapshot.Status,
+				"is_active":             snapshot.IsActive,
+				"last_synced_at":        snapshot.LastSyncedAt,
+				"raw_payload":           snapshot.RawPayload,
 				"last_communication_at": snapshot.LastCommunicationAt,
-				"creator_name":        snapshot.CreatorName,
-				"creator_id":          snapshot.CreatorID,
-				"creator_is_active":   snapshot.CreatorIsActive,
-				"account_is_active":   snapshot.AccountIsActive,
-				"phone_numbers":       snapshot.PhoneNumbers,
-				"axenta_created_at":   snapshot.AxentaCreatedAt,
-				"axenta_deleted_at":   snapshot.AxentaDeletedAt,
-				"deleted_at":          gorm.DeletedAt{},
+				"creator_name":          snapshot.CreatorName,
+				"creator_id":            snapshot.CreatorID,
+				"creator_is_active":     snapshot.CreatorIsActive,
+				"account_is_active":     snapshot.AccountIsActive,
+				"phone_numbers":         snapshot.PhoneNumbers,
+				"axenta_created_at":     snapshot.AxentaCreatedAt,
+				"axenta_deleted_at":     snapshot.AxentaDeletedAt,
+				"deleted_at":            gorm.DeletedAt{},
 			}),
 		}).Create(&snapshot)
 
@@ -1319,6 +1319,10 @@ type axentaUser struct {
 	CreationDatetime string `json:"creationDatetime"`
 	CreatorName      string `json:"creatorName"`
 	LastLogin        string `json:"lastLogin"`
+	// Аккаунт-владелец юзера (для фильтра «Наши родители» на /users):
+	// accountId матчится с external_account_id аккаунта → определяем прямой ли он ребёнок.
+	AccountID   int64  `json:"accountId"`
+	AccountName string `json:"accountName"`
 }
 
 type axentaUsersResponse struct {
@@ -1426,6 +1430,8 @@ func (s *AxentaSyncService) storeUsersWithDB(adminAccountID uint, users []axenta
 			AccountType:      u.AccountType,
 			IsActive:         u.IsActive,
 			CreatorName:      u.CreatorName,
+			UserAccountID:    u.AccountID,
+			OwnerAccountName: u.AccountName,
 			CreationDatetime: u.CreationDatetime,
 			LastSyncedAt:     syncedAt,
 			RawPayload:       string(raw),
@@ -1448,17 +1454,19 @@ func (s *AxentaSyncService) storeUsersWithDB(adminAccountID uint, users []axenta
 		result := db.Unscoped().Clauses(clause.OnConflict{
 			Columns: []clause.Column{{Name: "admin_account_id"}, {Name: "external_user_id"}},
 			DoUpdates: clause.Assignments(map[string]any{
-				"username":          snapshot.Username,
-				"name":              snapshot.Name,
-				"email":             snapshot.Email,
-				"account_type":      snapshot.AccountType,
-				"is_active":         snapshot.IsActive,
-				"creator_name":      snapshot.CreatorName,
-				"creation_datetime": snapshot.CreationDatetime,
-				"last_login":        snapshot.LastLogin,
-				"last_synced_at":    snapshot.LastSyncedAt,
-				"raw_payload":       snapshot.RawPayload,
-				"deleted_at":        nil,
+				"username":           snapshot.Username,
+				"name":               snapshot.Name,
+				"email":              snapshot.Email,
+				"account_type":       snapshot.AccountType,
+				"is_active":          snapshot.IsActive,
+				"creator_name":       snapshot.CreatorName,
+				"user_account_id":    snapshot.UserAccountID,
+				"owner_account_name": snapshot.OwnerAccountName,
+				"creation_datetime":  snapshot.CreationDatetime,
+				"last_login":         snapshot.LastLogin,
+				"last_synced_at":     snapshot.LastSyncedAt,
+				"raw_payload":        snapshot.RawPayload,
+				"deleted_at":         nil,
 			}),
 		}).Create(&snapshot)
 		if result.Error != nil {

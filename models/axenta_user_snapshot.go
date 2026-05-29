@@ -18,12 +18,16 @@ type AxentaUserSnapshot struct {
 	AdminAccountID uint  `json:"admin_account_id" gorm:"not null;index;uniqueIndex:idx_axenta_user_admin_external"`
 	ExternalUserID int64 `json:"external_user_id" gorm:"not null;uniqueIndex:idx_axenta_user_admin_external"`
 
-	Username         string     `json:"username" gorm:"type:varchar(200);index:idx_axenta_user_username"`
-	Name             string     `json:"name" gorm:"type:varchar(300)"`
-	Email            string     `json:"email" gorm:"type:varchar(200);index"`
-	AccountType      string     `json:"account_type" gorm:"type:varchar(50);index:idx_axenta_user_account_type"`
-	IsActive         bool       `json:"is_active" gorm:"index"`
-	CreatorName      string     `json:"creator_name" gorm:"type:varchar(200);index"`
+	Username    string `json:"username" gorm:"type:varchar(200);index:idx_axenta_user_username"`
+	Name        string `json:"name" gorm:"type:varchar(300)"`
+	Email       string `json:"email" gorm:"type:varchar(200);index"`
+	AccountType string `json:"account_type" gorm:"type:varchar(50);index:idx_axenta_user_account_type"`
+	IsActive    bool   `json:"is_active" gorm:"index"`
+	CreatorName string `json:"creator_name" gorm:"type:varchar(200);index"`
+	// Аккаунт-владелец юзера (Axenta accountId/accountName) — для фильтра «Наши родители»
+	// на /users (юзер mine ⟺ его аккаунт = наш прямой ребёнок).
+	UserAccountID    int64      `json:"user_account_id" gorm:"index"`
+	OwnerAccountName string     `json:"owner_account_name" gorm:"type:varchar(200);index"`
 	CreationDatetime string     `json:"creation_datetime" gorm:"type:varchar(50)"`
 	LastLogin        *time.Time `json:"last_login" gorm:"index"`
 

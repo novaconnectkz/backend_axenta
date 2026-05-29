@@ -96,6 +96,8 @@ func GetUnifiedObjects(c *gin.Context) {
 	source := strings.ToLower(c.DefaultQuery("source", "all"))
 	activeStr := c.Query("active")
 	ordering := c.Query("ordering")
+	parent := strings.TrimSpace(c.Query("parent"))
+	mineOnly := strings.ToLower(c.Query("scope")) == "mine"
 
 	if page < 1 {
 		page = 1
@@ -116,13 +118,21 @@ func GetUnifiedObjects(c *gin.Context) {
 	loadGelios := source == "all" || source == "gelios"
 	loadSkif := source == "all" || source == "skif"
 
+	// Фильтр «Родительский аккаунт» / scope=mine: объекты не несут иерархию, поэтому
+	// строим индекс владельцев-аккаунтов (account → {parentLabel, isMine}) и фильтруем
+	// по AccountName строки. Индекс строим только если фильтр активен (дорого).
+	var metaIdx *AccountMetaIndex
+	if parent != "" || mineOnly {
+		metaIdx = buildAccountMetaIndex(c, loadAxenta, loadWialon, loadSkif, loadGelios)
+	}
+
 	if loadAxenta {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			tenantDB := middleware.GetTenantDB(c)
 			t0 := time.Now()
-			axentaObjects, st, ok := fetchAxentaObjectsFast(tenantDB, search, activeStr)
+			axentaObjects, st, ok := fetchAxentaObjectsFast(tenantDB, search, activeStr, metaIdx, parent, mineOnly)
 			log.Printf("🔍 unified/objects axenta: %d (snapshot=%v) за %s",
 				len(axentaObjects), ok, time.Since(t0).Round(time.Millisecond))
 			mu.Lock()
@@ -144,7 +154,7 @@ func GetUnifiedObjects(c *gin.Context) {
 		go func() {
 			defer wg.Done()
 			t0 := time.Now()
-			wlObjects, whTotal, whActive, wlTotal, wlActive, fromCache := fetchWialonObjectsFast(companyIDRaw.(uint), search, activeStr, source)
+			wlObjects, whTotal, whActive, wlTotal, wlActive, fromCache := fetchWialonObjectsFast(companyIDRaw.(uint), search, activeStr, source, metaIdx, parent, mineOnly)
 			log.Printf("🔍 unified/objects wialon: %d (cache=%v) за %s",
 				len(wlObjects), fromCache, time.Since(t0).Round(time.Millisecond))
 			mu.Lock()
@@ -165,7 +175,7 @@ func GetUnifiedObjects(c *gin.Context) {
 		go func() {
 			defer wg.Done()
 			t0 := time.Now()
-			gObjects, gTotal, gActive, gInactive := fetchGeliosObjectsFast(gCompanyID, search, activeStr)
+			gObjects, gTotal, gActive, gInactive := fetchGeliosObjectsFast(gCompanyID, search, activeStr, metaIdx, parent, mineOnly)
 			log.Printf("🔍 unified/objects gelios: %d за %s",
 				len(gObjects), time.Since(t0).Round(time.Millisecond))
 			mu.Lock()
@@ -182,7 +192,7 @@ func GetUnifiedObjects(c *gin.Context) {
 		go func() {
 			defer wg.Done()
 			t0 := time.Now()
-			sObjects, sTotal, sActive, sInactive := fetchSkifObjectsFast(sCompanyID, search, activeStr)
+			sObjects, sTotal, sActive, sInactive := fetchSkifObjectsFast(sCompanyID, search, activeStr, metaIdx, parent, mineOnly)
 			log.Printf("🔍 unified/objects skif: %d за %s",
 				len(sObjects), time.Since(t0).Round(time.Millisecond))
 			mu.Lock()
@@ -195,6 +205,13 @@ func GetUnifiedObjects(c *gin.Context) {
 	}
 
 	wg.Wait()
+
+	// При активном фильтре родителя/scope per-source stats из fetcher'ов отражают
+	// полный объём (агрегаты считаются отдельным SQL, не из отфильтрованного списка) —
+	// пересчитываем KPI из фактически отфильтрованных строк.
+	if metaIdx != nil {
+		stats = recomputeObjectStatsFromItems(all, stats.AxentaDegraded)
+	}
 
 	// Сортировка по name (default)
 	sortUnifiedObjects(all, ordering)
@@ -223,6 +240,49 @@ func GetUnifiedObjects(c *gin.Context) {
 	})
 }
 
+// recomputeObjectStatsFromItems — пересчёт KPI из отфильтрованного списка объектов
+// (для scope=mine / parent). Deleted/ScheduledDel под фильтром не считаем (нет в списке).
+func recomputeObjectStatsFromItems(items []UnifiedObject, axentaDegraded bool) UnifiedObjectsStats {
+	var s UnifiedObjectsStats
+	s.AxentaDegraded = axentaDegraded
+	for _, o := range items {
+		switch o.Source {
+		case "axenta":
+			s.AxentaTotal++
+			if o.IsActive {
+				s.AxentaActive++
+			}
+		case "wh":
+			s.WialonWHTotal++
+			if o.IsActive {
+				s.WialonWHActive++
+			}
+		case "wl":
+			s.WialonWLTotal++
+			if o.IsActive {
+				s.WialonWLActive++
+			}
+		case "gelios":
+			s.GeliosTotal++
+			if o.IsActive {
+				s.GeliosActive++
+			}
+		case "skif":
+			s.SkifTotal++
+			if o.IsActive {
+				s.SkifActive++
+			}
+		}
+	}
+	s.AxentaInactive = s.AxentaTotal - s.AxentaActive
+	s.WialonTotal = s.WialonWHTotal + s.WialonWLTotal
+	s.WialonActive = s.WialonWHActive + s.WialonWLActive
+	s.WialonInactive = s.WialonTotal - s.WialonActive
+	s.GeliosInactive = s.GeliosTotal - s.GeliosActive
+	s.SkifInactive = s.SkifTotal - s.SkifActive
+	return s
+}
+
 // axentaObjectsAggregate — агрегаты по snapshot для KPI.
 type axentaObjectsAggregate struct {
 	Total        int
@@ -233,7 +293,7 @@ type axentaObjectsAggregate struct {
 }
 
 // fetchAxentaObjectsFast читает объекты Axenta из snapshot (с фильтрами).
-func fetchAxentaObjectsFast(db *gorm.DB, search, active string) ([]UnifiedObject, axentaObjectsAggregate, bool) {
+func fetchAxentaObjectsFast(db *gorm.DB, search, active string, metaIdx *AccountMetaIndex, parent string, mineOnly bool) ([]UnifiedObject, axentaObjectsAggregate, bool) {
 	var agg axentaObjectsAggregate
 	if db == nil {
 		return nil, agg, false
@@ -302,6 +362,17 @@ func fetchAxentaObjectsFast(db *gorm.DB, search, active string) ([]UnifiedObject
 
 	out := make([]UnifiedObject, 0, len(rows))
 	for _, r := range rows {
+		// Фильтр родителя/scope: axenta-объект по AccountExternalID (устойчиво к
+		// коллизиям/переименованию имён аккаунтов), fallback на имя при нулевом ID.
+		if metaIdx != nil {
+			meta, ok := metaIdx.AxentaID[r.AccountExternalID]
+			if !ok {
+				meta, ok = metaIdx.Axenta[r.AccountName]
+			}
+			if metaIdx.filterByMeta(meta, ok, parent, mineOnly) {
+				continue
+			}
+		}
 		var phones []string
 		if r.PhoneNumbers != nil && *r.PhoneNumbers != "" {
 			_ = json.Unmarshal([]byte(*r.PhoneNumbers), &phones)
@@ -340,7 +411,7 @@ func fetchAxentaObjectsFast(db *gorm.DB, search, active string) ([]UnifiedObject
 
 // fetchWialonObjectsFast — read-path Wialon: Redis cache + GetAllUnitsFromActiveConnections fallback.
 // Возвращает (objects, whTotal, whActive, wlTotal, wlActive, fromCache).
-func fetchWialonObjectsFast(companyID uint, search, active, source string) ([]UnifiedObject, int, int, int, int, bool) {
+func fetchWialonObjectsFast(companyID uint, search, active, source string, metaIdx *AccountMetaIndex, parent string, mineOnly bool) ([]UnifiedObject, int, int, int, int, bool) {
 	connService := services.NewWialonConnectionService(database.DB)
 
 	// Получаем активные подключения для разделения WH/WL
@@ -503,6 +574,10 @@ func fetchWialonObjectsFast(companyID uint, search, active, source string) ([]Un
 			creatorName = connOwner[u.ConnectionID]
 		}
 
+		if metaIdx.FilteredOut("wialon", accountName, parent, mineOnly) {
+			continue
+		}
+
 		connID := u.ConnectionID
 		out = append(out, UnifiedObject{
 			ID:                  u.ID,
@@ -629,7 +704,7 @@ func buildWialonUserIDToNameMap(companyID uint) map[int64]string {
 // fetchGeliosObjectsFast — объекты GELIOS (gelios_units) per company.
 // Зеркало паттерна fetchGeliosUsersFast/Accounts. active = is_active
 // (!removed && !isBlock из sync). Возвращает: objects, total, active, inactive.
-func fetchGeliosObjectsFast(companyID uint, search, active string) ([]UnifiedObject, int, int, int) {
+func fetchGeliosObjectsFast(companyID uint, search, active string, metaIdx *AccountMetaIndex, parent string, mineOnly bool) ([]UnifiedObject, int, int, int) {
 	var connections []models.GeliosConnection
 	if err := database.DB.Where("company_id = ? AND is_active = ?", companyID, true).
 		Find(&connections).Error; err != nil {
@@ -689,6 +764,9 @@ func fetchGeliosObjectsFast(companyID uint, search, active string) ([]UnifiedObj
 
 	out := make([]UnifiedObject, 0, len(rows))
 	for _, r := range rows {
+		if metaIdx.FilteredOut("gelios", r.GeliosCreatorLogin, parent, mineOnly) {
+			continue
+		}
 		connName := connByID[r.ConnectionID]
 		sourceLabel := "GELIOS"
 		if connName != "" {
@@ -740,7 +818,7 @@ func fetchGeliosObjectsFast(companyID uint, search, active string) ([]UnifiedObj
 // fetchSkifObjectsFast — объекты SKIF (skif_units) per company.
 // Зеркало fetchGeliosObjectsFast. active = is_active && skif_deleted_at IS NULL.
 // Возвращает: objects, total, active, inactive.
-func fetchSkifObjectsFast(companyID uint, search, active string) ([]UnifiedObject, int, int, int) {
+func fetchSkifObjectsFast(companyID uint, search, active string, metaIdx *AccountMetaIndex, parent string, mineOnly bool) ([]UnifiedObject, int, int, int) {
 	var connections []models.SkifConnection
 	if err := database.DB.Where("company_id = ? AND is_active = ?", companyID, true).
 		Find(&connections).Error; err != nil {
@@ -817,6 +895,9 @@ func fetchSkifObjectsFast(companyID uint, search, active string) ([]UnifiedObjec
 		}
 		// Учетка = SKIF-компания, к которой относится юнит (дилерская привязка).
 		accountName := r.SkifCompany
+		if metaIdx.FilteredOut("skif", accountName, parent, mineOnly) {
+			continue
+		}
 		connID := r.ConnectionID
 		out = append(out, UnifiedObject{
 			ID:                  int64(r.ID),

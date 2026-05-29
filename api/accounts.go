@@ -252,6 +252,8 @@ func upsertAdminUserSnapshot(db *gorm.DB, adminAccountID uint, account Account) 
 		Name:             account.AdminFullname,
 		AccountType:      account.Type,
 		IsActive:         account.AdminIsActive,
+		UserAccountID:    int64(account.ID), // аккаунт-владелец (для фильтра «Наши родители»)
+		OwnerAccountName: account.Name,
 		CreationDatetime: account.CreationDatetime,
 		LastSyncedAt:     time.Now().UTC(),
 		RawPayload:       string(rawPayload),
@@ -261,6 +263,7 @@ func upsertAdminUserSnapshot(db *gorm.DB, adminAccountID uint, account Account) 
 		Columns: []clause.Column{{Name: "admin_account_id"}, {Name: "external_user_id"}},
 		DoUpdates: clause.AssignmentColumns([]string{
 			"username", "name", "account_type", "is_active",
+			"user_account_id", "owner_account_name",
 			"creation_datetime", "last_synced_at", "raw_payload",
 		}),
 	}).Create(&snapshot).Error; err != nil {

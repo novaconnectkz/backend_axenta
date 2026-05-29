@@ -754,6 +754,195 @@ func collectGeliosParents(companyID uint, mineSet, othersSet map[string]bool) {
 	}
 }
 
+// ParentMeta — родитель владельца-аккаунта и mine-флаг (для фильтра «Родительский
+// аккаунт» на /objects и /users, где сами строки иерархию не несут).
+type ParentMeta struct {
+	ParentLabel string // непосредственный родитель владельца-аккаунта (для parent=X)
+	IsMine      bool   // владелец = прямой ребёнок нашей интеграционной учётки (scope=mine)
+}
+
+// AccountMetaIndex — карты «ключ-владельца → ParentMeta» по источникам. Ключ — то,
+// что objects/users несут в AccountName: axenta account_name, wialon resource name,
+// skif company name, gelios owner login.
+type AccountMetaIndex struct {
+	Axenta   map[string]ParentMeta
+	AxentaID map[int64]ParentMeta // axenta-юзеры несут AccountID, не имя → отдельный ключ
+	Wialon   map[string]ParentMeta
+	Skif     map[string]ParentMeta
+	Gelios   map[string]ParentMeta
+	// Roots — имена наших интеграционных учёток-корней (родители mine-аккаунтов).
+	// Юзеры фильтруются по Создателю (creator): «наш» ⟺ creator ∈ Roots.
+	Roots map[string]bool
+}
+
+// FilteredOutByCreator — фильтр юзеров по Создателю (creator). «Наши» ⟺ creator —
+// наша интеграционная учётка-корень. parent=X ⟺ creator == X (любой родитель из списка).
+func (idx *AccountMetaIndex) FilteredOutByCreator(creator, parent string, mineOnly bool) bool {
+	if idx == nil {
+		return false
+	}
+	if mineOnly && !idx.Roots[creator] {
+		return true
+	}
+	if parent != "" && creator != parent {
+		return true
+	}
+	return false
+}
+
+// filterByMeta — общий критерий отбрасывания строки по (meta, найден ли владелец).
+// idx==nil → фильтр не активен. Неизвестный владелец при активном фильтре → отбросить.
+func (idx *AccountMetaIndex) filterByMeta(meta ParentMeta, ok bool, parent string, mineOnly bool) bool {
+	if idx == nil {
+		return false
+	}
+	if mineOnly && (!ok || !meta.IsMine) {
+		return true
+	}
+	if parent != "" && (!ok || meta.ParentLabel != parent) {
+		return true
+	}
+	return false
+}
+
+// Lookup — мета по нормализованному источнику ("axenta"/"wh"/"wl"/"wialon"/"skif"/"gelios")
+// и имени владельца-аккаунта.
+func (idx *AccountMetaIndex) Lookup(source, ownerName string) (ParentMeta, bool) {
+	if idx == nil {
+		return ParentMeta{}, false
+	}
+	s := strings.ToLower(source)
+	switch {
+	case s == "axenta":
+		m, ok := idx.Axenta[ownerName]
+		return m, ok
+	case strings.HasPrefix(s, "wh") || strings.HasPrefix(s, "wl") || s == "wialon":
+		m, ok := idx.Wialon[ownerName]
+		return m, ok
+	case s == "skif":
+		m, ok := idx.Skif[ownerName]
+		return m, ok
+	case s == "gelios":
+		m, ok := idx.Gelios[ownerName]
+		return m, ok
+	}
+	return ParentMeta{}, false
+}
+
+// FilteredOut — true если строку (объект/юзер) надо отбросить по фильтру родителя.
+// idx==nil (фильтр не активен) → никогда не отбрасывает. Неизвестный владелец при
+// активном фильтре → отбрасывается (его нет среди наших/выбранного родителя).
+func (idx *AccountMetaIndex) FilteredOut(source, ownerName, parent string, mineOnly bool) bool {
+	if idx == nil {
+		return false
+	}
+	meta, ok := idx.Lookup(source, ownerName)
+	return idx.filterByMeta(meta, ok, parent, mineOnly)
+}
+
+// buildAccountMetaIndex строит индекс владельцев-аккаунтов для фильтра родителя на
+// /objects и /users. Переиспользует account-fetch'еры (axenta/wialon/skif — ключ = Name
+// совпадает с object.AccountName). GELIOS — отдельным запросом: object.AccountName =
+// owner login, а UnifiedAccount.Name у gelios = legal_name/login (ненадёжно для ключа).
+func buildAccountMetaIndex(c *gin.Context, loadAxenta, loadWialon, loadSkif, loadGelios bool) *AccountMetaIndex {
+	idx := &AccountMetaIndex{
+		Axenta:   map[string]ParentMeta{},
+		AxentaID: map[int64]ParentMeta{},
+		Wialon:   map[string]ParentMeta{},
+		Skif:     map[string]ParentMeta{},
+		Gelios:   map[string]ParentMeta{},
+		Roots:    map[string]bool{},
+	}
+
+	put := func(m map[string]ParentMeta, ua UnifiedAccount) {
+		if ua.Name == "" {
+			return
+		}
+		label := accountParentLabel(ua)
+		m[ua.Name] = ParentMeta{ParentLabel: label, IsMine: ua.IsMine}
+		// Родитель mine-аккаунта = наша учётка-корень (для creator-фильтра юзеров).
+		if ua.IsMine && label != "" {
+			idx.Roots[label] = true
+		}
+	}
+
+	if loadAxenta {
+		if tenantDB := middleware.GetTenantDB(c); tenantDB != nil {
+			items, _, _, _, _ := fetchAxentaAccountsForUnified(tenantDB, "", "", "", "", false, true)
+			for _, ua := range items {
+				put(idx.Axenta, ua)
+				// axenta-юзеры фильтруются по AccountID (имя аккаунта у них не заполнено).
+				idx.AxentaID[int64(ua.ID)] = ParentMeta{ParentLabel: accountParentLabel(ua), IsMine: ua.IsMine}
+			}
+		}
+	}
+	companyID, hasCompany := c.Get("company_id")
+	if !hasCompany {
+		return idx
+	}
+	cid := companyID.(uint)
+
+	if loadWialon {
+		w, _, _, _, _, _, _ := fetchWialonAccountsForUnified(cid, "", "", "", "all", "", false)
+		for _, ua := range w {
+			put(idx.Wialon, ua)
+		}
+		// Roots для wialon — из wialon_connections.user_name (БД), независимо от Redis:
+		// при холодном accounts-cache fetchWialonAccountsForUnified пуст → Roots без
+		// wialon-корней → live-fallback /users отфильтровал бы всё. user_name = корень.
+		if database.DB != nil {
+			var crows []struct{ UserName string }
+			if err := database.DB.Table("wialon_connections").
+				Select("user_name").Where("company_id = ?", cid).
+				Scan(&crows).Error; err == nil {
+				for _, r := range crows {
+					if r.UserName != "" {
+						idx.Roots[r.UserName] = true
+					}
+				}
+			}
+		}
+	}
+	if loadSkif {
+		s, _, _ := fetchSkifAccountsForUnified(cid, "", "", "", "", false)
+		for _, ua := range s {
+			put(idx.Skif, ua)
+		}
+	}
+	if loadGelios && database.DB != nil {
+		var connections []models.GeliosConnection
+		if err := database.DB.Where("company_id = ? AND is_active = ?", cid, true).
+			Find(&connections).Error; err == nil && len(connections) > 0 {
+			connIDs := make([]uint, 0, len(connections))
+			connNameSet := make(map[string]bool, len(connections))
+			for _, cn := range connections {
+				connIDs = append(connIDs, cn.ID)
+				connNameSet[strings.ToLower(strings.TrimSpace(cn.Name))] = true
+				// Имя подключения = наша gelios-учётка-корень (для creator-фильтра юзеров).
+				if cn.Name != "" {
+					idx.Roots[cn.Name] = true
+				}
+			}
+			var rows []struct {
+				Login        string
+				CreatorLogin string
+			}
+			if err := database.DB.Model(&models.GeliosUser{}).
+				Select("login, creator_login").
+				Where("connection_id IN ? AND gelios_deleted_at IS NULL AND login <> ''", connIDs).
+				Scan(&rows).Error; err == nil {
+				for _, r := range rows {
+					idx.Gelios[r.Login] = ParentMeta{
+						ParentLabel: r.CreatorLogin,
+						IsMine:      connNameSet[strings.ToLower(strings.TrimSpace(r.CreatorLogin))],
+					}
+				}
+			}
+		}
+	}
+	return idx
+}
+
 // RegisterUnifiedAccountsRoutes регистрирует /api/unified/accounts.
 func RegisterUnifiedAccountsRoutes(apiGroup *gin.RouterGroup) {
 	apiGroup.GET("/unified/accounts", GetUnifiedAccounts)

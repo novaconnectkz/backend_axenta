@@ -163,6 +163,8 @@ func GetUnifiedUsers(c *gin.Context) {
 	activeStr := c.Query("active")
 	role := c.Query("role")
 	ordering := c.Query("ordering")
+	parent := strings.TrimSpace(c.Query("parent"))
+	mineOnly := strings.ToLower(c.Query("scope")) == "mine"
 
 	if page < 1 {
 		page = 1
@@ -183,13 +185,21 @@ func GetUnifiedUsers(c *gin.Context) {
 	loadSkif := source == "all" || source == "skif"
 	loadGelios := source == "all" || source == "gelios"
 
+	// Фильтр родителя/scope=mine: юзеры иерархию несут неровно → строим индекс
+	// владельцев-аккаунтов и фильтруем по принадлежности (axenta — AccountID,
+	// wialon — account из hierarchy, skif/gelios — creator). Только когда активен.
+	var metaIdx *AccountMetaIndex
+	if parent != "" || mineOnly {
+		metaIdx = buildAccountMetaIndex(c, loadAxenta, loadWialon, loadSkif, loadGelios)
+	}
+
 	if loadAxenta {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			tenantDB := middleware.GetTenantDB(c)
 			t0 := time.Now()
-			axentaUsers, axentaTotal, axentaActive, served := fetchAxentaUsersFast(tenantDB, search, activeStr, role)
+			axentaUsers, axentaTotal, axentaActive, served := fetchAxentaUsersFast(tenantDB, search, activeStr, role, metaIdx, parent, mineOnly)
 			log.Printf("🔍 unified/users axenta: %d users (snapshot=%v) за %s", len(axentaUsers), served, time.Since(t0).Round(time.Millisecond))
 			mu.Lock()
 			allUsers = append(allUsers, axentaUsers...)
@@ -208,7 +218,7 @@ func GetUnifiedUsers(c *gin.Context) {
 			defer wg.Done()
 			if companyID != nil {
 				t0 := time.Now()
-				wialonUsers, wTotal, wActive, whTotal, whActive, wlTotal, wlActive, fromCache := fetchWialonUsersFast(companyID.(uint), search, activeStr, source, role)
+				wialonUsers, wTotal, wActive, whTotal, whActive, wlTotal, wlActive, fromCache := fetchWialonUsersFast(companyID.(uint), search, activeStr, source, role, metaIdx, parent, mineOnly)
 				log.Printf("🔍 unified/users wialon: %d users (cache=%v) за %s", len(wialonUsers), fromCache, time.Since(t0).Round(time.Millisecond))
 				mu.Lock()
 				allUsers = append(allUsers, wialonUsers...)
@@ -229,7 +239,7 @@ func GetUnifiedUsers(c *gin.Context) {
 			defer wg.Done()
 			if companyID != nil {
 				t0 := time.Now()
-				skifUsers, sTotal, sActive := fetchSkifUsersFast(companyID.(uint), search, activeStr, role)
+				skifUsers, sTotal, sActive := fetchSkifUsersFast(companyID.(uint), search, activeStr, role, metaIdx, parent, mineOnly)
 				log.Printf("🔍 unified/users skif: %d users за %s", len(skifUsers), time.Since(t0).Round(time.Millisecond))
 				mu.Lock()
 				allUsers = append(allUsers, skifUsers...)
@@ -246,7 +256,7 @@ func GetUnifiedUsers(c *gin.Context) {
 			defer wg.Done()
 			if companyID != nil {
 				t0 := time.Now()
-				geliosUsers, gTotal, gActive := fetchGeliosUsersFast(companyID.(uint), search, activeStr, role)
+				geliosUsers, gTotal, gActive := fetchGeliosUsersFast(companyID.(uint), search, activeStr, role, metaIdx, parent, mineOnly)
 				log.Printf("🔍 unified/users gelios: %d users за %s", len(geliosUsers), time.Since(t0).Round(time.Millisecond))
 				mu.Lock()
 				allUsers = append(allUsers, geliosUsers...)
@@ -258,6 +268,12 @@ func GetUnifiedUsers(c *gin.Context) {
 	}
 
 	wg.Wait()
+
+	// При активном фильтре родителя/scope KPI из fetcher'ов отражают полный объём
+	// (счётчики считаются отдельным запросом) — пересчитываем из отфильтрованных строк.
+	if metaIdx != nil {
+		stats = recomputeUserStatsFromItems(allUsers, stats.AxentaDegraded)
+	}
 
 	// Серверная сортировка по ordering (если задан)
 	sortUnifiedUsers(allUsers, ordering)
@@ -295,17 +311,77 @@ func GetUnifiedUsers(c *gin.Context) {
 	})
 }
 
+// recomputeUserStatsFromItems — пересчёт KPI из отфильтрованного списка юзеров
+// (для scope=mine / parent). wh/wl различаем по SourceLabel.
+func recomputeUserStatsFromItems(items []UnifiedUser, axentaDegraded bool) UnifiedUsersStats {
+	var s UnifiedUsersStats
+	s.AxentaDegraded = axentaDegraded
+	for _, u := range items {
+		switch u.Source {
+		case "axenta":
+			s.AxentaTotal++
+			if u.IsActive {
+				s.AxentaActive++
+			}
+		case "wialon":
+			if strings.HasPrefix(u.SourceLabel, "WH(") {
+				s.WialonWHTotal++
+				if u.IsActive {
+					s.WialonWHActive++
+				}
+			} else if strings.HasPrefix(u.SourceLabel, "WL(") {
+				s.WialonWLTotal++
+				if u.IsActive {
+					s.WialonWLActive++
+				}
+			}
+		case "skif":
+			s.SkifTotal++
+			if u.IsActive {
+				s.SkifActive++
+			}
+		case "gelios":
+			s.GeliosTotal++
+			if u.IsActive {
+				s.GeliosActive++
+			}
+		}
+	}
+	s.WialonTotal = s.WialonWHTotal + s.WialonWLTotal
+	s.WialonActive = s.WialonWHActive + s.WialonWLActive
+	return s
+}
+
 // fetchAxentaUsersFast — read-path Axenta из snapshot (axenta_user_snapshots).
 // Ф3-B6: НЕТ live-fallback в axenta.cloud по request-токену — после Ф1 логин =
 // локальный JWT, невалиден для Axenta. Snapshot пуст/устарел → (nil,0,0,false):
 // Axenta-источник деградирует (caller ставит stats.AxentaDegraded), остальные
 // источники (Wialon/SKIF/GELIOS) работают как раньше.
 // Возвращает (users, total, active, served).
-func fetchAxentaUsersFast(db *gorm.DB, search, active, role string) ([]UnifiedUser, int, int, bool) {
-	if users, total, activeN, ok := tryServeUnifiedUsersFromSnapshot(db, search, active, role); ok {
-		return users, total, activeN, true
+func fetchAxentaUsersFast(db *gorm.DB, search, active, role string, metaIdx *AccountMetaIndex, parent string, mineOnly bool) ([]UnifiedUser, int, int, bool) {
+	users, total, activeN, ok := tryServeUnifiedUsersFromSnapshot(db, search, active, role)
+	if !ok {
+		return nil, 0, 0, false
 	}
-	return nil, 0, 0, false
+	// Фильтр родителя/scope: axenta-юзер «наш» ⟺ его аккаунт-владелец (AccountID) —
+	// наш прямой ребёнок. Axenta-юзеры создаются аккаунтами (не корнем напрямую),
+	// поэтому фильтруем по принадлежности аккаунту, как объекты. AccountName-fallback
+	// при нулевом ID.
+	if metaIdx != nil {
+		filtered := make([]UnifiedUser, 0, len(users))
+		for _, u := range users {
+			meta, ok := metaIdx.AxentaID[u.AccountID]
+			if !ok {
+				meta, ok = metaIdx.Axenta[u.AccountName]
+			}
+			if metaIdx.filterByMeta(meta, ok, parent, mineOnly) {
+				continue
+			}
+			filtered = append(filtered, u)
+		}
+		users = filtered
+	}
+	return users, total, activeN, true
 }
 
 // applyAxentaUserSnapshotFilters накладывает фильтры search/active/role на
@@ -413,7 +489,8 @@ func tryServeUnifiedUsersFromSnapshot(db *gorm.DB, search, active, role string) 
 			Source:           "axenta",
 			SourceLabel:      "Axenta Cloud",
 			AccountType:      r.AccountType,
-			AccountID:        int64(r.AdminAccountID),
+			AccountID:        r.UserAccountID, // аккаунт-владелец юзера (для фильтра «Наши родители»)
+			AccountName:      r.OwnerAccountName,
 		})
 	}
 
@@ -735,15 +812,17 @@ func splitSearchTerms(search string) []string {
 // fetchWialonUsersFast — read-path через Redis cache wialon:all-accounts:<cid>.
 // Cache наполняется WialonAllAccountsScheduler @5m. Если cache пуст — fallback на live (старая реализация).
 // Возвращает: users, total, active, whTotal, whActive, wlTotal, wlActive, fromCache.
-func fetchWialonUsersFast(companyID uint, search, activeStr, sourceFilter, roleFilter string) ([]UnifiedUser, int, int, int, int, int, int, bool) {
+func fetchWialonUsersFast(companyID uint, search, activeStr, sourceFilter, roleFilter string, metaIdx *AccountMetaIndex, parent string, mineOnly bool) ([]UnifiedUser, int, int, int, int, int, int, bool) {
 	if database.RedisClient == nil {
 		users, total, active := fetchWialonUsersFiltered(companyID, search, activeStr, sourceFilter)
+		users = filterWialonUsersByCreator(users, metaIdx, parent, mineOnly)
 		return users, total, active, 0, 0, 0, 0, false
 	}
 
 	cached, err := database.RedisClient.Get(context.Background(), allAccountsCacheKey(companyID)).Bytes()
 	if err != nil || len(cached) == 0 {
 		users, total, active := fetchWialonUsersFiltered(companyID, search, activeStr, sourceFilter)
+		users = filterWialonUsersByCreator(users, metaIdx, parent, mineOnly)
 		return users, total, active, 0, 0, 0, 0, false
 	}
 
@@ -874,6 +953,11 @@ func fetchWialonUsersFast(companyID uint, search, activeStr, sourceFilter, roleF
 			connIDPtr = &connID
 		}
 
+		// Фильтр родителя/scope: account-юзер «наш» ⟺ его Создатель (creatorName) — корень.
+		if parentMatched && metaIdx.FilteredOutByCreator(creatorName, parent, mineOnly) {
+			parentMatched = false
+		}
+
 		if parentMatched {
 			users = append(users, UnifiedUser{
 				ID:               int64(acc.ID),
@@ -910,6 +994,10 @@ func fetchWialonUsersFast(companyID uint, search, activeStr, sourceFilter, roleF
 			continue
 		}
 		for _, su := range acc.SubUsers {
+			// Создатель sub-юзера = его аккаунт (acc.Name). «Наш» ⟺ acc — корень.
+			if metaIdx.FilteredOutByCreator(acc.Name, parent, mineOnly) {
+				continue
+			}
 			if search != "" {
 				terms := splitSearchTerms(search)
 				matched := false
@@ -1005,6 +1093,22 @@ func sortUnifiedUsers(users []UnifiedUser, ordering string) {
 }
 
 // fetchWialonUsersFiltered — fallback live-fetch (без cache). Используется если Redis пуст.
+// filterWialonUsersByCreator — post-фильтр fallback-результата (Redis miss) по Создателю,
+// чтобы scope=mine/parent не протекали мимо live-пути (cache-путь фильтрует в цикле).
+func filterWialonUsersByCreator(users []UnifiedUser, metaIdx *AccountMetaIndex, parent string, mineOnly bool) []UnifiedUser {
+	if metaIdx == nil {
+		return users
+	}
+	out := users[:0]
+	for _, u := range users {
+		if metaIdx.FilteredOutByCreator(u.CreatorName, parent, mineOnly) {
+			continue
+		}
+		out = append(out, u)
+	}
+	return out
+}
+
 func fetchWialonUsersFiltered(companyID uint, search, activeStr, sourceFilter string) ([]UnifiedUser, int, int) {
 	users := make([]UnifiedUser, 0)
 	var totalUsers, activeUsers int
@@ -1098,7 +1202,7 @@ func fetchWialonUsersFiltered(companyID uint, search, activeStr, sourceFilter st
 //
 // Фильтры применяются на стороне БД: search по name/email/phone, active по is_active,
 // role mapping: "Партнёр"/"partner" → SUPERVISOR, "Клиент"/"client" → остальные роли.
-func fetchSkifUsersFast(companyID uint, search, activeStr, roleFilter string) ([]UnifiedUser, int, int) {
+func fetchSkifUsersFast(companyID uint, search, activeStr, roleFilter string, metaIdx *AccountMetaIndex, parent string, mineOnly bool) ([]UnifiedUser, int, int) {
 	var connections []models.SkifConnection
 	if err := database.DB.Where("company_id = ? AND is_active = ?", companyID, true).
 		Find(&connections).Error; err != nil {
@@ -1174,6 +1278,10 @@ func fetchSkifUsersFast(companyID uint, search, activeStr, roleFilter string) ([
 
 	users := make([]UnifiedUser, 0, len(rows))
 	for _, r := range rows {
+		// Фильтр родителя/scope: skif-юзер привязан к компании (skif_company).
+		if metaIdx.FilteredOut("skif", r.SkifCompany, parent, mineOnly) {
+			continue
+		}
 		role := mapSkifRoleToRole(r.RoleKey)
 		sourceLabel := "SKIF"
 		if r.SkifCompany != "" {
@@ -1230,7 +1338,7 @@ func mapSkifRoleToRole(roleKey string) string {
 // fetchGeliosUsersFast — пользователи GELIOS (дерево users) per company.
 // Зеркало fetchSkifUsersFast. active = !is_block. role: isAdmin→partner,
 // иначе client. CreatorName/Hierarchy = creator (родитель в дереве).
-func fetchGeliosUsersFast(companyID uint, search, activeStr, roleFilter string) ([]UnifiedUser, int, int) {
+func fetchGeliosUsersFast(companyID uint, search, activeStr, roleFilter string, metaIdx *AccountMetaIndex, parent string, mineOnly bool) ([]UnifiedUser, int, int) {
 	var connections []models.GeliosConnection
 	if err := database.DB.Where("company_id = ? AND is_active = ?", companyID, true).
 		Find(&connections).Error; err != nil {
@@ -1307,6 +1415,10 @@ func fetchGeliosUsersFast(companyID uint, search, activeStr, roleFilter string) 
 
 	users := make([]UnifiedUser, 0, len(rows))
 	for _, r := range rows {
+		// Фильтр родителя/scope: gelios-юзер «наш» ⟺ его Создатель (creator) — корень.
+		if metaIdx.FilteredOutByCreator(r.CreatorLogin, parent, mineOnly) {
+			continue
+		}
 		role := "client"
 		if r.IsAdmin {
 			role = "partner"

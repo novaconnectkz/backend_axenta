@@ -297,20 +297,20 @@ func ExportObjectsToXLSX(c *gin.Context) {
 		if tenantDB == nil {
 			tenantDB = database.DB
 		}
-		axObjs, _, _ := fetchAxentaObjectsFast(tenantDB, search, activeStr)
+		axObjs, _, _ := fetchAxentaObjectsFast(tenantDB, search, activeStr, nil, "", false)
 		allObjects = append(allObjects, axObjs...)
 	}
 	if cid, ok := companyIDRaw.(uint); ok {
 		if loadWialon {
-			wlObjs, _, _, _, _, _ := fetchWialonObjectsFast(cid, search, activeStr, source)
+			wlObjs, _, _, _, _, _ := fetchWialonObjectsFast(cid, search, activeStr, source, nil, "", false)
 			allObjects = append(allObjects, wlObjs...)
 		}
 		if loadGelios {
-			gObjs, _, _, _ := fetchGeliosObjectsFast(cid, search, activeStr)
+			gObjs, _, _, _ := fetchGeliosObjectsFast(cid, search, activeStr, nil, "", false)
 			allObjects = append(allObjects, gObjs...)
 		}
 		if loadSkif {
-			sObjs, _, _, _ := fetchSkifObjectsFast(cid, search, activeStr)
+			sObjs, _, _, _ := fetchSkifObjectsFast(cid, search, activeStr, nil, "", false)
 			allObjects = append(allObjects, sObjs...)
 		}
 	}
