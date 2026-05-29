@@ -40,6 +40,7 @@ type UnifiedAccount struct {
 	DaysBeforeBlocking *int    `json:"daysBeforeBlocking,omitempty"`
 	Source             string  `json:"source"` // "axenta" | "WH(...)" | "WL(...)" | "skif"
 	SourceLabel        string  `json:"sourceLabel,omitempty"`
+	IsMine             bool    `json:"isMine,omitempty"`       // прямой ребёнок нашей интеграционной учётки (scope=mine)
 	ConnectionID       *uint   `json:"connectionId,omitempty"` // wialon + skif
 	DealerRights       bool    `json:"dealerRights,omitempty"`
 	SkifCompanyID      string  `json:"skifCompanyId,omitempty"`      // UUID дилерской компании в SKIF
@@ -98,6 +99,10 @@ func GetUnifiedAccounts(c *gin.Context) {
 	activeStr := c.Query("is_active")
 	ordering := c.DefaultQuery("ordering", "-creationDatetime")
 	parent := strings.TrimSpace(c.Query("parent"))
+	// scope=mine — только прямые дети наших интеграционных учёток (см. /parents).
+	// Предикат per-system: axenta/wialon depth(hierarchy)==2, skif — компании,
+	// gelios — creator_login == имя подключения.
+	mineOnly := strings.ToLower(c.Query("scope")) == "mine"
 	// Ф0: режим выбора партнёра в дропдауне — обходим TTL-гейт Axenta для полноты списка.
 	pickerMode := c.Query("for") == "picker"
 
@@ -133,7 +138,7 @@ func GetUnifiedAccounts(c *gin.Context) {
 			defer wg.Done()
 			tenantDB := middleware.GetTenantDB(c)
 			t0 := time.Now()
-			items, total, active, clients, partners := fetchAxentaAccountsForUnified(tenantDB, search, accountType, activeStr, parent, pickerMode)
+			items, total, active, clients, partners := fetchAxentaAccountsForUnified(tenantDB, search, accountType, activeStr, parent, mineOnly, pickerMode)
 			log.Printf("🔍 unified/accounts axenta: %d items за %s", len(items), time.Since(t0).Round(time.Millisecond))
 			mu.Lock()
 			allAccounts = append(allAccounts, items...)
@@ -154,7 +159,7 @@ func GetUnifiedAccounts(c *gin.Context) {
 				return
 			}
 			t0 := time.Now()
-			items, wTotal, wActive, whTotal, whActive, wlTotal, wlActive := fetchWialonAccountsForUnified(companyID.(uint), search, accountType, activeStr, source, parent)
+			items, wTotal, wActive, whTotal, whActive, wlTotal, wlActive := fetchWialonAccountsForUnified(companyID.(uint), search, accountType, activeStr, source, parent, mineOnly)
 			log.Printf("🔍 unified/accounts wialon: %d items за %s", len(items), time.Since(t0).Round(time.Millisecond))
 
 			// Ф2: Wialon-партнёры (дилеры) из wialon_account_statuses (DB, не Redis) —
@@ -190,7 +195,7 @@ func GetUnifiedAccounts(c *gin.Context) {
 				return
 			}
 			t0 := time.Now()
-			items, sTotal, sActive := fetchSkifAccountsForUnified(companyID.(uint), search, accountType, activeStr, parent)
+			items, sTotal, sActive := fetchSkifAccountsForUnified(companyID.(uint), search, accountType, activeStr, parent, mineOnly)
 			log.Printf("🔍 unified/accounts skif: %d items за %s", len(items), time.Since(t0).Round(time.Millisecond))
 			mu.Lock()
 			allAccounts = append(allAccounts, items...)
@@ -209,7 +214,7 @@ func GetUnifiedAccounts(c *gin.Context) {
 				return
 			}
 			t0 := time.Now()
-			items, gTotal, gActive, gClients, gPartners := fetchGeliosAccountsForUnified(companyID.(uint), search, accountType, activeStr, parent)
+			items, gTotal, gActive, gClients, gPartners := fetchGeliosAccountsForUnified(companyID.(uint), search, accountType, activeStr, parent, mineOnly)
 			log.Printf("🔍 unified/accounts gelios: %d items за %s", len(items), time.Since(t0).Round(time.Millisecond))
 			mu.Lock()
 			allAccounts = append(allAccounts, items...)
@@ -252,7 +257,7 @@ func GetUnifiedAccounts(c *gin.Context) {
 
 // fetchAxentaAccountsForUnified читает axenta_account_snapshots с фильтрами.
 // Возвращает: items, total, active, clients, partners.
-func fetchAxentaAccountsForUnified(db *gorm.DB, search, accountType, activeStr, parent string, ignoreTTL bool) ([]UnifiedAccount, int, int, int, int) {
+func fetchAxentaAccountsForUnified(db *gorm.DB, search, accountType, activeStr, parent string, mineOnly, ignoreTTL bool) ([]UnifiedAccount, int, int, int, int) {
 	if db == nil {
 		return nil, 0, 0, 0, 0
 	}
@@ -325,6 +330,12 @@ func fetchAxentaAccountsForUnified(db *gorm.DB, search, accountType, activeStr, 
 		if parent != "" && !isDirectParent(r.ParentAccountName, r.Hierarchy, parent) {
 			continue
 		}
+		// Прямой ребёнок нашей учётки: hierarchy "GLOMOS > X" (глубина 2).
+		// Корень (сам GLOMOS) и внуки (depth>2) — не наши прямые.
+		isMine := hierarchyDepth(r.Hierarchy) == 2
+		if mineOnly && !isMine {
+			continue
+		}
 		total++
 		if r.IsActive {
 			active++
@@ -345,6 +356,7 @@ func fetchAxentaAccountsForUnified(db *gorm.DB, search, accountType, activeStr, 
 			ObjectsTotal:       r.ObjectsTotal,
 			IsActive:           r.IsActive,
 			Hierarchy:          r.Hierarchy,
+			IsMine:             isMine,
 			Source:             "axenta",
 			SourceLabel:        "Axenta Cloud",
 			Comment:            strPtrIfNotEmpty(r.Comment),
@@ -381,6 +393,31 @@ func isDirectParent(parentName, hierarchy, target string) bool {
 	return parts[len(parts)-2] == target
 }
 
+// hierarchyDepth — число узлов в "A > B > Self". 0 для пустой строки.
+// Прямой ребёнок корня = глубина 2 ("Корень > Ребёнок").
+func hierarchyDepth(hierarchy string) int {
+	hierarchy = strings.TrimSpace(hierarchy)
+	if hierarchy == "" {
+		return 0
+	}
+	return len(strings.Split(hierarchy, " > "))
+}
+
+// accountParentLabel — имя непосредственного родителя записи (для дропдауна /parents).
+// ParentAccountName приоритетнее (axenta/skif/gelios), иначе предпоследний узел hierarchy (wialon).
+// Возвращаем RAW (без TrimSpace) — значение дропдауна должно побайтово совпасть с тем,
+// что сравнивает isDirectParent / parent=-фильтр, иначе выбор из списка ничего не найдёт.
+func accountParentLabel(ua UnifiedAccount) string {
+	if ua.ParentAccountName != "" {
+		return ua.ParentAccountName
+	}
+	parts := strings.Split(ua.Hierarchy, " > ")
+	if len(parts) >= 2 {
+		return parts[len(parts)-2]
+	}
+	return ""
+}
+
 func strPtrIfNotEmpty(s string) *string {
 	if s == "" {
 		return nil
@@ -396,7 +433,7 @@ func strPtrIfNotEmpty(s string) *string {
 // Это убирает sentinel objectsTotal=-1 в Redis-кэше — frontend получает готовые
 // цифры сразу, без второго round-trip к /wialon/connections/{id}/objects-stats
 // (который делал live-fetch на 5-15 сек при холодном Redis).
-func fetchWialonAccountsForUnified(companyID uint, search, accountType, activeStr, sourceFilter, parent string) ([]UnifiedAccount, int, int, int, int, int, int) {
+func fetchWialonAccountsForUnified(companyID uint, search, accountType, activeStr, sourceFilter, parent string, mineOnly bool) ([]UnifiedAccount, int, int, int, int, int, int) {
 	if database.RedisClient == nil {
 		return nil, 0, 0, 0, 0, 0, 0
 	}
@@ -417,6 +454,28 @@ func fetchWialonAccountsForUnified(companyID uint, search, accountType, activeSt
 	}
 
 	statsByUserID := loadWialonStatsForCompany(companyID)
+
+	// scope=mine: иерархия wialon = "SourceLabel > Родитель > Сам" (immediate parent =
+	// parts[len-2]). Прямой ребёнок интеграции = тот, чей непосредственный родитель ==
+	// имя интеграционной у/з подключения. Авторитетный источник имени — wialon_connections.user_name
+	// (glomoskz/glomosuz/Профмонитор), НЕ wialon_connections.name (для conn 7 name=app.gpsnetwork.ru,
+	// а у/з = Профмонитор). Парсинг self-set ненадёжен: интеграционная у/з сама есть в списке,
+	// а при флапе/пагинации wialon строки теряются.
+	userNameByConn := make(map[uint]string)
+	if database.DB != nil {
+		var crows []struct {
+			ID       uint
+			UserName string
+		}
+		if err := database.DB.Table("wialon_connections").
+			Select("id, user_name").Where("company_id = ?", companyID).
+			Scan(&crows).Error; err != nil {
+			log.Printf("⚠️ unified/accounts wialon user_name map: %v", err)
+		}
+		for _, r := range crows {
+			userNameByConn[r.ID] = r.UserName
+		}
+	}
 
 	pattern := strings.ToLower(search)
 	items := make([]UnifiedAccount, 0, len(resp.Data.Items))
@@ -447,6 +506,16 @@ func fetchWialonAccountsForUnified(companyID uint, search, accountType, activeSt
 			}
 		}
 		if parent != "" && !isDirectParent("", a.Hierarchy, parent) {
+			continue
+		}
+		// Прямой ребёнок интеграции: immediate parent (parts[len-2]) == user_name подключения.
+		isMine := false
+		if un := userNameByConn[a.ConnectionID]; un != "" {
+			if parts := strings.Split(a.Hierarchy, " > "); len(parts) >= 2 {
+				isMine = parts[len(parts)-2] == un
+			}
+		}
+		if mineOnly && !isMine {
 			continue
 		}
 
@@ -484,6 +553,7 @@ func fetchWialonAccountsForUnified(companyID uint, search, accountType, activeSt
 			ObjectsTotal:     objectsTotal,
 			IsActive:         a.IsActive,
 			Hierarchy:        a.Hierarchy,
+			IsMine:           isMine,
 			Source:           a.SourceLabel,
 			SourceLabel:      a.SourceLabel,
 			ConnectionID:     &connID,
@@ -546,6 +616,7 @@ func fetchWialonPartnersForUnified(companyID uint, search, activeStr, parent str
 			SourceLabel:   "Wialon",
 			ConnectionID:  &connID,
 			DealerRights:  true,
+			IsMine:        true, // is_direct_dealer=true → дилер прямо под интеграционной у/з
 		})
 	}
 	return items, len(items)
@@ -581,10 +652,114 @@ func loadWialonStatsForCompany(companyID uint) map[int64]models.WialonObjectStat
 	return result
 }
 
+// UnifiedParentsResponse — список родительских аккаунтов для дропдауна фильтра,
+// разбитый на «наши» (прямые корни-подключения) и «остальные» (поддилеры).
+type UnifiedParentsResponse struct {
+	Mine   []string `json:"mine"`   // корни наших подключений (только с ≥1 прямым ребёнком)
+	Others []string `json:"others"` // прочие родители (поддилеры и т.п.)
+}
+
+// GetUnifiedAccountParents — собирает уникальные имена родителей из всех 4 источников
+// и классифицирует: mine = корень нашей интеграционной учётки (есть прямые дети),
+// others = всё прочее. Питает дропдаун «Родительский аккаунт» на /accounts.
+// @Router /api/unified/accounts/parents [get]
+func GetUnifiedAccountParents(c *gin.Context) {
+	all := make([]UnifiedAccount, 0, 4096)
+
+	if tenantDB := middleware.GetTenantDB(c); tenantDB != nil {
+		items, _, _, _, _ := fetchAxentaAccountsForUnified(tenantDB, "", "", "", "", false, true)
+		all = append(all, items...)
+	}
+	mineSet := make(map[string]bool)
+	othersSet := make(map[string]bool)
+
+	if companyID, ok := c.Get("company_id"); ok {
+		cid := companyID.(uint)
+		w, _, _, _, _, _, _ := fetchWialonAccountsForUnified(cid, "", "", "", "all", "", false)
+		all = append(all, w...)
+		s, _, _ := fetchSkifAccountsForUnified(cid, "", "", "", "", false)
+		all = append(all, s...)
+		// GELIOS — отдельным DISTINCT-запросом, минуя account-fetch с Limit(5000):
+		// при большом дереве лимит мог бы молча обрезать часть родителей дропдауна.
+		collectGeliosParents(cid, mineSet, othersSet)
+	}
+
+	for _, ua := range all {
+		label := accountParentLabel(ua)
+		if label == "" {
+			continue
+		}
+		if ua.IsMine {
+			mineSet[label] = true
+		} else {
+			othersSet[label] = true
+		}
+	}
+
+	mine := make([]string, 0, len(mineSet))
+	for k := range mineSet {
+		mine = append(mine, k)
+	}
+	others := make([]string, 0, len(othersSet))
+	for k := range othersSet {
+		if !mineSet[k] { // имя могло встретиться в обеих ролях — приоритет «наши»
+			others = append(others, k)
+		}
+	}
+	ciLess := func(s []string) func(i, j int) bool {
+		return func(i, j int) bool { return strings.ToLower(s[i]) < strings.ToLower(s[j]) }
+	}
+	sort.Slice(mine, ciLess(mine))
+	sort.Slice(others, ciLess(others))
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data":   UnifiedParentsResponse{Mine: mine, Others: others},
+	})
+}
+
+// collectGeliosParents — lightweight DISTINCT creator_login для дропдауна /parents,
+// без Limit(5000)/Count/Order из account-fetch. Классифицирует: creator == имя
+// подключения → mine (наш token-owner), иначе others. Семантика аккаунта (is_admin
+// OR units>0) сохраняется, чтобы список родителей совпадал с тем, что реально в таблице.
+func collectGeliosParents(companyID uint, mineSet, othersSet map[string]bool) {
+	if database.DB == nil {
+		return
+	}
+	var connections []models.GeliosConnection
+	if err := database.DB.Where("company_id = ? AND is_active = ?", companyID, true).
+		Find(&connections).Error; err != nil || len(connections) == 0 {
+		return
+	}
+	connIDs := make([]uint, 0, len(connections))
+	connNameSet := make(map[string]bool, len(connections))
+	for _, cn := range connections {
+		connIDs = append(connIDs, cn.ID)
+		connNameSet[strings.ToLower(strings.TrimSpace(cn.Name))] = true
+	}
+	var logins []string
+	if err := database.DB.Model(&models.GeliosUser{}).
+		Where("connection_id IN ? AND gelios_deleted_at IS NULL AND creator_login <> ''", connIDs).
+		Where("is_admin = ? OR units_count > 0", true).
+		Distinct().Pluck("creator_login", &logins).Error; err != nil {
+		log.Printf("⚠️ /parents gelios distinct: %v", err)
+		return
+	}
+	for _, login := range logins {
+		if connNameSet[strings.ToLower(strings.TrimSpace(login))] {
+			mineSet[login] = true
+		} else {
+			othersSet[login] = true
+		}
+	}
+}
+
 // RegisterUnifiedAccountsRoutes регистрирует /api/unified/accounts.
 func RegisterUnifiedAccountsRoutes(apiGroup *gin.RouterGroup) {
 	apiGroup.GET("/unified/accounts", GetUnifiedAccounts)
 	apiGroup.GET("/unified/accounts/", GetUnifiedAccounts)
+	apiGroup.GET("/unified/accounts/parents", GetUnifiedAccountParents)
+	apiGroup.GET("/unified/accounts/parents/", GetUnifiedAccountParents)
 	log.Println("✅ Unified Accounts API routes registered")
 }
 
@@ -620,7 +795,7 @@ func sortUnifiedAccounts(items []UnifiedAccount, ordering string) {
 // Fallback: GROUP BY skif_units если таблица statuses пуста (cold start, до первого sync).
 //
 // Возвращает: items, total, active. Для KPI карточки SKIF на /accounts.
-func fetchSkifAccountsForUnified(companyID uint, search, accountType, activeStr, parent string) ([]UnifiedAccount, int, int) {
+func fetchSkifAccountsForUnified(companyID uint, search, accountType, activeStr, parent string, mineOnly bool) ([]UnifiedAccount, int, int) {
 	if database.DB == nil {
 		return nil, 0, 0
 	}
@@ -752,6 +927,7 @@ func fetchSkifAccountsForUnified(companyID uint, search, accountType, activeStr,
 			SourceLabel:       "SKIF",
 			ConnectionID:      &connID,
 			SkifCompanyID:     r.SkifCompanyID,
+			IsMine:            true, // компании висят прямо под нашим SKIF-подключением
 		}
 		// Приоритет: skif_object_created (точная дата из /updates/query)
 		// > skif_units.skif_created_at > skif_units.created_at (наш sync).
@@ -769,7 +945,8 @@ func fetchSkifAccountsForUnified(companyID uint, search, accountType, activeStr,
 
 	// Subdealers (type=partner) — добавляем отдельными строками если accountType
 	// не равен "client" (для type=client фильтра показываем только компании).
-	if accountType != "partner" && accountType != "client" || accountType == "partner" {
+	// При scope=mine субдилеры исключаются: их parent — дилер выше, не наше подключение.
+	if !mineOnly && (accountType != "partner" && accountType != "client" || accountType == "partner") {
 		var dealers []models.SkifDealer
 		if err := database.DB.
 			Joins("JOIN skif_connections sc ON sc.id = skif_dealers.connection_id").
@@ -830,7 +1007,10 @@ func fetchSkifAccountsForUnified(companyID uint, search, accountType, activeStr,
 // на юзере. type: is_admin→partner, иначе client. active = !is_block.
 // parent = creator_login. ObjectsTotal/Active = units_count (GELIOS
 // per-active разбивку в списке не отдаёт → total≈active при !is_block).
-func fetchGeliosAccountsForUnified(companyID uint, search, accountType, activeStr, parent string) ([]UnifiedAccount, int, int, int, int) {
+func fetchGeliosAccountsForUnified(companyID uint, search, accountType, activeStr, parent string, mineOnly bool) ([]UnifiedAccount, int, int, int, int) {
+	if database.DB == nil {
+		return nil, 0, 0, 0, 0
+	}
 	var connections []models.GeliosConnection
 	if err := database.DB.Where("company_id = ? AND is_active = ?", companyID, true).
 		Find(&connections).Error; err != nil {
@@ -842,9 +1022,11 @@ func fetchGeliosAccountsForUnified(companyID uint, search, accountType, activeSt
 	}
 	connByID := make(map[uint]string, len(connections))
 	connIDs := make([]uint, 0, len(connections))
+	connNameSet := make(map[string]bool, len(connections)) // lowercased имена подключений для scope=mine
 	for _, cn := range connections {
 		connByID[cn.ID] = cn.Name
 		connIDs = append(connIDs, cn.ID)
+		connNameSet[strings.ToLower(strings.TrimSpace(cn.Name))] = true
 	}
 
 	// Аккаунт = биллинг-узел: дилер/админ ИЛИ владелец объектов.
@@ -880,8 +1062,22 @@ func fetchGeliosAccountsForUnified(companyID uint, search, accountType, activeSt
 	} else if activeStr == "false" || activeStr == "0" {
 		q = q.Where("is_block = ?", true)
 	}
+	// COLLATE "und-x-icu": PG с lc_ctype=C не понижает кириллицу через LOWER()
+	// (ГАРАЖ24 → ГАРАЖ24), поэтому имена подключений-кириллицей не матчатся.
+	// ICU case-folding (как в search) даёт корректный lower без миграции схемы.
 	if parent != "" {
-		q = q.Where("LOWER(creator_login) = ?", strings.ToLower(parent))
+		q = q.Where(`LOWER(creator_login COLLATE "und-x-icu") = ?`, strings.ToLower(parent))
+	}
+	// scope=mine: прямые дети = те, чей creator = token-owner (= имя подключения).
+	if mineOnly {
+		if len(connNameSet) == 0 {
+			return nil, 0, 0, 0, 0
+		}
+		names := make([]string, 0, len(connNameSet))
+		for n := range connNameSet {
+			names = append(names, n)
+		}
+		q = q.Where(`LOWER(creator_login COLLATE "und-x-icu") IN ?`, names)
 	}
 
 	var totalCount int64
@@ -937,6 +1133,7 @@ func fetchGeliosAccountsForUnified(companyID uint, search, accountType, activeSt
 			CreationDatetime:  creationDT,
 			ParentAccountName: r.CreatorLogin,
 			Hierarchy:         r.CreatorLogin,
+			IsMine:            connNameSet[strings.ToLower(strings.TrimSpace(r.CreatorLogin))],
 			Source:            "gelios",
 			SourceLabel:       sourceLabel,
 			ConnectionID:      &connID,
