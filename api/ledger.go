@@ -6,6 +6,7 @@ import (
 	"backend_axenta/models"
 	"backend_axenta/services"
 	"fmt"
+	"hash/fnv"
 	"net/http"
 	"strconv"
 	"time"
@@ -334,7 +335,10 @@ type ledgerTransferRequest struct {
 	ToContractID   uint    `json:"to_contract_id" binding:"required"`
 	Amount         float64 `json:"amount" binding:"required"` // положительная сумма
 	Description    string  `json:"description"`
+	IdempotencyKey string  `json:"idempotency_key"` // против дублей retry
 }
+
+var errTransferInsufficient = fmt.Errorf("insufficient funds")
 
 // PostLedgerTransfer — POST /api/auth/ledger/transfer
 // Перевод средств с лицевого счёта одного договора на другой. Атомарно: заголовок
@@ -389,10 +393,30 @@ func PostLedgerTransfer(c *gin.Context) {
 		return
 	}
 
-	amount := decimal.NewFromFloat(req.Amount)
-	if ledgerBalance(req.FromContractID, adminAccountID).LessThan(amount) {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "недостаточно средств на лицевом счёте источника"})
+	// Право на операцию по политике компании (OperationRoleThreshold).
+	if !requireBillingOperation(c, adminAccountID, from.CompanyID) {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "перевод недоступен для вашей роли (см. политику биллинга)"})
 		return
+	}
+
+	amount := decimal.NewFromFloat(req.Amount).Round(2)
+	if amount.LessThanOrEqual(decimal.Zero) {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "сумма перевода должна быть > 0"})
+		return
+	}
+
+	// Идемпотентность: повтор с тем же ключом → вернуть прежний перевод (без дубля).
+	if req.IdempotencyKey != "" {
+		var ex models.LedgerTransfer
+		if database.DB.Where("admin_account_id = ? AND idempotency_key = ?", adminAccountID, req.IdempotencyKey).First(&ex).Error == nil {
+			c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{
+				"transfer_id":  ex.TransferID,
+				"from_balance": ledgerBalance(req.FromContractID, adminAccountID).StringFixed(2),
+				"to_balance":   ledgerBalance(req.ToContractID, adminAccountID).StringFixed(2),
+				"idempotent":   true,
+			}})
+			return
+		}
 	}
 
 	username, _ := c.Get("username")
@@ -405,11 +429,23 @@ func PostLedgerTransfer(c *gin.Context) {
 	if desc == "" {
 		desc = "Перевод между лицевыми счетами"
 	}
+	lockKey := transferLockKey(adminAccountID, req.FromContractID)
 
 	if err := database.DB.Transaction(func(tx *gorm.DB) error {
+		// Анти-double-spend: advisory-lock на источник + пересчёт баланса ВНУТРИ tx.
+		if e := tx.Exec("SELECT pg_advisory_xact_lock(?)", lockKey).Error; e != nil {
+			return e
+		}
+		var bal decimal.Decimal
+		tx.Model(&models.LedgerEntry{}).
+			Where("contract_id = ? AND admin_account_id = ? AND deleted_at IS NULL", req.FromContractID, adminAccountID).
+			Select("COALESCE(SUM(amount),0)").Scan(&bal)
+		if bal.LessThan(amount) {
+			return errTransferInsufficient
+		}
 		hdr := models.LedgerTransfer{
 			AdminAccountID: adminAccountID, CompanyID: from.CompanyID,
-			TransferID: transferID, FromContractID: req.FromContractID, ToContractID: req.ToContractID,
+			TransferID: transferID, IdempotencyKey: req.IdempotencyKey, FromContractID: req.FromContractID, ToContractID: req.ToContractID,
 			Amount: amount, Currency: fromCcy, Status: "completed", Description: desc, CreatedBy: createdBy,
 		}
 		if err := tx.Create(&hdr).Error; err != nil {
@@ -432,6 +468,10 @@ func PostLedgerTransfer(c *gin.Context) {
 		}
 		return tx.Create(&in).Error
 	}); err != nil {
+		if err == errTransferInsufficient {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "недостаточно средств на лицевом счёте источника"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "ошибка перевода: " + err.Error()})
 		return
 	}
@@ -441,4 +481,11 @@ func PostLedgerTransfer(c *gin.Context) {
 		"from_balance": ledgerBalance(req.FromContractID, adminAccountID).StringFixed(2),
 		"to_balance":   ledgerBalance(req.ToContractID, adminAccountID).StringFixed(2),
 	}})
+}
+
+// transferLockKey — стабильный int64 для pg_advisory_xact_lock (admin+contract).
+func transferLockKey(adminAccountID, contractID uint) int64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(fmt.Sprintf("ledger_transfer:%d:%d", adminAccountID, contractID)))
+	return int64(h.Sum64() >> 1)
 }

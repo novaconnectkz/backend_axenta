@@ -60,7 +60,8 @@ type LedgerTransfer struct {
 	AdminAccountID uint `json:"admin_account_id" gorm:"not null;index"`
 	CompanyID      uint `json:"company_id" gorm:"not null;index"`
 
-	TransferID     string          `json:"transfer_id" gorm:"not null;uniqueIndex;type:varchar(64)"` // UUID, связь пары проводок
+	TransferID     string          `json:"transfer_id" gorm:"not null;uniqueIndex;type:varchar(64)"`                                          // UUID, связь пары проводок
+	IdempotencyKey string          `json:"idempotency_key" gorm:"uniqueIndex:idx_transfer_idem,where:idempotency_key <> '';type:varchar(64)"` // клиентский ключ против дублей retry
 	FromContractID uint            `json:"from_contract_id" gorm:"not null;index"`
 	ToContractID   uint            `json:"to_contract_id" gorm:"not null;index"`
 	Amount         decimal.Decimal `json:"amount" gorm:"not null;type:decimal(15,2)"` // положительная сумма перевода

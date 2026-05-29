@@ -118,6 +118,25 @@ func managerCanAccessContract(c *gin.Context, contractID uint) bool {
 	return count > 0
 }
 
+// requireBillingOperation — разрешена ли операция (перевод/отсрочка/обещание) по
+// политике OperationRoleThreshold компании. admin/superadmin — всегда; manager —
+// только если threshold='manager'. Иначе (нет политики / прочие роли) — deny.
+func requireBillingOperation(c *gin.Context, adminAccountID, companyID uint) bool {
+	if requireContractAssignAccess(c) {
+		return true // admin/superadmin
+	}
+	if !isManagerScoped(c) {
+		return false // не manager и не admin → deny
+	}
+	var bs models.BillingSettings
+	if err := database.DB.Table("public.billing_settings").
+		Where("company_id = ? AND admin_account_id = ?", companyID, adminAccountID).
+		First(&bs).Error; err != nil {
+		return false // нет политики → deny
+	}
+	return bs.OperationRoleThreshold == models.RoleManager
+}
+
 // resolveManagerName проверяет, что назначаемый пользователь существует и имеет
 // допустимую роль (manager/admin), и возвращает денорм-имя. ok=false → назначение
 // невалидно (нельзя привязать произвольного local_user как менеджера).
