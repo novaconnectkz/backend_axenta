@@ -208,6 +208,16 @@ type BillingSettings struct {
 
 	// Настройки тарификации объектов
 	MinDaysForFullMonth int `json:"min_days_for_full_month" gorm:"default:5"` // Минимальное количество дней присутствия объекта в месяце для начисления полного месяца
+
+	// ===== Политика биллинга (П0 governance, правит только admin/superadmin) =====
+	// Определяет рамки для операторов: режим, лимиты, что разрешено в компании.
+	DefaultBillingMode     string          `json:"default_billing_mode" gorm:"default:'prepaid';type:varchar(20)"` // prepaid | postpaid — дефолт для новых договоров
+	AllowPostpaid          bool            `json:"allow_postpaid" gorm:"default:false"`                           // разрешена ли постоплата в компании
+	AllowPromisedPayments  bool            `json:"allow_promised_payments" gorm:"default:false"`                  // разрешены ли обещанные платежи
+	MaxCreditLimit         decimal.Decimal `json:"max_credit_limit" gorm:"type:decimal(15,2);default:0"`          // потолок кредит-лимита (долга) для постоплаты
+	MaxDeferralDays        int             `json:"max_deferral_days" gorm:"default:0"`                            // макс. отсрочка платежа для операторов (дней)
+	RateSource             string          `json:"rate_source" gorm:"default:'cbr_rf';type:varchar(20)"`          // источник курса валют: cbr_rf | nbk_kz | none (мультивалюта, П5)
+	OperationRoleThreshold string          `json:"operation_role_threshold" gorm:"default:'admin';type:varchar(20)"` // мин. роль для перевод/отсрочка/обещание
 }
 
 // TableName задает имя таблицы для модели BillingSettings

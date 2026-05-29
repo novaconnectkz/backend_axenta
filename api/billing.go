@@ -3166,6 +3166,23 @@ func GetOverdueInvoices(c *gin.Context) {
 	})
 }
 
+// requireBillingAdmin — guard: политику биллинга правят только admin/superadmin.
+// Возвращает false и пишет 403, если роль не подходит.
+func requireBillingAdmin(c *gin.Context) bool {
+	if v, _ := c.Get("is_superadmin"); v == true {
+		return true
+	}
+	role, _ := c.Get("role")
+	if r, ok := role.(string); ok && (r == "admin" || r == "superadmin") {
+		return true
+	}
+	c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+		"status": "error",
+		"error":  "Настройки биллинга доступны только администратору",
+	})
+	return false
+}
+
 // GetBillingSettings получает настройки биллинга для компании
 func GetBillingSettings(c *gin.Context) {
 	adminAccountID, err := middleware.GetAdminAccountID(c)
@@ -3276,6 +3293,14 @@ func GetBillingSettings(c *gin.Context) {
 				ContractDefaultNumeratorID: nil,
 				Bitrix24DealNumberField:    "",
 				AutopilotEnabled:           true, // Автопилот включен по умолчанию
+				// Политика биллинга (П0) — безопасные дефолты.
+				DefaultBillingMode:     "prepaid",
+				AllowPostpaid:          false,
+				AllowPromisedPayments:  false,
+				MaxCreditLimit:         decimal.Zero,
+				MaxDeferralDays:        0,
+				RateSource:             "cbr_rf",
+				OperationRoleThreshold: "admin",
 			}
 
 			fmt.Printf("GetBillingSettings: настройки не найдены, создаем по умолчанию для admin_account_id=%d, company_id=%d\n", adminAccountID, companyID)
@@ -3365,6 +3390,11 @@ func isUniqueConstraintError(err error) bool {
 
 // UpdateBillingSettings обновляет настройки биллинга
 func UpdateBillingSettings(c *gin.Context) {
+	// Политика биллинга (валюта/НДС/режим/лимиты) — только admin/superadmin.
+	// FE-гейт декоративен, реальная защита здесь.
+	if !requireBillingAdmin(c) {
+		return
+	}
 	adminAccountID, err := middleware.GetAdminAccountID(c)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{
@@ -3462,6 +3492,14 @@ func UpdateBillingSettings(c *gin.Context) {
 				ContractDefaultNumeratorID: nil,
 				Bitrix24DealNumberField:    "",
 				AutopilotEnabled:           true, // Автопилот включен по умолчанию
+				// Политика биллинга (П0) — безопасные дефолты.
+				DefaultBillingMode:     "prepaid",
+				AllowPostpaid:          false,
+				AllowPromisedPayments:  false,
+				MaxCreditLimit:         decimal.Zero,
+				MaxDeferralDays:        0,
+				RateSource:             "cbr_rf",
+				OperationRoleThreshold: "admin",
 			}
 
 			if err := db.Create(&settings).Error; err != nil {
