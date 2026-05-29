@@ -3433,8 +3433,10 @@ func UpdateBillingSettings(c *gin.Context) {
 	}
 
 	var settings models.BillingSettings
-	// Пытаемся найти настройки для данной пары admin/company
-	err = db.Where("company_id = ? AND admin_account_id = ?", uint(companyID), adminAccountID).First(&settings).Error
+	// Пытаемся найти настройки для данной пары admin/company.
+	// Table("public.billing_settings") — НЕ зависим от search_path на пуле-коннекте
+	// (иначе на части соединений строка не находилась → ложный create → pkey dup).
+	err = db.Table("public.billing_settings").Where("company_id = ? AND admin_account_id = ?", uint(companyID), adminAccountID).First(&settings).Error
 
 	if err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -3447,7 +3449,7 @@ func UpdateBillingSettings(c *gin.Context) {
 
 		// Настройки не найдены - пытаемся найти по company_id без учета admin_account_id
 		var companySettings models.BillingSettings
-		if err := db.Where("company_id = ?", uint(companyID)).First(&companySettings).Error; err == nil {
+		if err := db.Table("public.billing_settings").Where("company_id = ?", uint(companyID)).First(&companySettings).Error; err == nil {
 			// Нашли настройки компании, обновляем admin_account_id
 			companySettings.AdminAccountID = adminAccountID
 			if saveErr := db.Save(&companySettings).Error; saveErr != nil {
@@ -3502,7 +3504,7 @@ func UpdateBillingSettings(c *gin.Context) {
 				OperationRoleThreshold: "admin",
 			}
 
-			if err := db.Create(&settings).Error; err != nil {
+			if err := db.Table("public.billing_settings").Create(&settings).Error; err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{
 					"status": "error",
 					"error":  "Ошибка создания настроек биллинга",
@@ -3567,12 +3569,16 @@ func UpdateBillingSettings(c *gin.Context) {
 		}
 	}
 
-	updateData.AdminAccountID = 0
+	// Сохраняем идентификаторы строки: Select("*") пишет ВСЕ поля, а zero-значения
+	// updateData затёрли бы admin_account_id/company_id (раньше был баг — обнулялись).
+	updateData.ID = settings.ID
+	updateData.AdminAccountID = settings.AdminAccountID
+	updateData.CompanyID = settings.CompanyID
 
 	// ВАЖНО: Updates() пропускает zero values (включая false для bool).
 	// Используем Select() для явного указания полей, которые нужно обновить
 	fmt.Printf("🔄 Обновляем настройки для settings.ID=%d\n", settings.ID)
-	if err := db.Model(&settings).Select("*").Updates(updateData).Error; err != nil {
+	if err := db.Table("public.billing_settings").Where("id = ?", settings.ID).Select("*").Updates(updateData).Error; err != nil {
 		fmt.Printf("❌ ОШИБКА при обновлении настроек: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
@@ -3584,7 +3590,7 @@ func UpdateBillingSettings(c *gin.Context) {
 
 	// Перезагружаем обновленные настройки из БД
 	fmt.Printf("🔄 Перезагружаем настройки из БД...\n")
-	if err := db.Where("id = ?", settings.ID).First(&settings).Error; err != nil {
+	if err := db.Table("public.billing_settings").Where("id = ?", settings.ID).First(&settings).Error; err != nil {
 		fmt.Printf("❌ ОШИБКА при получении обновленных настроек: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
