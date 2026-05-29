@@ -594,7 +594,7 @@ func (s *LedgerChargeScheduler) GetStatus() map[string]interface{} {
 
 var errChargeExists = fmt.Errorf("ledger auto_charge already exists")
 
-// cachedRate — закэшированный результат GetRate (П5 #6).
+// cachedRate — закэшированный результат конверсии (П5 #6).
 type cachedRate struct {
 	rate     decimal.Decimal
 	rateDate time.Time
@@ -602,20 +602,16 @@ type cachedRate struct {
 	err      error
 }
 
-// getRateCached — GetRate с кэшем на прогон компании + ограничение источника (Codex #5).
-// cbr_rf котирует только в RUB → если валюта договора не RUB, прямой пары нет и
-// inverse/cross пока не поддержан: возвращаем ошибку (подписка стопнётся с понятным логом),
-// а не молча начисляем неверно.
+// getRateCached — курс конверсии base→quote с кэшем на прогон компании. Использует
+// GetConversionRate (pivot источника): прямой / inverse / cross. Для cbr_rf (pivot=RUB)
+// договор в RUB = прямой курс план→RUB, договор в иной валюте = inverse/cross через RUB
+// (П5 backlog: inverse/cross в charge). rate всегда >0, иначе err.
 func (s *LedgerChargeScheduler) getRateCached(cache map[string]cachedRate, day time.Time, base, quote, source string) (decimal.Decimal, time.Time, bool, error) {
-	if source == "cbr_rf" && quote != "RUB" {
-		return decimal.Zero, time.Time{}, false,
-			fmt.Errorf("источник cbr_rf поддерживает только котировку в RUB (договор в %s — нужен другой источник/inverse, не реализовано)", quote)
-	}
 	key := fmt.Sprintf("%s|%s|%s|%s", day.Format("2006-01-02"), base, quote, source)
 	if c, ok := cache[key]; ok {
 		return c.rate, c.rateDate, c.stale, c.err
 	}
-	rate, rateDate, stale, err := s.rateSvc.GetRate(day, base, quote, source)
+	rate, rateDate, stale, err := s.rateSvc.GetConversionRate(day, base, quote, source)
 	cache[key] = cachedRate{rate: rate, rateDate: rateDate, stale: stale, err: err}
 	return rate, rateDate, stale, err
 }

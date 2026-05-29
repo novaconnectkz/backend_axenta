@@ -124,32 +124,46 @@ func TestNoDoubleRounding(t *testing.T) {
 	assert.False(t, roundedFirst.Equal(rawPath), "пути должны различаться — в этом и баг")
 }
 
-// getRateCached: cbr_rf поддерживает только quote=RUB (Codex #5) + кэш-хит.
-func TestGetRateCached_SourceLimit(t *testing.T) {
+// getRateCached: конверсия через pivot (прямой/inverse/cross) + кэш-хит (П5 backlog).
+func TestGetRateCached(t *testing.T) {
 	s := &LedgerChargeScheduler{rateSvc: setupRateTestSvc(t)}
 	mk := func(base, rate string) {
 		require.NoError(t, s.rateSvc.db.Create(&models.CurrencyRate{
 			RateDate: day(2026, 5, 29), BaseCcy: base, QuoteCcy: "RUB", Source: "cbr_rf", Rate: d(rate),
 		}).Error)
 	}
-	mk("EUR", "83.68")
+	mk("EUR", "100.00")
+	mk("USD", "80.00")
+	dt := day(2026, 5, 29)
 	cache := map[string]cachedRate{}
 
-	// quote != RUB для cbr_rf → ошибка (inverse/cross не реализован).
-	_, _, _, err := s.getRateCached(cache, day(2026, 5, 29), "USD", "KZT", "cbr_rf")
-	assert.Error(t, err, "cbr_rf с quote=KZT должен дать ошибку")
-
-	// quote=RUB → ок + кэшируется.
-	r, _, _, err := s.getRateCached(cache, day(2026, 5, 29), "EUR", "RUB", "cbr_rf")
+	// Прямой план→RUB (договор в RUB).
+	r, _, _, err := s.getRateCached(cache, dt, "EUR", "RUB", "cbr_rf")
 	require.NoError(t, err)
-	assert.True(t, r.Equal(d("83.68")))
-	assert.Len(t, cache, 1, "результат должен попасть в кэш")
-
-	// Повторный вызов — из кэша (тот же ключ).
-	r2, _, _, err := s.getRateCached(cache, day(2026, 5, 29), "EUR", "RUB", "cbr_rf")
-	require.NoError(t, err)
-	assert.True(t, r2.Equal(d("83.68")))
+	assert.True(t, r.Equal(d("100")), "EUR→RUB got %s", r)
 	assert.Len(t, cache, 1)
+
+	// inverse RUB→X (план в RUB, договор в EUR) — раньше стопил подписку, теперь ок.
+	r, _, _, err = s.getRateCached(cache, dt, "RUB", "EUR", "cbr_rf")
+	require.NoError(t, err)
+	assert.True(t, r.Equal(d("0.01")), "RUB→EUR got %s", r)
+	assert.Len(t, cache, 2)
+
+	// cross X→Y (план EUR, договор USD) — раньше стопил, теперь 100/80=1.25.
+	r, _, _, err = s.getRateCached(cache, dt, "EUR", "USD", "cbr_rf")
+	require.NoError(t, err)
+	assert.True(t, r.Equal(d("1.25")), "EUR→USD got %s", r)
+	assert.Len(t, cache, 3)
+
+	// Повторный cross — из кэша, новый ключ не добавляется.
+	r2, _, _, err := s.getRateCached(cache, dt, "EUR", "USD", "cbr_rf")
+	require.NoError(t, err)
+	assert.True(t, r2.Equal(d("1.25")))
+	assert.Len(t, cache, 3)
+
+	// Нет курса в одном из звеньев cross → ошибка (стоп подписки).
+	_, _, _, err = s.getRateCached(cache, dt, "GBP", "USD", "cbr_rf")
+	assert.Error(t, err, "GBP→USD без курса GBP→RUB должен дать ошибку")
 }
 
 func setupChargeTestDB(t *testing.T) *gorm.DB {

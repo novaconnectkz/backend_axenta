@@ -438,7 +438,7 @@ func PostLedgerTransfer(c *gin.Context) {
 			Where("company_id = ?", from.CompanyID).Select("rate_source").First(&bs).Error == nil && bs.RateSource != "" {
 			rateSource = bs.RateSource
 		}
-		r, stale, rerr := currencyRateService().GetConversionRate(time.Now().UTC(), fromCcy, toCcy, rateSource)
+		r, _, stale, rerr := currencyRateService().GetConversionRate(time.Now().UTC(), fromCcy, toCcy, rateSource)
 		if rerr != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "нет курса для конверсии " + fromCcy + "→" + toCcy + ": " + rerr.Error()})
 			return

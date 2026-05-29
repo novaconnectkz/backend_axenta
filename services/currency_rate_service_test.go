@@ -161,34 +161,53 @@ func TestGetConversionRate(t *testing.T) {
 	mk("USD", "80.00")
 	dt := day(2026, 5, 29)
 
-	// same → 1.
-	r, _, err := s.GetConversionRate(dt, "RUB", "RUB", "cbr_rf")
+	// same → 1, rateDate = день запроса.
+	r, rd, _, err := s.GetConversionRate(dt, "RUB", "RUB", "cbr_rf")
 	require.NoError(t, err)
 	assert.True(t, r.Equal(d("1")))
+	assert.True(t, rd.Equal(dt), "same-ccy rateDate got %s", rd)
 
 	// прямой X→RUB (to==pivot): EUR→RUB = 100.
-	r, _, err = s.GetConversionRate(dt, "EUR", "RUB", "cbr_rf")
+	r, rd, _, err = s.GetConversionRate(dt, "EUR", "RUB", "cbr_rf")
 	require.NoError(t, err)
 	assert.True(t, r.Equal(d("100")), "EUR→RUB got %s", r)
+	assert.True(t, rd.Equal(day(2026, 5, 29)), "EUR→RUB rateDate got %s", rd)
 
 	// inverse RUB→X (from==pivot): RUB→EUR = 1/100 = 0.01.
-	r, _, err = s.GetConversionRate(dt, "RUB", "EUR", "cbr_rf")
+	r, _, _, err = s.GetConversionRate(dt, "RUB", "EUR", "cbr_rf")
 	require.NoError(t, err)
 	assert.True(t, r.Equal(d("0.01")), "RUB→EUR got %s", r)
 
 	// cross X→Y через RUB: EUR→USD = 100/80 = 1.25.
-	r, _, err = s.GetConversionRate(dt, "EUR", "USD", "cbr_rf")
+	r, _, _, err = s.GetConversionRate(dt, "EUR", "USD", "cbr_rf")
 	require.NoError(t, err)
 	assert.True(t, r.Equal(d("1.25")), "EUR→USD got %s", r)
 
 	// обратный cross USD→EUR = 80/100 = 0.8.
-	r, _, err = s.GetConversionRate(dt, "USD", "EUR", "cbr_rf")
+	r, _, _, err = s.GetConversionRate(dt, "USD", "EUR", "cbr_rf")
 	require.NoError(t, err)
 	assert.True(t, r.Equal(d("0.8")), "USD→EUR got %s", r)
 
 	// нет курса → ошибка.
-	_, _, err = s.GetConversionRate(dt, "GBP", "RUB", "cbr_rf")
+	_, _, _, err = s.GetConversionRate(dt, "GBP", "RUB", "cbr_rf")
 	assert.Error(t, err)
+}
+
+// cross с разными датами курсов → rateDate = более поздняя из двух (П5 backlog).
+func TestGetConversionRate_CrossEffectiveDate(t *testing.T) {
+	s := setupRateTestSvc(t)
+	// EUR котирован 27-го, USD — 29-го. Запрос на 29-е: EUR подтянется fallback'ом с 27-го,
+	// USD — с 29-го. effDate = max(27, 29) = 29.
+	require.NoError(t, s.db.Create(&models.CurrencyRate{
+		RateDate: day(2026, 5, 27), BaseCcy: "EUR", QuoteCcy: "RUB", Source: "cbr_rf", Rate: d("100.00"),
+	}).Error)
+	require.NoError(t, s.db.Create(&models.CurrencyRate{
+		RateDate: day(2026, 5, 29), BaseCcy: "USD", QuoteCcy: "RUB", Source: "cbr_rf", Rate: d("80.00"),
+	}).Error)
+	r, rd, _, err := s.GetConversionRate(day(2026, 5, 29), "EUR", "USD", "cbr_rf")
+	require.NoError(t, err)
+	assert.True(t, r.Equal(d("1.25")), "EUR→USD got %s", r)
+	assert.True(t, rd.Equal(day(2026, 5, 29)), "cross effDate должен быть max(27,29)=29, got %s", rd)
 }
 
 func TestUpsertRates_Idempotent(t *testing.T) {

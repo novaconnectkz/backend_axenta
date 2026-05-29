@@ -212,12 +212,14 @@ func (s *CurrencyRateService) GetRate(date time.Time, base, quote, source string
 //   - from==pivot → inverse 1/(to→pivot) (RUB→X);
 //   - оба ≠ pivot → cross (from→pivot)/(to→pivot) (X→RUB→Y).
 // stale=true если ЛЮБОЙ задействованный курс устарел. err — если любого курса нет.
-// Возвращает rate (>0) с округлением до 8 знаков.
-func (s *CurrencyRateService) GetConversionRate(date time.Time, from, to, source string) (rate decimal.Decimal, stale bool, err error) {
+// rateDate — эффективная дата курса для аудита/Metadata: для cross берётся БОЛЕЕ ПОЗДНЯЯ
+// из двух задействованных дат (самый «свежий» использованный fallback). Для same-ccy — день
+// запроса. Возвращает rate (>0) с округлением до 8 знаков.
+func (s *CurrencyRateService) GetConversionRate(date time.Time, from, to, source string) (rate decimal.Decimal, rateDate time.Time, stale bool, err error) {
 	from = strings.ToUpper(from)
 	to = strings.ToUpper(to)
 	if from == to {
-		return decimal.NewFromInt(1), false, nil
+		return decimal.NewFromInt(1), dayFloor(date.UTC()), false, nil
 	}
 	pivot := quoteCcyForSource(source)
 
@@ -225,38 +227,43 @@ func (s *CurrencyRateService) GetConversionRate(date time.Time, from, to, source
 	// внутри сервиса, не полагаясь на вызывающего (Codex #4).
 	switch {
 	case to == pivot:
-		r, _, st, e := s.GetRate(date, from, pivot, source)
+		r, rd, st, e := s.GetRate(date, from, pivot, source)
 		if e != nil {
-			return decimal.Zero, false, e
+			return decimal.Zero, time.Time{}, false, e
 		}
 		if r.LessThanOrEqual(decimal.Zero) {
-			return decimal.Zero, false, fmt.Errorf("некорректный курс %s→%s = %s", from, pivot, r)
+			return decimal.Zero, time.Time{}, false, fmt.Errorf("некорректный курс %s→%s = %s", from, pivot, r)
 		}
-		return r, st, nil
+		return r, rd, st, nil
 	case from == pivot:
-		r, _, st, e := s.GetRate(date, to, pivot, source)
+		r, rd, st, e := s.GetRate(date, to, pivot, source)
 		if e != nil {
-			return decimal.Zero, false, e
+			return decimal.Zero, time.Time{}, false, e
 		}
 		if r.LessThanOrEqual(decimal.Zero) {
-			return decimal.Zero, false, fmt.Errorf("некорректный курс %s→%s = %s", to, pivot, r)
+			return decimal.Zero, time.Time{}, false, fmt.Errorf("некорректный курс %s→%s = %s", to, pivot, r)
 		}
-		return decimal.NewFromInt(1).Div(r).Round(8), st, nil
+		return decimal.NewFromInt(1).Div(r).Round(8), rd, st, nil
 	default:
-		rFrom, _, st1, e1 := s.GetRate(date, from, pivot, source)
+		rFrom, rdFrom, st1, e1 := s.GetRate(date, from, pivot, source)
 		if e1 != nil {
-			return decimal.Zero, false, e1
+			return decimal.Zero, time.Time{}, false, e1
 		}
-		rTo, _, st2, e2 := s.GetRate(date, to, pivot, source)
+		rTo, rdTo, st2, e2 := s.GetRate(date, to, pivot, source)
 		if e2 != nil {
-			return decimal.Zero, false, e2
+			return decimal.Zero, time.Time{}, false, e2
 		}
 		if rFrom.LessThanOrEqual(decimal.Zero) {
-			return decimal.Zero, false, fmt.Errorf("некорректный курс %s→%s = %s", from, pivot, rFrom)
+			return decimal.Zero, time.Time{}, false, fmt.Errorf("некорректный курс %s→%s = %s", from, pivot, rFrom)
 		}
 		if rTo.LessThanOrEqual(decimal.Zero) {
-			return decimal.Zero, false, fmt.Errorf("некорректный курс %s→%s = %s", to, pivot, rTo)
+			return decimal.Zero, time.Time{}, false, fmt.Errorf("некорректный курс %s→%s = %s", to, pivot, rTo)
 		}
-		return rFrom.Div(rTo).Round(8), st1 || st2, nil
+		// rateDate = более поздняя из двух (самый свежий fallback задействован в cross).
+		effDate := rdFrom
+		if rdTo.After(effDate) {
+			effDate = rdTo
+		}
+		return rFrom.Div(rTo).Round(8), effDate, st1 || st2, nil
 	}
 }
