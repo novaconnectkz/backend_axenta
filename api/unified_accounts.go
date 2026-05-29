@@ -826,10 +826,11 @@ func fetchSkifAccountsForUnified(companyID uint, search, accountType, activeStr,
 		}
 	}
 
-	// Statuses map: skif_company_id → CompanyStatus (ACTIVE/BLOCKED/...)
+	// Statuses map: skif_company_id → CompanyStatus (ACTIVE/BLOCKED/...) + owning dealer.
 	type statusInfo struct {
 		Status            string
 		TerminalBlockType string
+		DealerID          string
 	}
 	statusMap := make(map[string]statusInfo)
 	var statuses []models.SkifCompanyStatus
@@ -838,8 +839,23 @@ func fetchSkifAccountsForUnified(companyID uint, search, accountType, activeStr,
 		Where("sc.company_id = ?", companyID).
 		Find(&statuses).Error; err == nil {
 		for _, st := range statuses {
-			statusMap[st.SkifCompanyID] = statusInfo{Status: st.CompanyStatus, TerminalBlockType: st.TerminalBlockType}
+			statusMap[st.SkifCompanyID] = statusInfo{Status: st.CompanyStatus, TerminalBlockType: st.TerminalBlockType, DealerID: st.SkifDealerID}
 		}
+	}
+
+	// Субдилеры (skif_dealers) — наши прямые дилеры под интегратором (parent = наш интегратор).
+	// Загружаем заранее: используем для (1) классификации компаний (компания под субдилером =
+	// внук, НЕ mine; её parent = имя субдилера) и (2) вывода самих субдилеров как mine.
+	var dealers []models.SkifDealer
+	if err := database.DB.
+		Joins("JOIN skif_connections sc ON sc.id = skif_dealers.connection_id").
+		Where("sc.company_id = ? AND skif_dealers.hidden = ?", companyID, false).
+		Find(&dealers).Error; err != nil {
+		log.Printf("⚠️ unified/accounts skif dealers: %v", err)
+	}
+	subdealerNameByID := make(map[string]string, len(dealers))
+	for _, d := range dealers {
+		subdealerNameByID[d.SkifDealerID] = d.Name
 	}
 	// SkifCompany считается активной если у неё есть хотя бы один активный юнит.
 	// Источник created_at — MIN(skif_created_at) по юнитам компании.
@@ -904,8 +920,20 @@ func fetchSkifAccountsForUnified(companyID uint, search, accountType, activeStr,
 		if pattern != "" && !strings.Contains(strings.ToLower(r.Name), pattern) {
 			continue
 		}
-		// parent для SKIF — имя SkifConnection (дилеры висят под connection как под "партнёром").
-		if parent != "" && r.ConnectionName != parent {
+		// Родитель компании = её владелец-дилер. Если dealer ∈ субдилеры → компания
+		// внук (parent = имя субдилера, НЕ mine). Иначе компания прямо под нашим
+		// интегратором (parent = имя подключения, mine).
+		dealerID := statusMap[r.SkifCompanyID].DealerID
+		subName, underSubdealer := subdealerNameByID[dealerID]
+		parentLabel := r.ConnectionName
+		if underSubdealer {
+			parentLabel = subName
+		}
+		isMineCompany := !underSubdealer
+		if parent != "" && parentLabel != parent {
+			continue
+		}
+		if mineOnly && !isMineCompany {
 			continue
 		}
 
@@ -919,7 +947,7 @@ func fetchSkifAccountsForUnified(companyID uint, search, accountType, activeStr,
 			ID:                int(connID)*1000000 + hashSkifID(r.SkifCompanyID), // synthetic — UnifiedAccount.ID должен быть int
 			Name:              r.Name,
 			Type:              "client",
-			ParentAccountName: r.ConnectionName,
+			ParentAccountName: parentLabel,
 			ObjectsTotal:      r.ObjectsTotal,
 			ObjectsActive:     r.ObjectsActive,
 			IsActive:          isActive,
@@ -927,7 +955,7 @@ func fetchSkifAccountsForUnified(companyID uint, search, accountType, activeStr,
 			SourceLabel:       "SKIF",
 			ConnectionID:      &connID,
 			SkifCompanyID:     r.SkifCompanyID,
-			IsMine:            true, // компании висят прямо под нашим SKIF-подключением
+			IsMine:            isMineCompany,
 		}
 		// Приоритет: skif_object_created (точная дата из /updates/query)
 		// > skif_units.skif_created_at > skif_units.created_at (наш sync).
@@ -943,20 +971,12 @@ func fetchSkifAccountsForUnified(companyID uint, search, accountType, activeStr,
 		items = append(items, ua)
 	}
 
-	// Subdealers (type=partner) — добавляем отдельными строками если accountType
-	// не равен "client" (для type=client фильтра показываем только компании).
-	// При scope=mine субдилеры исключаются: их parent — дилер выше, не наше подключение.
-	if !mineOnly && (accountType != "partner" && accountType != "client" || accountType == "partner") {
-		var dealers []models.SkifDealer
-		if err := database.DB.
-			Joins("JOIN skif_connections sc ON sc.id = skif_dealers.connection_id").
-			Where("sc.company_id = ? AND skif_dealers.hidden = ?", companyID, false).
-			Find(&dealers).Error; err == nil {
+	// Subdealers (type=partner) — наши прямые дилеры под интегратором → mine.
+	// Показываем если accountType не "client" (для type=client — только компании).
+	if accountType != "client" {
+		{
 			for _, d := range dealers {
 				dealerActive := !d.Blocked
-				if accountType == "client" {
-					continue
-				}
 				switch activeStr {
 				case "true", "1":
 					if !dealerActive {
@@ -991,6 +1011,7 @@ func fetchSkifAccountsForUnified(companyID uint, search, accountType, activeStr,
 					ConnectionID:      &connID,
 					SkifCompanyID:     d.SkifDealerID, // synthetic — для UI идентификации
 					DealerRights:      true,
+					IsMine:            true, // субдилер = прямой ребёнок нашего интегратора
 					CreationDatetime:  d.CreatedAt.Format(time.RFC3339),
 				}
 				items = append(items, ua)
