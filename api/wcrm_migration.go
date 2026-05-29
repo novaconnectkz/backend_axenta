@@ -254,6 +254,42 @@ func parseWcrmDate(s string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
+// contractPeriodFromAppendices вычисляет период договора из ВКЛЮЧЁННЫХ приложений:
+// StartDate = min(start), EndDate = max(end). Конец приложения = parse(end_date) либо
+// start + period месяцев (в WCRM end часто 0000-00-00). Возвращает (start, end, ok);
+// ok=false если нет включённых приложений с валидной датой старта → caller берёт даты договора.
+// Период договора в WCRM (ct.StartDate) — дата подписания, не отражает реальный срок услуги;
+// пользователь хочет видеть период по приложению.
+func contractPeriodFromAppendices(ct wcrmContract) (time.Time, *time.Time, bool) {
+	var minStart time.Time
+	var maxEnd *time.Time
+	found := false
+	for _, ap := range ct.Appendices {
+		if ap.Enabled == 0 {
+			continue
+		}
+		st, okS := parseWcrmDate(ap.StartDate)
+		if !okS {
+			continue
+		}
+		if !found || st.Before(minStart) {
+			minStart = st
+		}
+		found = true
+		var en *time.Time
+		if e, okE := parseWcrmDate(ap.EndDate); okE {
+			en = &e
+		} else if ap.Period > 0 {
+			e := st.AddDate(0, ap.Period, 0)
+			en = &e
+		}
+		if en != nil && (maxEnd == nil || en.After(*maxEnd)) {
+			maxEnd = en
+		}
+	}
+	return minStart, maxEnd, found
+}
+
 // deriveContractStatus: active если end_date пуст или в будущем, иначе expired.
 func deriveContractStatus(endStr *string) (string, bool) {
 	if endStr == nil {
@@ -452,13 +488,23 @@ func GetWcrmMigrationPreview(c *gin.Context) {
 			if ct.EndDate != nil {
 				endStr = *ct.EndDate
 			}
+			// Период по приложениям (как при import), а не дата подписания договора.
+			ctStartStr, ctEndStr := ct.StartDate, endStr
+			if s, e, ok := contractPeriodFromAppendices(ct); ok {
+				ctStartStr = s.Format("2006-01-02")
+				if e != nil {
+					ctEndStr = e.Format("2006-01-02")
+				} else {
+					ctEndStr = ""
+				}
+			}
 			cand.Contracts = append(cand.Contracts, wcrmPreviewContract{
 				WcrmContractID: ct.WcrmContractID,
 				SourceNumber:   ct.Number,
 				TargetNumber:   target,
 				NumberConflict: conflict,
-				StartDate:      ct.StartDate,
-				EndDate:        endStr,
+				StartDate:      ctStartStr,
+				EndDate:        ctEndStr,
 				Status:         status,
 				AppendixCount:  len(ct.Appendices),
 				BadDates:       badDates,
@@ -625,13 +671,20 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 			// Договор активен (есть включённое приложение, прошёл skip выше).
 			status := "active"
 			isActive := true
+			// Период договора = min/max по включённым приложениям (дата старта приложения,
+			// не дата подписания договора). Fallback на даты договора если приложений с датой нет.
 			var startPtr, endPtr *time.Time
-			if t, ok := parseWcrmDate(ct.StartDate); ok {
-				startPtr = &t
-			}
-			if ct.EndDate != nil {
-				if t, ok := parseWcrmDate(*ct.EndDate); ok {
-					endPtr = &t
+			if s, e, ok := contractPeriodFromAppendices(ct); ok {
+				startPtr = &s
+				endPtr = e
+			} else {
+				if t, ok := parseWcrmDate(ct.StartDate); ok {
+					startPtr = &t
+				}
+				if ct.EndDate != nil {
+					if t, ok := parseWcrmDate(*ct.EndDate); ok {
+						endPtr = &t
+					}
 				}
 			}
 
