@@ -5,6 +5,7 @@ import (
 	"backend_axenta/middleware"
 	"backend_axenta/models"
 	"backend_axenta/services"
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"net/http"
@@ -19,6 +20,9 @@ import (
 
 // ledgerChargeScheduler — глобальный экземпляр для ручного триггера.
 var ledgerChargeScheduler *services.LedgerChargeScheduler
+
+// currencyRateSvc — сервис курсов для кросс-валютного перевода (П5 фаза 3).
+var currencyRateSvc = services.NewCurrencyRateService()
 
 // SetLedgerChargeScheduler регистрирует scheduler (вызывается из main).
 func SetLedgerChargeScheduler(s *services.LedgerChargeScheduler) {
@@ -388,10 +392,6 @@ func PostLedgerTransfer(c *gin.Context) {
 	if toCcy == "" {
 		toCcy = "RUB"
 	}
-	if fromCcy != toCcy {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "перевод между разными валютами пока не поддерживается"})
-		return
-	}
 
 	// Право на операцию по политике компании (OperationRoleThreshold).
 	if !requireBillingOperation(c, adminAccountID, from.CompanyID) {
@@ -405,7 +405,9 @@ func PostLedgerTransfer(c *gin.Context) {
 		return
 	}
 
-	// Идемпотентность: повтор с тем же ключом → вернуть прежний перевод (без дубля).
+	// Идемпотентность ДО конверсии (Codex #1): повтор уже созданного перевода должен
+	// вернуть прежний результат независимо от текущих курсов (иначе retry упадёт, если
+	// курс сегодня пропал/устарел). Проверяем сразу после загрузки договоров.
 	if req.IdempotencyKey != "" {
 		var ex models.LedgerTransfer
 		if database.DB.Where("admin_account_id = ? AND idempotency_key = ?", adminAccountID, req.IdempotencyKey).First(&ex).Error == nil {
@@ -419,12 +421,63 @@ func PostLedgerTransfer(c *gin.Context) {
 		}
 	}
 
+	// Кросс-валютный перевод (П5 фаза 3): сумма списания у источника (fromCcy) →
+	// конверсия по курсу на сегодня → зачисление получателю (toCcy). Курс фиксируем
+	// в header перевода. Одна валюта → rate=1, toAmount=amount.
+	transferRate := decimal.NewFromInt(1)
+	toAmount := amount
+	transferRateSource := ""
+	if fromCcy != toCcy {
+		rateSource := "cbr_rf"
+		var bs models.BillingSettings
+		if database.DB.Table("public.billing_settings").
+			Where("company_id = ?", from.CompanyID).Select("rate_source").First(&bs).Error == nil && bs.RateSource != "" {
+			rateSource = bs.RateSource
+		}
+		r, stale, rerr := currencyRateSvc.GetConversionRate(time.Now().UTC(), fromCcy, toCcy, rateSource)
+		if rerr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "нет курса для конверсии " + fromCcy + "→" + toCcy + ": " + rerr.Error()})
+			return
+		}
+		if r.LessThanOrEqual(decimal.Zero) {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "некорректный курс конверсии"})
+			return
+		}
+		if stale {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "курс конверсии устарел, перевод отклонён — обновите курсы"})
+			return
+		}
+		transferRate = r
+		transferRateSource = rateSource
+		toAmount = amount.Mul(r).Round(2)
+		if toAmount.LessThanOrEqual(decimal.Zero) {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "сумма после конверсии нулевая"})
+			return
+		}
+	}
+
 	username, _ := c.Get("username")
 	createdBy, _ := username.(string)
 	transferID := uuid.New().String()
 	now := time.Now().UTC()
-	metaOut := fmt.Sprintf(`{"transfer_id":"%s","counterparty_contract_id":%d}`, transferID, req.ToContractID)
-	metaIn := fmt.Sprintf(`{"transfer_id":"%s","counterparty_contract_id":%d}`, transferID, req.FromContractID)
+	// Metadata пары проводок через json.Marshal — валюты/числа не ломают jsonb
+	// спецсимволами (Codex #2). Для кросс-валюты фиксируем курс/встречную сумму (аудит).
+	metaOutBytes, _ := json.Marshal(map[string]interface{}{
+		"transfer_id":              transferID,
+		"counterparty_contract_id": req.ToContractID,
+		"rate":                     transferRate.String(),
+		"to_amount":                toAmount.StringFixed(2),
+		"to_ccy":                   toCcy,
+	})
+	metaInBytes, _ := json.Marshal(map[string]interface{}{
+		"transfer_id":              transferID,
+		"counterparty_contract_id": req.FromContractID,
+		"rate":                     transferRate.String(),
+		"from_amount":              amount.StringFixed(2),
+		"from_ccy":                 fromCcy,
+	})
+	metaOut := string(metaOutBytes)
+	metaIn := string(metaInBytes)
 	desc := req.Description
 	if desc == "" {
 		desc = "Перевод между лицевыми счетами"
@@ -446,11 +499,13 @@ func PostLedgerTransfer(c *gin.Context) {
 		hdr := models.LedgerTransfer{
 			AdminAccountID: adminAccountID, CompanyID: from.CompanyID,
 			TransferID: transferID, IdempotencyKey: req.IdempotencyKey, FromContractID: req.FromContractID, ToContractID: req.ToContractID,
-			Amount: amount, Currency: fromCcy, Status: "completed", Description: desc, CreatedBy: createdBy,
+			Amount: amount, Currency: fromCcy, ToAmount: toAmount, ToCurrency: toCcy, Rate: transferRate, RateSource: transferRateSource,
+			Status: "completed", Description: desc, CreatedBy: createdBy,
 		}
 		if err := tx.Create(&hdr).Error; err != nil {
 			return err
 		}
+		// Списание у источника — в валюте источника (amount).
 		out := models.LedgerEntry{
 			AdminAccountID: adminAccountID, CompanyID: from.CompanyID, ContractID: req.FromContractID,
 			EntryType: "transfer_out", Amount: amount.Neg(), Currency: fromCcy, Source: "transfer",
@@ -460,9 +515,10 @@ func PostLedgerTransfer(c *gin.Context) {
 		if err := tx.Create(&out).Error; err != nil {
 			return err
 		}
+		// Зачисление получателю — в его валюте (toAmount), инвариант ledger.ccy==contract.ccy.
 		in := models.LedgerEntry{
 			AdminAccountID: adminAccountID, CompanyID: to.CompanyID, ContractID: req.ToContractID,
-			EntryType: "transfer_in", Amount: amount, Currency: toCcy, Source: "transfer",
+			EntryType: "transfer_in", Amount: toAmount, Currency: toCcy, Source: "transfer",
 			ExternalID: "transfer:" + transferID + ":in", Description: desc, EntryDate: now,
 			CreatedBy: createdBy, Metadata: &metaIn,
 		}

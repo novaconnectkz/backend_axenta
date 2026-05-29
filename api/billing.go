@@ -2037,6 +2037,35 @@ func GetContractBillingBreakdown(c *gin.Context) {
 		totalFuture = decimal.Zero
 	}
 
+	// Валюта/курс (П5): если по договору были charge'и с конверсией валют,
+	// показываем валюту договора + последний применённый курс (из Metadata).
+	contractCcy := contract.Currency
+	if contractCcy == "" {
+		contractCcy = "RUB"
+	}
+	currencyInfo := gin.H{"contract_currency": contractCcy, "multicurrency": false}
+	{
+		var lastMetaCharge models.LedgerEntry
+		if database.DB.
+			Where("contract_id = ? AND admin_account_id = ? AND source = ? AND metadata IS NOT NULL AND deleted_at IS NULL",
+				uint(contractID), adminAccountID, "auto_charge").
+			Order("entry_date DESC").First(&lastMetaCharge).Error == nil && lastMetaCharge.Metadata != nil {
+			var m map[string]interface{}
+			if json.Unmarshal([]byte(*lastMetaCharge.Metadata), &m) == nil {
+				if _, ok := m["rate"]; ok {
+					currencyInfo = gin.H{
+						"contract_currency": contractCcy,
+						"multicurrency":     true,
+						"plan_currency":     m["original_ccy"],
+						"last_rate":         m["rate"],
+						"last_rate_date":    m["rate_date"],
+						"rate_source":       m["source"],
+					}
+				}
+			}
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
 		"data": gin.H{
@@ -2047,6 +2076,7 @@ func GetContractBillingBreakdown(c *gin.Context) {
 				"end_date":     contract.EndDate,
 				"total_amount": contract.TotalAmount,
 			},
+			"currency_info":   currencyInfo,
 			"monthly_charges": monthlyCharges,
 			"summary": gin.H{
 				"total_amount": totalAmount,

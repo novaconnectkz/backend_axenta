@@ -149,6 +149,48 @@ func TestGetRate(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// GetConversionRate: pivot=RUB. Прямой/inverse/cross + same (П5 фаза 3).
+func TestGetConversionRate(t *testing.T) {
+	s := setupRateTestSvc(t)
+	mk := func(base, rate string) {
+		require.NoError(t, s.db.Create(&models.CurrencyRate{
+			RateDate: day(2026, 5, 29), BaseCcy: base, QuoteCcy: "RUB", Source: "cbr_rf", Rate: d(rate),
+		}).Error)
+	}
+	mk("EUR", "100.00")
+	mk("USD", "80.00")
+	dt := day(2026, 5, 29)
+
+	// same → 1.
+	r, _, err := s.GetConversionRate(dt, "RUB", "RUB", "cbr_rf")
+	require.NoError(t, err)
+	assert.True(t, r.Equal(d("1")))
+
+	// прямой X→RUB (to==pivot): EUR→RUB = 100.
+	r, _, err = s.GetConversionRate(dt, "EUR", "RUB", "cbr_rf")
+	require.NoError(t, err)
+	assert.True(t, r.Equal(d("100")), "EUR→RUB got %s", r)
+
+	// inverse RUB→X (from==pivot): RUB→EUR = 1/100 = 0.01.
+	r, _, err = s.GetConversionRate(dt, "RUB", "EUR", "cbr_rf")
+	require.NoError(t, err)
+	assert.True(t, r.Equal(d("0.01")), "RUB→EUR got %s", r)
+
+	// cross X→Y через RUB: EUR→USD = 100/80 = 1.25.
+	r, _, err = s.GetConversionRate(dt, "EUR", "USD", "cbr_rf")
+	require.NoError(t, err)
+	assert.True(t, r.Equal(d("1.25")), "EUR→USD got %s", r)
+
+	// обратный cross USD→EUR = 80/100 = 0.8.
+	r, _, err = s.GetConversionRate(dt, "USD", "EUR", "cbr_rf")
+	require.NoError(t, err)
+	assert.True(t, r.Equal(d("0.8")), "USD→EUR got %s", r)
+
+	// нет курса → ошибка.
+	_, _, err = s.GetConversionRate(dt, "GBP", "RUB", "cbr_rf")
+	assert.Error(t, err)
+}
+
 func TestUpsertRates_Idempotent(t *testing.T) {
 	s := setupRateTestSvc(t)
 	rates := map[string]decimal.Decimal{
