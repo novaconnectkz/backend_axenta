@@ -204,6 +204,26 @@ func (s *LedgerChargeScheduler) sweepCompanySuspensions(company models.Company) 
 	}
 	pub := s.db.Session(&gorm.Session{})
 	now := time.Now().UTC()
+
+	// Активные holds компании (П3/П4) — один запрос, map по (contract_id, admin_account_id).
+	// admin в ключе обязателен: contract_id может совпадать у разных админов одной company
+	// → без admin чужой зонт заблокировал бы приостановку (зеркало scoping баланса, Codex #3).
+	// Зонт блокирует авто-приостановку до hold_until; просроченный гасим тут же.
+	type holdKey struct {
+		contractID uint
+		adminID    uint
+	}
+	holdByContract := make(map[holdKey]models.BillingHold)
+	{
+		var holds []models.BillingHold
+		pub.Table("public.billing_holds").
+			Where("company_id = ? AND active = ? AND deleted_at IS NULL", company.ID, true).
+			Find(&holds)
+		for _, h := range holds {
+			holdByContract[holdKey{h.ContractID, h.AdminAccountID}] = h
+		}
+	}
+
 	for i := range contracts {
 		ct := &contracts[i]
 		// Баланс СТРОГО в рамках компании+админа (contract_id может совпадать в разных
@@ -214,13 +234,43 @@ func (s *LedgerChargeScheduler) sweepCompanySuspensions(company models.Company) 
 			Select("COALESCE(SUM(amount),0)").Scan(&bal)
 		threshold := ct.CreditLimit.Neg() // допустимый минус: balance < −creditLimit → блок
 
+		// Lifecycle зонта (П3/П4) ДО решения о приостановке. Решение — pure-функция
+		// holdLifecycleAction (тестируется без БД); здесь только применяем эффект.
+		hold, hasHold := holdByContract[holdKey{ct.ID, ct.AdminAccountID}]
+		holdActive := false
+		if hasHold {
+			switch holdLifecycleAction(bal, threshold, hold.HoldUntil, now) {
+			case holdFulfill:
+				// Долг погашен (в т.ч. promise исполнен) → закрываем зонт как fulfilled.
+				// Atomic WHERE active=true; ошибку логируем (не глотаем — Codex #7).
+				if e := pub.Table("public.billing_holds").Where("id = ? AND active = ?", hold.ID, true).
+					Updates(map[string]interface{}{"status": "fulfilled", "active": false, "resolved_at": now}).Error; e != nil {
+					log.Printf("⚠️ SuspensionSweep: не удалось закрыть hold %d (fulfilled): %v", hold.ID, e)
+				}
+			case holdExpire:
+				// Срок зонта истёк, долг остался → expired. Блокируем дальше ТОЛЬКО если
+				// expire реально снял active (RowsAffected>0) — иначе оставляем holdActive,
+				// чтобы не приостановить договор при всё ещё активном зонте в БД (Codex #7).
+				res := pub.Table("public.billing_holds").Where("id = ? AND active = ?", hold.ID, true).
+					Updates(map[string]interface{}{"status": "expired", "active": false, "resolved_at": now})
+				if res.Error != nil {
+					log.Printf("⚠️ SuspensionSweep: не удалось закрыть hold %d (expired): %v", hold.ID, res.Error)
+					holdActive = true // не смогли снять зонт → не блокируем в этот прогон
+				} else if res.RowsAffected == 0 {
+					holdActive = true // кто-то уже снял/изменил зонт параллельно → не блокируем
+				}
+			default:
+				holdActive = true // зонт ещё держит — приостановку не делаем
+			}
+		}
+
 		var active models.BillingSuspension
 		hasActive := pub.Table("public.billing_suspensions").
 			Where("contract_id = ? AND admin_account_id = ? AND company_id = ? AND reason = ? AND active = ? AND deleted_at IS NULL",
 				ct.ID, ct.AdminAccountID, company.ID, "billing_debt", true).First(&active).Error == nil
 
 		switch {
-		case bal.LessThan(threshold) && !hasActive && ct.Status == "active":
+		case bal.LessThan(threshold) && !hasActive && !holdActive && ct.Status == "active":
 			// Приостанавливаем ТОЛЬКО из status='active' (не трогаем ручной suspend/draft/...).
 			// suspension create + status update — в одной tx (атомарность, Codex H1).
 			susp := models.BillingSuspension{
@@ -458,6 +508,29 @@ func (s *LedgerChargeScheduler) GetStatus() map[string]interface{} {
 }
 
 var errChargeExists = fmt.Errorf("ledger auto_charge already exists")
+
+// holdAction — решение sweep'а по зонту (П3/П4).
+type holdAction int
+
+const (
+	holdKeep    holdAction = iota // зонт держит, авто-приостановку пропускаем
+	holdFulfill                   // долг погашен → закрыть зонт как fulfilled
+	holdExpire                    // срок истёк, долг остался → expired, дальше обычный suspend
+)
+
+// holdLifecycleAction — pure-решение жизненного цикла зонта на момент now.
+// balance >= threshold (threshold = −creditLimit) → долг в пределах → fulfill.
+// Иначе в долгу: срок истёк (now >= holdUntil) → expire; иначе keep (держим).
+// Порядок важен: fulfill приоритетнее expire (вышел из долга в день истечения — закрыть как исполненный).
+func holdLifecycleAction(balance, threshold decimal.Decimal, holdUntil, now time.Time) holdAction {
+	if !balance.LessThan(threshold) {
+		return holdFulfill
+	}
+	if !holdUntil.After(now) {
+		return holdExpire
+	}
+	return holdKeep
+}
 
 // --- helpers ---
 
