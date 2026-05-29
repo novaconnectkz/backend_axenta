@@ -1,6 +1,9 @@
 package api
 
 import (
+	"net/http"
+	"strings"
+
 	"backend_axenta/database"
 	"backend_axenta/middleware"
 	"backend_axenta/models"
@@ -8,6 +11,24 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
+
+// GetBillingManagers — GET /api/auth/billing/managers
+// Список локальных пользователей (роли manager/admin) для селектора «Менеджер» на договоре.
+func GetBillingManagers(c *gin.Context) {
+	var users []models.LocalUser
+	database.DB.Table("public.local_users").
+		Where("role IN ?", []string{models.RoleManager, models.RoleAdmin}).
+		Order("name").Find(&users)
+	out := make([]gin.H, 0, len(users))
+	for _, u := range users {
+		name := strings.TrimSpace(u.Name)
+		if name == "" {
+			name = u.Username
+		}
+		out = append(out, gin.H{"id": u.ID, "name": name, "role": u.Role})
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": out})
+}
 
 // ============================================================================
 // Scoping менеджера: роль `manager` видит/правит ТОЛЬКО свои договоры

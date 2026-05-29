@@ -1094,6 +1094,7 @@ func main() {
 	log.Println("✅ Зарегистрирован GET /api/auth/contracts/:contract_id/calculate -> CalculateContractCost")
 
 	// Общие роуты для договоров (ПОСЛЕ специфичных)
+	apiGroup.GET("/billing/managers", api.GetBillingManagers) // список менеджеров для селектора договора
 	apiGroup.GET("/contracts", api.GetContracts)
 	apiGroup.GET("/contracts/:contract_id", api.GetContract)
 	apiGroup.POST("/contracts", api.CreateContract)

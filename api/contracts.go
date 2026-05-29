@@ -1303,6 +1303,7 @@ type CreateContractRequestRaw struct {
 	Description string `json:"description"`
 	CompanyID   uint   `json:"company_id"`
 	ObjectIDs   []uint `json:"object_ids"`
+	ManagerID   *uint  `json:"manager_id"` // обслуживающий менеджер (только admin назначает)
 
 	// Тип договора
 	ContractType     string `json:"contract_type"`      // client или partner
@@ -1950,6 +1951,27 @@ func CreateContract(c *gin.Context) {
 	// Временно устанавливаем IsAutoRenew и ContractPeriodMonths в nil, так как эти колонки могут отсутствовать в БД
 	contract.IsAutoRenew = false
 	contract.ContractPeriodMonths = nil
+
+	// Менеджер договора: admin назначает из запроса; manager-создатель → сам себе.
+	// Денорм-имя резолвим из local_users (для показа/сортировки).
+	if requireContractAssignAccess(c) {
+		if rawRequest.ManagerID != nil && *rawRequest.ManagerID > 0 {
+			contract.ManagerID = rawRequest.ManagerID
+		}
+	} else if uid, ok := currentUserID(c); ok {
+		contract.ManagerID = &uid
+	}
+	if contract.ManagerID != nil {
+		var lu models.LocalUser
+		if database.DB.Table("public.local_users").First(&lu, *contract.ManagerID).Error == nil {
+			if n := strings.TrimSpace(lu.Name); n != "" {
+				contract.ManagerName = n
+			} else {
+				contract.ManagerName = lu.Username
+			}
+		}
+	}
+
 	if err := tenantDB.Omit("SellerCountryCode", "BuyerCountryCode", "NDSRateOverride", "TariffPlan", "Appendices", "Objects", "IsAutoRenew", "ContractPeriodMonths").Create(&contract).Error; err != nil {
 		log.Printf("❌ Ошибка при создании договора: %v", err)
 		log.Printf("📋 Тип ошибки: %T", err)
