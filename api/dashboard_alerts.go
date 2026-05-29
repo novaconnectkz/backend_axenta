@@ -86,19 +86,20 @@ func GetDashboardAlerts(c *gin.Context) {
 	alerts := []DashboardAlert{}
 
 	// 1. Просроченные счета — Invoice с DueDate < now() и не оплачен/не отменён.
+	// Scoping менеджера: только по его договорам (contract_id IN свои).
 	var overdueCount int64
 	var overdueSum decimal.Decimal
-	publicDB.Table(publicTable(publicDB, "invoices")).
-		Where("company_id = ? AND due_date < ? AND status NOT IN ?", companyID, now, []string{"paid", "cancelled"}).
+	applyManagerScope(c, publicDB.Table(publicTable(publicDB, "invoices")).
+		Where("company_id = ? AND due_date < ? AND status NOT IN ?", companyID, now, []string{"paid", "cancelled"})).
 		Count(&overdueCount)
 	if overdueCount > 0 {
 		// Суммируем remaining = total_amount - paid_amount
 		var sumRow struct {
 			Sum decimal.Decimal
 		}
-		publicDB.Table(publicTable(publicDB, "invoices")).
+		applyManagerScope(c, publicDB.Table(publicTable(publicDB, "invoices")).
 			Select("COALESCE(SUM(total_amount - paid_amount), 0) as sum").
-			Where("company_id = ? AND due_date < ? AND status NOT IN ?", companyID, now, []string{"paid", "cancelled"}).
+			Where("company_id = ? AND due_date < ? AND status NOT IN ?", companyID, now, []string{"paid", "cancelled"})).
 			Scan(&sumRow)
 		overdueSum = sumRow.Sum
 

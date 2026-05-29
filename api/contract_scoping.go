@@ -126,6 +126,18 @@ func requireContractAssignAccess(c *gin.Context) bool {
 	return false
 }
 
+// applyContractTableScope — для запросов ПО таблице contracts (колонка manager_id).
+// manager → только свои (manager_id=self); admin/superadmin — без изменений.
+func applyContractTableScope(c *gin.Context, q *gorm.DB) *gorm.DB {
+	if !isManagerScoped(c) {
+		return q
+	}
+	if uid, ok := currentUserID(c); ok {
+		return q.Where("manager_id = ?", uid)
+	}
+	return q.Where("1 = 0")
+}
+
 // applyManagerScope добавляет к gorm-запросу по таблице с колонкой contract_id
 // фильтр по договорам менеджера (если scope применяется). Без эффекта для admin.
 func applyManagerScope(c *gin.Context, q *gorm.DB) *gorm.DB {
