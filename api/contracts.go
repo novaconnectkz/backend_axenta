@@ -2485,6 +2485,17 @@ func UpdateContract(c *gin.Context) {
 		updateData.ManagerName = name
 	}
 
+	// Режим биллинга (П2): меняет только admin/superadmin в рамках политики компании.
+	if !requireContractAssignAccess(c) {
+		updateData.BillingMode = contract.BillingMode
+		updateData.CreditLimit = contract.CreditLimit
+	} else if updateData.BillingMode != "" || updateData.CreditLimit.GreaterThan(decimal.Zero) {
+		if ok, msg := validateBillingModePolicy(adminAccountID, contract.CompanyID, updateData.BillingMode, updateData.CreditLimit); !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": msg})
+			return
+		}
+	}
+
 	// Проверяем тарифный план если он изменился (опционально, будет привязан через подписку)
 	if updateData.TariffPlanID != nil && *updateData.TariffPlanID > 0 {
 		var contractTariffPlanID uint = 0

@@ -72,3 +72,27 @@ type LedgerTransfer struct {
 }
 
 func (LedgerTransfer) TableName() string { return "ledger_transfers" }
+
+// BillingSuspension — приостановка договора (П2). Отдельная сущность, НЕ перетираем
+// Contract.Status напрямую: храним причину + предыдущий статус, чтобы авто-разблок
+// при погашении долга вернул именно прежний статус и не задел ручной cancel/expired.
+// Авто-разблок касается только reason='billing_debt'.
+type BillingSuspension struct {
+	ID        uint           `json:"id" gorm:"primarykey"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
+
+	AdminAccountID uint `json:"admin_account_id" gorm:"not null;index"`
+	CompanyID      uint `json:"company_id" gorm:"not null;index"`
+	ContractID     uint `json:"contract_id" gorm:"not null;index"`
+
+	Reason         string          `json:"reason" gorm:"not null;type:varchar(30);index"` // billing_debt | manual
+	PreviousStatus string          `json:"previous_status" gorm:"type:varchar(20)"`       // статус договора до приостановки
+	DebtAmount     decimal.Decimal `json:"debt_amount" gorm:"type:decimal(15,2)"`         // долг на момент блокировки
+	Active         bool            `json:"active" gorm:"not null;default:true;index"`
+	SuspendedBy    string          `json:"suspended_by" gorm:"type:varchar(100)"` // scheduler | username
+	ResolvedAt     *time.Time      `json:"resolved_at"`
+}
+
+func (BillingSuspension) TableName() string { return "billing_suspensions" }

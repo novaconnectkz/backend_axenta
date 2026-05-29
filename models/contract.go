@@ -111,6 +111,12 @@ type Contract struct {
 	ManagerID   *uint  `json:"manager_id" gorm:"index"`
 	ManagerName string `json:"manager_name" gorm:"type:varchar(200)"`
 
+	// Модель биллинга договора (П2): prepaid — блок при долге; postpaid — допускается
+	// долг до CreditLimit. Блокировка за долг: balance < −CreditLimit (см. billing_suspension).
+	// Назначает admin в рамках политики компании (AllowPostpaid / MaxCreditLimit).
+	BillingMode string          `json:"billing_mode" gorm:"default:'prepaid';type:varchar(20)"`
+	CreditLimit decimal.Decimal `json:"credit_limit" gorm:"type:decimal(15,2);default:0"`
+
 	// Настройки автоматической пролонгации (настраиваются через подписку)
 	IsAutoRenew          bool `json:"is_auto_renew" gorm:"-"`          // Автоматическая пролонгация договора (настраивается через подписку)
 	ContractPeriodMonths *int `json:"contract_period_months" gorm:"-"` // Период договора в месяцах (настраивается через подписку)

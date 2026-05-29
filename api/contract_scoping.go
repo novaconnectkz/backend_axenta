@@ -9,6 +9,7 @@ import (
 	"backend_axenta/models"
 
 	"github.com/gin-gonic/gin"
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
 
@@ -135,6 +136,33 @@ func requireBillingOperation(c *gin.Context, adminAccountID, companyID uint) boo
 		return false // нет политики → deny
 	}
 	return bs.OperationRoleThreshold == models.RoleManager
+}
+
+// validateBillingModePolicy проверяет, что выбранный режим/лимит допустимы политикой
+// компании: postpaid разрешён только при AllowPostpaid, credit_limit ≤ MaxCreditLimit.
+// Возвращает (ok, errMsg). Пустой/prepaid режим всегда ок.
+func validateBillingModePolicy(adminAccountID, companyID uint, mode string, limit decimal.Decimal) (bool, string) {
+	if mode == "" || mode == "prepaid" {
+		if limit.GreaterThan(decimal.Zero) {
+			return false, "кредит-лимит допустим только в режиме постоплаты"
+		}
+		return true, ""
+	}
+	if mode != "postpaid" {
+		return false, "неизвестный режим биллинга"
+	}
+	var bs models.BillingSettings
+	if err := database.DB.Table("public.billing_settings").
+		Where("company_id = ? AND admin_account_id = ?", companyID, adminAccountID).First(&bs).Error; err != nil {
+		return false, "политика биллинга не настроена — постоплата недоступна"
+	}
+	if !bs.AllowPostpaid {
+		return false, "постоплата не разрешена политикой компании"
+	}
+	if bs.MaxCreditLimit.GreaterThan(decimal.Zero) && limit.GreaterThan(bs.MaxCreditLimit) {
+		return false, "кредит-лимит превышает максимум политики (" + bs.MaxCreditLimit.StringFixed(2) + ")"
+	}
+	return true, ""
 }
 
 // resolveManagerName проверяет, что назначаемый пользователь существует и имеет

@@ -1184,8 +1184,9 @@ func CreateMissingGlobalTables() error {
 		&models.InvoiceItem{},
 		&models.Invoice{},
 		&models.BillingHistory{},
-		&models.LedgerEntry{},    // лицевой счёт (проводки)
-		&models.LedgerTransfer{}, // переводы между лицевыми счетами (заголовок пары проводок)
+		&models.LedgerEntry{},       // лицевой счёт (проводки)
+		&models.LedgerTransfer{},    // переводы между лицевыми счетами (заголовок пары проводок)
+		&models.BillingSuspension{}, // приостановки договоров за долг (П2)
 		// AxentaAccountSnapshot и AxentaObjectSnapshot теперь тенант-специфичны (IsGlobal: false)
 	}
 

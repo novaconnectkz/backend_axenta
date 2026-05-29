@@ -151,6 +151,100 @@ func (s *LedgerChargeScheduler) RunUpToDate(targetDate time.Time) {
 	s.lastRun = time.Now()
 	log.Printf("✅ LedgerCharge: готово за %v — компаний=%d, проводок=%d, пропущено(дубли)=%d",
 		time.Since(start), len(companies), totalEntries, totalSkipped)
+
+	// После начисления — sweep приостановок за долг (П2, фаза A: только CRM-статус).
+	s.RunSuspensionSweep(companies)
+}
+
+// RunSuspensionSweep — по всем активным компаниям проверяет клиентские договоры:
+// balance < −credit_limit → приостановить (billing_suspension reason=billing_debt +
+// Contract.Status='suspended'); долг погашен → снять приостановку и вернуть прежний статус.
+// Фаза A: меняем только CRM-статус (без блокировки у провайдера).
+func (s *LedgerChargeScheduler) RunSuspensionSweep(companies []models.Company) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("❌ ПАНИКА в RunSuspensionSweep: %v", r)
+		}
+	}()
+	if len(companies) == 0 {
+		_ = s.db.Session(&gorm.Session{}).Table("public.companies").
+			Where("is_active = ?", true).Find(&companies).Error
+	}
+	suspended, resolved := 0, 0
+	for _, company := range companies {
+		su, re := s.sweepCompanySuspensions(company)
+		suspended += su
+		resolved += re
+	}
+	if suspended > 0 || resolved > 0 {
+		log.Printf("🔒 SuspensionSweep: приостановлено=%d, снято=%d", suspended, resolved)
+	}
+}
+
+func (s *LedgerChargeScheduler) sweepCompanySuspensions(company models.Company) (suspended, resolved int) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("❌ ПАНИКА в sweepCompanySuspensions(%d): %v", company.ID, r)
+		}
+	}()
+	schema := company.DatabaseSchema
+	if schema == "" {
+		schema = fmt.Sprintf("tenant_%d", company.ID)
+	}
+	tenantDB, err := database.ConnectToTenant(schema)
+	if err != nil {
+		return
+	}
+
+	// Клиентские договоры в активном/приостановленном статусе.
+	var contracts []models.Contract
+	if err := tenantDB.Where("contract_type = ? AND status IN ? AND deleted_at IS NULL",
+		"client", []string{"active", "suspended"}).Find(&contracts).Error; err != nil {
+		return
+	}
+	pub := s.db.Session(&gorm.Session{})
+	now := time.Now().UTC()
+	for i := range contracts {
+		ct := &contracts[i]
+		var bal decimal.Decimal
+		pub.Table("public.ledger_entries").
+			Where("contract_id = ? AND admin_account_id = ? AND deleted_at IS NULL", ct.ID, ct.AdminAccountID).
+			Select("COALESCE(SUM(amount),0)").Scan(&bal)
+		threshold := ct.CreditLimit.Neg() // допустимый минус: balance < −creditLimit → блок
+
+		var active models.BillingSuspension
+		hasActive := pub.Table("public.billing_suspensions").
+			Where("contract_id = ? AND admin_account_id = ? AND reason = ? AND active = ? AND deleted_at IS NULL",
+				ct.ID, ct.AdminAccountID, "billing_debt", true).First(&active).Error == nil
+
+		if bal.LessThan(threshold) {
+			// Долг сверх лимита → приостановить, если ещё не приостановлен за долг.
+			if !hasActive {
+				susp := models.BillingSuspension{
+					AdminAccountID: ct.AdminAccountID, CompanyID: company.ID, ContractID: ct.ID,
+					Reason: "billing_debt", PreviousStatus: ct.Status, DebtAmount: bal.Abs(),
+					Active: true, SuspendedBy: "scheduler",
+				}
+				if pub.Table("public.billing_suspensions").Create(&susp).Error == nil {
+					tenantDB.Model(&models.Contract{}).Where("id = ?", ct.ID).Update("status", "suspended")
+					suspended++
+				}
+			}
+		} else if hasActive {
+			// Долг погашен/в пределах → снять приостановку, вернуть прежний статус.
+			pub.Table("public.billing_suspensions").Where("id = ?", active.ID).
+				Updates(map[string]interface{}{"active": false, "resolved_at": now})
+			restore := active.PreviousStatus
+			if restore == "" || restore == "suspended" {
+				restore = "active"
+			}
+			if ct.Status == "suspended" {
+				tenantDB.Model(&models.Contract{}).Where("id = ?", ct.ID).Update("status", restore)
+			}
+			resolved++
+		}
+	}
+	return
 }
 
 // chargeCompany начисляет по всем клиентским подпискам одной компании.
