@@ -280,7 +280,10 @@ func contractPeriodFromAppendices(ct wcrmContract) (time.Time, *time.Time, bool)
 		if e, okE := parseWcrmDate(ap.EndDate); okE {
 			en = &e
 		} else if ap.Period > 0 {
-			e := st.AddDate(0, ap.Period, 0)
+			// start + period — это граница СЛЕДУЮЩЕГО периода (WCRM хранит 0000-00-00).
+			// −1 день → последний день покрытия, иначе следующий месяц биллится лишним
+			// (period=12 с 2026-01-01 = янв–дек 2026, end 2026-12-31, НЕ 2027-01-01).
+			e := st.AddDate(0, ap.Period, 0).AddDate(0, 0, -1)
 			en = &e
 		}
 		if en != nil && (maxEnd == nil || en.After(*maxEnd)) {
@@ -441,9 +444,9 @@ func GetWcrmMigrationPreview(c *gin.Context) {
 				apStartT, okS := parseWcrmDate(ap.StartDate)
 				apEndT, okE := parseWcrmDate(ap.EndDate)
 				// В WCRM end_date часто 0000-00-00 (хранится только start + period).
-				// Реальный срок приложения = start + period месяцев (как считает UI WCRM).
+				// start+period = граница следующего периода → −1 день = последний день покрытия.
 				if !okE && okS && ap.Period > 0 {
-					apEndT = apStartT.AddDate(0, ap.Period, 0)
+					apEndT = apStartT.AddDate(0, ap.Period, 0).AddDate(0, 0, -1)
 					okE = true
 				}
 				if !okS {
@@ -770,9 +773,10 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 				if e, okE := parseWcrmDate(ap.EndDate); okE {
 					apEndPtr = &e
 				} else if ap.Period > 0 {
-					// WCRM end_date = 0000-00-00 (хранит start + period). Реальный срок
-					// приложения = start + period месяцев (как считает UI WCRM).
-					e := apStart.AddDate(0, ap.Period, 0)
+					// WCRM end_date = 0000-00-00 (хранит start + period). start+period =
+					// граница следующего периода → −1 день = последний день покрытия
+					// (иначе следующий месяц биллится лишним, см. детализ. расчёта).
+					e := apStart.AddDate(0, ap.Period, 0).AddDate(0, 0, -1)
 					apEndPtr = &e
 				} else if endPtr != nil {
 					apEndPtr = endPtr
