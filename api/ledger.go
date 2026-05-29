@@ -21,8 +21,12 @@ import (
 // ledgerChargeScheduler — глобальный экземпляр для ручного триггера.
 var ledgerChargeScheduler *services.LedgerChargeScheduler
 
-// currencyRateSvc — сервис курсов для кросс-валютного перевода (П5 фаза 3).
-var currencyRateSvc = services.NewCurrencyRateService()
+// currencyRateService — сервис курсов для кросс-валютного перевода (П5 фаза 3).
+// Ленивая инициализация: package-level var выполнился бы ДО подключения database.DB
+// в main (NewCurrencyRateService захватывает database.DB) → svc.db=nil → nil deref.
+func currencyRateService() *services.CurrencyRateService {
+	return services.NewCurrencyRateService()
+}
 
 // SetLedgerChargeScheduler регистрирует scheduler (вызывается из main).
 func SetLedgerChargeScheduler(s *services.LedgerChargeScheduler) {
@@ -434,7 +438,7 @@ func PostLedgerTransfer(c *gin.Context) {
 			Where("company_id = ?", from.CompanyID).Select("rate_source").First(&bs).Error == nil && bs.RateSource != "" {
 			rateSource = bs.RateSource
 		}
-		r, stale, rerr := currencyRateSvc.GetConversionRate(time.Now().UTC(), fromCcy, toCcy, rateSource)
+		r, stale, rerr := currencyRateService().GetConversionRate(time.Now().UTC(), fromCcy, toCcy, rateSource)
 		if rerr != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "нет курса для конверсии " + fromCcy + "→" + toCcy + ": " + rerr.Error()})
 			return
