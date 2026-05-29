@@ -257,6 +257,19 @@ func main() {
 		log.Println("🔧 LedgerChargeScheduler отключён (для включения ENABLE_LEDGER_CHARGE_SCHEDULER=true)")
 	}
 
+	// П5: Currency rate scheduler — ежедневная загрузка курсов ЦБ РФ (04:00 UTC).
+	// Регистрируем экземпляр всегда (нужен для ручного POST /currency/rates/fetch);
+	// cron отключается DISABLE_CURRENCY_RATE_SCHEDULER=true.
+	currencyRateScheduler := services.NewCurrencyRateScheduler()
+	api.SetCurrencyRateScheduler(currencyRateScheduler)
+	if os.Getenv("DISABLE_CURRENCY_RATE_SCHEDULER") == "true" {
+		log.Println("🔧 CurrencyRateScheduler: cron отключён (DISABLE_CURRENCY_RATE_SCHEDULER=true); ручной fetch доступен")
+	} else if err := currencyRateScheduler.Start(); err != nil {
+		log.Printf("⚠️ CurrencyRateScheduler failed to start: %v", err)
+	} else {
+		defer currencyRateScheduler.Stop()
+	}
+
 	// Wialon stats scheduler — раз в N минут собирает usage объектов в public.wialon_object_stats.
 	// Endpoint /api/wialon/connections/:id/objects-stats читает из этой таблицы (live-запрос для
 	// WH с 3412 ресурсов занимает 6.5 минут). Включён всегда — это критично для UI.
@@ -1061,6 +1074,11 @@ func main() {
 	apiGroup.POST("/ledger/hold", api.PostLedgerHold)
 	apiGroup.POST("/ledger/hold/:id/cancel", api.PostLedgerHoldCancel)
 	log.Println("✅ Зарегистрированы /api/auth/ledger/* (лицевой счёт)")
+
+	// Курсы валют (П5 мультивалюта): ручная загрузка ЦБ РФ + выдача курса пары.
+	apiGroup.POST("/currency/rates/fetch", api.PostCurrencyRatesFetch)
+	apiGroup.GET("/currency/rate", api.GetCurrencyRate)
+	log.Println("✅ Зарегистрированы /api/auth/currency/* (курсы валют)")
 
 	// Синхронизация договора с подпиской
 	apiGroup.POST("/contracts/:contract_id/sync-from-subscription", api.SyncContractFromSubscription)
