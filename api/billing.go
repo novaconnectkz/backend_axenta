@@ -570,9 +570,11 @@ func GetSubscriptions(c *gin.Context) {
 	}
 
 	var subscriptions []models.Subscription
-	if err := db.Preload("BillingPlan", "admin_account_id = ?", adminAccountID).
-		Where("company_id = ? AND admin_account_id = ?", uint(companyID), adminAccountID).
-		Find(&subscriptions).Error; err != nil {
+	subQuery := db.Preload("BillingPlan", "admin_account_id = ?", adminAccountID).
+		Where("company_id = ? AND admin_account_id = ?", uint(companyID), adminAccountID)
+	// Scoping менеджера: только подписки его договоров (contract_id IN свои).
+	subQuery = applyManagerScope(c, subQuery)
+	if err := subQuery.Find(&subscriptions).Error; err != nil {
 		fmt.Printf("GetSubscriptions: ОШИБКА при получении подписок (admin_account_id=%d, company_id=%d): %v\n",
 			adminAccountID, companyID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -1703,6 +1705,12 @@ func GetContractBillingBreakdown(c *gin.Context) {
 		return
 	}
 
+	// Scoping менеджера: чужой договор — нет доступа к детализации.
+	if !managerCanAccessContract(c, uint(contractID)) {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "договор вне вашего доступа"})
+		return
+	}
+
 	// Загружаем договор
 	var contract models.Contract
 	if err := tenantDB.First(&contract, uint(contractID)).Error; err != nil {
@@ -2331,6 +2339,9 @@ func GetInvoices(c *gin.Context) {
 	// Базовый запрос - без Preload сначала для фильтрации
 	query := database.DB.Model(&models.Invoice{}).
 		Where("admin_account_id = ?", adminAccountID)
+
+	// Scoping менеджера: только счета его договоров (contract_id IN свои).
+	query = applyManagerScope(c, query)
 
 	if companyIDStr != "" {
 		companyID, parseErr := strconv.ParseUint(companyIDStr, 10, 32)

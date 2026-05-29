@@ -70,6 +70,10 @@ func GetLedgerBalance(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "некорректный contract_id"})
 		return
 	}
+	if !managerCanAccessContract(c, uint(contractID)) {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "договор вне вашего доступа"})
+		return
+	}
 	adminAccountID, err := middleware.GetAdminAccountID(c)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": err.Error()})
@@ -104,6 +108,10 @@ func GetLedgerEntries(c *gin.Context) {
 	contractID, err := strconv.ParseUint(c.Param("contract_id"), 10, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "некорректный contract_id"})
+		return
+	}
+	if !managerCanAccessContract(c, uint(contractID)) {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "договор вне вашего доступа"})
 		return
 	}
 	adminAccountID, err := middleware.GetAdminAccountID(c)
@@ -141,6 +149,10 @@ func PostLedgerPayment(c *gin.Context) {
 	}
 	if req.Amount <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "сумма платежа должна быть > 0"})
+		return
+	}
+	if !managerCanAccessContract(c, req.ContractID) {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "договор вне вашего доступа"})
 		return
 	}
 	if req.Source == "" {

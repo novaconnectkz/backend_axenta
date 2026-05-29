@@ -341,6 +341,18 @@ func GetContracts(c *gin.Context) {
 	// GORM автоматически исключает записи с deleted_at (soft delete)
 	baseQuery := tenantDB.Model(&models.Contract{}).Where("admin_account_id = ?", adminAccountID)
 
+	// Scoping менеджера: роль manager видит ТОЛЬКО свои договоры (manager_id = свой user_id).
+	// admin/superadmin — все. Фильтр manager_id=<id> (для admin — выборка по менеджеру).
+	if isManagerScoped(c) {
+		if uid, ok := currentUserID(c); ok {
+			baseQuery = baseQuery.Where("manager_id = ?", uid)
+		} else {
+			baseQuery = baseQuery.Where("1 = 0") // нет user_id у manager → ничего
+		}
+	} else if mgr := c.Query("manager_id"); mgr != "" {
+		baseQuery = baseQuery.Where("manager_id = ?", mgr)
+	}
+
 	// 🚀 Параметр skip_stats для ленивой загрузки (Progressive Loading)
 	// Если true - возвращает список быстро без статистики объектов
 	skipStats := c.Query("skip_stats") == "true"
@@ -958,9 +970,9 @@ func GetContractObjectsList(c *gin.Context) {
 			name = fmt.Sprintf("Объект #%d", co.ObjectID)
 		}
 		out = append(out, gin.H{
-			"object_id":    co.ObjectID,
-			"name":         name,
-			"account_name": account,
+			"object_id":     co.ObjectID,
+			"name":          name,
+			"account_name":  account,
 			"object_schema": co.ObjectSchema,
 		})
 	}
@@ -2417,6 +2429,23 @@ func UpdateContract(c *gin.Context) {
 			"error":  "Неверный формат данных",
 		})
 		return
+	}
+
+	// Менеджера договора назначает только admin/superadmin. Прочие роли НЕ могут
+	// переназначить (manager не должен забрать/отдать чужой договор) — сохраняем как было.
+	if !requireContractAssignAccess(c) {
+		updateData.ManagerID = contract.ManagerID
+		updateData.ManagerName = contract.ManagerName
+	} else if updateData.ManagerID != nil && *updateData.ManagerID > 0 {
+		// Резолвим денорм-имя менеджера из local_users (public).
+		var lu models.LocalUser
+		if database.DB.Table("public.local_users").First(&lu, *updateData.ManagerID).Error == nil {
+			if n := strings.TrimSpace(lu.Name); n != "" {
+				updateData.ManagerName = n
+			} else {
+				updateData.ManagerName = lu.Username
+			}
+		}
 	}
 
 	// Проверяем тарифный план если он изменился (опционально, будет привязан через подписку)
