@@ -27,6 +27,11 @@ func SetLedgerChargeScheduler(s *services.LedgerChargeScheduler) {
 // Ручной прогон авто-начисления (для теста). Body опц.: {"date":"YYYY-MM-DD"}
 // — начислить за все недостающие дни до этой даты включительно (default вчера).
 func PostLedgerChargeRun(c *gin.Context) {
+	// Глобальный прогон начислений — только admin/superadmin.
+	if !requireContractAssignAccess(c) {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "доступно только администратору"})
+		return
+	}
 	if ledgerChargeScheduler == nil {
 		// Планировщик может быть выключен флагом — поднимаем разовый экземпляр.
 		ledgerChargeScheduler = services.NewLedgerChargeScheduler()
@@ -261,6 +266,12 @@ func PostLedgerImport(c *gin.Context) {
 	for _, it := range body.Items {
 		if it.Amount <= 0 || it.ContractID == 0 {
 			failed++
+			continue
+		}
+		// Scoping менеджера: нельзя импортировать платёж на чужой договор.
+		if !managerCanAccessContract(c, it.ContractID) {
+			failed++
+			errorsList = append(errorsList, fmt.Sprintf("договор %d вне доступа", it.ContractID))
 			continue
 		}
 		var contract models.Contract

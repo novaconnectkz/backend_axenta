@@ -114,7 +114,7 @@ func buildBuckets(now time.Time, period string) []chartBucket {
 		currentMonthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, loc)
 		out := make([]chartBucket, months)
 		for i := 0; i < months; i++ {
-			start := currentMonthStart.AddDate(0, -(months-1-i), 0)
+			start := currentMonthStart.AddDate(0, -(months - 1 - i), 0)
 			end := start.AddDate(0, 1, 0)
 			out[i] = chartBucket{start, end, monthShortRu(start.Month()), start.Format("2006-01")}
 		}
@@ -124,7 +124,7 @@ func buildBuckets(now time.Time, period string) []chartBucket {
 		currentMonthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, loc)
 		out := make([]chartBucket, months)
 		for i := 0; i < months; i++ {
-			start := currentMonthStart.AddDate(0, -(months-1-i), 0)
+			start := currentMonthStart.AddDate(0, -(months - 1 - i), 0)
 			end := start.AddDate(0, 1, 0)
 			out[i] = chartBucket{start, end, monthShortRu(start.Month()), start.Format("2006-01")}
 		}

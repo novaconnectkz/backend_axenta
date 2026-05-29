@@ -15,6 +15,11 @@ import (
 // GetBillingManagers — GET /api/auth/billing/managers
 // Список локальных пользователей (роли manager/admin) для селектора «Менеджер» на договоре.
 func GetBillingManagers(c *gin.Context) {
+	// Список менеджеров для назначения — только admin/superadmin (manager не назначает).
+	if !requireContractAssignAccess(c) {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"status": "error", "error": "доступно только администратору"})
+		return
+	}
 	var users []models.LocalUser
 	database.DB.Table("public.local_users").
 		Where("role IN ?", []string{models.RoleManager, models.RoleAdmin}).
@@ -73,7 +78,7 @@ func managerScopedContractIDs(c *gin.Context) ([]uint, bool, error) {
 	}
 	tenantDB := middleware.GetTenantDB(c)
 	if tenantDB == nil {
-		tenantDB = database.DB
+		return []uint{0}, true, nil // нет tenant-БД у manager → ничего (fail-closed)
 	}
 	adminAccountID, _ := middleware.GetAdminAccountID(c)
 
@@ -103,7 +108,7 @@ func managerCanAccessContract(c *gin.Context, contractID uint) bool {
 	}
 	tenantDB := middleware.GetTenantDB(c)
 	if tenantDB == nil {
-		tenantDB = database.DB
+		return false // для manager отсутствие tenant-БД = deny (fail-closed)
 	}
 	var count int64
 	if err := tenantDB.Model(&models.Contract{}).
@@ -111,6 +116,23 @@ func managerCanAccessContract(c *gin.Context, contractID uint) bool {
 		return false // fail-closed
 	}
 	return count > 0
+}
+
+// resolveManagerName проверяет, что назначаемый пользователь существует и имеет
+// допустимую роль (manager/admin), и возвращает денорм-имя. ok=false → назначение
+// невалидно (нельзя привязать произвольного local_user как менеджера).
+func resolveManagerName(id uint) (string, bool) {
+	var lu models.LocalUser
+	if err := database.DB.Table("public.local_users").
+		Where("id = ? AND role IN ?", id, []string{models.RoleManager, models.RoleAdmin}).
+		First(&lu).Error; err != nil {
+		return "", false
+	}
+	name := strings.TrimSpace(lu.Name)
+	if name == "" {
+		name = lu.Username
+	}
+	return name, true
 }
 
 // requireContractAssignAccess — назначать/менять менеджера договора может только

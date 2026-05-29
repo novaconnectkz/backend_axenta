@@ -137,20 +137,20 @@ type wcrmPreviewContract struct {
 }
 
 type wcrmPreviewCandidate struct {
-	WcrmCompanyID  int64                 `json:"wcrm_company_id"`
-	ClientName     string                `json:"client_name"`
-	ClientINN      string                `json:"client_inn"`
-	ClientType     string                `json:"client_type"`      // organization|individual_entrepreneur|physical_person
-	ClientTypeNote string                `json:"client_type_note"` // "manual_review" если не определён
-	ContractsCount int                   `json:"contracts_count"`
-	AppendixCount  int                   `json:"appendix_count"`
-	ObjectCount    int                   `json:"object_count"`
-	Balance        string                `json:"balance"`
-	BalanceTarget  string                `json:"balance_target"` // billing_history(payment_received|balance_debt) или "—"
-	Contracts      []wcrmPreviewContract `json:"contracts"`
-	AlreadyImported bool                 `json:"already_imported"`
-	Status         string                `json:"status"` // pending|approved|skipped|error (из state)
-	HasIssues      bool                  `json:"has_issues"`
+	WcrmCompanyID   int64                 `json:"wcrm_company_id"`
+	ClientName      string                `json:"client_name"`
+	ClientINN       string                `json:"client_inn"`
+	ClientType      string                `json:"client_type"`      // organization|individual_entrepreneur|physical_person
+	ClientTypeNote  string                `json:"client_type_note"` // "manual_review" если не определён
+	ContractsCount  int                   `json:"contracts_count"`
+	AppendixCount   int                   `json:"appendix_count"`
+	ObjectCount     int                   `json:"object_count"`
+	Balance         string                `json:"balance"`
+	BalanceTarget   string                `json:"balance_target"` // billing_history(payment_received|balance_debt) или "—"
+	Contracts       []wcrmPreviewContract `json:"contracts"`
+	AlreadyImported bool                  `json:"already_imported"`
+	Status          string                `json:"status"` // pending|approved|skipped|error (из state)
+	HasIssues       bool                  `json:"has_issues"`
 }
 
 type wcrmPreviewResponse struct {
@@ -563,7 +563,7 @@ func wcrmSchema() string {
 // ---- Approve / Skip / Undo / Status ----
 
 type wcrmApproveRequest struct {
-	SnapshotSHA256    string `json:"snapshot_sha256"`
+	SnapshotSHA256     string `json:"snapshot_sha256"`
 	ClientTypeOverride string `json:"client_type_override"` // для manual_review
 	// AppendixStartOverrides — ручной старт подписки на приложение: ключ = wcrm_attachment_id
 	// (строка), значение = YYYY-MM-DD. Нет записи → авто (дата старта приложения из WCRM).
@@ -578,8 +578,8 @@ type wcrmApproveResult struct {
 	SubscriptionsCreated int      `json:"subscriptions_created"`
 	ObjectsLinked        int      `json:"objects_linked"`
 	ObjectsUnmatched     int      `json:"objects_unmatched"`
-	ObjectsForeign       int      `json:"objects_foreign"`        // объектов пропущено: в Axenta уже у другой компании
-	ForeignObjectNames   []string `json:"foreign_object_names"`   // имена пропущенных «чужих» объектов
+	ObjectsForeign       int      `json:"objects_foreign"`      // объектов пропущено: в Axenta уже у другой компании
+	ForeignObjectNames   []string `json:"foreign_object_names"` // имена пропущенных «чужих» объектов
 	SkippedInactive      int      `json:"skipped_inactive"`     // договоров пропущено (все приложения disabled)
 	TariffNotFound       []string `json:"tariff_not_found"`     // цены без тарифа → подписка не создана
 	BalanceRecorded      bool     `json:"balance_recorded"`
@@ -769,34 +769,34 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 			findErr := tx.Where("external_id = ?", extID).First(&existing).Error
 			if findErr == gorm.ErrRecordNotFound {
 				nc := models.Contract{
-					Number:          targetNumber,
-					AdminAccountID:  adminAccountID,
-					CompanyID:       wcrmTargetTenantID,
-					ContractType:    "client",
-					ClientType:      ctype,
-					ClientName:      clientName,
-					ClientShortName: rec.Company.Name,
-					ClientINN:       rec.Company.INN,
-					ClientKPP:       rec.Company.KPP,
-					ClientEmail:     rec.Company.Email,
-					ClientPhone:     rec.Company.Phone,
-					ClientAddress:   rec.Company.AddressU,
-					ClientLegalAddress:  rec.Company.AddressU,
-					ClientPostalAddress: rec.Company.AddressP,
-					ClientOGRN:      rec.Company.OGRN,
-					ClientOKPO:      rec.Company.OKPO,
-					ClientDirector:  rec.Company.HeadName,
-					ClientBankName:  rec.Company.BankName,
-					ClientBankBIK:   rec.Company.BIK,
+					Number:                         targetNumber,
+					AdminAccountID:                 adminAccountID,
+					CompanyID:                      wcrmTargetTenantID,
+					ContractType:                   "client",
+					ClientType:                     ctype,
+					ClientName:                     clientName,
+					ClientShortName:                rec.Company.Name,
+					ClientINN:                      rec.Company.INN,
+					ClientKPP:                      rec.Company.KPP,
+					ClientEmail:                    rec.Company.Email,
+					ClientPhone:                    rec.Company.Phone,
+					ClientAddress:                  rec.Company.AddressU,
+					ClientLegalAddress:             rec.Company.AddressU,
+					ClientPostalAddress:            rec.Company.AddressP,
+					ClientOGRN:                     rec.Company.OGRN,
+					ClientOKPO:                     rec.Company.OKPO,
+					ClientDirector:                 rec.Company.HeadName,
+					ClientBankName:                 rec.Company.BankName,
+					ClientBankBIK:                  rec.Company.BIK,
 					ClientBankCorrespondentAccount: rec.Company.CorA,
-					ClientBankAccount: rec.Company.CurA,
-					StartDate:       startPtr,
-					EndDate:         endPtr,
-					Status:          status,
-					IsActive:        isActive,
-					Currency:        "RUB",
-					NotifyBefore:    30,
-					ExternalID:      extID,
+					ClientBankAccount:              rec.Company.CurA,
+					StartDate:                      startPtr,
+					EndDate:                        endPtr,
+					Status:                         status,
+					IsActive:                       isActive,
+					Currency:                       "RUB",
+					NotifyBefore:                   30,
+					ExternalID:                     extID,
 				}
 				// Select("*"): форсим запись ВСЕХ полей включая is_active=false.
 				// Иначе GORM (default:true тег) пропускает zero-value bool → БД ставит true.
@@ -827,7 +827,7 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 				}
 				result.ContractsUpdated++
 			}
-				processedContractIDs = append(processedContractIDs, existing.ID)
+			processedContractIDs = append(processedContractIDs, existing.ID)
 
 			// Включённые приложения (enabled=1) ГРУППИРУЕМ по (тариф + длительность) →
 			// ОДНА подписка на группу. Кейс: один договор, несколько приложений с одинаковым

@@ -3621,6 +3621,11 @@ func UpdateBillingSettings(c *gin.Context) {
 
 // RunInvoicesGeneration запускает генерацию счетов (POST /api/invoices/run согласно roadmap)
 func RunInvoicesGeneration(c *gin.Context) {
+	// Массовая генерация счетов — только admin/superadmin (идёт по всем договорам).
+	if !requireContractAssignAccess(c) {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "доступно только администратору"})
+		return
+	}
 	adminAccountID, err := middleware.GetAdminAccountID(c)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{
@@ -4001,6 +4006,23 @@ func GetInvoicesByPeriod(c *gin.Context) {
 			"error":  err.Error(),
 		})
 		return
+	}
+
+	// Scoping менеджера: оставляем только счета его договоров.
+	if ids, applies, scErr := managerScopedContractIDs(c); applies {
+		allowed := map[uint]bool{}
+		if scErr == nil {
+			for _, id := range ids {
+				allowed[id] = true
+			}
+		}
+		filtered := invoices[:0]
+		for _, inv := range invoices {
+			if inv.ContractID != nil && allowed[*inv.ContractID] {
+				filtered = append(filtered, inv)
+			}
+		}
+		invoices = filtered
 	}
 
 	c.JSON(http.StatusOK, gin.H{

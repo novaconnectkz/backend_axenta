@@ -169,9 +169,9 @@ func buildWialonDetails(publicDB *gorm.DB, companyID uint, connType string, buck
 	}
 
 	type connRow struct {
-		ID         uint
-		Name       string
-		LiveTotal  int64
+		ID        uint
+		Name      string
+		LiveTotal int64
 	}
 	var conns []connRow
 	publicDB.Raw(`

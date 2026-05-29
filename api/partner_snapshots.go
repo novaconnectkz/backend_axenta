@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -72,6 +73,12 @@ func GetPartnerContractSnapshots(c *gin.Context) {
 	}
 
 	contractID := c.Param("contract_id")
+	if cid, perr := strconv.ParseUint(contractID, 10, 32); perr == nil {
+		if !managerCanAccessContract(c, uint(cid)) {
+			c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "договор вне вашего доступа"})
+			return
+		}
+	}
 	log.Printf("📊 Запрос снимков для партнерского договора ID=%s", contractID)
 
 	// Получаем параметры периода
@@ -818,6 +825,12 @@ func GeneratePartnerSnapshotsForPeriod(c *gin.Context) {
 	}
 
 	contractID := c.Param("contract_id")
+	if cid, perr := strconv.ParseUint(contractID, 10, 32); perr == nil {
+		if !managerCanAccessContract(c, uint(cid)) {
+			c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "договор вне вашего доступа"})
+			return
+		}
+	}
 	log.Printf("📸 Создание снимков для договора ID=%s за период", contractID)
 
 	// Получаем токен пользователя из заголовка
@@ -969,6 +982,11 @@ func GeneratePartnerSnapshotsForPeriod(c *gin.Context) {
 // GenerateAllPartnerSnapshotsForPeriod создает снимки для ВСЕХ партнерских договоров за период
 // POST /api/auth/contracts/partner-snapshots/generate-all
 func GenerateAllPartnerSnapshotsForPeriod(c *gin.Context) {
+	// Массовая генерация снимков по всем партнёр-договорам — только admin/superadmin.
+	if !requireContractAssignAccess(c) {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "доступно только администратору"})
+		return
+	}
 	adminAccountID, err := middleware.GetAdminAccountID(c)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{
