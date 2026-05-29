@@ -4,6 +4,7 @@ import (
 	"backend_axenta/database"
 	"backend_axenta/models"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -34,6 +35,7 @@ import (
 type LedgerChargeScheduler struct {
 	cron      *cron.Cron
 	db        *gorm.DB
+	rateSvc   *CurrencyRateService // конверсия валют при начислении (П5 фаза 2)
 	isRunning bool
 	lastRun   time.Time
 }
@@ -46,7 +48,7 @@ func NewLedgerChargeScheduler() *LedgerChargeScheduler {
 		cron.WithLocation(time.UTC),
 		cron.WithChain(cron.Recover(cron.DefaultLogger)),
 	)
-	return &LedgerChargeScheduler{cron: c, db: database.DB}
+	return &LedgerChargeScheduler{cron: c, db: database.DB, rateSvc: NewCurrencyRateService()}
 }
 
 // Start запускает ежедневный прогон в 02:00 UTC (после snapshot-планировщиков).
@@ -342,28 +344,50 @@ func (s *LedgerChargeScheduler) chargeCompany(company models.Company, cutoff, ta
 		return
 	}
 
+	// Источник курса компании (П5): из политики биллинга, default cbr_rf.
+	rateSource := "cbr_rf"
+	{
+		var bs models.BillingSettings
+		if s.db.Session(&gorm.Session{}).Table("public.billing_settings").
+			Where("company_id = ?", company.ID).Select("rate_source").First(&bs).Error == nil && bs.RateSource != "" {
+			rateSource = bs.RateSource
+		}
+	}
+
 	// Кэш проверенных договоров: только client + active билятся.
-	contractOK := make(map[uint]bool)
+	// currency держим для конверсии валют (П5): ledger пишется в валюте договора.
+	type ctInfo struct {
+		ok       bool
+		currency string
+	}
+	contractInfo := make(map[uint]ctInfo)
+	// Кэш курсов на прогон компании: (day|base|quote|source) → результат GetRate.
+	// Backfill бьёт одни и те же пары/даты по многим подпискам (Codex #6).
+	rateCache := make(map[string]cachedRate)
 	for _, sub := range subs {
 		if sub.ContractID == nil {
 			continue
 		}
 		cid := *sub.ContractID
-		ok, checked := contractOK[cid]
+		info, checked := contractInfo[cid]
 		if !checked {
 			var ct models.Contract
-			if e := tenantDB.Select("id, contract_type, status").First(&ct, cid).Error; e != nil {
-				ok = false
+			if e := tenantDB.Select("id, contract_type, status, currency").First(&ct, cid).Error; e != nil {
+				info = ctInfo{ok: false}
 			} else {
-				ok = ct.ContractType == "client" && ct.Status == "active"
+				ccy := ct.Currency
+				if ccy == "" {
+					ccy = "RUB"
+				}
+				info = ctInfo{ok: ct.ContractType == "client" && ct.Status == "active", currency: ccy}
 			}
-			contractOK[cid] = ok
+			contractInfo[cid] = info
 		}
-		if !ok {
+		if !info.ok {
 			continue
 		}
 
-		e, sk := s.chargeSubscription(tenantDB, company.ID, &sub, cid, cutoff, targetDate)
+		e, sk := s.chargeSubscription(tenantDB, company.ID, &sub, cid, info.currency, rateSource, rateCache, cutoff, targetDate)
 		entries += e
 		skipped += sk
 	}
@@ -371,10 +395,20 @@ func (s *LedgerChargeScheduler) chargeCompany(company models.Company, cutoff, ta
 }
 
 // chargeSubscription начисляет дневные charge'и по одной подписке за период.
-func (s *LedgerChargeScheduler) chargeSubscription(tenantDB *gorm.DB, companyID uint, sub *models.Subscription, contractID uint, cutoff, targetDate time.Time) (entries, skipped int) {
+// contractCcy — валюта договора (ledger пишется в ней, инвариант Codex [H]).
+// rateSource — источник курса для конверсии plan.Currency → contractCcy (П5).
+func (s *LedgerChargeScheduler) chargeSubscription(tenantDB *gorm.DB, companyID uint, sub *models.Subscription, contractID uint, contractCcy, rateSource string, rateCache map[string]cachedRate, cutoff, targetDate time.Time) (entries, skipped int) {
 	price := sub.BillingPlan.Price
 	if price.IsZero() {
 		return
+	}
+	// Валюта плана (в чём задана цена). Пустая → RUB.
+	planCcy := sub.BillingPlan.Currency
+	if planCcy == "" {
+		planCcy = "RUB"
+	}
+	if contractCcy == "" {
+		contractCcy = "RUB"
 	}
 
 	// Нижняя граница периода: max(cutoff, sub.start, lastCharge+1).
@@ -412,8 +446,58 @@ func (s *LedgerChargeScheduler) chargeSubscription(tenantDB *gorm.DB, companyID 
 			continue
 		}
 
-		daily := dailyChargeAmount(price, count, day, yearly)
-		if daily.IsZero() {
+		// Конверсия валюты (П5): daily в валюте плана → валюту договора по курсу на
+		// ДЕНЬ начисления (historical, как состав объектов). ledger всегда в валюте
+		// договора (инвариант Codex [H]). Снимок курса в Metadata — для аудита/rebill.
+		var chargeAmount decimal.Decimal
+		var metaPtr *string
+		if planCcy == contractCcy {
+			// Same-currency: округляем дневную сумму до 2 знаков (как раньше).
+			chargeAmount = dailyChargeAmount(price, count, day, yearly)
+		} else {
+			rate, rateDate, stale, rerr := s.getRateCached(rateCache, day, planCcy, contractCcy, rateSource)
+			if rerr != nil {
+				// Курса на день нет → НЕ начисляем по rate=1. Стоп подписки: checkpoint
+				// не уедет за непросчитанный день, доберём когда курс появится (Codex [M]).
+				log.Printf("⚠️ LedgerCharge: sub %d день %s — нет курса %s→%s (%s), стоп подписки: %v",
+					sub.ID, day.Format("2006-01-02"), planCcy, contractCcy, rateSource, rerr)
+				return
+			}
+			// rate ≤ 0 — невозможный курс: rate=0 потерял бы день, rate<0 дал бы кредит
+			// вместо charge. Стоп подписки до исправления курса (Codex #1 critical).
+			if rate.LessThanOrEqual(decimal.Zero) {
+				log.Printf("❌ LedgerCharge: sub %d день %s — некорректный курс %s→%s = %s, стоп подписки",
+					sub.ID, day.Format("2006-01-02"), planCcy, contractCcy, rate.String())
+				return
+			}
+			// Stale-курс (fallback старше порога) НЕ постим: ждём свежий курс, чтобы не
+			// фиксировать неточную сумму в иммутабельной проводке (Codex #3). Доберём позже.
+			if stale {
+				log.Printf("⚠️ LedgerCharge: sub %d день %s — курс %s→%s устарел (rate_date=%s), стоп подписки до свежего курса",
+					sub.ID, day.Format("2006-01-02"), planCcy, contractCcy, rateDate.Format("2006-01-02"))
+				return
+			}
+			// RAW дневная сумма (без предв. округления) → конверсия → единственный round (Codex #2).
+			rawDaily := dailyChargeAmountRaw(price, count, day, yearly)
+			chargeAmount = convertAmount(rawDaily, rate)
+			// Metadata через json.Marshal — без ручной сборки строки (Codex #4: source/ccy
+			// могли бы сломать jsonb спецсимволами).
+			mb, mErr := json.Marshal(map[string]string{
+				"rate":            rate.String(),
+				"rate_date":       rateDate.Format("2006-01-02"),
+				"source":          rateSource,
+				"original_amount": rawDaily.Round(2).String(),
+				"original_ccy":    planCcy,
+			})
+			if mErr != nil {
+				log.Printf("⚠️ LedgerCharge: sub %d день %s — ошибка сборки metadata, стоп подписки: %v",
+					sub.ID, day.Format("2006-01-02"), mErr)
+				return
+			}
+			ms := string(mb)
+			metaPtr = &ms
+		}
+		if chargeAmount.IsZero() {
 			continue
 		}
 
@@ -425,13 +509,14 @@ func (s *LedgerChargeScheduler) chargeSubscription(tenantDB *gorm.DB, companyID 
 			ContractID:     contractID,
 			SubscriptionID: &subID,
 			EntryType:      "charge",
-			Amount:         daily.Neg(), // charge < 0
-			Currency:       "RUB",
+			Amount:         chargeAmount.Neg(), // charge < 0, в валюте договора
+			Currency:       contractCcy,
 			Source:         "auto_charge",
 			ExternalID:     extID,
 			Description:    fmt.Sprintf("Начисление за %s (%d объектов)", day.Format("2006-01-02"), count),
 			EntryDate:      day,
 			CreatedBy:      "scheduler",
+			Metadata:       metaPtr,
 		}
 
 		// Идемпотентность: уникальный (admin, company, source, external_id).
@@ -509,6 +594,32 @@ func (s *LedgerChargeScheduler) GetStatus() map[string]interface{} {
 
 var errChargeExists = fmt.Errorf("ledger auto_charge already exists")
 
+// cachedRate — закэшированный результат GetRate (П5 #6).
+type cachedRate struct {
+	rate     decimal.Decimal
+	rateDate time.Time
+	stale    bool
+	err      error
+}
+
+// getRateCached — GetRate с кэшем на прогон компании + ограничение источника (Codex #5).
+// cbr_rf котирует только в RUB → если валюта договора не RUB, прямой пары нет и
+// inverse/cross пока не поддержан: возвращаем ошибку (подписка стопнётся с понятным логом),
+// а не молча начисляем неверно.
+func (s *LedgerChargeScheduler) getRateCached(cache map[string]cachedRate, day time.Time, base, quote, source string) (decimal.Decimal, time.Time, bool, error) {
+	if source == "cbr_rf" && quote != "RUB" {
+		return decimal.Zero, time.Time{}, false,
+			fmt.Errorf("источник cbr_rf поддерживает только котировку в RUB (договор в %s — нужен другой источник/inverse, не реализовано)", quote)
+	}
+	key := fmt.Sprintf("%s|%s|%s|%s", day.Format("2006-01-02"), base, quote, source)
+	if c, ok := cache[key]; ok {
+		return c.rate, c.rateDate, c.stale, c.err
+	}
+	rate, rateDate, stale, err := s.rateSvc.GetRate(day, base, quote, source)
+	cache[key] = cachedRate{rate: rate, rateDate: rateDate, stale: stale, err: err}
+	return rate, rateDate, stale, err
+}
+
 // holdAction — решение sweep'а по зонту (П3/П4).
 type holdAction int
 
@@ -534,9 +645,10 @@ func holdLifecycleAction(balance, threshold decimal.Decimal, holdUntil, now time
 
 // --- helpers ---
 
-// dailyChargeAmount — дневная сумма начисления (>0): price × count / дней_в_периоде,
-// округлённая до 2 знаков. monthly → дней в календарном месяце дня; yearly → дней в году.
-func dailyChargeAmount(price decimal.Decimal, count int, day time.Time, yearly bool) decimal.Decimal {
+// dailyChargeAmountRaw — дневная сумма БЕЗ округления (high-precision): price × count
+// / дней_в_периоде. Используется для конверсии валют, чтобы не терять копейки на
+// двойном округлении (round в валюте плана → ×rate → round в валюте договора — Codex #2).
+func dailyChargeAmountRaw(price decimal.Decimal, count int, day time.Time, yearly bool) decimal.Decimal {
 	if count <= 0 || price.IsZero() {
 		return decimal.Zero
 	}
@@ -545,7 +657,20 @@ func dailyChargeAmount(price decimal.Decimal, count int, day time.Time, yearly b
 		periodDays = daysInYear(day)
 	}
 	monthly := price.Mul(decimal.NewFromInt(int64(count)))
-	return monthly.Div(decimal.NewFromInt(int64(periodDays))).Round(2)
+	return monthly.Div(decimal.NewFromInt(int64(periodDays)))
+}
+
+// dailyChargeAmount — дневная сумма начисления (>0), округлённая до 2 знаков
+// (same-currency путь: ledger в валюте плана = валюте договора).
+func dailyChargeAmount(price decimal.Decimal, count int, day time.Time, yearly bool) decimal.Decimal {
+	return dailyChargeAmountRaw(price, count, day, yearly).Round(2)
+}
+
+// convertAmount — сумма amount (в валюте плана) → валюту договора по курсу rate
+// (quote за 1 base), округление до 2 знаков на границе posting (Codex [M] decimal scale).
+// amount передаётся RAW (без предв. округления) — единственное округление здесь.
+func convertAmount(amount, rate decimal.Decimal) decimal.Decimal {
+	return amount.Mul(rate).Round(2)
 }
 
 func dayFloor(t time.Time) time.Time {

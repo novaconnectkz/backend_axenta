@@ -92,6 +92,66 @@ func TestHoldLifecycleAction(t *testing.T) {
 	}
 }
 
+// convertAmount: конверсия суммы плана в валюту договора по курсу (П5 фаза 2).
+func TestConvertAmount(t *testing.T) {
+	// 15.50 EUR × 83.6892 = 1297.18 (round 2).
+	assert.True(t, convertAmount(d("15.50"), d("83.6892")).Equal(d("1297.18")),
+		"got %s", convertAmount(d("15.50"), d("83.6892")))
+	// rate=1 (одна валюта) → без изменений.
+	assert.True(t, convertAmount(d("1297.18"), d("1")).Equal(d("1297.18")))
+	// Округление: 10 × 0.185 (KZT→RUB) = 1.85.
+	assert.True(t, convertAmount(d("10"), d("0.185")).Equal(d("1.85")))
+	// Округление вниз: 1 × 0.333 = 0.33.
+	assert.True(t, convertAmount(d("1"), d("0.333")).Equal(d("0.33")))
+	// Округление вверх (банковское? shopspring Round = half-up): 1 × 0.335 = 0.34.
+	assert.True(t, convertAmount(d("1"), d("0.335")).Equal(d("0.34")),
+		"half-up округление, got %s", convertAmount(d("1"), d("0.335")))
+	// Ноль суммы → ноль.
+	assert.True(t, convertAmount(d("0"), d("83.68")).IsZero())
+}
+
+// Fix двойного округления (Codex #2): raw daily × rate ≠ round(daily) × rate для
+// мелких тарифов. 1 EUR/31 = 0.032258..., курс 100.
+func TestNoDoubleRounding(t *testing.T) {
+	day := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC) // январь, 31 день
+	rate := d("100")
+	// Старый (багованный) путь: round дневной суммы в валюте плана, потом ×rate.
+	roundedFirst := convertAmount(dailyChargeAmount(d("1"), 1, day, false), rate) // 0.03 × 100 = 3.00
+	// Новый путь: raw × rate, один round.
+	rawPath := convertAmount(dailyChargeAmountRaw(d("1"), 1, day, false), rate) // 0.032258×100=3.2258→3.23
+	assert.True(t, roundedFirst.Equal(d("3.00")), "double-round даёт 3.00, got %s", roundedFirst)
+	assert.True(t, rawPath.Equal(d("3.23")), "raw-path даёт 3.23, got %s", rawPath)
+	assert.False(t, roundedFirst.Equal(rawPath), "пути должны различаться — в этом и баг")
+}
+
+// getRateCached: cbr_rf поддерживает только quote=RUB (Codex #5) + кэш-хит.
+func TestGetRateCached_SourceLimit(t *testing.T) {
+	s := &LedgerChargeScheduler{rateSvc: setupRateTestSvc(t)}
+	mk := func(base, rate string) {
+		require.NoError(t, s.rateSvc.db.Create(&models.CurrencyRate{
+			RateDate: day(2026, 5, 29), BaseCcy: base, QuoteCcy: "RUB", Source: "cbr_rf", Rate: d(rate),
+		}).Error)
+	}
+	mk("EUR", "83.68")
+	cache := map[string]cachedRate{}
+
+	// quote != RUB для cbr_rf → ошибка (inverse/cross не реализован).
+	_, _, _, err := s.getRateCached(cache, day(2026, 5, 29), "USD", "KZT", "cbr_rf")
+	assert.Error(t, err, "cbr_rf с quote=KZT должен дать ошибку")
+
+	// quote=RUB → ок + кэшируется.
+	r, _, _, err := s.getRateCached(cache, day(2026, 5, 29), "EUR", "RUB", "cbr_rf")
+	require.NoError(t, err)
+	assert.True(t, r.Equal(d("83.68")))
+	assert.Len(t, cache, 1, "результат должен попасть в кэш")
+
+	// Повторный вызов — из кэша (тот же ключ).
+	r2, _, _, err := s.getRateCached(cache, day(2026, 5, 29), "EUR", "RUB", "cbr_rf")
+	require.NoError(t, err)
+	assert.True(t, r2.Equal(d("83.68")))
+	assert.Len(t, cache, 1)
+}
+
 func setupChargeTestDB(t *testing.T) *gorm.DB {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
