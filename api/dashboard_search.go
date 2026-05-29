@@ -114,10 +114,10 @@ func GetGlobalSearch(c *gin.Context) {
 		resp.Clients = searchClients(publicDB, tenantDB, companyID, pattern, limit)
 	}
 	if inScope(scope, "contracts") {
-		resp.Contracts = searchContracts(tenantDB, pattern, limit)
+		resp.Contracts = searchContracts(c, tenantDB, pattern, limit)
 	}
 	if inScope(scope, "invoices") {
-		resp.Invoices = searchInvoices(publicDB, companyID, pattern, limit)
+		resp.Invoices = searchInvoices(c, publicDB, companyID, pattern, limit)
 	}
 	if inScope(scope, "users") {
 		resp.Users = searchUsers(publicDB, tenantDB, companyID, pattern, limit)
@@ -172,16 +172,17 @@ func searchObjects(db *gorm.DB, pattern string, limit int) []SearchResultItem {
 }
 
 // searchContracts — по contracts (number, client_name).
-func searchContracts(db *gorm.DB, pattern string, limit int) []SearchResultItem {
+func searchContracts(c *gin.Context, db *gorm.DB, pattern string, limit int) []SearchResultItem {
 	type row struct {
 		ID         uint
 		Number     string
 		ClientName string
 	}
 	var rows []row
-	db.Table("contracts").
+	// Scoping менеджера: ищет только среди своих договоров.
+	applyContractTableScope(c, db.Table("contracts").
 		Select("id, number, client_name").
-		Where(`(LOWER(number COLLATE "und-x-icu") LIKE ? OR LOWER(client_name COLLATE "und-x-icu") LIKE ?) AND deleted_at IS NULL`, pattern, pattern).
+		Where(`(LOWER(number COLLATE "und-x-icu") LIKE ? OR LOWER(client_name COLLATE "und-x-icu") LIKE ?) AND deleted_at IS NULL`, pattern, pattern)).
 		Limit(limit).
 		Scan(&rows)
 
@@ -199,16 +200,17 @@ func searchContracts(db *gorm.DB, pattern string, limit int) []SearchResultItem 
 }
 
 // searchInvoices — по invoices (number) для текущей компании.
-func searchInvoices(db *gorm.DB, companyID uint, pattern string, limit int) []SearchResultItem {
+func searchInvoices(c *gin.Context, db *gorm.DB, companyID uint, pattern string, limit int) []SearchResultItem {
 	type row struct {
 		ID     uint
 		Number string
 		Status string
 	}
 	var rows []row
-	db.Table(publicTable(db, "invoices")).
+	// Scoping менеджера: только счета его договоров.
+	applyManagerScope(c, db.Table(publicTable(db, "invoices")).
 		Select("id, number, status").
-		Where(`company_id = ? AND LOWER(number COLLATE "und-x-icu") LIKE ? AND deleted_at IS NULL`, companyID, pattern).
+		Where(`company_id = ? AND LOWER(number COLLATE "und-x-icu") LIKE ? AND deleted_at IS NULL`, companyID, pattern)).
 		Limit(limit).
 		Scan(&rows)
 

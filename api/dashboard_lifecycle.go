@@ -19,7 +19,7 @@ type LifecyclePoint struct {
 
 // LifecycleSource — серия created/deleted per source.
 type LifecycleSource struct {
-	Key          string           `json:"key"`           // axenta | wialon | all
+	Key          string           `json:"key"` // axenta | wialon | all
 	Label        string           `json:"label"`
 	Points       []LifecyclePoint `json:"points"`        // per-day
 	TotalCreated int              `json:"total_created"` // SUM за период
@@ -183,6 +183,7 @@ func buildSkifLifecycle(db *gorm.DB, companyID uint, from time.Time, days int, l
 //     дата создания в GELIOS, fallback на наш created_at)
 //   - deleted = gelios_deleted_at per day (момент подтверждённого
 //     исчезновения из выгрузки, НЕ реального удаления в GELIOS)
+//
 // Прошлое до первого sync невосстановимо (forward-сбор).
 func buildGeliosLifecycle(db *gorm.DB, companyID uint, from time.Time, days int, loc *time.Location) LifecycleSource {
 	src := LifecycleSource{

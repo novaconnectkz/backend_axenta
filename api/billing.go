@@ -570,9 +570,11 @@ func GetSubscriptions(c *gin.Context) {
 	}
 
 	var subscriptions []models.Subscription
-	if err := db.Preload("BillingPlan", "admin_account_id = ?", adminAccountID).
-		Where("company_id = ? AND admin_account_id = ?", uint(companyID), adminAccountID).
-		Find(&subscriptions).Error; err != nil {
+	subQuery := db.Preload("BillingPlan", "admin_account_id = ?", adminAccountID).
+		Where("company_id = ? AND admin_account_id = ?", uint(companyID), adminAccountID)
+	// Scoping менеджера: только подписки его договоров (contract_id IN свои).
+	subQuery = applyManagerScope(c, subQuery)
+	if err := subQuery.Find(&subscriptions).Error; err != nil {
 		fmt.Printf("GetSubscriptions: ОШИБКА при получении подписок (admin_account_id=%d, company_id=%d): %v\n",
 			adminAccountID, companyID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -1703,6 +1705,12 @@ func GetContractBillingBreakdown(c *gin.Context) {
 		return
 	}
 
+	// Scoping менеджера: чужой договор — нет доступа к детализации.
+	if !managerCanAccessContract(c, uint(contractID)) {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "договор вне вашего доступа"})
+		return
+	}
+
 	// Загружаем договор
 	var contract models.Contract
 	if err := tenantDB.First(&contract, uint(contractID)).Error; err != nil {
@@ -2331,6 +2339,9 @@ func GetInvoices(c *gin.Context) {
 	// Базовый запрос - без Preload сначала для фильтрации
 	query := database.DB.Model(&models.Invoice{}).
 		Where("admin_account_id = ?", adminAccountID)
+
+	// Scoping менеджера: только счета его договоров (contract_id IN свои).
+	query = applyManagerScope(c, query)
 
 	if companyIDStr != "" {
 		companyID, parseErr := strconv.ParseUint(companyIDStr, 10, 32)
@@ -3166,6 +3177,23 @@ func GetOverdueInvoices(c *gin.Context) {
 	})
 }
 
+// requireBillingAdmin — guard: политику биллинга правят только admin/superadmin.
+// Возвращает false и пишет 403, если роль не подходит.
+func requireBillingAdmin(c *gin.Context) bool {
+	if v, _ := c.Get("is_superadmin"); v == true {
+		return true
+	}
+	role, _ := c.Get("role")
+	if r, ok := role.(string); ok && (r == "admin" || r == "superadmin") {
+		return true
+	}
+	c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+		"status": "error",
+		"error":  "Настройки биллинга доступны только администратору",
+	})
+	return false
+}
+
 // GetBillingSettings получает настройки биллинга для компании
 func GetBillingSettings(c *gin.Context) {
 	adminAccountID, err := middleware.GetAdminAccountID(c)
@@ -3276,6 +3304,14 @@ func GetBillingSettings(c *gin.Context) {
 				ContractDefaultNumeratorID: nil,
 				Bitrix24DealNumberField:    "",
 				AutopilotEnabled:           true, // Автопилот включен по умолчанию
+				// Политика биллинга (П0) — безопасные дефолты.
+				DefaultBillingMode:     "prepaid",
+				AllowPostpaid:          false,
+				AllowPromisedPayments:  false,
+				MaxCreditLimit:         decimal.Zero,
+				MaxDeferralDays:        0,
+				RateSource:             "cbr_rf",
+				OperationRoleThreshold: "admin",
 			}
 
 			fmt.Printf("GetBillingSettings: настройки не найдены, создаем по умолчанию для admin_account_id=%d, company_id=%d\n", adminAccountID, companyID)
@@ -3365,6 +3401,11 @@ func isUniqueConstraintError(err error) bool {
 
 // UpdateBillingSettings обновляет настройки биллинга
 func UpdateBillingSettings(c *gin.Context) {
+	// Политика биллинга (валюта/НДС/режим/лимиты) — только admin/superadmin.
+	// FE-гейт декоративен, реальная защита здесь.
+	if !requireBillingAdmin(c) {
+		return
+	}
 	adminAccountID, err := middleware.GetAdminAccountID(c)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{
@@ -3403,8 +3444,10 @@ func UpdateBillingSettings(c *gin.Context) {
 	}
 
 	var settings models.BillingSettings
-	// Пытаемся найти настройки для данной пары admin/company
-	err = db.Where("company_id = ? AND admin_account_id = ?", uint(companyID), adminAccountID).First(&settings).Error
+	// Пытаемся найти настройки для данной пары admin/company.
+	// Table("public.billing_settings") — НЕ зависим от search_path на пуле-коннекте
+	// (иначе на части соединений строка не находилась → ложный create → pkey dup).
+	err = db.Table("public.billing_settings").Where("company_id = ? AND admin_account_id = ?", uint(companyID), adminAccountID).First(&settings).Error
 
 	if err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -3417,7 +3460,7 @@ func UpdateBillingSettings(c *gin.Context) {
 
 		// Настройки не найдены - пытаемся найти по company_id без учета admin_account_id
 		var companySettings models.BillingSettings
-		if err := db.Where("company_id = ?", uint(companyID)).First(&companySettings).Error; err == nil {
+		if err := db.Table("public.billing_settings").Where("company_id = ?", uint(companyID)).First(&companySettings).Error; err == nil {
 			// Нашли настройки компании, обновляем admin_account_id
 			companySettings.AdminAccountID = adminAccountID
 			if saveErr := db.Save(&companySettings).Error; saveErr != nil {
@@ -3462,9 +3505,17 @@ func UpdateBillingSettings(c *gin.Context) {
 				ContractDefaultNumeratorID: nil,
 				Bitrix24DealNumberField:    "",
 				AutopilotEnabled:           true, // Автопилот включен по умолчанию
+				// Политика биллинга (П0) — безопасные дефолты.
+				DefaultBillingMode:     "prepaid",
+				AllowPostpaid:          false,
+				AllowPromisedPayments:  false,
+				MaxCreditLimit:         decimal.Zero,
+				MaxDeferralDays:        0,
+				RateSource:             "cbr_rf",
+				OperationRoleThreshold: "admin",
 			}
 
-			if err := db.Create(&settings).Error; err != nil {
+			if err := db.Table("public.billing_settings").Create(&settings).Error; err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{
 					"status": "error",
 					"error":  "Ошибка создания настроек биллинга",
@@ -3529,12 +3580,16 @@ func UpdateBillingSettings(c *gin.Context) {
 		}
 	}
 
-	updateData.AdminAccountID = 0
+	// Сохраняем идентификаторы строки: Select("*") пишет ВСЕ поля, а zero-значения
+	// updateData затёрли бы admin_account_id/company_id (раньше был баг — обнулялись).
+	updateData.ID = settings.ID
+	updateData.AdminAccountID = settings.AdminAccountID
+	updateData.CompanyID = settings.CompanyID
 
 	// ВАЖНО: Updates() пропускает zero values (включая false для bool).
 	// Используем Select() для явного указания полей, которые нужно обновить
 	fmt.Printf("🔄 Обновляем настройки для settings.ID=%d\n", settings.ID)
-	if err := db.Model(&settings).Select("*").Updates(updateData).Error; err != nil {
+	if err := db.Table("public.billing_settings").Where("id = ?", settings.ID).Select("*").Updates(updateData).Error; err != nil {
 		fmt.Printf("❌ ОШИБКА при обновлении настроек: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
@@ -3546,7 +3601,7 @@ func UpdateBillingSettings(c *gin.Context) {
 
 	// Перезагружаем обновленные настройки из БД
 	fmt.Printf("🔄 Перезагружаем настройки из БД...\n")
-	if err := db.Where("id = ?", settings.ID).First(&settings).Error; err != nil {
+	if err := db.Table("public.billing_settings").Where("id = ?", settings.ID).First(&settings).Error; err != nil {
 		fmt.Printf("❌ ОШИБКА при получении обновленных настроек: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
@@ -3566,6 +3621,11 @@ func UpdateBillingSettings(c *gin.Context) {
 
 // RunInvoicesGeneration запускает генерацию счетов (POST /api/invoices/run согласно roadmap)
 func RunInvoicesGeneration(c *gin.Context) {
+	// Массовая генерация счетов — только admin/superadmin (идёт по всем договорам).
+	if !requireContractAssignAccess(c) {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "доступно только администратору"})
+		return
+	}
 	adminAccountID, err := middleware.GetAdminAccountID(c)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{
@@ -3946,6 +4006,23 @@ func GetInvoicesByPeriod(c *gin.Context) {
 			"error":  err.Error(),
 		})
 		return
+	}
+
+	// Scoping менеджера: оставляем только счета его договоров.
+	if ids, applies, scErr := managerScopedContractIDs(c); applies {
+		allowed := map[uint]bool{}
+		if scErr == nil {
+			for _, id := range ids {
+				allowed[id] = true
+			}
+		}
+		filtered := invoices[:0]
+		for _, inv := range invoices {
+			if inv.ContractID != nil && allowed[*inv.ContractID] {
+				filtered = append(filtered, inv)
+			}
+		}
+		invoices = filtered
 	}
 
 	c.JSON(http.StatusOK, gin.H{

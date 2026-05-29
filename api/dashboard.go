@@ -72,9 +72,9 @@ func GetDashboardStats(c *gin.Context) {
 	// Подсчет пользователей
 	tenantDB.Model(&models.User{}).Count(&stats.TotalUsers)
 
-	// Подсчет контрактов
-	tenantDB.Model(&models.Contract{}).Count(&stats.TotalContracts)
-	tenantDB.Model(&models.Contract{}).Where("status = ?", "active").Count(&stats.ActiveContracts)
+	// Подсчет контрактов (scoping менеджера: только свои)
+	applyContractTableScope(c, tenantDB.Model(&models.Contract{})).Count(&stats.TotalContracts)
+	applyContractTableScope(c, tenantDB.Model(&models.Contract{}).Where("status = ?", "active")).Count(&stats.ActiveContracts)
 
 	// Примерные финансовые данные (можно дополнить реальной логикой)
 	stats.MonthlyRevenue = 150000.0
@@ -195,9 +195,9 @@ func GetDashboardActivity(c *gin.Context) {
 		}
 
 		var invoices []models.Invoice
-		// Получаем больше счетов, чтобы важные события не терялись
-		publicDB.Model(&models.Invoice{}).
-			Where("admin_account_id = ? AND deleted_at IS NULL", adminAccountID).
+		// Получаем больше счетов, чтобы важные события не терялись (scoping менеджера)
+		applyManagerScope(c, publicDB.Model(&models.Invoice{}).
+			Where("admin_account_id = ? AND deleted_at IS NULL", adminAccountID)).
 			Order("created_at DESC"). // Сортируем по дате создания (новые первыми)
 			Limit(limit * 2).         // Берем в 2 раза больше, чтобы точно не потерять важные события
 			Find(&invoices)
@@ -247,8 +247,8 @@ func GetDashboardActivity(c *gin.Context) {
 	// 4. Получаем последние договоры
 	if enabledSources["contracts"] {
 		var contracts []models.Contract
-		tenantDB.Model(&models.Contract{}).
-			Where("admin_account_id = ?", adminAccountID).
+		applyContractTableScope(c, tenantDB.Model(&models.Contract{}).
+			Where("admin_account_id = ?", adminAccountID)).
 			Order("updated_at DESC, created_at DESC").
 			Limit(limit / 3). // Треть от лимита для договоров
 			Find(&contracts)
@@ -352,8 +352,8 @@ func GetDashboardActivity(c *gin.Context) {
 		publicDB := database.DB.Session(&gorm.Session{})
 		if err := publicDB.Exec("SET search_path TO public").Error; err == nil {
 			var subscriptions []models.Subscription
-			publicDB.Model(&models.Subscription{}).
-				Where("admin_account_id = ? AND deleted_at IS NULL", adminAccountID).
+			applyManagerScope(c, publicDB.Model(&models.Subscription{}).
+				Where("admin_account_id = ? AND deleted_at IS NULL", adminAccountID)).
 				Preload("BillingPlan").
 				Order("updated_at DESC, created_at DESC").
 				Limit(limit / 4). // Четверть от лимита для подписок
@@ -585,17 +585,18 @@ func GetBillingDashboard(c *gin.Context) {
 		Overdue:             decimal.Zero,
 	}
 
+	// Scoping менеджера: все денежные агрегаты — только по его договорам (contract_id IN свои).
 	// Подсчитываем активные подписки
 	var activeSubscriptions int64
-	database.DB.Model(&models.Subscription{}).
-		Where("company_id = ? AND status = ? AND deleted_at IS NULL", companyID, "active").
+	applyManagerScope(c, database.DB.Model(&models.Subscription{}).
+		Where("company_id = ? AND status = ? AND deleted_at IS NULL", companyID, "active")).
 		Count(&activeSubscriptions)
 	response.SubscriptionsActive = activeSubscriptions
 
 	// Подсчитываем общий доход (из оплаченных счетов)
 	var paidInvoices []models.Invoice
-	database.DB.Model(&models.Invoice{}).
-		Where("company_id = ? AND status = ? AND deleted_at IS NULL", companyID, "paid").
+	applyManagerScope(c, database.DB.Model(&models.Invoice{}).
+		Where("company_id = ? AND status = ? AND deleted_at IS NULL", companyID, "paid")).
 		Find(&paidInvoices)
 
 	for _, invoice := range paidInvoices {
@@ -604,9 +605,9 @@ func GetBillingDashboard(c *gin.Context) {
 
 	// Подсчитываем к оплате (неоплаченные счета, не просроченные)
 	var payableInvoices []models.Invoice
-	database.DB.Model(&models.Invoice{}).
+	applyManagerScope(c, database.DB.Model(&models.Invoice{}).
 		Where("company_id = ? AND status IN (?, ?) AND deleted_at IS NULL AND due_date >= ?",
-			companyID, "sent", "draft", time.Now()).
+			companyID, "sent", "draft", time.Now())).
 		Find(&payableInvoices)
 
 	for _, invoice := range payableInvoices {
@@ -615,9 +616,9 @@ func GetBillingDashboard(c *gin.Context) {
 
 	// Подсчитываем просроченные
 	var overdueInvoices []models.Invoice
-	database.DB.Model(&models.Invoice{}).
+	applyManagerScope(c, database.DB.Model(&models.Invoice{}).
 		Where("company_id = ? AND status != ? AND status != ? AND deleted_at IS NULL AND due_date < ?",
-			companyID, "paid", "cancelled", time.Now()).
+			companyID, "paid", "cancelled", time.Now())).
 		Find(&overdueInvoices)
 
 	for _, invoice := range overdueInvoices {

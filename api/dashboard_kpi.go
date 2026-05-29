@@ -72,7 +72,7 @@ func GetDashboardKPI(c *gin.Context) {
 		buildActiveObjectsKPI(tenantDB, now),
 		buildMonthlyRevenueKPI(publicDB, tenantDB, companyID, now),
 		buildTodayInstallationsKPI(tenantDB, now),
-		buildAlertKPI(tenantDB, publicDB, companyID, now),
+		buildAlertKPI(c, tenantDB, publicDB, companyID, now),
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -285,7 +285,7 @@ func buildTodayInstallationsKPI(db *gorm.DB, now time.Time) KPIMetric {
 // которого максимальный severity. Если активных алертов нет — показываем
 // "Всё в норме" в качестве fallback.
 
-func buildAlertKPI(tenantDB, publicDB *gorm.DB, companyID uint, now time.Time) KPIMetric {
+func buildAlertKPI(c *gin.Context, tenantDB, publicDB *gorm.DB, companyID uint, now time.Time) KPIMetric {
 	type candidate struct {
 		title    string
 		value    string
@@ -296,10 +296,10 @@ func buildAlertKPI(tenantDB, publicDB *gorm.DB, companyID uint, now time.Time) K
 
 	candidates := []candidate{}
 
-	// Просроченные счета (public.invoices)
+	// Просроченные счета (public.invoices) — scoping менеджера (только свои договоры)
 	var overdue int64
-	publicDB.Table(publicTable(publicDB, "invoices")).
-		Where("company_id = ? AND due_date < ? AND status NOT IN ?", companyID, now, []string{"paid", "cancelled"}).
+	applyManagerScope(c, publicDB.Table(publicTable(publicDB, "invoices")).
+		Where("company_id = ? AND due_date < ? AND status NOT IN ?", companyID, now, []string{"paid", "cancelled"})).
 		Count(&overdue)
 	if overdue > 0 {
 		sev := "high"

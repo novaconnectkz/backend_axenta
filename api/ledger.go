@@ -27,6 +27,11 @@ func SetLedgerChargeScheduler(s *services.LedgerChargeScheduler) {
 // Ручной прогон авто-начисления (для теста). Body опц.: {"date":"YYYY-MM-DD"}
 // — начислить за все недостающие дни до этой даты включительно (default вчера).
 func PostLedgerChargeRun(c *gin.Context) {
+	// Глобальный прогон начислений — только admin/superadmin.
+	if !requireContractAssignAccess(c) {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "доступно только администратору"})
+		return
+	}
 	if ledgerChargeScheduler == nil {
 		// Планировщик может быть выключен флагом — поднимаем разовый экземпляр.
 		ledgerChargeScheduler = services.NewLedgerChargeScheduler()
@@ -70,6 +75,10 @@ func GetLedgerBalance(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "некорректный contract_id"})
 		return
 	}
+	if !managerCanAccessContract(c, uint(contractID)) {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "договор вне вашего доступа"})
+		return
+	}
 	adminAccountID, err := middleware.GetAdminAccountID(c)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": err.Error()})
@@ -104,6 +113,10 @@ func GetLedgerEntries(c *gin.Context) {
 	contractID, err := strconv.ParseUint(c.Param("contract_id"), 10, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "некорректный contract_id"})
+		return
+	}
+	if !managerCanAccessContract(c, uint(contractID)) {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "договор вне вашего доступа"})
 		return
 	}
 	adminAccountID, err := middleware.GetAdminAccountID(c)
@@ -141,6 +154,10 @@ func PostLedgerPayment(c *gin.Context) {
 	}
 	if req.Amount <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "сумма платежа должна быть > 0"})
+		return
+	}
+	if !managerCanAccessContract(c, req.ContractID) {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "договор вне вашего доступа"})
 		return
 	}
 	if req.Source == "" {
@@ -249,6 +266,12 @@ func PostLedgerImport(c *gin.Context) {
 	for _, it := range body.Items {
 		if it.Amount <= 0 || it.ContractID == 0 {
 			failed++
+			continue
+		}
+		// Scoping менеджера: нельзя импортировать платёж на чужой договор.
+		if !managerCanAccessContract(c, it.ContractID) {
+			failed++
+			errorsList = append(errorsList, fmt.Sprintf("договор %d вне доступа", it.ContractID))
 			continue
 		}
 		var contract models.Contract

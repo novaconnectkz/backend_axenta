@@ -341,6 +341,18 @@ func GetContracts(c *gin.Context) {
 	// GORM автоматически исключает записи с deleted_at (soft delete)
 	baseQuery := tenantDB.Model(&models.Contract{}).Where("admin_account_id = ?", adminAccountID)
 
+	// Scoping менеджера: роль manager видит ТОЛЬКО свои договоры (manager_id = свой user_id).
+	// admin/superadmin — все. Фильтр manager_id=<id> (для admin — выборка по менеджеру).
+	if isManagerScoped(c) {
+		if uid, ok := currentUserID(c); ok {
+			baseQuery = baseQuery.Where("manager_id = ?", uid)
+		} else {
+			baseQuery = baseQuery.Where("1 = 0") // нет user_id у manager → ничего
+		}
+	} else if mgr := c.Query("manager_id"); mgr != "" {
+		baseQuery = baseQuery.Where("manager_id = ?", mgr)
+	}
+
 	// 🚀 Параметр skip_stats для ленивой загрузки (Progressive Loading)
 	// Если true - возвращает список быстро без статистики объектов
 	skipStats := c.Query("skip_stats") == "true"
@@ -915,6 +927,10 @@ func GetContractObjectsList(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Неверный формат ID договора"})
 		return
 	}
+	if !managerCanAccessContract(c, uint(contractID)) {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "договор вне вашего доступа"})
+		return
+	}
 	tenantDB := middleware.GetTenantDB(c)
 	if tenantDB == nil {
 		tenantDB = database.DB
@@ -958,9 +974,9 @@ func GetContractObjectsList(c *gin.Context) {
 			name = fmt.Sprintf("Объект #%d", co.ObjectID)
 		}
 		out = append(out, gin.H{
-			"object_id":    co.ObjectID,
-			"name":         name,
-			"account_name": account,
+			"object_id":     co.ObjectID,
+			"name":          name,
+			"account_name":  account,
 			"object_schema": co.ObjectSchema,
 		})
 	}
@@ -988,6 +1004,10 @@ func GetContractStats(c *gin.Context) {
 		return
 	}
 
+	if !managerCanAccessContract(c, uint(contractID)) {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "договор вне вашего доступа"})
+		return
+	}
 	tenantDB := middleware.GetTenantDB(c)
 	if tenantDB == nil {
 		log.Printf("⚠️ GetContractStats: Не удалось получить tenant DB из контекста")
@@ -1126,6 +1146,11 @@ func GetContract(c *gin.Context) {
 	if tenantDB == nil {
 		log.Printf("⚠️ Не удалось получить tenant DB из контекста, используем основную БД")
 		tenantDB = database.DB
+	}
+
+	if !managerCanAccessContract(c, uint(contractID)) {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "договор вне вашего доступа"})
+		return
 	}
 
 	var contract models.Contract
@@ -1291,6 +1316,7 @@ type CreateContractRequestRaw struct {
 	Description string `json:"description"`
 	CompanyID   uint   `json:"company_id"`
 	ObjectIDs   []uint `json:"object_ids"`
+	ManagerID   *uint  `json:"manager_id"` // обслуживающий менеджер (только admin назначает)
 
 	// Тип договора
 	ContractType     string `json:"contract_type"`      // client или partner
@@ -1938,6 +1964,25 @@ func CreateContract(c *gin.Context) {
 	// Временно устанавливаем IsAutoRenew и ContractPeriodMonths в nil, так как эти колонки могут отсутствовать в БД
 	contract.IsAutoRenew = false
 	contract.ContractPeriodMonths = nil
+
+	// Менеджер договора: admin назначает из запроса (с валидацией роли); manager-создатель → сам себе.
+	if requireContractAssignAccess(c) {
+		if rawRequest.ManagerID != nil && *rawRequest.ManagerID > 0 {
+			name, ok := resolveManagerName(*rawRequest.ManagerID)
+			if !ok {
+				c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "недопустимый менеджер для назначения"})
+				return
+			}
+			contract.ManagerID = rawRequest.ManagerID
+			contract.ManagerName = name
+		}
+	} else if uid, ok := currentUserID(c); ok {
+		contract.ManagerID = &uid
+		if name, ok2 := resolveManagerName(uid); ok2 {
+			contract.ManagerName = name
+		}
+	}
+
 	if err := tenantDB.Omit("SellerCountryCode", "BuyerCountryCode", "NDSRateOverride", "TariffPlan", "Appendices", "Objects", "IsAutoRenew", "ContractPeriodMonths").Create(&contract).Error; err != nil {
 		log.Printf("❌ Ошибка при создании договора: %v", err)
 		log.Printf("📋 Тип ошибки: %T", err)
@@ -2410,6 +2455,12 @@ func UpdateContract(c *gin.Context) {
 		return
 	}
 
+	// Scoping менеджера: нельзя править чужой договор.
+	if !managerCanAccessContract(c, contract.ID) {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "договор вне вашего доступа"})
+		return
+	}
+
 	var updateData models.Contract
 	if err := c.ShouldBindJSON(&updateData); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -2417,6 +2468,21 @@ func UpdateContract(c *gin.Context) {
 			"error":  "Неверный формат данных",
 		})
 		return
+	}
+
+	// Менеджера договора назначает только admin/superadmin. Прочие роли НЕ могут
+	// переназначить (manager не должен забрать/отдать чужой договор) — сохраняем как было.
+	if !requireContractAssignAccess(c) {
+		updateData.ManagerID = contract.ManagerID
+		updateData.ManagerName = contract.ManagerName
+	} else if updateData.ManagerID != nil && *updateData.ManagerID > 0 {
+		// Валидируем назначаемого (роль manager/admin) + резолвим имя.
+		name, ok := resolveManagerName(*updateData.ManagerID)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "недопустимый менеджер для назначения"})
+			return
+		}
+		updateData.ManagerName = name
 	}
 
 	// Проверяем тарифный план если он изменился (опционально, будет привязан через подписку)
@@ -2530,6 +2596,12 @@ func DeleteContract(c *gin.Context) {
 			"status": "error",
 			"error":  "Договор не найден",
 		})
+		return
+	}
+
+	// Scoping менеджера: нельзя удалить чужой договор.
+	if !managerCanAccessContract(c, contract.ID) {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "договор вне вашего доступа"})
 		return
 	}
 
@@ -2674,6 +2746,11 @@ func GetContractAppendices(c *gin.Context) {
 		return
 	}
 
+	if !managerCanAccessContract(c, uint(contractID)) {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "договор вне вашего доступа"})
+		return
+	}
+
 	// Получаем tenant DB из контекста
 	tenantDB := middleware.GetTenantDB(c)
 	if tenantDB == nil {
@@ -2726,6 +2803,13 @@ func CreateContractAppendix(c *gin.Context) {
 	}
 
 	contractID := c.Param("contract_id")
+
+	if cid, perr := strconv.ParseUint(contractID, 10, 32); perr == nil {
+		if !managerCanAccessContract(c, uint(cid)) {
+			c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "договор вне вашего доступа"})
+			return
+		}
+	}
 
 	// Получаем tenant DB из контекста
 	tenantDB := middleware.GetTenantDB(c)
@@ -2932,6 +3016,13 @@ func CalculateContractCost(c *gin.Context) {
 	}
 
 	contractID := c.Param("contract_id")
+
+	if cid, perr := strconv.ParseUint(contractID, 10, 32); perr == nil {
+		if !managerCanAccessContract(c, uint(cid)) {
+			c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "договор вне вашего доступа"})
+			return
+		}
+	}
 
 	// Получаем tenant DB из контекста
 	tenantDB := middleware.GetTenantDB(c)

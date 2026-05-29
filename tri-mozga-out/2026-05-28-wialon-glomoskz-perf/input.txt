@@ -1,0 +1,34 @@
+Диагностика производительности Wialon-загрузки в Go-бэкенде (backend_axenta). НЕ писать код в файлы — только анализ + план.
+
+ПРОБЛЕМА: загрузка одного Wialon-коннекта `glomoskz` занимает 2m30s. Мелкие коннекты — секунды.
+
+ИЗМЕРЕННЫЕ ФАКТЫ (прод, 2026-05-28):
+- glomoskz: ~4500 users (itemsType=user) + ~3000 avl_resource, 12186 объектов, 3283 аккаунта в итоге.
+- Лог: `⚡ Wialon PARALLEL: connection=glomoskz загружена за 2m30.79s, 3283 аккаунтов`.
+- После рестарта systemd-бэкенда СРАЗУ стартуют 5 schedulers, каждый независимо LoginWithHost+fetch по glomoskz: wialon_all_accounts, WialonStatsScheduler, wialon_history_scheduler, wialon_billing_plans_scheduler, wialon_stats_scheduler. В логах десятки повторных `LoginWithHost` (по 69KB ответ) с au:glomoskz. Wialon: лимит ~5 concurrent sessions per token + rate limit ~общий.
+
+КЛЮЧЕВЫЕ ФАЙЛЫ (читай их, путь от backend_axenta/):
+- services/wialon_service.go: `GetAccountsBatchFromHost` (строка ~2408), `searchItemsPaginated` (~2272), `LoginWithHost` (~799).
+- api/wialon_connections.go: `buildAndCacheAllAccountsForCompany` (~709).
+
+`searchItemsPaginated` — суть: цикл from=0 шаг pageSize=1000, КАЖДЫЙ core/search_items вызов с params `force:1`, спека одна и та же (propValueMask="*", sortType="sys_name"). Страницы строго последовательны.
+
+`GetAccountsBatchFromHost`: Login → searchItemsPaginated(user, flags=407) → searchItemsPaginated(avl_resource, flags=5) → callBatch(dealers+disabled) → Logout(defer). ~8 sequential round-trips.
+
+ГИПОТЕЗА (валидируй ИЛИ опровергни честно):
+Главный killer — `force:1` на каждой странице. В Wialon SDK core/search_items: force=1 пересоздаёт result-set сессии (полный re-search), force=0 переиспользует закэшированный set для того же spec и дёшево отдаёт срез from/to. Re-force каждой страницы = O(N·pages) серверной работы. Фикс: force:1 только на первой странице, force:0 на остальных.
+Вторичное: 5 schedulers дублируют тяжёлый fetch glomoskz после рестарта (нет single-flight/shared rate-limiter); flags=407 раздувает payload; нет HTTP timeout.
+
+ВОПРОСЫ:
+1. Верна ли диагностика force=1/force=0 для Wialon search_items при from/to пагинации? Если force=0 на последующих страницах рискует консистентностью (set протух между страницами) — как правильно (re-force при смене totalItemsCount? snapshot id?).
+2. Оптимальный безопасный фикс пагинации без дублей/пропусков.
+3. Вторичные фиксы и их выигрыш: single-flight per-connection, shared rate-limiter, HTTP timeout, уменьшение flags.
+4. Конкретный план правок (файл/функция/что менять) + severity + почему «100% рабочее».
+
+ВЕРНИ СТРОГО ПО ШАБЛОНУ:
+Рекомендация: <одна строка>
+Блокирующие риски: <буллеты>
+Допущения: <буллеты>
+Уверенность: low/medium/high
+Тесты для верификации: <буллеты>
+План правок: <буллеты file/func/изменение/severity>
