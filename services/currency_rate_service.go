@@ -81,6 +81,9 @@ func (s *CurrencyRateService) fetchCBR(url string) (time.Time, map[string]decima
 	if err != nil {
 		return time.Time{}, nil, err
 	}
+	// CBR отдаёт 403 на дефолтный Go-http-client UA — ставим браузерный (Codex-staging fix).
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; ACRM-billing/1.0)")
+	req.Header.Set("Accept", "application/xml, text/xml, */*")
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return time.Time{}, nil, fmt.Errorf("CBR fetch: %w", err)
