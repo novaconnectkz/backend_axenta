@@ -426,6 +426,9 @@ func GetWcrmMigrationPreview(c *gin.Context) {
 			cand.BalanceTarget = "—"
 		}
 
+		// Axenta-аккаунт компании (доминантный) — для подсчёта «своих» vs «переехавших» объектов.
+		domAcc := dominantAxentaAccount(&r, axentaObjMap)
+
 		allImported := len(r.Contracts) > 0
 		for _, ct := range r.Contracts {
 			extID := "wcrm:contract:" + strconv.FormatInt(ct.WcrmContractID, 10)
@@ -482,7 +485,7 @@ func GetWcrmMigrationPreview(c *gin.Context) {
 					if len(names) < 50 {
 						names = append(names, ob.Name)
 					}
-					if _, ok := axentaObjMap[ob.UID]; ok {
+					if ref, ok := axentaObjMap[ob.UID]; ok && (domAcc == 0 || ref.CompanyID == domAcc) {
 						ctObjMatched++
 					}
 				}
@@ -575,10 +578,41 @@ type wcrmApproveResult struct {
 	SubscriptionsCreated int      `json:"subscriptions_created"`
 	ObjectsLinked        int      `json:"objects_linked"`
 	ObjectsUnmatched     int      `json:"objects_unmatched"`
+	ObjectsForeign       int      `json:"objects_foreign"`        // объектов пропущено: в Axenta уже у другой компании
+	ForeignObjectNames   []string `json:"foreign_object_names"`   // имена пропущенных «чужих» объектов
 	SkippedInactive      int      `json:"skipped_inactive"`     // договоров пропущено (все приложения disabled)
 	TariffNotFound       []string `json:"tariff_not_found"`     // цены без тарифа → подписка не создана
 	BalanceRecorded      bool     `json:"balance_recorded"`
 	CreatedContractIDs   []uint   `json:"created_contract_ids"`
+}
+
+// dominantAxentaAccount — Axenta-аккаунт мигрируемой компании = account_external_id,
+// за которым числится БОЛЬШИНСТВО её сматченных по uid объектов. Объекты с другим
+// аккаунтом «переехали» в Axenta к другой компании (WCRM-snapshot устарел) → пропускаем.
+// Возвращает 0 если совпадений нет (тогда фильтр не применяем).
+func dominantAxentaAccount(rec *wcrmRecord, objMap map[string]acrmObjectRef) uint {
+	counts := map[uint]int{}
+	for _, ct := range rec.Contracts {
+		for _, ap := range ct.Appendices {
+			if ap.Enabled == 0 {
+				continue
+			}
+			for _, ob := range ap.Objects {
+				if ref, ok := objMap[ob.UID]; ok && ref.CompanyID > 0 {
+					counts[ref.CompanyID]++
+				}
+			}
+		}
+	}
+	var best uint
+	bestN := 0
+	for acc, n := range counts {
+		if n > bestN {
+			bestN = n
+			best = acc
+		}
+	}
+	return best
 }
 
 // PostWcrmMigrationApprove — POST /api/auth/migration/wcrm/approve/:wcrm_company_id
@@ -678,6 +712,10 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 		// uid → ACRM Axenta-объект (для привязки объектов подписки по uid-матчу).
 		// WCRM ax-объекты = Axenta Cloud; uid == axenta_object_snapshots.unique_id.
 		axentaObjMap := loadAxentaObjectMap(wcrmSchema())
+
+		// Axenta-аккаунт компании (доминантный среди её объектов). Объекты, «переехавшие»
+		// в Axenta к другому аккаунту, пропускаем — WCRM-snapshot их ещё числит за нами.
+		dominantAcc := dominantAxentaAccount(rec, axentaObjMap)
 
 		// Все обработанные (created+updated) договоры ЭТОЙ компании — для привязки
 		// остатка к первому договору компании (не глобального min, который мог быть чужим).
@@ -929,6 +967,12 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 					ref, ok := axentaObjMap[ob.UID]
 					if !ok {
 						result.ObjectsUnmatched++
+						continue
+					}
+					// «Переехавший» объект: в Axenta уже у другого аккаунта → пропуск.
+					if dominantAcc != 0 && ref.CompanyID != dominantAcc {
+						result.ObjectsForeign++
+						result.ForeignObjectNames = append(result.ForeignObjectNames, ob.Name)
 						continue
 					}
 					sid := subID
