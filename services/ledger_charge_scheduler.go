@@ -206,42 +206,50 @@ func (s *LedgerChargeScheduler) sweepCompanySuspensions(company models.Company) 
 	now := time.Now().UTC()
 	for i := range contracts {
 		ct := &contracts[i]
+		// Баланс СТРОГО в рамках компании+админа (contract_id может совпадать в разных
+		// tenant-схемах одного admin → без company_id балансы смешались бы — Codex critical).
 		var bal decimal.Decimal
 		pub.Table("public.ledger_entries").
-			Where("contract_id = ? AND admin_account_id = ? AND deleted_at IS NULL", ct.ID, ct.AdminAccountID).
+			Where("contract_id = ? AND admin_account_id = ? AND company_id = ? AND deleted_at IS NULL", ct.ID, ct.AdminAccountID, company.ID).
 			Select("COALESCE(SUM(amount),0)").Scan(&bal)
 		threshold := ct.CreditLimit.Neg() // допустимый минус: balance < −creditLimit → блок
 
 		var active models.BillingSuspension
 		hasActive := pub.Table("public.billing_suspensions").
-			Where("contract_id = ? AND admin_account_id = ? AND reason = ? AND active = ? AND deleted_at IS NULL",
-				ct.ID, ct.AdminAccountID, "billing_debt", true).First(&active).Error == nil
+			Where("contract_id = ? AND admin_account_id = ? AND company_id = ? AND reason = ? AND active = ? AND deleted_at IS NULL",
+				ct.ID, ct.AdminAccountID, company.ID, "billing_debt", true).First(&active).Error == nil
 
-		if bal.LessThan(threshold) {
-			// Долг сверх лимита → приостановить, если ещё не приостановлен за долг.
-			if !hasActive {
-				susp := models.BillingSuspension{
-					AdminAccountID: ct.AdminAccountID, CompanyID: company.ID, ContractID: ct.ID,
-					Reason: "billing_debt", PreviousStatus: ct.Status, DebtAmount: bal.Abs(),
-					Active: true, SuspendedBy: "scheduler",
+		switch {
+		case bal.LessThan(threshold) && !hasActive && ct.Status == "active":
+			// Приостанавливаем ТОЛЬКО из status='active' (не трогаем ручной suspend/draft/...).
+			// suspension create + status update — в одной tx (атомарность, Codex H1).
+			susp := models.BillingSuspension{
+				AdminAccountID: ct.AdminAccountID, CompanyID: company.ID, ContractID: ct.ID,
+				Reason: "billing_debt", PreviousStatus: "active", DebtAmount: bal.Abs(),
+				Active: true, SuspendedBy: "scheduler",
+			}
+			err := pub.Transaction(func(tx *gorm.DB) error {
+				if e := tx.Table("public.billing_suspensions").Create(&susp).Error; e != nil {
+					return e // partial-unique поймает гонку → дубль не создастся
 				}
-				if pub.Table("public.billing_suspensions").Create(&susp).Error == nil {
-					tenantDB.Model(&models.Contract{}).Where("id = ?", ct.ID).Update("status", "suspended")
-					suspended++
+				return tenantDB.Model(&models.Contract{}).Where("id = ? AND status = ?", ct.ID, "active").Update("status", "suspended").Error
+			})
+			if err == nil {
+				suspended++
+			}
+		case !bal.LessThan(threshold) && hasActive:
+			// Долг погашен/в пределах → снять debt-приостановку. Возвращаем статус в 'active'
+			// (приостанавливали только из active). Ручной suspend сюда не попадёт (нет active billing_debt).
+			err := pub.Transaction(func(tx *gorm.DB) error {
+				if e := tx.Table("public.billing_suspensions").Where("id = ?", active.ID).
+					Updates(map[string]interface{}{"active": false, "resolved_at": now}).Error; e != nil {
+					return e
 				}
+				return tenantDB.Model(&models.Contract{}).Where("id = ? AND status = ?", ct.ID, "suspended").Update("status", "active").Error
+			})
+			if err == nil {
+				resolved++
 			}
-		} else if hasActive {
-			// Долг погашен/в пределах → снять приостановку, вернуть прежний статус.
-			pub.Table("public.billing_suspensions").Where("id = ?", active.ID).
-				Updates(map[string]interface{}{"active": false, "resolved_at": now})
-			restore := active.PreviousStatus
-			if restore == "" || restore == "suspended" {
-				restore = "active"
-			}
-			if ct.Status == "suspended" {
-				tenantDB.Model(&models.Contract{}).Where("id = ?", ct.ID).Update("status", restore)
-			}
-			resolved++
 		}
 	}
 	return

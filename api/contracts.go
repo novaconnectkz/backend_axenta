@@ -1311,12 +1311,14 @@ func GetContract(c *gin.Context) {
 // CreateContractRequestRaw представляет сырой запрос с датами как строками
 type CreateContractRequestRaw struct {
 	// Основные поля договора
-	Number      string `json:"number"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	CompanyID   uint   `json:"company_id"`
-	ObjectIDs   []uint `json:"object_ids"`
-	ManagerID   *uint  `json:"manager_id"` // обслуживающий менеджер (только admin назначает)
+	Number      string          `json:"number"`
+	Title       string          `json:"title"`
+	Description string          `json:"description"`
+	CompanyID   uint            `json:"company_id"`
+	ObjectIDs   []uint          `json:"object_ids"`
+	ManagerID   *uint           `json:"manager_id"`   // обслуживающий менеджер (только admin назначает)
+	BillingMode string          `json:"billing_mode"` // prepaid|postpaid (только admin, в рамках политики)
+	CreditLimit decimal.Decimal `json:"credit_limit"` // кредит-лимит для постоплаты
 
 	// Тип договора
 	ContractType     string `json:"contract_type"`      // client или partner
@@ -1983,6 +1985,18 @@ func CreateContract(c *gin.Context) {
 		}
 	}
 
+	// Режим биллинга: admin задаёт в рамках политики; прочие → prepaid (дефолт).
+	contract.BillingMode = "prepaid"
+	contract.CreditLimit = decimal.Zero
+	if requireContractAssignAccess(c) && rawRequest.BillingMode == "postpaid" {
+		if ok, msg := validateBillingModePolicy(adminAccountID, contract.CompanyID, "postpaid", rawRequest.CreditLimit); !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": msg})
+			return
+		}
+		contract.BillingMode = "postpaid"
+		contract.CreditLimit = rawRequest.CreditLimit
+	}
+
 	if err := tenantDB.Omit("SellerCountryCode", "BuyerCountryCode", "NDSRateOverride", "TariffPlan", "Appendices", "Objects", "IsAutoRenew", "ContractPeriodMonths").Create(&contract).Error; err != nil {
 		log.Printf("❌ Ошибка при создании договора: %v", err)
 		log.Printf("📋 Тип ошибки: %T", err)
@@ -2521,6 +2535,18 @@ func UpdateContract(c *gin.Context) {
 			"error":  "Ошибка при обновлении договора",
 		})
 		return
+	}
+
+	// Режим биллинга — явный update (Updates(struct) пропускает zero, иначе credit_limit=0
+	// и downgrade postpaid→prepaid не сохранятся). prepaid принудительно обнуляет лимит.
+	if requireContractAssignAccess(c) && updateData.BillingMode != "" {
+		mode := updateData.BillingMode
+		limit := updateData.CreditLimit
+		if mode != "postpaid" {
+			limit = decimal.Zero
+		}
+		tenantDB.Model(&models.Contract{}).Where("id = ?", contract.ID).
+			Updates(map[string]interface{}{"billing_mode": mode, "credit_limit": limit})
 	}
 
 	// Загружаем обновленные данные

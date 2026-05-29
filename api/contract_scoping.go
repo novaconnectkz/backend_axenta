@@ -142,6 +142,9 @@ func requireBillingOperation(c *gin.Context, adminAccountID, companyID uint) boo
 // компании: postpaid разрешён только при AllowPostpaid, credit_limit ≤ MaxCreditLimit.
 // Возвращает (ok, errMsg). Пустой/prepaid режим всегда ок.
 func validateBillingModePolicy(adminAccountID, companyID uint, mode string, limit decimal.Decimal) (bool, string) {
+	if limit.IsNegative() {
+		return false, "кредит-лимит не может быть отрицательным"
+	}
 	if mode == "" || mode == "prepaid" {
 		if limit.GreaterThan(decimal.Zero) {
 			return false, "кредит-лимит допустим только в режиме постоплаты"

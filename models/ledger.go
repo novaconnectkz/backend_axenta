@@ -83,9 +83,11 @@ type BillingSuspension struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
 
-	AdminAccountID uint `json:"admin_account_id" gorm:"not null;index"`
-	CompanyID      uint `json:"company_id" gorm:"not null;index"`
-	ContractID     uint `json:"contract_id" gorm:"not null;index"`
+	// Партиальный uniqueIndex: не более одной АКТИВНОЙ debt-приостановки на договор
+	// (анти-дубль при гонке двух sweep — Codex H3).
+	AdminAccountID uint `json:"admin_account_id" gorm:"not null;index;uniqueIndex:idx_susp_active_debt,where:active AND deleted_at IS NULL AND reason = 'billing_debt'"`
+	CompanyID      uint `json:"company_id" gorm:"not null;index;uniqueIndex:idx_susp_active_debt"`
+	ContractID     uint `json:"contract_id" gorm:"not null;index;uniqueIndex:idx_susp_active_debt"`
 
 	Reason         string          `json:"reason" gorm:"not null;type:varchar(30);index"` // billing_debt | manual
 	PreviousStatus string          `json:"previous_status" gorm:"type:varchar(20)"`       // статус договора до приостановки
