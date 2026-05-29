@@ -64,11 +64,20 @@ type LedgerTransfer struct {
 	IdempotencyKey string          `json:"idempotency_key" gorm:"uniqueIndex:idx_transfer_idem,where:idempotency_key <> '';type:varchar(64)"` // клиентский ключ против дублей retry
 	FromContractID uint            `json:"from_contract_id" gorm:"not null;index"`
 	ToContractID   uint            `json:"to_contract_id" gorm:"not null;index"`
-	Amount         decimal.Decimal `json:"amount" gorm:"not null;type:decimal(15,2)"` // положительная сумма перевода
+	Amount         decimal.Decimal `json:"amount" gorm:"not null;type:decimal(15,2)"` // сумма списания у источника (в Currency)
 	Currency       string          `json:"currency" gorm:"not null;default:'RUB';type:varchar(3)"`
-	Status         string          `json:"status" gorm:"not null;default:'completed';type:varchar(20)"` // completed | reversed
-	Description    string          `json:"description" gorm:"type:text"`
-	CreatedBy      string          `json:"created_by" gorm:"type:varchar(100)"`
+
+	// Кросс-валютный перевод (П5 фаза 3): если валюта источника ≠ валюте получателя,
+	// сумма конвертится по курсу. ToAmount/ToCurrency — что зачислено получателю.
+	// Для одновалютного перевода ToAmount=Amount, ToCurrency=Currency, Rate=1.
+	ToAmount   decimal.Decimal `json:"to_amount" gorm:"type:decimal(15,2)"`           // сумма зачисления получателю (в ToCurrency)
+	ToCurrency string          `json:"to_currency" gorm:"type:varchar(3)"`           // валюта получателя
+	Rate       decimal.Decimal `json:"rate" gorm:"type:decimal(18,8)"`               // применённый курс from→to (1 при одной валюте)
+	RateSource string          `json:"rate_source" gorm:"type:varchar(20)"`          // источник курса (cbr_rf|nbk_kz), пусто при одной валюте
+
+	Status      string `json:"status" gorm:"not null;default:'completed';type:varchar(20)"` // completed | reversed
+	Description string `json:"description" gorm:"type:text"`
+	CreatedBy   string `json:"created_by" gorm:"type:varchar(100)"`
 }
 
 func (LedgerTransfer) TableName() string { return "ledger_transfers" }
