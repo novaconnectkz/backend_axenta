@@ -2006,11 +2006,6 @@ func GetContractBillingBreakdown(c *gin.Context) {
 
 	for _, charge := range monthlyCharges {
 		totalAmount = totalAmount.Add(charge.TotalAmount)
-		if charge.IsCompleted {
-			totalPaid = totalPaid.Add(charge.TotalAmount)
-		} else {
-			totalFuture = totalFuture.Add(charge.TotalAmount)
-		}
 
 		// ВРЕМЕННО: Собираем статистику по фактическим счетам
 		if charge.TempInvoices != nil {
@@ -2018,6 +2013,20 @@ func GetContractBillingBreakdown(c *gin.Context) {
 			totalActualPaid = totalActualPaid.Add(charge.TempInvoices.ActualPaid)
 			totalActualOutstanding = totalActualOutstanding.Add(charge.TempInvoices.ActualOutstanding)
 		}
+	}
+
+	// «Оплачено» = ПОСТУПЛЕНИЯ по договору из ledger (только amount>0: предоплата, платежи),
+	// а НЕ стоимость прошедших месяцев и НЕ чистый баланс. Списания (charge, amount<0) —
+	// это потребление, их сюда НЕ включаем, иначе уже списанное «съедало» бы оплачено.
+	// «К оплате» = остаток стоимости после оплаты = max(0, стоимость − оплачено).
+	var ledgerPaid decimal.Decimal
+	database.DB.Table("public.ledger_entries").
+		Where("contract_id = ? AND admin_account_id = ? AND amount > 0 AND deleted_at IS NULL", uint(contractID), adminAccountID).
+		Select("COALESCE(SUM(amount),0)").Scan(&ledgerPaid)
+	totalPaid = ledgerPaid
+	totalFuture = totalAmount.Sub(totalPaid)
+	if totalFuture.IsNegative() {
+		totalFuture = decimal.Zero
 	}
 
 	c.JSON(http.StatusOK, gin.H{
