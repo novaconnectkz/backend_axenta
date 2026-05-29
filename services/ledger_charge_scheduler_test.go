@@ -57,6 +57,41 @@ func TestDailyChargeAmount_Variations(t *testing.T) {
 	assert.True(t, dailyChargeAmount(d("3650"), 1, yday, true).Equal(d("10")))
 }
 
+// holdLifecycleAction — pure-решение жизненного цикла зонта (П3/П4) в sweep.
+// Покрываем все ветки: fulfill / expire / keep + приоритет fulfill над expire.
+func TestHoldLifecycleAction(t *testing.T) {
+	now := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
+	future := now.Add(24 * time.Hour)  // зонт ещё держит
+	past := now.Add(-1 * time.Hour)    // срок истёк
+	threshold := d("-1000")            // допустимый минус = −creditLimit (creditLimit=1000)
+
+	cases := []struct {
+		name      string
+		balance   decimal.Decimal
+		holdUntil time.Time
+		want      holdAction
+	}{
+		// Долг в пределах лимита (balance >= threshold) → fulfill, независимо от срока.
+		{"в долгу но в пределах лимита, срок есть", d("-500"), future, holdFulfill},
+		{"переплата, срок есть", d("300"), future, holdFulfill},
+		{"ровно на пороге (balance==threshold)", d("-1000"), future, holdFulfill},
+		{"вышел из долга в день истечения → fulfill приоритетнее expire", d("0"), past, holdFulfill},
+		// В долгу сверх лимита + срок истёк → expire.
+		{"глубоко в долгу, срок истёк", d("-5000"), past, holdExpire},
+		{"чуть за порогом, срок истёк", d("-1000.01"), past, holdExpire},
+		{"в долгу, срок ровно now (now>=holdUntil)", d("-5000"), now, holdExpire},
+		// В долгу сверх лимита + срок не истёк → keep (зонт держит).
+		{"глубоко в долгу, срок есть", d("-5000"), future, holdKeep},
+		{"чуть за порогом, срок есть", d("-1000.01"), future, holdKeep},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := holdLifecycleAction(tc.balance, threshold, tc.holdUntil, now)
+			assert.Equal(t, tc.want, got, "balance=%s holdUntil=%s", tc.balance, tc.holdUntil.Format(time.RFC3339))
+		})
+	}
+}
+
 func setupChargeTestDB(t *testing.T) *gorm.DB {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),

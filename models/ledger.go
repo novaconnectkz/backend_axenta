@@ -98,3 +98,44 @@ type BillingSuspension struct {
 }
 
 func (BillingSuspension) TableName() string { return "billing_suspensions" }
+
+// BillingHold — «зонт» над договором, который временно блокирует авто-приостановку
+// за долг (П3 отсрочка + П4 обещанный платёж). НЕ трогает баланс: ledger остаётся
+// единственным источником правды. Hold лишь говорит sweep'у «не блокируй до HoldUntil».
+//
+// Два типа (HoldType):
+//   - deferral — отсрочка платежа: держим до даты, сумма не важна (Amount=0);
+//   - promise  — обещанный платёж: клиент обещал внести Amount до HoldUntil.
+//
+// Lifecycle (Status): active → fulfilled (вышел из долга) | expired (срок истёк, долг
+// остался) | cancelled (оператор отменил). Sweep гасит expired и снимает зонт при fulfilled.
+//
+// Глобальная (public) таблица — как ledger_entries / billing_suspensions (ключи
+// admin/company/contract, без FK на tenant-схему).
+type BillingHold struct {
+	ID        uint           `json:"id" gorm:"primarykey"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
+
+	// Партиальный uniqueIndex: не более одного АКТИВНОГО hold на договор
+	// (анти-дубль при гонке двух операторов / двух sweep — зеркало BillingSuspension).
+	AdminAccountID uint `json:"admin_account_id" gorm:"not null;index;uniqueIndex:idx_hold_active,where:active AND deleted_at IS NULL"`
+	CompanyID      uint `json:"company_id" gorm:"not null;index;uniqueIndex:idx_hold_active"`
+	ContractID     uint `json:"contract_id" gorm:"not null;index;uniqueIndex:idx_hold_active"`
+
+	HoldType string          `json:"hold_type" gorm:"not null;type:varchar(20);index"` // deferral | promise
+	Amount   decimal.Decimal `json:"amount" gorm:"type:decimal(15,2);default:0"`       // promise: обещанная сумма; deferral: 0
+	Currency string          `json:"currency" gorm:"not null;default:'RUB';type:varchar(3)"`
+
+	HoldUntil time.Time `json:"hold_until" gorm:"not null;index"`                         // до какой даты зонт держит
+	Status    string    `json:"status" gorm:"not null;default:'active';type:varchar(20);index"` // active | fulfilled | expired | cancelled
+	Active    bool      `json:"active" gorm:"not null;default:true;index"`               // = (status==active), для partial-index
+
+	DebtAtCreate decimal.Decimal `json:"debt_at_create" gorm:"type:decimal(15,2);default:0"` // долг на момент создания (отчёт)
+	Reason       string          `json:"reason" gorm:"type:text"`
+	CreatedBy    string          `json:"created_by" gorm:"type:varchar(100)"`
+	ResolvedAt   *time.Time      `json:"resolved_at"` // когда стал fulfilled/expired/cancelled
+}
+
+func (BillingHold) TableName() string { return "billing_holds" }

@@ -1056,6 +1056,10 @@ func main() {
 	apiGroup.POST("/ledger/import", api.PostLedgerImport)
 	apiGroup.POST("/ledger/transfer", api.PostLedgerTransfer) // перевод между лицевыми счетами
 	apiGroup.POST("/ledger/charge/run", api.PostLedgerChargeRun)
+	// Зонты отсрочки/обещанного платежа (П3+П4): блокируют авто-приостановку за долг.
+	apiGroup.GET("/ledger/holds/:contract_id", api.GetLedgerHolds)
+	apiGroup.POST("/ledger/hold", api.PostLedgerHold)
+	apiGroup.POST("/ledger/hold/:id/cancel", api.PostLedgerHoldCancel)
 	log.Println("✅ Зарегистрированы /api/auth/ledger/* (лицевой счёт)")
 
 	// Синхронизация договора с подпиской
