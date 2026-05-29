@@ -1832,14 +1832,25 @@ func GetContractBillingBreakdown(c *gin.Context) {
 
 		// Рассчитываем стоимость каждой подписки за этот месяц
 		for _, subData := range subscriptionsData {
-			// Проверяем, была ли подписка активна в этом месяце
-			subStartMonth := time.Date(subData.Subscription.CreatedAt.Year(), subData.Subscription.CreatedAt.Month(), 1, 0, 0, 0, 0, subData.Subscription.CreatedAt.Location())
+			// Начало действия подписки = StartDate (дата начала услуги), НЕ CreatedAt
+			// (дата создания строки — у мигрированных из WCRM = дата импорта, из-за чего
+			// прошлые месяцы услуги показывались пустыми «0 подписок»).
+			subStart := subData.Subscription.StartDate
+			if subStart.IsZero() {
+				subStart = subData.Subscription.CreatedAt
+			}
+			subStartMonth := time.Date(subStart.Year(), subStart.Month(), 1, 0, 0, 0, 0, subStart.Location())
 
-			// Определяем конец действия подписки
+			// Конец действия: cancelled/expired → месяц снятия; иначе EndDate подписки
+			// (если задан), иначе конец договора.
 			var subEndMonth time.Time
-			if subData.Subscription.Status == "cancelled" || subData.Subscription.Status == "expired" {
+			switch {
+			case subData.Subscription.Status == "cancelled" || subData.Subscription.Status == "expired":
 				subEndMonth = time.Date(subData.Subscription.UpdatedAt.Year(), subData.Subscription.UpdatedAt.Month(), 1, 0, 0, 0, 0, subData.Subscription.UpdatedAt.Location())
-			} else {
+			case subData.Subscription.EndDate != nil:
+				e := *subData.Subscription.EndDate
+				subEndMonth = time.Date(e.Year(), e.Month(), 1, 0, 0, 0, 0, e.Location())
+			default:
 				subEndMonth = endMonth
 			}
 
