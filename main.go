@@ -1085,6 +1085,7 @@ func main() {
 	apiGroup.GET("/counterparties/search", api.SearchCounterparties)
 	apiGroup.GET("/counterparties", api.GetCounterparties)
 	apiGroup.GET("/counterparties/:id", api.GetCounterparty)
+	apiGroup.GET("/counterparties/:id/balance", api.GetCounterpartyBalance) // Ф4b: единый ЛС
 	apiGroup.POST("/counterparties", api.CreateCounterparty)
 	apiGroup.PUT("/counterparties/:id", api.UpdateCounterparty)
 	apiGroup.DELETE("/counterparties/:id", api.DeleteCounterparty)
