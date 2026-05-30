@@ -308,6 +308,24 @@ func (s *LedgerChargeScheduler) sweepCompanySuspensions(company models.Company) 
 	return
 }
 
+// routeCadence — П6: эффективная каденция подписки и выбор charge-пути.
+// Override каденции тарифа (planCadence) перебивает глобальную каденцию компании
+// (companyCadence) — это Ф4. Возвращает "lump" | "monthly" | "daily".
+func routeCadence(companyCadence, planCadence, planPeriod, longSubCharge string) string {
+	cadence := companyCadence
+	if pc := strings.TrimSpace(planCadence); pc != "" {
+		cadence = pc // Ф4: override тарифа
+	}
+	switch {
+	case cadence == "period" && planPeriod == "yearly" && longSubCharge == "lump_sum":
+		return "lump"
+	case cadence == "monthly" || cadence == "period":
+		return "monthly"
+	default:
+		return "daily"
+	}
+}
+
 // chargeCompany начисляет по всем клиентским подпискам одной компании.
 func (s *LedgerChargeScheduler) chargeCompany(company models.Company, cutoff, targetDate time.Time) (entries, skipped int) {
 	defer func() {
@@ -347,9 +365,9 @@ func (s *LedgerChargeScheduler) chargeCompany(company models.Company, cutoff, ta
 
 	// Политика биллинга компании (П5 источник курса + П6 каденция/мин.дни/длинные подписки).
 	rateSource := "cbr_rf"
-	companyCadence := "daily"   // П6: daily | monthly | period
-	minDaysFull := 5            // мин. дней присутствия объекта в месяце для полного месяца
-	longSubCharge := "monthly"  // П6: monthly | lump_sum — как списывать подписки >1 мес
+	companyCadence := "daily"  // П6: daily | monthly | period
+	minDaysFull := 5           // мин. дней присутствия объекта в месяце для полного месяца
+	longSubCharge := "monthly" // П6: monthly | lump_sum — как списывать подписки >1 мес
 	{
 		var bs models.BillingSettings
 		if s.db.Session(&gorm.Session{}).Table("public.billing_settings").
@@ -405,18 +423,13 @@ func (s *LedgerChargeScheduler) chargeCompany(company models.Company, cutoff, ta
 			continue
 		}
 
-		// Эффективная каденция: override тарифа перебивает глобальную (П6).
-		cadence := companyCadence
-		if pc := strings.TrimSpace(sub.BillingPlan.ChargeCadence); pc != "" {
-			cadence = pc
-		}
-
+		// П6 Ф4: эффективная каденция + выбор charge-пути (override тарифа > глобал).
 		var e, sk int
-		switch {
-		case cadence == "period" && sub.BillingPlan.BillingPeriod == "yearly" && longSubCharge == "lump_sum":
+		switch routeCadence(companyCadence, sub.BillingPlan.ChargeCadence, sub.BillingPlan.BillingPeriod, longSubCharge) {
+		case "lump":
 			// Длинная подписка разово: вся сумма периода 1 проводкой (П6 Ф3).
 			e, sk = s.chargeSubscriptionPeriodLump(tenantDB, company.ID, &sub, cid, info.currency, info.billingMode, rateSource, minDaysFull, rateCache, cutoff, targetDate)
-		case cadence == "monthly" || cadence == "period":
+		case "monthly":
 			// monthly, либо period+помесячно (в т.ч. yearly→price/12), либо period на
 			// месячном тарифе — единое месячное начисление.
 			e, sk = s.chargeSubscriptionMonthly(tenantDB, company.ID, &sub, cid, info.currency, info.billingMode, rateSource, minDaysFull, rateCache, cutoff, targetDate)

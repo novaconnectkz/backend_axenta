@@ -61,9 +61,9 @@ func TestDailyChargeAmount_Variations(t *testing.T) {
 // Покрываем все ветки: fulfill / expire / keep + приоритет fulfill над expire.
 func TestHoldLifecycleAction(t *testing.T) {
 	now := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
-	future := now.Add(24 * time.Hour)  // зонт ещё держит
-	past := now.Add(-1 * time.Hour)    // срок истёк
-	threshold := d("-1000")            // допустимый минус = −creditLimit (creditLimit=1000)
+	future := now.Add(24 * time.Hour) // зонт ещё держит
+	past := now.Add(-1 * time.Hour)   // срок истёк
+	threshold := d("-1000")           // допустимый минус = −creditLimit (creditLimit=1000)
 
 	cases := []struct {
 		name      string
@@ -255,11 +255,11 @@ func TestObjectsPresentInMonthGE(t *testing.T) {
 
 	endJ3 := jan(3)
 	endJ6 := jan(6)
-	mk(jan(1), nil, "active", nil)     // A: весь месяц (31 дн) ≥5 ✓
-	mk(jan(1), &endJ3, "active", nil)  // B: 1-3 (3 дн) <5 ✗
-	mk(jan(1), &endJ6, "active", nil)  // C: 1-6 (6 дн) ≥5 ✓
-	mk(jan(28), nil, "active", nil)    // D: 28-31 (4 дн) <5 ✗
-	mk(jan(1), nil, "inactive", nil)   // E: inactive ✗
+	mk(jan(1), nil, "active", nil)    // A: весь месяц (31 дн) ≥5 ✓
+	mk(jan(1), &endJ3, "active", nil) // B: 1-3 (3 дн) <5 ✗
+	mk(jan(1), &endJ6, "active", nil) // C: 1-6 (6 дн) ≥5 ✓
+	mk(jan(28), nil, "active", nil)   // D: 28-31 (4 дн) <5 ✗
+	mk(jan(1), nil, "inactive", nil)  // E: inactive ✗
 
 	// window = январь, ограниченный днём наблюдения. obs далеко → полный месяц.
 	janEnd := janStart.AddDate(0, 1, 0)
@@ -421,4 +421,40 @@ func TestChargeSubscriptionPeriodLump(t *testing.T) {
 	// набирает ≥5 дней за период (к маю) → год списывается (а не 0 из-за анкор-месяца).
 	e4, _ := s.chargeSubscriptionPeriodLump(db, 186, subLate, 90, "RUB", "prepaid", "cbr_rf", 5, rc, apr(1), target)
 	assert.Equal(t, 1, e4, "late-start: год списан (присутствие за период ≥5 дней)")
+}
+
+// П6 Ф4: override каденции тарифа перебивает глобальную каденцию компании.
+// routeCadence — pure-функция выбора charge-пути; покрываем матрицу override.
+func TestRouteCadence_Override(t *testing.T) {
+	cases := []struct {
+		name                           string
+		company, plan, period, longSub string
+		want                           string
+	}{
+		// Ф4 главный кейс: глобал daily, тариф override monthly → monthly.
+		{"override-up_daily→monthly", "daily", "monthly", "monthly", "monthly", "monthly"},
+		// Без override: пустой план берёт глобал.
+		{"no-override_monthly", "monthly", "", "monthly", "monthly", "monthly"},
+		{"no-override_daily", "daily", "", "monthly", "monthly", "daily"},
+		// Override вниз: глобал monthly, тариф override daily → daily.
+		{"override-down_monthly→daily", "monthly", "daily", "monthly", "monthly", "daily"},
+		// Override на period+yearly+lump_sum → lump.
+		{"override_period-yearly-lump", "daily", "period", "yearly", "lump_sum", "lump"},
+		// period+yearly но longSub=monthly → НЕ lump, помесячно.
+		{"period-yearly_monthly-longsub", "daily", "period", "yearly", "monthly", "monthly"},
+		// period на месячном тарифе → monthly (price/1), не lump.
+		{"override_period-monthly-plan", "daily", "period", "monthly", "lump_sum", "monthly"},
+		// Дефолт: оба пусты → daily.
+		{"default_empty", "", "", "monthly", "monthly", "daily"},
+		// Глобал period+lump, тариф override monthly перебивает lump → monthly.
+		{"override_lump→monthly", "period", "monthly", "yearly", "lump_sum", "monthly"},
+		// Пробелы в override игнорируются (TrimSpace) → глобал.
+		{"whitespace-override_ignored", "monthly", "  ", "monthly", "monthly", "monthly"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := routeCadence(c.company, c.plan, c.period, c.longSub)
+			assert.Equal(t, c.want, got)
+		})
+	}
 }
