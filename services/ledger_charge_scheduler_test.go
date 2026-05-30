@@ -316,7 +316,7 @@ func TestChargeSubscriptionMonthly(t *testing.T) {
 	// --- Prepaid: апрель (полный) + май (прошло ≥5 дней) = 2 проводки, дата = 1-е тек. месяца ---
 	subP := mkSub(300, apr(1))
 	mkObj(300, apr(1), nil)
-	e, _ := s.chargeSubscriptionMonthly(db, 186, subP, 88, "RUB", "prepaid", "cbr_rf", 5, rc, cutoff, target)
+	e, _ := s.chargeSubscriptionMonthly(db, 186, subP, 88, 0, "RUB", "prepaid", "cbr_rf", 5, rc, cutoff, target)
 	assert.Equal(t, 2, e, "prepaid: апрель + май")
 	var pe []models.LedgerEntry
 	db.Where("subscription_id = ?", 300).Order("entry_date").Find(&pe)
@@ -328,13 +328,13 @@ func TestChargeSubscriptionMonthly(t *testing.T) {
 	assert.Equal(t, may(1), pe[1].EntryDate.UTC())
 
 	// Идемпотентность: повтор → 0 новых.
-	e2, _ := s.chargeSubscriptionMonthly(db, 186, subP, 88, "RUB", "prepaid", "cbr_rf", 5, rc, cutoff, target)
+	e2, _ := s.chargeSubscriptionMonthly(db, 186, subP, 88, 0, "RUB", "prepaid", "cbr_rf", 5, rc, cutoff, target)
 	assert.Equal(t, 0, e2)
 
 	// --- Postpaid: апрель списывается 1-го МАЯ; май ещё не наступил (1 июня > target) = 1 проводка ---
 	subPost := mkSub(301, apr(1))
 	mkObj(301, apr(1), nil)
-	ep, _ := s.chargeSubscriptionMonthly(db, 186, subPost, 89, "RUB", "postpaid", "cbr_rf", 5, rc, cutoff, target)
+	ep, _ := s.chargeSubscriptionMonthly(db, 186, subPost, 89, 0, "RUB", "postpaid", "cbr_rf", 5, rc, cutoff, target)
 	assert.Equal(t, 1, ep, "postpaid: только апрель")
 	var poe []models.LedgerEntry
 	db.Where("subscription_id = ?", 301).Find(&poe)
@@ -348,7 +348,7 @@ func TestChargeSubscriptionMonthly(t *testing.T) {
 	require.NoError(t, db.Create(&models.LedgerEntry{AdminAccountID: 1, CompanyID: 186, ContractID: 90,
 		SubscriptionID: func() *uint { v := uint(302); return &v }(), EntryType: "charge", Amount: d("-20"),
 		Currency: "RUB", Source: "auto_charge", ExternalID: "autocharge:sub:302:2026-04-15", EntryDate: apr(15)}).Error)
-	es, _ := s.chargeSubscriptionMonthly(db, 186, subSwitch, 90, "RUB", "prepaid", "cbr_rf", 5, rc, cutoff, target)
+	es, _ := s.chargeSubscriptionMonthly(db, 186, subSwitch, 90, 0, "RUB", "prepaid", "cbr_rf", 5, rc, cutoff, target)
 	var sw []models.LedgerEntry
 	db.Where("subscription_id = ? AND external_id LIKE ?", 302, "autocharge:sub:302:2026-04%").Find(&sw)
 	// апрель: 1 дневная (старая), monthly НЕ добавил за апрель.
@@ -386,7 +386,7 @@ func TestChargeSubscriptionPeriodLump(t *testing.T) {
 	// Prepaid yearly lump: 1 проводка -12000, дата = 1-е апреля, extID :y:2026-04.
 	sub := mkSub(400)
 	mkObj(400, apr(1))
-	e, _ := s.chargeSubscriptionPeriodLump(db, 186, sub, 88, "RUB", "prepaid", "cbr_rf", 5, rc, cutoff, target)
+	e, _ := s.chargeSubscriptionPeriodLump(db, 186, sub, 88, 0, "RUB", "prepaid", "cbr_rf", 5, rc, cutoff, target)
 	assert.Equal(t, 1, e, "один годовой charge")
 	var le []models.LedgerEntry
 	db.Where("subscription_id = ?", 400).Find(&le)
@@ -396,7 +396,7 @@ func TestChargeSubscriptionPeriodLump(t *testing.T) {
 	assert.True(t, le[0].Amount.Equal(d("-12000")), "вся годовая сумма")
 
 	// Идемпотентность.
-	e2, _ := s.chargeSubscriptionPeriodLump(db, 186, sub, 88, "RUB", "prepaid", "cbr_rf", 5, rc, cutoff, target)
+	e2, _ := s.chargeSubscriptionPeriodLump(db, 186, sub, 88, 0, "RUB", "prepaid", "cbr_rf", 5, rc, cutoff, target)
 	assert.Equal(t, 0, e2)
 
 	// Анти-дубль: за период уже есть дневная проводка → годовая пропускается.
@@ -405,7 +405,7 @@ func TestChargeSubscriptionPeriodLump(t *testing.T) {
 	require.NoError(t, db.Create(&models.LedgerEntry{AdminAccountID: 1, CompanyID: 186, ContractID: 89,
 		SubscriptionID: func() *uint { v := uint(401); return &v }(), EntryType: "charge", Amount: d("-30"),
 		Currency: "RUB", Source: "auto_charge", ExternalID: "autocharge:sub:401:2026-04-10", EntryDate: apr(10)}).Error)
-	e3, _ := s.chargeSubscriptionPeriodLump(db, 186, sub2, 89, "RUB", "prepaid", "cbr_rf", 5, rc, cutoff, target)
+	e3, _ := s.chargeSubscriptionPeriodLump(db, 186, sub2, 89, 0, "RUB", "prepaid", "cbr_rf", 5, rc, cutoff, target)
 	assert.Equal(t, 0, e3, "год покрыт дневной → пропуск")
 	var le2 int64
 	db.Model(&models.LedgerEntry{}).Where("external_id = ?", "autocharge:sub:401:y:2026-04").Count(&le2)
@@ -419,7 +419,7 @@ func TestChargeSubscriptionPeriodLump(t *testing.T) {
 	mkObj(402, apr(27))
 	// cutoff=apr(1): период не режется e1-guard'ом; объект с 27-го через window-окно
 	// набирает ≥5 дней за период (к маю) → год списывается (а не 0 из-за анкор-месяца).
-	e4, _ := s.chargeSubscriptionPeriodLump(db, 186, subLate, 90, "RUB", "prepaid", "cbr_rf", 5, rc, apr(1), target)
+	e4, _ := s.chargeSubscriptionPeriodLump(db, 186, subLate, 90, 0, "RUB", "prepaid", "cbr_rf", 5, rc, apr(1), target)
 	assert.Equal(t, 1, e4, "late-start: год списан (присутствие за период ≥5 дней)")
 }
 
@@ -490,7 +490,7 @@ func TestDailyChargeSkipsCoveredMonths(t *testing.T) {
 	require.NoError(t, db.Create(&models.LedgerEntry{AdminAccountID: 1, CompanyID: 186, ContractID: 95,
 		SubscriptionID: pu(500), EntryType: "charge", Amount: d("-600"), Currency: "RUB", Source: "auto_charge",
 		ExternalID: "autocharge:sub:500:2026-06", EntryDate: jun(1)}).Error)
-	e, _ := s.chargeSubscription(db, 186, subM, 95, "RUB", "cbr_rf", rc, jun(1), jul(31))
+	e, _ := s.chargeSubscription(db, 186, subM, 95, 0, "RUB", "cbr_rf", rc, jun(1), jul(31))
 	var junDaily, julDaily int64
 	db.Model(&models.LedgerEntry{}).Where("external_id LIKE ?", "autocharge:sub:500:2026-06-%").Count(&junDaily)
 	db.Model(&models.LedgerEntry{}).Where("external_id LIKE ?", "autocharge:sub:500:2026-07-%").Count(&julDaily)
@@ -504,7 +504,7 @@ func TestDailyChargeSkipsCoveredMonths(t *testing.T) {
 	require.NoError(t, db.Create(&models.LedgerEntry{AdminAccountID: 1, CompanyID: 186, ContractID: 96,
 		SubscriptionID: pu(501), EntryType: "charge", Amount: d("-7200"), Currency: "RUB", Source: "auto_charge",
 		ExternalID: "autocharge:sub:501:y:2026-06", EntryDate: jun(1)}).Error)
-	el, _ := s.chargeSubscription(db, 186, subL, 96, "RUB", "cbr_rf", rc, jun(1), jul(31))
+	el, _ := s.chargeSubscription(db, 186, subL, 96, 0, "RUB", "cbr_rf", rc, jun(1), jul(31))
 	var lumpDaily int64
 	db.Model(&models.LedgerEntry{}).Where("subscription_id = ? AND external_id LIKE ?", 501, "autocharge:sub:501:2026-%-%").Count(&lumpDaily)
 	assert.EqualValues(t, 0, lumpDaily, "период lump покрыт → 0 дневных")
@@ -513,7 +513,7 @@ func TestDailyChargeSkipsCoveredMonths(t *testing.T) {
 	// --- контроль: без покрытия daily постит как обычно ---
 	subD := mkSub(502, jun(1), "monthly")
 	mkObj(502, jun(1))
-	ed, _ := s.chargeSubscription(db, 186, subD, 97, "RUB", "cbr_rf", rc, jun(1), jun(10))
+	ed, _ := s.chargeSubscription(db, 186, subD, 97, 0, "RUB", "cbr_rf", rc, jun(1), jun(10))
 	assert.Equal(t, 10, ed, "без покрытия — 10 дневных проводок (1-10 июня)")
 }
 
@@ -542,7 +542,7 @@ func TestDailyChargePostpaidMonthlyNoLostDay(t *testing.T) {
 		SubscriptionID: pu(510), EntryType: "charge", Amount: d("-600"), Currency: "RUB", Source: "auto_charge",
 		ExternalID: "autocharge:sub:510:2026-06", EntryDate: jul(1)}).Error)
 
-	s.chargeSubscription(db, 186, sub, 98, "RUB", "cbr_rf", rc, jun(1), jul(5))
+	s.chargeSubscription(db, 186, sub, 98, 0, "RUB", "cbr_rf", rc, jun(1), jul(5))
 	// Июнь покрыт monthly → 0 дневных. Июль 1-5 непокрыт → 5 дневных, ВКЛЮЧАЯ 01.07.
 	var junDaily int64
 	db.Model(&models.LedgerEntry{}).Where("external_id LIKE ?", "autocharge:sub:510:2026-06-%").Count(&junDaily)

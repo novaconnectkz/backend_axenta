@@ -2547,6 +2547,8 @@ func UpdateContract(c *gin.Context) {
 		}
 		tenantDB.Model(&models.Contract{}).Where("id = ?", contract.ID).
 			Updates(map[string]interface{}{"billing_mode": mode, "credit_limit": limit})
+		// Ф2: зеркалим лимит/режим на контрагента (авторитет для sweep/charge).
+		mirrorBillingToCounterparty(contract.CounterpartyID, adminAccountID, contract.CompanyID, mode, limit)
 	}
 
 	// Загружаем обновленные данные

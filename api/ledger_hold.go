@@ -77,7 +77,7 @@ func PostLedgerHold(c *gin.Context) {
 		tenantDB = database.DB
 	}
 	var contract models.Contract
-	if err := tenantDB.Select("id, company_id, credit_limit").First(&contract, req.ContractID).Error; err != nil {
+	if err := tenantDB.Select("id, company_id, credit_limit, counterparty_id").First(&contract, req.ContractID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "договор не найден"})
 		return
 	}
@@ -121,11 +121,17 @@ func PostLedgerHold(c *gin.Context) {
 	// Долг на момент создания (для отчёта): balance < 0 → долг.
 	// Scope строго company+admin+contract (contract_id может совпадать в разных
 	// tenant-схемах одного admin → без company_id балансы смешались бы — Codex).
+	// Ф2: долг считаем по балансу КОНТРАГЕНТА (единый ЛС); cp=0 → legacy per-договор.
 	debtAtCreate := decimal.Zero
 	var bal decimal.Decimal
-	database.DB.Model(&models.LedgerEntry{}).
-		Where("contract_id = ? AND admin_account_id = ? AND company_id = ? AND deleted_at IS NULL", req.ContractID, adminAccountID, contract.CompanyID).
-		Select("COALESCE(SUM(amount),0)").Scan(&bal)
+	balQ := database.DB.Model(&models.LedgerEntry{}).
+		Where("admin_account_id = ? AND company_id = ? AND deleted_at IS NULL", adminAccountID, contract.CompanyID)
+	if contract.CounterpartyID != 0 {
+		balQ = balQ.Where("counterparty_id = ?", contract.CounterpartyID)
+	} else {
+		balQ = balQ.Where("contract_id = ?", req.ContractID)
+	}
+	balQ.Select("COALESCE(SUM(amount),0)").Scan(&bal)
 	if bal.IsNegative() {
 		debtAtCreate = bal.Abs()
 	}

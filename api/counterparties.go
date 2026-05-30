@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
 
@@ -341,6 +342,20 @@ func DeleteCounterparty(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "success", "message": "контрагент удалён"})
+}
+
+// mirrorBillingToCounterparty — Ф2: при изменении billing_mode/credit_limit договора
+// зеркалим значения на его контрагента (авторитетный источник для sweep/charge в единый ЛС).
+// cp=0 → no-op (договор вне модели контрагентов). Полная миграция write-пути на форму
+// контрагента — Ф4. credit_limit при prepaid должен приходить нулевым (контролирует вызывающий).
+func mirrorBillingToCounterparty(counterpartyID, adminAccountID, companyID uint, billingMode string, creditLimit decimal.Decimal) {
+	if counterpartyID == 0 || billingMode == "" {
+		return
+	}
+	// Скоуп id+admin+company (id — PK, но фиксируем инвариант шардинга; admin общий по компаниям).
+	database.DB.Model(&models.Counterparty{}).
+		Where("id = ? AND admin_account_id = ? AND company_id = ?", counterpartyID, adminAccountID, companyID).
+		Updates(map[string]interface{}{"billing_mode": billingMode, "credit_limit": creditLimit})
 }
 
 // isUniqueViolation — грубая проверка нарушения уникального индекса (PG: SQLSTATE 23505).

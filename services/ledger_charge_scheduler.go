@@ -231,11 +231,27 @@ func (s *LedgerChargeScheduler) sweepCompanySuspensions(company models.Company) 
 		ct := &contracts[i]
 		// Баланс СТРОГО в рамках компании+админа (contract_id может совпадать в разных
 		// tenant-схемах одного admin → без company_id балансы смешались бы — Codex critical).
+		// Ф2: баланс и кредит-лимит per-контрагент (единый ЛС → долг приостанавливает ВСЕ
+		// договоры контрагента, т.к. каждый видит один агрегат). cp=0 → legacy per-договор.
 		var bal decimal.Decimal
-		pub.Table("public.ledger_entries").
-			Where("contract_id = ? AND admin_account_id = ? AND company_id = ? AND deleted_at IS NULL", ct.ID, ct.AdminAccountID, company.ID).
-			Select("COALESCE(SUM(amount),0)").Scan(&bal)
-		threshold := ct.CreditLimit.Neg() // допустимый минус: balance < −creditLimit → блок
+		balQ := pub.Table("public.ledger_entries").
+			Where("admin_account_id = ? AND company_id = ? AND deleted_at IS NULL", ct.AdminAccountID, company.ID)
+		if ct.CounterpartyID != 0 {
+			balQ = balQ.Where("counterparty_id = ?", ct.CounterpartyID)
+		} else {
+			balQ = balQ.Where("contract_id = ?", ct.ID)
+		}
+		balQ.Select("COALESCE(SUM(amount),0)").Scan(&bal)
+		creditLimit := ct.CreditLimit // лимит авторитетен на контрагенте (fallback на договор)
+		if ct.CounterpartyID != 0 {
+			var cp models.Counterparty
+			if pub.Table("public.counterparties").Select("credit_limit").
+				Where("id = ? AND admin_account_id = ? AND company_id = ?", ct.CounterpartyID, ct.AdminAccountID, company.ID).
+				First(&cp).Error == nil {
+				creditLimit = cp.CreditLimit
+			}
+		}
+		threshold := creditLimit.Neg() // допустимый минус: balance < −creditLimit → блок
 
 		// Lifecycle зонта (П3/П4) ДО решения о приостановке. Решение — pure-функция
 		// holdLifecycleAction (тестируется без БД); здесь только применяем эффект.
@@ -392,9 +408,10 @@ func (s *LedgerChargeScheduler) chargeCompany(company models.Company, cutoff, ta
 	// currency держим для конверсии валют (П5); billingMode — для тайминга месячной
 	// каденции (П6: prepaid → 1-е тек. месяца, postpaid → 1-е след.).
 	type ctInfo struct {
-		ok          bool
-		currency    string
-		billingMode string
+		ok             bool
+		currency       string
+		billingMode    string
+		counterpartyID uint // Ф2: денорм для стамповки проводок (баланс per-контрагент)
 	}
 	contractInfo := make(map[uint]ctInfo)
 	// Кэш курсов на прогон компании: (day|base|quote|source) → результат GetRate.
@@ -408,14 +425,25 @@ func (s *LedgerChargeScheduler) chargeCompany(company models.Company, cutoff, ta
 		info, checked := contractInfo[cid]
 		if !checked {
 			var ct models.Contract
-			if e := tenantDB.Select("id, contract_type, status, currency, billing_mode").First(&ct, cid).Error; e != nil {
+			if e := tenantDB.Select("id, contract_type, status, currency, billing_mode, counterparty_id, admin_account_id").First(&ct, cid).Error; e != nil {
 				info = ctInfo{ok: false}
 			} else {
 				ccy := ct.Currency
 				if ccy == "" {
 					ccy = "RUB"
 				}
-				info = ctInfo{ok: ct.ContractType == "client" && ct.Status == "active", currency: ccy, billingMode: ct.BillingMode}
+				// Ф2: billing_mode авторитетен на контрагенте (fallback на договор при cp=0/отсутствии).
+				// Скоуп id+admin+company (defensive: id — PK, но фиксируем инвариант шардинга).
+				billingMode := ct.BillingMode
+				if ct.CounterpartyID != 0 {
+					var cp models.Counterparty
+					if s.db.Table("public.counterparties").Select("billing_mode").
+						Where("id = ? AND admin_account_id = ? AND company_id = ?", ct.CounterpartyID, ct.AdminAccountID, company.ID).
+						First(&cp).Error == nil && cp.BillingMode != "" {
+						billingMode = cp.BillingMode
+					}
+				}
+				info = ctInfo{ok: ct.ContractType == "client" && ct.Status == "active", currency: ccy, billingMode: billingMode, counterpartyID: ct.CounterpartyID}
 			}
 			contractInfo[cid] = info
 		}
@@ -428,14 +456,14 @@ func (s *LedgerChargeScheduler) chargeCompany(company models.Company, cutoff, ta
 		switch routeCadence(companyCadence, sub.BillingPlan.ChargeCadence, sub.BillingPlan.BillingPeriod, longSubCharge) {
 		case "lump":
 			// Длинная подписка разово: вся сумма периода 1 проводкой (П6 Ф3).
-			e, sk = s.chargeSubscriptionPeriodLump(tenantDB, company.ID, &sub, cid, info.currency, info.billingMode, rateSource, minDaysFull, rateCache, cutoff, targetDate)
+			e, sk = s.chargeSubscriptionPeriodLump(tenantDB, company.ID, &sub, cid, info.counterpartyID, info.currency, info.billingMode, rateSource, minDaysFull, rateCache, cutoff, targetDate)
 		case "monthly":
 			// monthly, либо period+помесячно (в т.ч. yearly→price/12), либо period на
 			// месячном тарифе — единое месячное начисление.
-			e, sk = s.chargeSubscriptionMonthly(tenantDB, company.ID, &sub, cid, info.currency, info.billingMode, rateSource, minDaysFull, rateCache, cutoff, targetDate)
+			e, sk = s.chargeSubscriptionMonthly(tenantDB, company.ID, &sub, cid, info.counterpartyID, info.currency, info.billingMode, rateSource, minDaysFull, rateCache, cutoff, targetDate)
 		default:
 			// daily — посуточное начисление как раньше.
-			e, sk = s.chargeSubscription(tenantDB, company.ID, &sub, cid, info.currency, rateSource, rateCache, cutoff, targetDate)
+			e, sk = s.chargeSubscription(tenantDB, company.ID, &sub, cid, info.counterpartyID, info.currency, rateSource, rateCache, cutoff, targetDate)
 		}
 		entries += e
 		skipped += sk
@@ -446,7 +474,7 @@ func (s *LedgerChargeScheduler) chargeCompany(company models.Company, cutoff, ta
 // chargeSubscription начисляет дневные charge'и по одной подписке за период.
 // contractCcy — валюта договора (ledger пишется в ней, инвариант Codex [H]).
 // rateSource — источник курса для конверсии plan.Currency → contractCcy (П5).
-func (s *LedgerChargeScheduler) chargeSubscription(tenantDB *gorm.DB, companyID uint, sub *models.Subscription, contractID uint, contractCcy, rateSource string, rateCache map[string]cachedRate, cutoff, targetDate time.Time) (entries, skipped int) {
+func (s *LedgerChargeScheduler) chargeSubscription(tenantDB *gorm.DB, companyID uint, sub *models.Subscription, contractID, counterpartyID uint, contractCcy, rateSource string, rateCache map[string]cachedRate, cutoff, targetDate time.Time) (entries, skipped int) {
 	price := sub.BillingPlan.Price
 	if price.IsZero() {
 		return
@@ -574,6 +602,7 @@ func (s *LedgerChargeScheduler) chargeSubscription(tenantDB *gorm.DB, companyID 
 			AdminAccountID: sub.AdminAccountID,
 			CompanyID:      companyID,
 			ContractID:     contractID,
+			CounterpartyID: counterpartyID, // Ф2: денорм для баланса per-контрагент
 			SubscriptionID: &subID,
 			EntryType:      "charge",
 			Amount:         chargeAmount.Neg(), // charge < 0, в валюте договора
@@ -759,7 +788,7 @@ func (s *LedgerChargeScheduler) monthsCoveredByLongerCadence(adminAccountID, com
 // биллинга (prepaid → 1-е тек. месяца, postpaid → 1-е след.). Сумма = полная месячная
 // цена × (объекты с присутствием ≥ minDays). Идемпотентность per-month (external_id
 // :YYYY-MM). cutoff ограничивает backfill снизу.
-func (s *LedgerChargeScheduler) chargeSubscriptionMonthly(tenantDB *gorm.DB, companyID uint, sub *models.Subscription, contractID uint, contractCcy, billingMode, rateSource string, minDays int, rateCache map[string]cachedRate, cutoff, targetDate time.Time) (entries, skipped int) {
+func (s *LedgerChargeScheduler) chargeSubscriptionMonthly(tenantDB *gorm.DB, companyID uint, sub *models.Subscription, contractID, counterpartyID uint, contractCcy, billingMode, rateSource string, minDays int, rateCache map[string]cachedRate, cutoff, targetDate time.Time) (entries, skipped int) {
 	price := sub.BillingPlan.Price
 	if price.IsZero() {
 		return
@@ -910,6 +939,7 @@ func (s *LedgerChargeScheduler) chargeSubscriptionMonthly(tenantDB *gorm.DB, com
 			AdminAccountID: sub.AdminAccountID,
 			CompanyID:      companyID,
 			ContractID:     contractID,
+			CounterpartyID: counterpartyID, // Ф2: денорм для баланса per-контрагент
 			SubscriptionID: &subID,
 			EntryType:      "charge",
 			Amount:         chargeAmount.Neg(),
@@ -950,7 +980,7 @@ func (s *LedgerChargeScheduler) chargeSubscriptionMonthly(tenantDB *gorm.DB, com
 // вся сумма года 1 проводкой на день биллинга начала периода (prepaid → 1-е месяца старта
 // периода, postpaid → 1-е следующего). Периоды (годы) катятся от месяца старта подписки.
 // Сумма = полная годовая цена × объекты с присутствием ≥minDays в месяце старта периода.
-func (s *LedgerChargeScheduler) chargeSubscriptionPeriodLump(tenantDB *gorm.DB, companyID uint, sub *models.Subscription, contractID uint, contractCcy, billingMode, rateSource string, minDays int, rateCache map[string]cachedRate, cutoff, targetDate time.Time) (entries, skipped int) {
+func (s *LedgerChargeScheduler) chargeSubscriptionPeriodLump(tenantDB *gorm.DB, companyID uint, sub *models.Subscription, contractID, counterpartyID uint, contractCcy, billingMode, rateSource string, minDays int, rateCache map[string]cachedRate, cutoff, targetDate time.Time) (entries, skipped int) {
 	price := sub.BillingPlan.Price // полная годовая цена
 	if price.IsZero() {
 		return
@@ -1063,6 +1093,7 @@ func (s *LedgerChargeScheduler) chargeSubscriptionPeriodLump(tenantDB *gorm.DB, 
 			AdminAccountID: sub.AdminAccountID,
 			CompanyID:      companyID,
 			ContractID:     contractID,
+			CounterpartyID: counterpartyID, // Ф2: денорм для баланса per-контрагент
 			SubscriptionID: &sid,
 			EntryType:      "charge",
 			Amount:         chargeAmount.Neg(),

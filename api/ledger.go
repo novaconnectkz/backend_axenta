@@ -77,6 +77,48 @@ func ledgerBalance(contractID, adminAccountID uint) decimal.Decimal {
 	return sum
 }
 
+// ── Ф2: баланс per-контрагент (единый лицевой счёт) ─────────────────────────────
+// Один контрагент = N договоров = ОДИН баланс = SUM(amount) по counterparty_id.
+// charge остаётся per-договор (ContractID), но баланс/платёж/лимит — per-контрагент.
+
+// counterpartyBalance — баланс контрагента: SUM(amount) по ВСЕМ его проводкам.
+// company_id обязателен: admin_account_id в legacy-sync общий для компаний, а
+// counterparty_id уникален лишь в рамках (admin, company).
+func counterpartyBalance(counterpartyID, adminAccountID, companyID uint) decimal.Decimal {
+	var sum decimal.Decimal
+	database.DB.Model(&models.LedgerEntry{}).
+		Where("counterparty_id = ? AND admin_account_id = ? AND company_id = ? AND deleted_at IS NULL",
+			counterpartyID, adminAccountID, companyID).
+		Select("COALESCE(SUM(amount), 0)").Scan(&sum)
+	return sum
+}
+
+// balanceForContract — баланс лицевого счёта, относящийся к договору:
+//   - есть контрагент (counterparty_id<>0) → единый баланс контрагента (все его договоры);
+//   - иначе (партнёр/немигрированный) → legacy баланс самого договора (per-договор).
+// Так Ф2 forward-correct, но не ломает контракты вне модели контрагентов (cp=0).
+func balanceForContract(contractID, counterpartyID, adminAccountID, companyID uint) decimal.Decimal {
+	if counterpartyID != 0 {
+		return counterpartyBalance(counterpartyID, adminAccountID, companyID)
+	}
+	var sum decimal.Decimal
+	database.DB.Model(&models.LedgerEntry{}).
+		Where("contract_id = ? AND admin_account_id = ? AND company_id = ? AND deleted_at IS NULL",
+			contractID, adminAccountID, companyID).
+		Select("COALESCE(SUM(amount), 0)").Scan(&sum)
+	return sum
+}
+
+// contractLedgerKeys загружает (counterparty_id, company_id) договора из tenant-схемы —
+// для резолва per-контрагент баланса в хендлерах, у которых на входе contract_id.
+func contractLedgerKeys(tenantDB *gorm.DB, contractID uint) (counterpartyID, companyID uint, ok bool) {
+	var ct models.Contract
+	if err := tenantDB.Select("id, counterparty_id, company_id").First(&ct, contractID).Error; err != nil {
+		return 0, 0, false
+	}
+	return ct.CounterpartyID, ct.CompanyID, true
+}
+
 // GetLedgerBalance — GET /api/auth/ledger/balance/:contract_id
 // Баланс договора + разбивка (начислено/оплачено).
 func GetLedgerBalance(c *gin.Context) {
@@ -94,27 +136,47 @@ func GetLedgerBalance(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": err.Error()})
 		return
 	}
-	var agg struct {
-		Charged decimal.Decimal
-		Paid    decimal.Decimal
+	// Ф2: баланс/разбивка per-контрагент. Резолвим counterparty_id+company_id договора;
+	// cp<>0 → агрегируем по контрагенту (все его договоры), иначе legacy per-договор.
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB == nil {
+		tenantDB = database.DB
 	}
-	database.DB.Model(&models.LedgerEntry{}).
-		Where("contract_id = ? AND admin_account_id = ? AND deleted_at IS NULL", uint(contractID), adminAccountID).
-		Select("COALESCE(SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END),0) AS charged, COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END),0) AS paid").
-		Scan(&agg)
-	balance := agg.Paid.Sub(agg.Charged)
+	cpID, companyID, _ := contractLedgerKeys(tenantDB, uint(contractID))
+	charged, paid := ledgerBreakdown(uint(contractID), cpID, adminAccountID, companyID)
+	balance := paid.Sub(charged)
 	debtAmount := decimal.Zero
 	if balance.IsNegative() {
 		debtAmount = balance.Abs()
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{
-		"contract_id":   contractID,
-		"balance":       balance.StringFixed(2), // >0 переплата, <0 долг
-		"total_charged": agg.Charged.StringFixed(2),
-		"total_paid":    agg.Paid.StringFixed(2),
-		"is_debt":       balance.IsNegative(),
-		"debt_amount":   debtAmount.StringFixed(2), // долг только если balance<0, иначе 0
+		"contract_id":     contractID,
+		"counterparty_id": cpID, // 0 = вне модели контрагентов (баланс per-договор)
+		"balance":         balance.StringFixed(2), // >0 переплата, <0 долг
+		"total_charged":   charged.StringFixed(2),
+		"total_paid":      paid.StringFixed(2),
+		"is_debt":         balance.IsNegative(),
+		"debt_amount":     debtAmount.StringFixed(2), // долг только если balance<0, иначе 0
 	}})
+}
+
+// ledgerBreakdown — (начислено, оплачено) лицевого счёта. cp<>0 → по контрагенту
+// (все договоры), иначе по договору. companyID обязателен для скоупа.
+func ledgerBreakdown(contractID, counterpartyID, adminAccountID, companyID uint) (charged, paid decimal.Decimal) {
+	var agg struct {
+		Charged decimal.Decimal
+		Paid    decimal.Decimal
+	}
+	q := database.DB.Model(&models.LedgerEntry{}).
+		Where("admin_account_id = ? AND company_id = ? AND deleted_at IS NULL", adminAccountID, companyID)
+	if counterpartyID != 0 {
+		q = q.Where("counterparty_id = ?", counterpartyID)
+	} else {
+		q = q.Where("contract_id = ?", contractID)
+	}
+	q.Select("COALESCE(SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END),0) AS charged, COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END),0) AS paid").
+		Scan(&agg)
+	return agg.Charged, agg.Paid
 }
 
 // GetLedgerEntries — GET /api/auth/ledger/entries/:contract_id
@@ -134,9 +196,20 @@ func GetLedgerEntries(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": err.Error()})
 		return
 	}
+	// Ф2: история per-контрагент (все договоры контрагента); cp=0 → legacy per-договор.
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB == nil {
+		tenantDB = database.DB
+	}
+	cpID, companyID, _ := contractLedgerKeys(tenantDB, uint(contractID))
+	q := database.DB.Where("admin_account_id = ? AND company_id = ? AND deleted_at IS NULL", adminAccountID, companyID)
+	if cpID != 0 {
+		q = q.Where("counterparty_id = ?", cpID)
+	} else {
+		q = q.Where("contract_id = ?", uint(contractID))
+	}
 	var entries []models.LedgerEntry
-	database.DB.Where("contract_id = ? AND admin_account_id = ? AND deleted_at IS NULL", uint(contractID), adminAccountID).
-		Order("entry_date DESC, id DESC").Limit(2000).Find(&entries)
+	q.Order("entry_date DESC, id DESC").Limit(2000).Find(&entries)
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": entries})
 }
 
@@ -180,7 +253,7 @@ func PostLedgerPayment(c *gin.Context) {
 		tenantDB = database.DB
 	}
 	var contract models.Contract
-	if err := tenantDB.Select("id, company_id").First(&contract, req.ContractID).Error; err != nil {
+	if err := tenantDB.Select("id, company_id, counterparty_id").First(&contract, req.ContractID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "договор не найден"})
 		return
 	}
@@ -198,6 +271,7 @@ func PostLedgerPayment(c *gin.Context) {
 		AdminAccountID: adminAccountID,
 		CompanyID:      contract.CompanyID,
 		ContractID:     req.ContractID,
+		CounterpartyID: contract.CounterpartyID, // Ф2: денорм для баланса per-контрагент
 		EntryType:      "payment",
 		Amount:         decimal.NewFromFloat(req.Amount), // платёж +
 		Currency:       "RUB",
@@ -232,7 +306,7 @@ func PostLedgerPayment(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{
 		"entry_id":    entry.ID,
-		"new_balance": ledgerBalance(req.ContractID, adminAccountID).StringFixed(2),
+		"new_balance": balanceForContract(req.ContractID, contract.CounterpartyID, adminAccountID, contract.CompanyID).StringFixed(2),
 	}})
 }
 
@@ -285,7 +359,7 @@ func PostLedgerImport(c *gin.Context) {
 			continue
 		}
 		var contract models.Contract
-		if err := tenantDB.Select("id, company_id").First(&contract, it.ContractID).Error; err != nil {
+		if err := tenantDB.Select("id, company_id, counterparty_id").First(&contract, it.ContractID).Error; err != nil {
 			failed++
 			errorsList = append(errorsList, fmt.Sprintf("договор %d не найден", it.ContractID))
 			continue
@@ -300,6 +374,7 @@ func PostLedgerImport(c *gin.Context) {
 			AdminAccountID: adminAccountID,
 			CompanyID:      contract.CompanyID,
 			ContractID:     it.ContractID,
+			CounterpartyID: contract.CounterpartyID, // Ф2: денорм
 			EntryType:      "payment",
 			Amount:         decimal.NewFromFloat(it.Amount),
 			Currency:       "RUB",
@@ -381,12 +456,17 @@ func PostLedgerTransfer(c *gin.Context) {
 		tenantDB = database.DB
 	}
 	var from, to models.Contract
-	if err := tenantDB.Select("id, currency, company_id").First(&from, req.FromContractID).Error; err != nil {
+	if err := tenantDB.Select("id, currency, company_id, counterparty_id").First(&from, req.FromContractID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "договор-источник не найден"})
 		return
 	}
-	if err := tenantDB.Select("id, currency, company_id").First(&to, req.ToContractID).Error; err != nil {
+	if err := tenantDB.Select("id, currency, company_id, counterparty_id").First(&to, req.ToContractID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "договор-получатель не найден"})
+		return
+	}
+	// Ф2: единый ЛС — перевод внутри ОДНОГО контрагента бессмыслен (один баланс).
+	if from.CounterpartyID != 0 && from.CounterpartyID == to.CounterpartyID {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "договоры принадлежат одному контрагенту — у них общий лицевой счёт"})
 		return
 	}
 	fromCcy, toCcy := from.Currency, to.Currency
@@ -417,8 +497,8 @@ func PostLedgerTransfer(c *gin.Context) {
 		if database.DB.Where("admin_account_id = ? AND idempotency_key = ?", adminAccountID, req.IdempotencyKey).First(&ex).Error == nil {
 			c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{
 				"transfer_id":  ex.TransferID,
-				"from_balance": ledgerBalance(req.FromContractID, adminAccountID).StringFixed(2),
-				"to_balance":   ledgerBalance(req.ToContractID, adminAccountID).StringFixed(2),
+				"from_balance": balanceForContract(req.FromContractID, from.CounterpartyID, adminAccountID, from.CompanyID).StringFixed(2),
+				"to_balance":   balanceForContract(req.ToContractID, to.CounterpartyID, adminAccountID, to.CompanyID).StringFixed(2),
 				"idempotent":   true,
 			}})
 			return
@@ -486,7 +566,14 @@ func PostLedgerTransfer(c *gin.Context) {
 	if desc == "" {
 		desc = "Перевод между лицевыми счетами"
 	}
-	lockKey := transferLockKey(adminAccountID, req.FromContractID)
+	// Ф2: lock + проверка средств — на лицевом счёте ИСТОЧНИКА-контрагента (единый баланс).
+	// cp=0 → legacy per-договор. Lock на той же сущности, что и баланс (сериализация переводов
+	// между договорами одного контрагента).
+	srcLockID := from.CounterpartyID
+	if srcLockID == 0 {
+		srcLockID = req.FromContractID
+	}
+	lockKey := transferLockKey(adminAccountID, srcLockID)
 
 	if err := database.DB.Transaction(func(tx *gorm.DB) error {
 		// Анти-double-spend: advisory-lock на источник + пересчёт баланса ВНУТРИ tx.
@@ -494,9 +581,14 @@ func PostLedgerTransfer(c *gin.Context) {
 			return e
 		}
 		var bal decimal.Decimal
-		tx.Model(&models.LedgerEntry{}).
-			Where("contract_id = ? AND admin_account_id = ? AND deleted_at IS NULL", req.FromContractID, adminAccountID).
-			Select("COALESCE(SUM(amount),0)").Scan(&bal)
+		balQ := tx.Model(&models.LedgerEntry{}).
+			Where("admin_account_id = ? AND company_id = ? AND deleted_at IS NULL", adminAccountID, from.CompanyID)
+		if from.CounterpartyID != 0 {
+			balQ = balQ.Where("counterparty_id = ?", from.CounterpartyID)
+		} else {
+			balQ = balQ.Where("contract_id = ?", req.FromContractID)
+		}
+		balQ.Select("COALESCE(SUM(amount),0)").Scan(&bal)
 		if bal.LessThan(amount) {
 			return errTransferInsufficient
 		}
@@ -509,10 +601,11 @@ func PostLedgerTransfer(c *gin.Context) {
 		if err := tx.Create(&hdr).Error; err != nil {
 			return err
 		}
-		// Списание у источника — в валюте источника (amount).
+		// Списание у источника — в валюте источника (amount). Стампуем counterparty_id (Ф2).
 		out := models.LedgerEntry{
 			AdminAccountID: adminAccountID, CompanyID: from.CompanyID, ContractID: req.FromContractID,
-			EntryType: "transfer_out", Amount: amount.Neg(), Currency: fromCcy, Source: "transfer",
+			CounterpartyID: from.CounterpartyID,
+			EntryType:      "transfer_out", Amount: amount.Neg(), Currency: fromCcy, Source: "transfer",
 			ExternalID: "transfer:" + transferID + ":out", Description: desc, EntryDate: now,
 			CreatedBy: createdBy, Metadata: &metaOut,
 		}
@@ -522,7 +615,8 @@ func PostLedgerTransfer(c *gin.Context) {
 		// Зачисление получателю — в его валюте (toAmount), инвариант ledger.ccy==contract.ccy.
 		in := models.LedgerEntry{
 			AdminAccountID: adminAccountID, CompanyID: to.CompanyID, ContractID: req.ToContractID,
-			EntryType: "transfer_in", Amount: toAmount, Currency: toCcy, Source: "transfer",
+			CounterpartyID: to.CounterpartyID,
+			EntryType:      "transfer_in", Amount: toAmount, Currency: toCcy, Source: "transfer",
 			ExternalID: "transfer:" + transferID + ":in", Description: desc, EntryDate: now,
 			CreatedBy: createdBy, Metadata: &metaIn,
 		}
@@ -538,8 +632,8 @@ func PostLedgerTransfer(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{
 		"transfer_id":  transferID,
-		"from_balance": ledgerBalance(req.FromContractID, adminAccountID).StringFixed(2),
-		"to_balance":   ledgerBalance(req.ToContractID, adminAccountID).StringFixed(2),
+		"from_balance": balanceForContract(req.FromContractID, from.CounterpartyID, adminAccountID, from.CompanyID).StringFixed(2),
+		"to_balance":   balanceForContract(req.ToContractID, to.CounterpartyID, adminAccountID, to.CompanyID).StringFixed(2),
 	}})
 }
 
