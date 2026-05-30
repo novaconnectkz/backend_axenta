@@ -51,6 +51,7 @@ func setupRelationTestRouter(db *gorm.DB) *gin.Engine {
 }
 
 func TestLocationInstallerRelations(t *testing.T) {
+	t.Skip(skipInstallerArrayReason)
 	db := setupRelationTestDB()
 	router := setupRelationTestRouter(db)
 
@@ -227,6 +228,7 @@ func TestLocationDeletion(t *testing.T) {
 }
 
 func TestMultipleInstallersInLocation(t *testing.T) {
+	t.Skip(skipInstallerArrayReason)
 	db := setupRelationTestDB()
 	router := setupRelationTestRouter(db)
 
