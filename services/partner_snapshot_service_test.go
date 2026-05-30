@@ -194,3 +194,43 @@ func TestPartnerSnapshotService_GetSnapshotsForContract_DateFilter(t *testing.T)
 	assert.Len(t, snapshots, 1) // Только снимок за январь
 	assert.Equal(t, time.Date(2025, 1, 15, 0, 0, 0, 0, time.UTC), snapshots[0].SnapshotDate)
 }
+
+// zone#1: save-loop happy-path + idempotency + timeout-helper. До этого save-цикл
+// (savePartnerObjectsToDB) имел ноль покрытия; тест фиксирует что context-обёрнутый
+// OnConflict Create персистит строки без ложного timeout, и повтор не плодит дубли.
+func TestSavePartnerObjectsToDB_HappyPathAndIdempotent(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.AxentaObjectSnapshot{}))
+	s := &PartnerSnapshotService{}
+	snapDate := time.Date(2026, 5, 29, 0, 0, 0, 0, time.UTC)
+
+	objs := []axentaObject{
+		{ID: 101, Name: "Объект А", UniqueID: "u-101", AccountID: 10, AccountName: "ACC", IsActive: true, Status: "active"},
+		{ID: 102, Name: "Объект Б", UniqueID: "u-102", AccountID: 10, AccountName: "ACC", IsActive: false, Status: "blocked"},
+	}
+
+	// Первый прогон: 2 строки сохранены, без ошибки/timeout.
+	require.NoError(t, s.savePartnerObjectsToDB(186, objs, snapDate, db))
+	var cnt int64
+	db.Model(&models.AxentaObjectSnapshot{}).Count(&cnt)
+	assert.EqualValues(t, 2, cnt, "две строки персистнуты")
+
+	// Идемпотентность: повтор с обновлённым именем → OnConflict update, без дублей.
+	objs[0].Name = "Объект А (упд)"
+	require.NoError(t, s.savePartnerObjectsToDB(186, objs, snapDate, db))
+	db.Model(&models.AxentaObjectSnapshot{}).Count(&cnt)
+	assert.EqualValues(t, 2, cnt, "повтор не плодит дубли (OnConflict по external_object_id)")
+	var upd models.AxentaObjectSnapshot
+	db.Where("external_object_id = ?", 101).First(&upd)
+	assert.Equal(t, "Объект А (упд)", upd.ObjectName, "имя обновлено через OnConflict")
+}
+
+func TestSnapshotDBStmtTimeout_Default(t *testing.T) {
+	t.Setenv("SNAPSHOT_DB_STMT_TIMEOUT_SEC", "")
+	assert.Equal(t, 120*time.Second, snapshotDBStmtTimeout(), "дефолт 120s")
+	t.Setenv("SNAPSHOT_DB_STMT_TIMEOUT_SEC", "30")
+	assert.Equal(t, 30*time.Second, snapshotDBStmtTimeout(), "env override 30s")
+	t.Setenv("SNAPSHOT_DB_STMT_TIMEOUT_SEC", "0")
+	assert.Equal(t, 120*time.Second, snapshotDBStmtTimeout(), "невалидный 0 → дефолт")
+}
