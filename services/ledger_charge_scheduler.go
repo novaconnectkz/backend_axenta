@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -184,6 +185,28 @@ func (s *LedgerChargeScheduler) RunSuspensionSweep(companies []models.Company) {
 	}
 }
 
+// joinUintCSV / parseUintCSV — сериализация списка id договоров для BillingSuspension.AffectedContractIDs.
+func joinUintCSV(ids []uint) string {
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, strconv.FormatUint(uint64(id), 10))
+	}
+	return strings.Join(parts, ",")
+}
+
+func parseUintCSV(s string) []uint {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	var out []uint
+	for _, p := range strings.Split(s, ",") {
+		if v, e := strconv.ParseUint(strings.TrimSpace(p), 10, 64); e == nil && v > 0 {
+			out = append(out, uint(v))
+		}
+	}
+	return out
+}
+
 func (s *LedgerChargeScheduler) sweepCompanySuspensions(company models.Company) (suspended, resolved int) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -198,6 +221,10 @@ func (s *LedgerChargeScheduler) sweepCompanySuspensions(company models.Company) 
 	if err != nil {
 		return
 	}
+	// Схема-квалифицированное имя contracts: статусы договоров обновляем ЧЕРЕЗ tx (public-
+	// соединение), а не tenantDB — иначе UPDATE в другой транзакции и атомарность с suspension
+	// теряется (tenantDB = отдельное соединение ConnectToTenant). Codex HIGH-1.
+	contractsTable := fmt.Sprintf(`"%s".contracts`, schema)
 
 	// Клиентские договоры в активном/приостановленном статусе.
 	var contracts []models.Contract
@@ -208,116 +235,178 @@ func (s *LedgerChargeScheduler) sweepCompanySuspensions(company models.Company) 
 	pub := s.db.Session(&gorm.Session{})
 	now := time.Now().UTC()
 
-	// Активные holds компании (П3/П4) — один запрос, map по (contract_id, admin_account_id).
-	// admin в ключе обязателен: contract_id может совпадать у разных админов одной company
-	// → без admin чужой зонт заблокировал бы приостановку (зеркало scoping баланса, Codex #3).
-	// Зонт блокирует авто-приостановку до hold_until; просроченный гасим тут же.
-	type holdKey struct {
-		contractID uint
-		adminID    uint
+	// Активные holds компании (Ф3: per-контрагент или legacy per-договор). Индексируем
+	// двояко: cp<>0 → по (admin, counterparty_id); cp=0 → по (admin, contract_id).
+	// admin в ключе обязателен: id может совпадать у разных админов одной company (Codex #3).
+	type unitKey struct {
+		adminID uint
+		id      uint // counterparty_id (cp-unit) или contract_id (legacy)
 	}
-	holdByContract := make(map[holdKey]models.BillingHold)
+	holdByCP := make(map[unitKey]models.BillingHold)
+	holdByContract := make(map[unitKey]models.BillingHold)
 	{
 		var holds []models.BillingHold
 		pub.Table("public.billing_holds").
 			Where("company_id = ? AND active = ? AND deleted_at IS NULL", company.ID, true).
 			Find(&holds)
 		for _, h := range holds {
-			holdByContract[holdKey{h.ContractID, h.AdminAccountID}] = h
+			if h.CounterpartyID != 0 {
+				holdByCP[unitKey{h.AdminAccountID, h.CounterpartyID}] = h
+			} else {
+				holdByContract[unitKey{h.AdminAccountID, h.ContractID}] = h
+			}
 		}
 	}
 
+	// Ф3: единица приостановки — КОНТРАГЕНТ (cp<>0, гасит ВСЕ его client-договоры одним
+	// решением) либо отдельный договор (cp=0, legacy). Группируем client-договоры в единицы.
+	type billingUnit struct {
+		adminID      uint
+		cpID         uint            // 0 → legacy per-договор
+		contractID   uint            // legacy contract_id (cp=0); 0 для контрагента
+		creditLimit  decimal.Decimal // legacy: с договора; cp: перетираем лимитом контрагента ниже
+		activeIDs    []uint          // client-договоры в 'active' (кандидаты на suspend)
+		suspendedIDs []uint          // client-договоры в 'suspended' (кандидаты на restore)
+	}
+	unitByCP := make(map[unitKey]*billingUnit)
+	units := make([]*billingUnit, 0, len(contracts))
 	for i := range contracts {
 		ct := &contracts[i]
-		// Баланс СТРОГО в рамках компании+админа (contract_id может совпадать в разных
-		// tenant-схемах одного admin → без company_id балансы смешались бы — Codex critical).
-		// Ф2: баланс и кредит-лимит per-контрагент (единый ЛС → долг приостанавливает ВСЕ
-		// договоры контрагента, т.к. каждый видит один агрегат). cp=0 → legacy per-договор.
+		if ct.CounterpartyID != 0 {
+			k := unitKey{ct.AdminAccountID, ct.CounterpartyID}
+			u := unitByCP[k]
+			if u == nil {
+				// creditLimit с первого договора группы — fallback, если counterparty-строка
+				// отсутствует/не прочиталась (иначе threshold=0 → ложная блокировка, Codex HIGH-4).
+				u = &billingUnit{adminID: ct.AdminAccountID, cpID: ct.CounterpartyID, creditLimit: ct.CreditLimit}
+				unitByCP[k] = u
+				units = append(units, u)
+			}
+			if ct.Status == "active" {
+				u.activeIDs = append(u.activeIDs, ct.ID)
+			} else {
+				u.suspendedIDs = append(u.suspendedIDs, ct.ID)
+			}
+		} else {
+			u := &billingUnit{adminID: ct.AdminAccountID, contractID: ct.ID, creditLimit: ct.CreditLimit}
+			if ct.Status == "active" {
+				u.activeIDs = []uint{ct.ID}
+			} else {
+				u.suspendedIDs = []uint{ct.ID}
+			}
+			units = append(units, u)
+		}
+	}
+
+	for _, u := range units {
+		// Баланс единицы (по контрагенту/договору) СТРОГО в рамках company+admin (Codex critical).
 		var bal decimal.Decimal
 		balQ := pub.Table("public.ledger_entries").
-			Where("admin_account_id = ? AND company_id = ? AND deleted_at IS NULL", ct.AdminAccountID, company.ID)
-		if ct.CounterpartyID != 0 {
-			balQ = balQ.Where("counterparty_id = ?", ct.CounterpartyID)
+			Where("admin_account_id = ? AND company_id = ? AND deleted_at IS NULL", u.adminID, company.ID)
+		if u.cpID != 0 {
+			balQ = balQ.Where("counterparty_id = ?", u.cpID)
 		} else {
-			balQ = balQ.Where("contract_id = ?", ct.ID)
+			balQ = balQ.Where("contract_id = ?", u.contractID)
 		}
 		balQ.Select("COALESCE(SUM(amount),0)").Scan(&bal)
-		creditLimit := ct.CreditLimit // лимит авторитетен на контрагенте (fallback на договор)
-		if ct.CounterpartyID != 0 {
+
+		creditLimit := u.creditLimit // cp: авторитетный лимит контрагента (fallback на договор)
+		if u.cpID != 0 {
 			var cp models.Counterparty
 			if pub.Table("public.counterparties").Select("credit_limit").
-				Where("id = ? AND admin_account_id = ? AND company_id = ?", ct.CounterpartyID, ct.AdminAccountID, company.ID).
+				Where("id = ? AND admin_account_id = ? AND company_id = ?", u.cpID, u.adminID, company.ID).
 				First(&cp).Error == nil {
 				creditLimit = cp.CreditLimit
 			}
 		}
 		threshold := creditLimit.Neg() // допустимый минус: balance < −creditLimit → блок
 
-		// Lifecycle зонта (П3/П4) ДО решения о приостановке. Решение — pure-функция
-		// holdLifecycleAction (тестируется без БД); здесь только применяем эффект.
-		hold, hasHold := holdByContract[holdKey{ct.ID, ct.AdminAccountID}]
+		// Lifecycle зонта (П3/П4) ДО решения о приостановке. Решение — pure holdLifecycleAction.
+		var hold models.BillingHold
+		var hasHold bool
+		if u.cpID != 0 {
+			hold, hasHold = holdByCP[unitKey{u.adminID, u.cpID}]
+		} else {
+			hold, hasHold = holdByContract[unitKey{u.adminID, u.contractID}]
+		}
 		holdActive := false
 		if hasHold {
 			switch holdLifecycleAction(bal, threshold, hold.HoldUntil, now) {
 			case holdFulfill:
-				// Долг погашен (в т.ч. promise исполнен) → закрываем зонт как fulfilled.
 				// Atomic WHERE active=true; ошибку логируем (не глотаем — Codex #7).
 				if e := pub.Table("public.billing_holds").Where("id = ? AND active = ?", hold.ID, true).
 					Updates(map[string]interface{}{"status": "fulfilled", "active": false, "resolved_at": now}).Error; e != nil {
 					log.Printf("⚠️ SuspensionSweep: не удалось закрыть hold %d (fulfilled): %v", hold.ID, e)
 				}
 			case holdExpire:
-				// Срок зонта истёк, долг остался → expired. Блокируем дальше ТОЛЬКО если
-				// expire реально снял active (RowsAffected>0) — иначе оставляем holdActive,
-				// чтобы не приостановить договор при всё ещё активном зонте в БД (Codex #7).
+				// Блокируем дальше ТОЛЬКО если expire реально снял active (RowsAffected>0, Codex #7).
 				res := pub.Table("public.billing_holds").Where("id = ? AND active = ?", hold.ID, true).
 					Updates(map[string]interface{}{"status": "expired", "active": false, "resolved_at": now})
 				if res.Error != nil {
 					log.Printf("⚠️ SuspensionSweep: не удалось закрыть hold %d (expired): %v", hold.ID, res.Error)
-					holdActive = true // не смогли снять зонт → не блокируем в этот прогон
+					holdActive = true
 				} else if res.RowsAffected == 0 {
-					holdActive = true // кто-то уже снял/изменил зонт параллельно → не блокируем
+					holdActive = true
 				}
 			default:
 				holdActive = true // зонт ещё держит — приостановку не делаем
 			}
 		}
 
+		// Активная debt-приостановка единицы (cp-уровень или legacy per-договор).
+		suspQ := pub.Table("public.billing_suspensions").
+			Where("admin_account_id = ? AND company_id = ? AND reason = ? AND active = ? AND deleted_at IS NULL",
+				u.adminID, company.ID, "billing_debt", true)
+		if u.cpID != 0 {
+			suspQ = suspQ.Where("counterparty_id = ?", u.cpID)
+		} else {
+			suspQ = suspQ.Where("counterparty_id = 0 AND contract_id = ?", u.contractID)
+		}
 		var active models.BillingSuspension
-		hasActive := pub.Table("public.billing_suspensions").
-			Where("contract_id = ? AND admin_account_id = ? AND company_id = ? AND reason = ? AND active = ? AND deleted_at IS NULL",
-				ct.ID, ct.AdminAccountID, company.ID, "billing_debt", true).First(&active).Error == nil
+		hasActive := suspQ.First(&active).Error == nil
 
 		switch {
-		case bal.LessThan(threshold) && !hasActive && !holdActive && ct.Status == "active":
-			// Приостанавливаем ТОЛЬКО из status='active' (не трогаем ручной suspend/draft/...).
-			// suspension create + status update — в одной tx (атомарность, Codex H1).
+		case bal.LessThan(threshold) && !hasActive && !holdActive && len(u.activeIDs) > 0:
+			// Долг → приостановить ВСЕ активные договоры единицы (единый ЛС). Одна suspension-строка
+			// (per-контрагент или legacy) + статусы договоров — в одной tx (атомарность, Codex H1).
 			susp := models.BillingSuspension{
-				AdminAccountID: ct.AdminAccountID, CompanyID: company.ID, ContractID: ct.ID,
+				AdminAccountID: u.adminID, CompanyID: company.ID, ContractID: u.contractID, CounterpartyID: u.cpID,
 				Reason: "billing_debt", PreviousStatus: "active", DebtAmount: bal.Abs(),
 				Active: true, SuspendedBy: "scheduler",
+				AffectedContractIDs: joinUintCSV(u.activeIDs), // точный restore при resolve
 			}
 			err := pub.Transaction(func(tx *gorm.DB) error {
 				if e := tx.Table("public.billing_suspensions").Create(&susp).Error; e != nil {
 					return e // partial-unique поймает гонку → дубль не создастся
 				}
-				return tenantDB.Model(&models.Contract{}).Where("id = ? AND status = ?", ct.ID, "active").Update("status", "suspended").Error
+				// Статусы — через tx (schema-qualified), в ТОЙ ЖЕ транзакции (атомарность, Codex HIGH-1).
+				return tx.Table(contractsTable).
+					Where("id IN ? AND status = ?", u.activeIDs, "active").Update("status", "suspended").Error
 			})
 			if err == nil {
-				suspended++
+				suspended += len(u.activeIDs)
 			}
 		case !bal.LessThan(threshold) && hasActive:
-			// Долг погашен/в пределах → снять debt-приостановку. Возвращаем статус в 'active'
-			// (приостанавливали только из active). Ручной suspend сюда не попадёт (нет active billing_debt).
+			// Долг погашен → снять приостановку + вернуть в 'active' ТОЛЬКО договоры, которые
+			// ИМЕННО ЭТА строка приостановила (AffectedContractIDs) — не трогаем приостановленные
+			// по др. причине (нет подписок/ручной bulk). Codex HIGH-2.
+			restoreIDs := parseUintCSV(active.AffectedContractIDs)
+			if len(restoreIDs) == 0 {
+				restoreIDs = u.suspendedIDs // fallback для старых строк без affected-списка
+			}
 			err := pub.Transaction(func(tx *gorm.DB) error {
 				if e := tx.Table("public.billing_suspensions").Where("id = ?", active.ID).
 					Updates(map[string]interface{}{"active": false, "resolved_at": now}).Error; e != nil {
 					return e
 				}
-				return tenantDB.Model(&models.Contract{}).Where("id = ? AND status = ?", ct.ID, "suspended").Update("status", "active").Error
+				if len(restoreIDs) == 0 {
+					return nil
+				}
+				return tx.Table(contractsTable).
+					Where("id IN ? AND status = ?", restoreIDs, "suspended").Update("status", "active").Error
 			})
 			if err == nil {
-				resolved++
+				resolved += len(restoreIDs)
 			}
 		}
 	}

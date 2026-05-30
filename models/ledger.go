@@ -98,14 +98,23 @@ type BillingSuspension struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
 
-	// Партиальный uniqueIndex: не более одной АКТИВНОЙ debt-приостановки на договор
-	// (анти-дубль при гонке двух sweep — Codex H3).
-	AdminAccountID uint `json:"admin_account_id" gorm:"not null;index;uniqueIndex:idx_susp_active_debt,where:active AND deleted_at IS NULL AND reason = 'billing_debt'"`
-	CompanyID      uint `json:"company_id" gorm:"not null;index;uniqueIndex:idx_susp_active_debt"`
-	ContractID     uint `json:"contract_id" gorm:"not null;index;uniqueIndex:idx_susp_active_debt"`
+	// Ф3: debt-приостановка per-КОНТРАГЕНТ (одна на контрагента, гасит ВСЕ его client-договоры).
+	// Дуальный партиальный uniqueIndex (анти-дубль при гонке sweep):
+	//   - idx_susp_debt_cp: cp<>0 → ключ (admin,company,counterparty_id), ContractID=0;
+	//   - idx_susp_debt_legacy: cp=0 → legacy per-договор (admin,company,contract_id).
+	// Manual-приостановки (reason='manual') под uniq НЕ попадают (WHERE reason='billing_debt').
+	AdminAccountID uint `json:"admin_account_id" gorm:"not null;index;uniqueIndex:idx_susp_debt_cp,where:active AND deleted_at IS NULL AND reason = 'billing_debt' AND counterparty_id <> 0;uniqueIndex:idx_susp_debt_legacy,where:active AND deleted_at IS NULL AND reason = 'billing_debt' AND counterparty_id = 0"`
+	CompanyID      uint `json:"company_id" gorm:"not null;index;uniqueIndex:idx_susp_debt_cp;uniqueIndex:idx_susp_debt_legacy"`
+	ContractID     uint `json:"contract_id" gorm:"not null;index;uniqueIndex:idx_susp_debt_legacy"`
+	CounterpartyID uint `json:"counterparty_id" gorm:"not null;default:0;index;uniqueIndex:idx_susp_debt_cp"`
 
 	Reason         string          `json:"reason" gorm:"not null;type:varchar(30);index"` // billing_debt | manual
 	PreviousStatus string          `json:"previous_status" gorm:"type:varchar(20)"`       // статус договора до приостановки
+	// Ф3: CSV id договоров, которые ИМЕННО ЭТА debt-строка перевела active→suspended.
+	// Нужен для точного restore: при погашении долга вернуть в active только эти договоры,
+	// не трогая приостановленные по др. причине (нет подписок/ручной bulk). cp-level строка
+	// гасит N договоров — без списка resolve вслепую поднял бы чужие приостановки.
+	AffectedContractIDs string `json:"affected_contract_ids" gorm:"type:text"`
 	DebtAmount     decimal.Decimal `json:"debt_amount" gorm:"type:decimal(15,2)"`         // долг на момент блокировки
 	Active         bool            `json:"active" gorm:"not null;default:true;index"`
 	SuspendedBy    string          `json:"suspended_by" gorm:"type:varchar(100)"` // scheduler | username
@@ -133,11 +142,14 @@ type BillingHold struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
 
-	// Партиальный uniqueIndex: не более одного АКТИВНОГО hold на договор
-	// (анти-дубль при гонке двух операторов / двух sweep — зеркало BillingSuspension).
-	AdminAccountID uint `json:"admin_account_id" gorm:"not null;index;uniqueIndex:idx_hold_active,where:active AND deleted_at IS NULL"`
-	CompanyID      uint `json:"company_id" gorm:"not null;index;uniqueIndex:idx_hold_active"`
-	ContractID     uint `json:"contract_id" gorm:"not null;index;uniqueIndex:idx_hold_active"`
+	// Ф3: зонт per-КОНТРАГЕНТ (один активный зонт на контрагента блокирует приостановку всех
+	// его договоров). Дуальный партиальный uniqueIndex (зеркало BillingSuspension):
+	//   - idx_hold_cp: cp<>0 → (admin,company,counterparty_id), ContractID=0;
+	//   - idx_hold_legacy: cp=0 → legacy per-договор (admin,company,contract_id).
+	AdminAccountID uint `json:"admin_account_id" gorm:"not null;index;uniqueIndex:idx_hold_cp,where:active AND deleted_at IS NULL AND counterparty_id <> 0;uniqueIndex:idx_hold_legacy,where:active AND deleted_at IS NULL AND counterparty_id = 0"`
+	CompanyID      uint `json:"company_id" gorm:"not null;index;uniqueIndex:idx_hold_cp;uniqueIndex:idx_hold_legacy"`
+	ContractID     uint `json:"contract_id" gorm:"not null;index;uniqueIndex:idx_hold_legacy"`
+	CounterpartyID uint `json:"counterparty_id" gorm:"not null;default:0;index;uniqueIndex:idx_hold_cp"`
 
 	HoldType string          `json:"hold_type" gorm:"not null;type:varchar(20);index"` // deferral | promise
 	Amount   decimal.Decimal `json:"amount" gorm:"type:decimal(15,2);default:0"`       // promise: обещанная сумма; deferral: 0
