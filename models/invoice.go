@@ -218,6 +218,10 @@ type BillingSettings struct {
 	MaxDeferralDays        int             `json:"max_deferral_days" gorm:"default:0"`                               // макс. отсрочка платежа для операторов (дней)
 	RateSource             string          `json:"rate_source" gorm:"default:'cbr_rf';type:varchar(20)"`             // источник курса валют: cbr_rf | nbk_kz | none (мультивалюта, П5)
 	OperationRoleThreshold string          `json:"operation_role_threshold" gorm:"default:'admin';type:varchar(20)"` // мин. роль для перевод/отсрочка/обещание
+
+	// Каденция списания adon-платы (П6, глобальный дефолт компании).
+	ChargeCadence          string `json:"charge_cadence" gorm:"default:'daily';type:varchar(20)"`               // daily | monthly | period (period = по billing_period тарифа)
+	LongSubscriptionCharge string `json:"long_subscription_charge" gorm:"default:'monthly';type:varchar(20)"`   // monthly | lump_sum — как списывать подписки >1 мес / yearly
 }
 
 // TableName задает имя таблицы для модели BillingSettings

@@ -25,6 +25,9 @@ type BillingPlan struct {
 	// Период тарификации
 	BillingPeriod string `json:"billing_period" gorm:"default:monthly;type:varchar(20)"` // hourly, daily, weekly, monthly, yearly, one-time
 
+	// Override каденции списания (П6). Пусто → берётся глобальная BillingSettings.charge_cadence.
+	ChargeCadence string `json:"charge_cadence" gorm:"type:varchar(20)"` // '' | daily | monthly | period
+
 	// Лимиты и возможности
 	MaxDevices      int  `json:"max_devices" gorm:"default:0"` // 0 = безлимитно
 	MaxUsers        int  `json:"max_users" gorm:"default:0"`   // 0 = безлимитно
