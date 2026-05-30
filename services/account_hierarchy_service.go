@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -58,6 +59,7 @@ func (s *AccountHierarchyService) LoadAllAccounts() error {
 
 		req.Header.Set("Authorization", "Token "+s.token)
 
+		_ = waitAxentaToken(context.Background(), s.token) // zone#2: shared per-token rate-limit
 		resp, err := client.Do(req)
 		if err != nil {
 			return fmt.Errorf("ошибка запроса к Axenta Cloud: %w", err)
@@ -279,6 +281,7 @@ func (s *AccountHierarchyService) DistributeObjectsByPartner(token string, snaps
 
 		req.Header.Set("Authorization", "Token "+token)
 
+		_ = waitAxentaToken(context.Background(), token) // zone#2: shared per-token rate-limit
 		resp, err := client.Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("ошибка запроса: %w", err)

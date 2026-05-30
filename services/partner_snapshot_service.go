@@ -38,6 +38,7 @@ func (s *PartnerSnapshotService) getTotalObjectsFromStats(token string) (total i
 
 	req.Header.Set("Authorization", "Token "+token)
 
+	_ = waitAxentaToken(context.Background(), token) // zone#2: shared per-token rate-limit
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, 0, fmt.Errorf("ошибка запроса: %w", err)
@@ -62,6 +63,7 @@ func (s *PartnerSnapshotService) getTotalObjectsFromStats(token string) (total i
 	reqActive, _ := http.NewRequest("GET", "https://axenta.cloud/api/cms/objects/?page=1&per_page=1&is_active=true", nil)
 	reqActive.Header.Set("Authorization", "Token "+token)
 
+	_ = waitAxentaToken(context.Background(), token) // zone#2: shared per-token rate-limit
 	respActive, err := client.Do(reqActive)
 	if err == nil && respActive.StatusCode == http.StatusOK {
 		var activeResponse struct {
@@ -540,6 +542,7 @@ func fetchPartnerObjects(token string, partnerCompanyID int) ([]axentaObject, er
 
 		req.Header.Set("Authorization", "Token "+token)
 
+		_ = waitAxentaToken(context.Background(), token) // zone#2: shared per-token rate-limit
 		resp, err := client.Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("ошибка запроса к Axenta Cloud: %w", err)
@@ -615,6 +618,7 @@ func (s *PartnerSnapshotService) getPartnerObjectsWithCountForDate(partnerCompan
 		req.Header.Set("Authorization", "Token "+token)
 		log.Printf("🔑 Используется токен: %s", tokenPreview)
 
+		_ = waitAxentaToken(context.Background(), token) // zone#2: shared per-token rate-limit
 		resp, err := client.Do(req)
 		if err != nil {
 			return 0, 0, nil, fmt.Errorf("ошибка запроса к Axenta Cloud: %w", err)
@@ -1268,6 +1272,7 @@ func (s *PartnerSnapshotService) SaveAllObjectsToDBForSnapshot(
 
 		req.Header.Set("Authorization", "Token "+token)
 
+		_ = waitAxentaToken(context.Background(), token) // zone#2: shared per-token rate-limit
 		resp, err := client.Do(req)
 		if err != nil {
 			return fmt.Errorf("ошибка запроса к Axenta Cloud: %w", err)

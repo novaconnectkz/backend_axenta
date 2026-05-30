@@ -523,6 +523,7 @@ func (s *SnapshotAccumulationService) fetchObjectsForDateRange(startDate, endDat
 
 		req.Header.Set("Authorization", "Token "+token)
 
+		_ = waitAxentaToken(context.Background(), token) // zone#2: shared per-token rate-limit
 		requestStart := time.Now()
 		resp, err := client.Do(req)
 		requestDuration := time.Since(requestStart)

@@ -512,6 +512,7 @@ func (s *AxentaSyncService) RefreshAccount(token string, adminAccountID uint, ac
 	req.Header.Set("Authorization", "Token "+token)
 	req.Header.Set("Accept", "application/json")
 
+	_ = waitAxentaToken(context.Background(), token) // zone#2: shared per-token rate-limit
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("axenta http: %w", err)
@@ -944,6 +945,7 @@ func (s *AxentaSyncService) getJSON(rawURL, token string, v interface{}) error {
 	req.Header.Set("Authorization", "Token "+token)
 	req.Header.Set("Content-Type", "application/json")
 
+	_ = waitAxentaToken(context.Background(), token) // zone#2: shared per-token rate-limit
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("ошибка выполнения HTTP запроса к %s: %w", rawURL, err)
