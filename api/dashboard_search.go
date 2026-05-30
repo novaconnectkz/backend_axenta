@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -221,7 +222,7 @@ func searchInvoices(c *gin.Context, db *gorm.DB, companyID uint, pattern string,
 			Type:     "invoice",
 			Title:    r.Number,
 			Subtitle: "Счёт · " + r.Status,
-			URL:      "/billing?tab=invoices",
+			URL:      "/billing?tab=invoices&search=" + url.QueryEscape(r.Number),
 		})
 	}
 	return out
