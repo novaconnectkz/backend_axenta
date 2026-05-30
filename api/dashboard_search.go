@@ -679,7 +679,7 @@ func searchInstallations(db *gorm.DB, pattern string, limit int) []SearchResultI
 			Type:     "installation",
 			Title:    title,
 			Subtitle: subtitle,
-			URL:      "/installations",
+			URL:      "/installations?installation=" + strconv.FormatUint(uint64(r.ID), 10),
 		})
 	}
 	return out
