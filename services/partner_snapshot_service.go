@@ -1,11 +1,14 @@
 package services
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1007,6 +1010,20 @@ func (s *PartnerSnapshotService) StartDailySnapshotScheduler() {
 }
 
 // savePartnerObjectsToDB сохраняет объекты партнера в таблицу axenta_object_snapshots
+// snapshotDBStmtTimeout — верхний deadline на ОДНУ DB-операцию snapshot-сохранения
+// (zone#1 hardening). Защита от вечного зависания per-row UPSERT на PG-локе: HTTP-таймауты
+// покрывают только Axenta-вызовы, не БД. Щедрый дефолт 120s → на нормальных прогонах не
+// срабатывает; застрявший lock/запрос аборт через context → строка errorCount++/continue
+// (не фатально, ретрай след. прогоном). Override env SNAPSHOT_DB_STMT_TIMEOUT_SEC.
+func snapshotDBStmtTimeout() time.Duration {
+	if v := os.Getenv("SNAPSHOT_DB_STMT_TIMEOUT_SEC"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return 120 * time.Second
+}
+
 func (s *PartnerSnapshotService) savePartnerObjectsToDB(
 	adminAccountID uint,
 	objects []axentaObject,
@@ -1015,6 +1032,8 @@ func (s *PartnerSnapshotService) savePartnerObjectsToDB(
 ) error {
 	savedCount := 0
 	errorCount := 0
+	timeoutCount := 0 // zone#1/Codex#2: timeout-аборты считаем отдельно — кэш неполон, биллинг-DB-count недостоверен
+	stmtTimeout := snapshotDBStmtTimeout()
 
 	// Защита от нулевого adminAccountID (используем 1 по умолчанию)
 	if adminAccountID == 0 {
@@ -1133,8 +1152,11 @@ func (s *PartnerSnapshotService) savePartnerObjectsToDB(
 
 		// Сохраняем с обработкой конфликтов (обновляем если существует)
 		// Объекты хранятся глобально один раз по external_object_id
-		// Привязка к партнерам через account_external_id и иерархию
-		if err := db.Clauses(clause.OnConflict{
+		// Привязка к партнерам через account_external_id и иерархию.
+		// Per-row deadline (zone#1): застрявший на PG-локе UPSERT аборт через context,
+		// а не вечный hang всего прогона (источник #5). cancel() сразу — без defer в цикле.
+		ctx, cancel := context.WithTimeout(context.Background(), stmtTimeout)
+		err := db.WithContext(ctx).Clauses(clause.OnConflict{
 			Columns: []clause.Column{{Name: "external_object_id"}},
 			DoUpdates: clause.AssignmentColumns([]string{
 				"admin_account_id", "account_external_id", "object_name", "unique_id", "device_type_name", "account_name",
@@ -1142,8 +1164,15 @@ func (s *PartnerSnapshotService) savePartnerObjectsToDB(
 				"creator_name", "creator_id", "creator_is_active", "account_is_active",
 				"phone_numbers", "axenta_created_at", "axenta_deleted_at",
 			}),
-		}).Create(&snapshot).Error; err != nil {
-			log.Printf("⚠️ Ошибка сохранения объекта %d: %v", obj.ID, err)
+		}).Create(&snapshot).Error
+		cancel()
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				timeoutCount++
+				log.Printf("⛔ Timeout (PG-lock?) сохранения объекта %d: %v", obj.ID, err)
+			} else {
+				log.Printf("⚠️ Ошибка сохранения объекта %d: %v", obj.ID, err)
+			}
 			errorCount++
 			continue
 		}
@@ -1153,6 +1182,13 @@ func (s *PartnerSnapshotService) savePartnerObjectsToDB(
 
 	if errorCount > 0 {
 		log.Printf("⚠️ При сохранении объектов возникло ошибок: %d (обработано: %d)", errorCount, savedCount)
+	}
+	// Codex#2: timeout-аборт = неполный DB-кэш. Возвращаем ошибку, чтобы вызывающий НЕ
+	// доверял DB-count (CountPartnerObjectsFromDB) как полному. Обычные per-row ошибки
+	// остаются толерантными (исторически nil). API-путь логирует+продолжает (count из API,
+	// безвреден); accumulation-путь пробрасывает; scheduler пока глотает (см. TODO).
+	if timeoutCount > 0 {
+		return fmt.Errorf("snapshot DB-кэш неполон: %d объектов аборчены по timeout (PG-lock, zone#1) — DB-count недостоверен", timeoutCount)
 	}
 	// Финальная статистика по уникальным объектам выводится в SavePartnerObjectsToDBForSnapshot
 	return nil

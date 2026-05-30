@@ -3,7 +3,9 @@ package services
 import (
 	"backend_axenta/database"
 	"backend_axenta/models"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -601,6 +603,8 @@ func (s *SnapshotAccumulationService) saveObjects(objects []axentaObject, tenant
 	adminAccountIDPtr := &adminAccountID
 
 	now := time.Now().UTC()
+	stmtTimeout := snapshotDBStmtTimeout() // zone#1: per-row deadline против hang на PG-локе
+	timeoutCount := 0
 	for _, obj := range objects {
 		rawPayload, _ := json.Marshal(obj)
 		snapshot := models.AxentaObjectSnapshot{
@@ -659,7 +663,9 @@ func (s *SnapshotAccumulationService) saveObjects(objects []axentaObject, tenant
 		// Сохраняем с обработкой конфликтов
 		// ВАЖНО: Уникальный индекс в БД только по external_object_id (idx_axenta_object_external)
 		// Поэтому используем только external_object_id в OnConflict
-		if err := tenantDB.Clauses(clause.OnConflict{
+		// Per-row deadline (zone#1): аборт застрявшего на PG-локе UPSERT вместо вечного hang.
+		ctx, cancel := context.WithTimeout(context.Background(), stmtTimeout)
+		err := tenantDB.WithContext(ctx).Clauses(clause.OnConflict{
 			Columns: []clause.Column{{Name: "external_object_id"}},
 			DoUpdates: clause.AssignmentColumns([]string{
 				"admin_account_id", "account_external_id", "object_name", "unique_id", "device_type_name", "account_name",
@@ -667,12 +673,24 @@ func (s *SnapshotAccumulationService) saveObjects(objects []axentaObject, tenant
 				"creator_name", "creator_id", "creator_is_active", "account_is_active",
 				"phone_numbers", "axenta_created_at", "axenta_deleted_at",
 			}),
-		}).Create(&snapshot).Error; err != nil {
-			log.Printf("⚠️ Ошибка сохранения объекта %d: %v", obj.ID, err)
+		}).Create(&snapshot).Error
+		cancel()
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				timeoutCount++
+				log.Printf("⛔ Timeout (PG-lock?) сохранения объекта %d: %v", obj.ID, err)
+			} else {
+				log.Printf("⚠️ Ошибка сохранения объекта %d: %v", obj.ID, err)
+			}
 			continue
 		}
 	}
 
+	// Codex#2: timeout-аборт = неполный кэш axenta_object_snapshots → биллинг-DB-count
+	// недостоверен. Возвращаем ошибку (вызывающий accumulation пробрасывает её выше).
+	if timeoutCount > 0 {
+		return fmt.Errorf("кэш объектов неполон: %d аборчено по timeout (PG-lock, zone#1)", timeoutCount)
+	}
 	return nil
 }
 
