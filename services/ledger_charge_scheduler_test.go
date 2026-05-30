@@ -261,27 +261,28 @@ func TestObjectsPresentInMonthGE(t *testing.T) {
 	mk(jan(28), nil, "active", nil)    // D: 28-31 (4 дн) <5 ✗
 	mk(jan(1), nil, "inactive", nil)   // E: inactive ✗
 
-	// observedEnd далеко в будущем → месяц считается полностью (как завершённый).
+	// window = январь, ограниченный днём наблюдения. obs далеко → полный месяц.
+	janEnd := janStart.AddDate(0, 1, 0)
 	obs := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	win := func(observed time.Time) time.Time { return capWindowEnd(janEnd, observed) }
 
-	cnt, err := s.objectsPresentInMonthGE(db, subID, janStart, obs, 5)
+	cnt, err := s.objectsPresentInWindowGE(db, subID, janStart, win(obs), 5)
 	require.NoError(t, err)
 	assert.Equal(t, 2, cnt, "при minDays=5 присутствуют A и C")
 
 	// minDays=1 → A,B,C,D (E inactive) = 4.
-	cnt1, err := s.objectsPresentInMonthGE(db, subID, janStart, obs, 1)
+	cnt1, err := s.objectsPresentInWindowGE(db, subID, janStart, win(obs), 1)
 	require.NoError(t, err)
 	assert.Equal(t, 4, cnt1)
 
 	// minDays=31 → только A (весь месяц).
-	cnt31, err := s.objectsPresentInMonthGE(db, subID, janStart, obs, 31)
+	cnt31, err := s.objectsPresentInWindowGE(db, subID, janStart, win(obs), 31)
 	require.NoError(t, err)
 	assert.Equal(t, 1, cnt31)
 
 	// Codex (c): observedEnd ограничивает текущий месяц. Наблюдаем только до 4-го января
 	// → A присутствует 3 дня (1,2,3) < 5 → 0. (защита от будущего присутствия prepaid).
-	obsEarly := jan(4)
-	cntEarly, err := s.objectsPresentInMonthGE(db, subID, janStart, obsEarly, 5)
+	cntEarly, err := s.objectsPresentInWindowGE(db, subID, janStart, win(jan(4)), 5)
 	require.NoError(t, err)
 	assert.Equal(t, 0, cntEarly, "до 4-го января никто не накопил ≥5 дней")
 }
@@ -358,4 +359,66 @@ func TestChargeSubscriptionMonthly(t *testing.T) {
 	db.Model(&models.LedgerEntry{}).Where("external_id = ?", "autocharge:sub:302:2026-05").Count(&swMay)
 	assert.EqualValues(t, 1, swMay, "май начислен monthly")
 	_ = es
+}
+
+// П6 Ф3: yearly lump_sum — вся годовая сумма 1 проводкой + анти-дубль.
+func TestChargeSubscriptionPeriodLump(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.ContractObject{}, &models.LedgerEntry{}))
+	s := &LedgerChargeScheduler{db: db}
+	apr := func(dd int) time.Time { return time.Date(2026, 4, dd, 0, 0, 0, 0, time.UTC) }
+
+	mkObj := func(subID uint, start time.Time) {
+		co := models.ContractObject{ContractID: 1, SubscriptionID: &subID, ObjectID: uint(time.Now().UnixNano() % 1000000),
+			ObjectCompanyID: 186, ObjectSchema: "tenant_186", Status: "active", StartDate: start}
+		require.NoError(t, db.Create(&co).Error)
+	}
+	mkSub := func(id uint) *models.Subscription {
+		sub := &models.Subscription{AdminAccountID: 1, StartDate: apr(1),
+			BillingPlan: models.BillingPlan{Price: d("12000"), BillingPeriod: "yearly", Currency: "RUB"}}
+		sub.ID = id
+		return sub
+	}
+	cutoff, target := apr(1), time.Date(2026, 5, 30, 0, 0, 0, 0, time.UTC)
+	rc := map[string]cachedRate{}
+
+	// Prepaid yearly lump: 1 проводка -12000, дата = 1-е апреля, extID :y:2026-04.
+	sub := mkSub(400)
+	mkObj(400, apr(1))
+	e, _ := s.chargeSubscriptionPeriodLump(db, 186, sub, 88, "RUB", "prepaid", "cbr_rf", 5, rc, cutoff, target)
+	assert.Equal(t, 1, e, "один годовой charge")
+	var le []models.LedgerEntry
+	db.Where("subscription_id = ?", 400).Find(&le)
+	require.Len(t, le, 1)
+	assert.Equal(t, "autocharge:sub:400:y:2026-04", le[0].ExternalID)
+	assert.Equal(t, apr(1), le[0].EntryDate.UTC())
+	assert.True(t, le[0].Amount.Equal(d("-12000")), "вся годовая сумма")
+
+	// Идемпотентность.
+	e2, _ := s.chargeSubscriptionPeriodLump(db, 186, sub, 88, "RUB", "prepaid", "cbr_rf", 5, rc, cutoff, target)
+	assert.Equal(t, 0, e2)
+
+	// Анти-дубль: за период уже есть дневная проводка → годовая пропускается.
+	sub2 := mkSub(401)
+	mkObj(401, apr(1))
+	require.NoError(t, db.Create(&models.LedgerEntry{AdminAccountID: 1, CompanyID: 186, ContractID: 89,
+		SubscriptionID: func() *uint { v := uint(401); return &v }(), EntryType: "charge", Amount: d("-30"),
+		Currency: "RUB", Source: "auto_charge", ExternalID: "autocharge:sub:401:2026-04-10", EntryDate: apr(10)}).Error)
+	e3, _ := s.chargeSubscriptionPeriodLump(db, 186, sub2, 89, "RUB", "prepaid", "cbr_rf", 5, rc, cutoff, target)
+	assert.Equal(t, 0, e3, "год покрыт дневной → пропуск")
+	var le2 int64
+	db.Model(&models.LedgerEntry{}).Where("external_id = ?", "autocharge:sub:401:y:2026-04").Count(&le2)
+	assert.EqualValues(t, 0, le2)
+
+	// Codex H4: late-start. Подписка с 27 апреля — в анкор-месяце всего 4 дня (<5), но
+	// window-based считает присутствие за период → к маю набирается ≥5 → год списывается.
+	subLate := &models.Subscription{AdminAccountID: 1, StartDate: apr(27),
+		BillingPlan: models.BillingPlan{Price: d("12000"), BillingPeriod: "yearly", Currency: "RUB"}}
+	subLate.ID = 402
+	mkObj(402, apr(27))
+	// cutoff=apr(1): период не режется e1-guard'ом; объект с 27-го через window-окно
+	// набирает ≥5 дней за период (к маю) → год списывается (а не 0 из-за анкор-месяца).
+	e4, _ := s.chargeSubscriptionPeriodLump(db, 186, subLate, 90, "RUB", "prepaid", "cbr_rf", 5, rc, apr(1), target)
+	assert.Equal(t, 1, e4, "late-start: год списан (присутствие за период ≥5 дней)")
 }

@@ -345,15 +345,16 @@ func (s *LedgerChargeScheduler) chargeCompany(company models.Company, cutoff, ta
 		return
 	}
 
-	// Политика биллинга компании (П5 источник курса + П6 каденция/мин.дни).
+	// Политика биллинга компании (П5 источник курса + П6 каденция/мин.дни/длинные подписки).
 	rateSource := "cbr_rf"
-	companyCadence := "daily" // П6: daily | monthly | period
-	minDaysFull := 5          // мин. дней присутствия объекта в месяце для полного месяца
+	companyCadence := "daily"   // П6: daily | monthly | period
+	minDaysFull := 5            // мин. дней присутствия объекта в месяце для полного месяца
+	longSubCharge := "monthly"  // П6: monthly | lump_sum — как списывать подписки >1 мес
 	{
 		var bs models.BillingSettings
 		if s.db.Session(&gorm.Session{}).Table("public.billing_settings").
 			Where("company_id = ?", company.ID).
-			Select("rate_source, charge_cadence, min_days_for_full_month").First(&bs).Error == nil {
+			Select("rate_source, charge_cadence, min_days_for_full_month, long_subscription_charge").First(&bs).Error == nil {
 			if bs.RateSource != "" {
 				rateSource = bs.RateSource
 			}
@@ -362,6 +363,9 @@ func (s *LedgerChargeScheduler) chargeCompany(company models.Company, cutoff, ta
 			}
 			if bs.MinDaysForFullMonth > 0 {
 				minDaysFull = bs.MinDaysForFullMonth
+			}
+			if bs.LongSubscriptionCharge != "" {
+				longSubCharge = bs.LongSubscriptionCharge
 			}
 		}
 	}
@@ -408,10 +412,16 @@ func (s *LedgerChargeScheduler) chargeCompany(company models.Company, cutoff, ta
 		}
 
 		var e, sk int
-		if cadence == "monthly" {
+		switch {
+		case cadence == "period" && sub.BillingPlan.BillingPeriod == "yearly" && longSubCharge == "lump_sum":
+			// Длинная подписка разово: вся сумма периода 1 проводкой (П6 Ф3).
+			e, sk = s.chargeSubscriptionPeriodLump(tenantDB, company.ID, &sub, cid, info.currency, info.billingMode, rateSource, minDaysFull, rateCache, cutoff, targetDate)
+		case cadence == "monthly" || cadence == "period":
+			// monthly, либо period+помесячно (в т.ч. yearly→price/12), либо period на
+			// месячном тарифе — единое месячное начисление.
 			e, sk = s.chargeSubscriptionMonthly(tenantDB, company.ID, &sub, cid, info.currency, info.billingMode, rateSource, minDaysFull, rateCache, cutoff, targetDate)
-		} else {
-			// daily (и period — до Фазы 3) — посуточное начисление как раньше.
+		default:
+			// daily — посуточное начисление как раньше.
 			e, sk = s.chargeSubscription(tenantDB, company.ID, &sub, cid, info.currency, rateSource, rateCache, cutoff, targetDate)
 		}
 		entries += e
@@ -591,33 +601,32 @@ func monthlyPlanAmount(price decimal.Decimal, billingPeriod string) decimal.Deci
 // objectsPresentInMonthGE — кол-во объектов подписки с присутствием ≥ minDays дней в
 // месяце [monthStart, monthStart+1мес). Присутствие = пересечение интервала привязки
 // объекта [start_date, end_date] с месяцем. Бинарно: ≥minDays → полный месяц (П6).
-// observedEnd ограничивает окно сверху ДНЁМ НАБЛЮДЕНИЯ (today+1): для текущего (ещё не
-// завершённого) месяца считаем только УЖЕ прошедшие дни — иначе prepaid на 1-е считал бы
-// будущее присутствие и переначислял бы за объект, который уйдёт раньше minDays (Codex c).
+// окне [windowStart, windowEnd). Присутствие = пересечение интервала привязки объекта
+// [start_date, end_date] с окном. Бинарно: ≥minDays → засчитываем (П6).
+// windowEnd УЖЕ ограничен днём наблюдения вызывающим (today+1) — для текущего (ещё не
+// завершённого) периода считаем только прошедшие дни (иначе prepaid на 1-е считал бы
+// будущее присутствие и переначислял бы за объект, ушедший раньше minDays — Codex c).
+// Окно может быть месяцем (monthly) или годом (yearly lump). Window-based вместо
+// календарного месяца чинит late-start: подписка с 29-го числа набирает minDays в окне
+// периода, а не упирается в 3 дня анкор-месяца (Codex H4).
 // Возвращает error — вызывающий обязан трактовать как «не знаем» и остановить подписку.
-func (s *LedgerChargeScheduler) objectsPresentInMonthGE(tenantDB *gorm.DB, subID uint, monthStart, observedEnd time.Time, minDays int) (int, error) {
-	monthEnd := monthStart.AddDate(0, 1, 0)
-	// Верхняя граница окна = min(конец месяца, день наблюдения).
-	windowEnd := monthEnd
-	if observedEnd.Before(windowEnd) {
-		windowEnd = observedEnd
-	}
+func (s *LedgerChargeScheduler) objectsPresentInWindowGE(tenantDB *gorm.DB, subID uint, windowStart, windowEnd time.Time, minDays int) (int, error) {
 	var objs []models.ContractObject
-	// Unscoped: историчность держим сами (deleted_at) — объект, удалённый позже месяца,
+	// Unscoped: историчность держим сами (deleted_at) — объект, удалённый позже окна,
 	// считается за дни ДО удаления.
 	err := tenantDB.Unscoped().
 		Where("subscription_id = ? AND status = ?", subID, "active").
-		Where("start_date < ?", monthEnd).
-		Where("(end_date IS NULL OR end_date >= ?)", monthStart).
-		Where("(deleted_at IS NULL OR deleted_at >= ?)", monthStart).
+		Where("start_date < ?", windowEnd).
+		Where("(end_date IS NULL OR end_date >= ?)", windowStart).
+		Where("(deleted_at IS NULL OR deleted_at >= ?)", windowStart).
 		Find(&objs).Error
 	if err != nil {
 		return 0, err
 	}
 	cnt := 0
 	for _, o := range objs {
-		// Окно присутствия объекта в месяце, ограниченное днём наблюдения.
-		ps := monthStart
+		// Окно присутствия объекта, ограниченное windowStart/windowEnd.
+		ps := windowStart
 		if st := dayFloor(o.StartDate.UTC()); st.After(ps) {
 			ps = st
 		}
@@ -641,6 +650,40 @@ func (s *LedgerChargeScheduler) objectsPresentInMonthGE(tenantDB *gorm.DB, subID
 		}
 	}
 	return cnt, nil
+}
+
+// capWindowEnd — верхняя граница окна = min(естественный конец периода, день наблюдения).
+func capWindowEnd(periodEnd, observedEnd time.Time) time.Time {
+	if observedEnd.Before(periodEnd) {
+		return observedEnd
+	}
+	return periodEnd
+}
+
+// periodCoveredByShorterCadence — есть ли за период [periodStart, periodEnd) хоть одна
+// ДНЕВНАЯ или МЕСЯЧНАЯ auto_charge проводка (от прежней каденции). Матч по external_id:
+// monthly `:YYYY-MM` и daily `:YYYY-MM-DD` оба начинаются с `:YYYY-MM`, годовой `:y:` не
+// матчится. Проверяем по external_id (логическое покрытие), а НЕ по entry_date — postpaid
+// проводка за декабрь имеет entry_date=1 янв и выпала бы из окна периода (Codex C1).
+func (s *LedgerChargeScheduler) periodCoveredByShorterCadence(adminAccountID, companyID, subID uint, periodStart, periodEnd time.Time) (bool, error) {
+	conds := make([]string, 0, 12)
+	args := make([]interface{}, 0, 12)
+	for mm := periodStart; mm.Before(periodEnd); mm = mm.AddDate(0, 1, 0) {
+		conds = append(conds, "external_id LIKE ?")
+		args = append(args, fmt.Sprintf("autocharge:sub:%d:%s%%", subID, mm.Format("2006-01")))
+	}
+	if len(conds) == 0 {
+		return false, nil
+	}
+	var cnt int64
+	if err := s.db.Model(&models.LedgerEntry{}).
+		Where("admin_account_id = ? AND company_id = ? AND source = ? AND deleted_at IS NULL",
+			adminAccountID, companyID, "auto_charge").
+		Where("("+strings.Join(conds, " OR ")+")", args...).
+		Count(&cnt).Error; err != nil {
+		return false, err
+	}
+	return cnt > 0, nil
 }
 
 // chargeSubscriptionMonthly — П6 monthly-каденция: ОДНО начисление за месяц на день
@@ -724,7 +767,26 @@ func (s *LedgerChargeScheduler) chargeSubscriptionMonthly(tenantDB *gorm.DB, com
 			continue
 		}
 
-		count, err := s.objectsPresentInMonthGE(tenantDB, sub.ID, m, observedEnd, minDays)
+		// Анти-двойное при обратной смене (lump→monthly): если ГОД, содержащий m, уже
+		// списан годовой lump-проводкой (:y:<начало периода>) — месяц покрыт (Codex C2).
+		lumpPeriod := monthFloor(sub.StartDate.UTC())
+		for !m.Before(lumpPeriod.AddDate(1, 0, 0)) {
+			lumpPeriod = lumpPeriod.AddDate(1, 0, 0)
+		}
+		var lumpExist int64
+		if e := s.db.Model(&models.LedgerEntry{}).
+			Where("admin_account_id = ? AND company_id = ? AND source = ? AND external_id = ? AND deleted_at IS NULL",
+				sub.AdminAccountID, companyID, "auto_charge", fmt.Sprintf("autocharge:sub:%d:y:%s", sub.ID, lumpPeriod.Format("2006-01"))).
+			Count(&lumpExist).Error; e != nil {
+			log.Printf("⚠️ LedgerCharge[m]: sub %d %s — ошибка проверки lump, стоп: %v", sub.ID, m.Format("2006-01"), e)
+			return
+		}
+		if lumpExist > 0 {
+			skipped++
+			continue
+		}
+
+		count, err := s.objectsPresentInWindowGE(tenantDB, sub.ID, m, capWindowEnd(m.AddDate(0, 1, 0), observedEnd), minDays)
 		if err != nil {
 			log.Printf("⚠️ LedgerCharge[m]: sub %d %s — ошибка подсчёта объектов, стоп: %v", sub.ID, m.Format("2006-01"), err)
 			return
@@ -804,6 +866,159 @@ func (s *LedgerChargeScheduler) chargeSubscriptionMonthly(tenantDB *gorm.DB, com
 			skipped++
 		default:
 			log.Printf("⚠️ LedgerCharge[m]: sub %d %s — ошибка записи, стоп: %v", sub.ID, m.Format("2006-01"), txErr)
+			return
+		}
+	}
+	return
+}
+
+// chargeSubscriptionPeriodLump — П6 Ф3 period-каденция, длинные (yearly) подписки РАЗОВО:
+// вся сумма года 1 проводкой на день биллинга начала периода (prepaid → 1-е месяца старта
+// периода, postpaid → 1-е следующего). Периоды (годы) катятся от месяца старта подписки.
+// Сумма = полная годовая цена × объекты с присутствием ≥minDays в месяце старта периода.
+func (s *LedgerChargeScheduler) chargeSubscriptionPeriodLump(tenantDB *gorm.DB, companyID uint, sub *models.Subscription, contractID uint, contractCcy, billingMode, rateSource string, minDays int, rateCache map[string]cachedRate, cutoff, targetDate time.Time) (entries, skipped int) {
+	price := sub.BillingPlan.Price // полная годовая цена
+	if price.IsZero() {
+		return
+	}
+	planCcy := sub.BillingPlan.Currency
+	if planCcy == "" {
+		planCcy = "RUB"
+	}
+	if contractCcy == "" {
+		contractCcy = "RUB"
+	}
+	prepaid := billingMode != "postpaid"
+	observedEnd := dayFloor(targetDate).AddDate(0, 0, 1)
+	subID := sub.ID
+
+	for p := monthFloor(sub.StartDate.UTC()); ; p = p.AddDate(1, 0, 0) {
+		periodEnd := p.AddDate(1, 0, 0)
+		billingDay := p // prepaid → 1-е месяца старта периода
+		if !prepaid {
+			billingDay = p.AddDate(0, 1, 0) // postpaid → 1-е след. месяца
+		}
+		if billingDay.After(targetDate) {
+			break
+		}
+		if billingDay.Before(dayFloor(cutoff)) {
+			continue
+		}
+		// Подписка закончилась раньше начала периода → стоп.
+		if sub.EndDate != nil && dayFloor(sub.EndDate.UTC()).Before(p) {
+			break
+		}
+
+		extID := fmt.Sprintf("autocharge:sub:%d:y:%s", subID, p.Format("2006-01"))
+
+		// Идемпотентность периода.
+		var exist int64
+		if e := s.db.Model(&models.LedgerEntry{}).
+			Where("admin_account_id = ? AND company_id = ? AND source = ? AND external_id = ? AND deleted_at IS NULL",
+				sub.AdminAccountID, companyID, "auto_charge", extID).Count(&exist).Error; e != nil {
+			log.Printf("⚠️ LedgerCharge[y]: sub %d %s — ошибка идемпотентности, стоп: %v", subID, p.Format("2006"), e)
+			return
+		}
+		if exist > 0 {
+			skipped++
+			continue
+		}
+
+		// Анти-двойное-списание (Codex C1): если за ЛЮБОЙ из 12 месяцев периода уже есть
+		// дневная/месячная проводка — год покрыт прежней каденцией, не дублируем годовой.
+		// Проверяем по external_id (monthly :YYYY-MM и daily :YYYY-MM-DD оба начинаются с
+		// :YYYY-MM), а НЕ по entry_date — иначе postpaid-декабрь (дата=1 янв) выпал бы из
+		// окна периода и не детектился.
+		covered, err := s.periodCoveredByShorterCadence(sub.AdminAccountID, companyID, subID, p, periodEnd)
+		if err != nil {
+			log.Printf("⚠️ LedgerCharge[y]: sub %d %s — ошибка проверки покрытия, стоп: %v", subID, p.Format("2006"), err)
+			return
+		}
+		if covered {
+			skipped++
+			continue
+		}
+
+		// Окно присутствия = период [p, periodEnd), ограниченный днём наблюдения.
+		count, err := s.objectsPresentInWindowGE(tenantDB, subID, p, capWindowEnd(periodEnd, observedEnd), minDays)
+		if err != nil {
+			log.Printf("⚠️ LedgerCharge[y]: sub %d %s — ошибка подсчёта объектов, стоп: %v", subID, p.Format("2006"), err)
+			return
+		}
+		if count == 0 {
+			continue
+		}
+		rawAmount := price.Mul(decimal.NewFromInt(int64(count)))
+
+		var chargeAmount decimal.Decimal
+		var metaPtr *string
+		if planCcy == contractCcy {
+			chargeAmount = rawAmount.Round(2)
+		} else {
+			rate, rateDate, stale, rerr := s.getRateCached(rateCache, billingDay, planCcy, contractCcy, rateSource)
+			if rerr != nil {
+				log.Printf("⚠️ LedgerCharge[y]: sub %d %s — нет курса %s→%s, стоп: %v", subID, p.Format("2006"), planCcy, contractCcy, rerr)
+				return
+			}
+			if rate.LessThanOrEqual(decimal.Zero) {
+				log.Printf("❌ LedgerCharge[y]: sub %d %s — некорректный курс %s, стоп", subID, p.Format("2006"), rate.String())
+				return
+			}
+			if stale {
+				log.Printf("⚠️ LedgerCharge[y]: sub %d %s — курс устарел (%s), стоп", subID, p.Format("2006"), rateDate.Format("2006-01-02"))
+				return
+			}
+			chargeAmount = convertAmount(rawAmount, rate)
+			mb, mErr := json.Marshal(map[string]string{
+				"rate": rate.String(), "rate_date": rateDate.Format("2006-01-02"),
+				"source": rateSource, "original_amount": rawAmount.Round(2).String(), "original_ccy": planCcy,
+			})
+			if mErr != nil {
+				log.Printf("⚠️ LedgerCharge[y]: sub %d %s — metadata, стоп: %v", subID, p.Format("2006"), mErr)
+				return
+			}
+			ms := string(mb)
+			metaPtr = &ms
+		}
+		if chargeAmount.IsZero() {
+			continue
+		}
+
+		sid := subID
+		entry := models.LedgerEntry{
+			AdminAccountID: sub.AdminAccountID,
+			CompanyID:      companyID,
+			ContractID:     contractID,
+			SubscriptionID: &sid,
+			EntryType:      "charge",
+			Amount:         chargeAmount.Neg(),
+			Currency:       contractCcy,
+			Source:         "auto_charge",
+			ExternalID:     extID,
+			Description:    fmt.Sprintf("Начисление за период %s–%s (%d объектов, год)", p.Format("2006-01"), periodEnd.AddDate(0, 0, -1).Format("2006-01"), count),
+			EntryDate:      billingDay,
+			CreatedBy:      "scheduler",
+			Metadata:       metaPtr,
+		}
+		txErr := s.db.Transaction(func(tx *gorm.DB) error {
+			var cnt int64
+			if e := tx.Model(&models.LedgerEntry{}).
+				Where("admin_account_id = ? AND company_id = ? AND source = ? AND external_id = ? AND deleted_at IS NULL",
+					sub.AdminAccountID, companyID, "auto_charge", extID).Count(&cnt).Error; e != nil {
+				return e
+			}
+			if cnt > 0 {
+				return errChargeExists
+			}
+			return tx.Create(&entry).Error
+		})
+		switch txErr {
+		case nil:
+			entries++
+		case errChargeExists:
+			skipped++
+		default:
+			log.Printf("⚠️ LedgerCharge[y]: sub %d %s — ошибка записи, стоп: %v", subID, p.Format("2006"), txErr)
 			return
 		}
 	}
