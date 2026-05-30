@@ -33,15 +33,18 @@ type Counterparty struct {
 	// не более одного контрагента на (admin, company, id_type, tax_id) при непустом tax_id.
 	// Контрагенты без tax_id (по имени) под уникальность не попадают — допускаются дубли-омонимы,
 	// разрешаются ручной проверкой (manual_review).
-	AdminAccountID uint `json:"admin_account_id" gorm:"not null;index;uniqueIndex:idx_cp_identity,where:tax_id <> '' AND deleted_at IS NULL"`
-	CompanyID      uint `json:"company_id" gorm:"not null;index;uniqueIndex:idx_cp_identity"`
+	// idx_cp_identity — уникальность по налоговому id (tax_id<>''). idx_cp_name_legacy —
+	// уникальность по ИМЕНИ для контрагентов без tax_id (иначе авто-назначение Ф4 при гонке
+	// двух договоров одного безИНН-клиента создаёт дубли — Codex Ф4a HIGH-1).
+	AdminAccountID uint `json:"admin_account_id" gorm:"not null;index;uniqueIndex:idx_cp_identity,where:tax_id <> '' AND deleted_at IS NULL;uniqueIndex:idx_cp_name_legacy,where:(tax_id = '' OR tax_id IS NULL) AND deleted_at IS NULL"`
+	CompanyID      uint `json:"company_id" gorm:"not null;index;uniqueIndex:idx_cp_identity;uniqueIndex:idx_cp_name_legacy"`
 
 	// Идентификатор контрагента.
 	Country string `json:"country" gorm:"type:varchar(2);default:'ru';index"`                            // ru|kz|...
 	IDType  string `json:"id_type" gorm:"not null;default:'inn';type:varchar(20);uniqueIndex:idx_cp_identity"` // inn|bin|iin|passport|other
 	TaxID   string `json:"tax_id" gorm:"type:varchar(32);uniqueIndex:idx_cp_identity"`                    // ИНН/БИН/ИИН/паспорт; пусто = по имени
 
-	Name       string `json:"name" gorm:"not null;type:varchar(200);index"`
+	Name       string `json:"name" gorm:"not null;type:varchar(200);index;uniqueIndex:idx_cp_name_legacy"`
 	ClientType string `json:"client_type" gorm:"type:varchar(50)"` // organization|individual_entrepreneur|physical_person
 
 	// Реквизиты (переносятся с Contract.Client* — будущий дом идентичности клиента, форма Ф4).

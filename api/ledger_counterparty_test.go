@@ -55,6 +55,51 @@ func TestCounterpartyBalanceAggregates(t *testing.T) {
 	assert.Equal(t, "13000.00", paid.StringFixed(2))
 }
 
+// Ф4: resolveOrCreateCounterparty — find-or-create по идентичности договора (закрывает HIGH-3).
+func TestResolveOrCreateCounterparty(t *testing.T) {
+	if err := database.SetupTestDatabase(); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	defer database.CleanupTestDatabase()
+	if err := database.DB.AutoMigrate(&models.Counterparty{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	const admin, company = uint(1), uint(1)
+
+	// С ИНН → создаётся inn-контрагент, manual_review=false.
+	c1 := &models.Contract{AdminAccountID: admin, CompanyID: company, ClientName: "ООО Альфа", ClientINN: "7701234567", ClientType: "organization"}
+	id1, err := resolveOrCreateCounterparty(admin, company, c1)
+	assert.NoError(t, err)
+	assert.NotZero(t, id1)
+
+	// Второй договор того же клиента (тот же ИНН) → ТОТ ЖЕ контрагент (find, не дубль).
+	c2 := &models.Contract{AdminAccountID: admin, CompanyID: company, ClientName: "ООО Альфа (другое написание)", ClientINN: "7701234567"}
+	id2, err := resolveOrCreateCounterparty(admin, company, c2)
+	assert.NoError(t, err)
+	assert.Equal(t, id1, id2, "тот же ИНН → тот же контрагент")
+
+	var cp models.Counterparty
+	database.DB.First(&cp, id1)
+	assert.Equal(t, "inn", cp.IDType)
+	assert.False(t, cp.ManualReview)
+
+	// Без ИНН → manual_review=true; повтор по имени → тот же.
+	c3 := &models.Contract{AdminAccountID: admin, CompanyID: company, ClientName: "ИП Гамма"}
+	id3, err := resolveOrCreateCounterparty(admin, company, c3)
+	assert.NoError(t, err)
+	c4 := &models.Contract{AdminAccountID: admin, CompanyID: company, ClientName: "ИП Гамма"}
+	id4, _ := resolveOrCreateCounterparty(admin, company, c4)
+	assert.Equal(t, id3, id4, "то же имя без ИНН → тот же контрагент")
+	var cp3 models.Counterparty
+	database.DB.First(&cp3, id3)
+	assert.True(t, cp3.ManualReview)
+
+	// Всего 2 контрагента (Альфа + Гамма), не 4.
+	var total int64
+	database.DB.Model(&models.Counterparty{}).Count(&total)
+	assert.Equal(t, int64(2), total)
+}
+
 // Ф2: company_id обязателен в скоупе — одинаковый counterparty_id в разных компаниях
 // (admin_account_id общий) не должен смешиваться.
 func TestCounterpartyBalanceScopedByCompany(t *testing.T) {

@@ -1657,7 +1657,8 @@ func CreateContract(c *gin.Context) {
 		return
 	}
 
-	if contract.ClientName == "" {
+	if strings.TrimSpace(contract.ClientName) == "" {
+		// TrimSpace: whitespace-only имя → пусто после нормализации в counterparty (Codex Ф4a).
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
 			"error":  "Имя клиента обязательно",
@@ -1997,6 +1998,17 @@ func CreateContract(c *gin.Context) {
 		contract.CreditLimit = rawRequest.CreditLimit
 	}
 
+	// Ф4: назначаем контрагента ДО вставки договора → counterparty_id попадает в тот же INSERT
+	// (атомарно, не висит cp=0 при сбое — Codex Ф4a). client-договор без явного cp (FE Ф4b может
+	// прислать) → find-or-create по идентичности клиента (закрывает HIGH-3: новые договоры в едином ЛС).
+	if contract.ContractType == "client" && contract.CounterpartyID == 0 {
+		if cpID, e := resolveOrCreateCounterparty(adminAccountID, contract.CompanyID, &contract); e != nil {
+			log.Printf("⚠️ Не удалось назначить контрагента (договор %s): %v", contract.Number, e)
+		} else {
+			contract.CounterpartyID = cpID
+		}
+	}
+
 	if err := tenantDB.Omit("SellerCountryCode", "BuyerCountryCode", "NDSRateOverride", "TariffPlan", "Appendices", "Objects", "IsAutoRenew", "ContractPeriodMonths").Create(&contract).Error; err != nil {
 		log.Printf("❌ Ошибка при создании договора: %v", err)
 		log.Printf("📋 Тип ошибки: %T", err)
@@ -2077,7 +2089,7 @@ func CreateContract(c *gin.Context) {
 
 contractCreated:
 
-	log.Printf("✅ Договор успешно создан с ID=%d", contract.ID)
+	log.Printf("✅ Договор успешно создан с ID=%d (контрагент %d)", contract.ID, contract.CounterpartyID)
 
 	// Убеждаемся, что таблица contract_objects существует перед привязкой объектов
 	if err := ensureContractObjectsTable(tenantDB); err != nil {
@@ -2555,6 +2567,20 @@ func UpdateContract(c *gin.Context) {
 	// Загружаем Appendices через Preload (если таблица существует)
 	if err := tenantDB.Preload("Appendices").First(&contract, contract.ID).Error; err != nil {
 		log.Printf("⚠️ Не удалось загрузить обновленные данные договора %d: %v", contract.ID, err)
+	}
+
+	// Ф4: client-договор без контрагента (старый/не назначенный) → назначить по идентичности.
+	// Не перемещаем уже привязанные (смена контрагента — явное действие FE в Ф4b).
+	if contract.ContractType == "client" && contract.CounterpartyID == 0 {
+		if cpID, e := resolveOrCreateCounterparty(adminAccountID, contract.CompanyID, &contract); e != nil {
+			log.Printf("⚠️ UpdateContract: не удалось назначить контрагента договору %d: %v", contract.ID, e)
+		} else if cpID != 0 {
+			if e := tenantDB.Model(&models.Contract{}).Where("id = ?", contract.ID).Update("counterparty_id", cpID).Error; e != nil {
+				log.Printf("⚠️ UpdateContract: не удалось проставить counterparty_id договору %d: %v", contract.ID, e)
+			} else {
+				contract.CounterpartyID = cpID
+			}
+		}
 	}
 
 	// Партнёрский договор не использует подписки → не должен застревать в draft

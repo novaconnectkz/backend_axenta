@@ -61,14 +61,12 @@ func counterpartyScope(c *gin.Context) (*gorm.DB, uint, uint, bool) {
 // GetCounterparties — GET /api/auth/counterparties
 // Список контрагентов компании. Фильтры: ?q= (имя/tax_id), ?manual_review=1, пагинация limit/offset.
 func GetCounterparties(c *gin.Context) {
-	if !requireContractAssignAccess(c) {
-		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "доступно только администратору"})
-		return
-	}
+	// Ф4: менеджер видит ТОЛЬКО контрагентов своих договоров; admin/superadmin — всех (scope admin+company).
 	q, _, _, ok := counterpartyScope(c)
 	if !ok {
 		return
 	}
+	q = applyCounterpartyManagerScope(c, q)
 
 	if s := strings.TrimSpace(c.Query("q")); s != "" {
 		pattern := "%" + strings.ToLower(s) + "%"
@@ -102,14 +100,11 @@ func GetCounterparties(c *gin.Context) {
 // SearchCounterparties — GET /api/auth/counterparties/search?q=...
 // Лёгкий autocomplete для формы договора (Ф4): id, name, tax_id, id_type, manual_review.
 func SearchCounterparties(c *gin.Context) {
-	if !requireContractAssignAccess(c) {
-		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "доступно только администратору"})
-		return
-	}
 	q, _, _, ok := counterpartyScope(c)
 	if !ok {
 		return
 	}
+	q = applyCounterpartyManagerScope(c, q) // Ф4: менеджер — только свои контрагенты
 	if s := strings.TrimSpace(c.Query("q")); s != "" {
 		pattern := "%" + strings.ToLower(s) + "%"
 		// Скобки обязательны: иначе OR на верхнем уровне обходит admin/company-scope.
@@ -133,10 +128,6 @@ func SearchCounterparties(c *gin.Context) {
 
 // GetCounterparty — GET /api/auth/counterparties/:id
 func GetCounterparty(c *gin.Context) {
-	if !requireContractAssignAccess(c) {
-		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "доступно только администратору"})
-		return
-	}
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "некорректный id"})
@@ -146,6 +137,7 @@ func GetCounterparty(c *gin.Context) {
 	if !ok {
 		return
 	}
+	q = applyCounterpartyManagerScope(c, q) // Ф4: менеджер — только свои контрагенты
 	var cp models.Counterparty
 	if err := q.First(&cp, uint(id)).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "контрагент не найден"})
@@ -342,6 +334,85 @@ func DeleteCounterparty(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "success", "message": "контрагент удалён"})
+}
+
+// cpNormalizeName — каноничное имя контрагента (схлопывание пробелов), как в datafix.
+func cpNormalizeName(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// resolveOrCreateCounterparty — Ф4: находит контрагента по идентичности договора или создаёт
+// нового (та же логика, что datafix Ф1). Закрывает Codex HIGH-3 — новые договоры входят в
+// единый ЛС автоматически. Идентичность: есть ИНН → id_type=inn по ИНН; иначе по имени +
+// manual_review. Возвращает counterparty_id. Гонку (две параллельные вставки) ловит
+// партиальный uniqueIndex → повторный SELECT.
+func resolveOrCreateCounterparty(adminAccountID, companyID uint, ct *models.Contract) (uint, error) {
+	if adminAccountID == 0 || companyID == 0 {
+		return 0, fmt.Errorf("counterparty: пустой admin/company scope")
+	}
+	inn := strings.TrimSpace(ct.ClientINN)
+	name := cpNormalizeName(ct.ClientName)
+	idType := "other"
+	manualReview := true
+	if inn != "" {
+		idType = "inn"
+		manualReview = false
+	}
+
+	find := func() (uint, bool) {
+		var id uint
+		q := database.DB.Model(&models.Counterparty{}).Select("id").
+			Where("admin_account_id = ? AND company_id = ? AND deleted_at IS NULL", adminAccountID, companyID)
+		if inn != "" {
+			q = q.Where("id_type = ? AND tax_id = ?", idType, inn)
+		} else {
+			// Имя exact-match (case-preserved) — обходит lc_collate=C; зеркало datafix lookup.
+			q = q.Where("(tax_id = '' OR tax_id IS NULL) AND name = ?", name)
+		}
+		q.Scan(&id)
+		return id, id != 0
+	}
+
+	if id, ok := find(); ok {
+		return id, nil
+	}
+	cp := models.Counterparty{
+		AdminAccountID: adminAccountID, CompanyID: companyID, Country: "ru",
+		IDType: idType, TaxID: inn, Name: name, ClientType: ct.ClientType,
+		ShortName: ct.ClientShortName, KPP: ct.ClientKPP, Email: ct.ClientEmail, Phone: ct.ClientPhone,
+		Address: ct.ClientAddress, LegalAddress: ct.ClientLegalAddress, PostalAddress: ct.ClientPostalAddress,
+		OGRN: ct.ClientOGRN, OKPO: ct.ClientOKPO, Director: ct.ClientDirector, BasedOn: ct.ClientBasedOn,
+		Website: ct.ClientWebsite, BankName: ct.ClientBankName, BankBIK: ct.ClientBankBIK,
+		BankCorrespondentAccount: ct.ClientBankCorrespondentAccount, BankAccount: ct.ClientBankAccount,
+		BankRecipient: ct.ClientBankRecipient, PassportSeries: ct.ClientPassportSeries,
+		PassportNumber: ct.ClientPassportNumber, PassportIssuedBy: ct.ClientPassportIssuedBy,
+		PassportIssueDate: ct.ClientPassportIssueDate, PassportDepartmentCode: ct.ClientPassportDepartmentCode,
+		RegistrationAddress: ct.ClientRegistrationAddress, ActualAddress: ct.ClientActualAddress,
+		SNILS: ct.ClientSNILS, OGRNIP: ct.ClientOGRNIP,
+		BillingMode: defaultBillingMode(ct.BillingMode), CreditLimit: ct.CreditLimit,
+		ManualReview: manualReview, CreatedBy: "auto:contract",
+	}
+	if name == "" {
+		return 0, fmt.Errorf("counterparty: пустое имя клиента")
+	}
+	err := database.DB.Create(&cp).Error
+	if err != nil {
+		if isUniqueViolation(err) {
+			// Гонка: кто-то создал того же контрагента параллельно → перечитать.
+			if id, ok := find(); ok {
+				return id, nil
+			}
+		}
+		return 0, err
+	}
+	return cp.ID, nil
+}
+
+func defaultBillingMode(m string) string {
+	if strings.TrimSpace(m) == "" {
+		return "prepaid"
+	}
+	return m
 }
 
 // mirrorBillingToCounterparty — Ф2: при изменении billing_mode/credit_limit договора

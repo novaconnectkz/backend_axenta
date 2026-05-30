@@ -97,6 +97,43 @@ func managerScopedContractIDs(c *gin.Context) ([]uint, bool, error) {
 	return ids, true, nil
 }
 
+// managerScopedCounterparties — Ф4: контрагенты, доступные менеджеру = контрагенты его
+// договоров (cp<>0). Возвращает (cpIDs, applies, err): applies=false → admin/superadmin (все).
+// applies=true с []{0} → у менеджера нет своих контрагентов (пустой/невозможный IN).
+func managerScopedCounterparties(c *gin.Context) ([]uint, bool, error) {
+	contractIDs, applies, err := managerScopedContractIDs(c)
+	if !applies || err != nil {
+		return nil, applies, err
+	}
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB == nil {
+		return []uint{0}, true, nil // fail-closed
+	}
+	var cpIDs []uint
+	if e := tenantDB.Model(&models.Contract{}).
+		Where("id IN ? AND counterparty_id <> 0", contractIDs).
+		Distinct().Pluck("counterparty_id", &cpIDs).Error; e != nil {
+		return []uint{0}, true, e
+	}
+	if len(cpIDs) == 0 {
+		return []uint{0}, true, nil
+	}
+	return cpIDs, true, nil
+}
+
+// applyCounterpartyManagerScope — добавляет к запросу по public.counterparties фильтр
+// `id IN <контрагенты менеджера>` (для роли manager). admin/superadmin — без изменений.
+func applyCounterpartyManagerScope(c *gin.Context, q *gorm.DB) *gorm.DB {
+	cpIDs, applies, err := managerScopedCounterparties(c)
+	if !applies {
+		return q
+	}
+	if err != nil {
+		return q.Where("1 = 0") // fail-closed
+	}
+	return q.Where("id IN ?", cpIDs)
+}
+
 // managerCanAccessContract — может ли текущий пользователь видеть конкретный договор.
 // admin/superadmin → всегда true. manager → только если он назначен на этот договор.
 func managerCanAccessContract(c *gin.Context, contractID uint) bool {

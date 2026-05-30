@@ -798,6 +798,12 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 					NotifyBefore:                   30,
 					ExternalID:                     extID,
 				}
+				// Ф4: контрагент мигрируемому договору (единый ЛС). resolveOrCreate использует
+				// database.DB (public), вне migration-tx → идемпотентно (reuse при ретрае).
+				// Ошибку игнорируем: cp=0 покрыт legacy-fallback + повторным datafix.
+				if cpID, e := resolveOrCreateCounterparty(adminAccountID, uint(wcrmTargetTenantID), &nc); e == nil {
+					nc.CounterpartyID = cpID
+				}
 				// Select("*"): форсим запись ВСЕХ полей включая is_active=false.
 				// Иначе GORM (default:true тег) пропускает zero-value bool → БД ставит true.
 				if err := tx.Select("*").Create(&nc).Error; err != nil {
