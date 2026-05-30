@@ -1088,6 +1088,13 @@ func main() {
 	apiGroup.POST("/contracts/fix-statuses", api.FixContractStatuses)
 	log.Printf("✅ Зарегистрирован POST /api/auth/contracts/fix-statuses -> FixContractStatuses")
 
+	// Массовые действия над договорами (только admin/superadmin). Hyphen-сегмент, чтобы
+	// не конфликтовать со /contracts/:contract_id (как /contracts/fix-statuses).
+	apiGroup.POST("/contracts/bulk-assign-manager", api.BulkAssignManager)
+	apiGroup.POST("/contracts/bulk-set-status", api.BulkSetStatus)
+	apiGroup.POST("/contracts/bulk-delete", api.BulkDeleteContracts)
+	log.Printf("✅ Зарегистрированы POST /api/auth/contracts/bulk-{assign-manager,set-status,delete}")
+
 	// Общие роуты для договоров
 	// ВАЖНО: Специфичные роуты должны быть ПЕРЕД общими, чтобы не перехватывались
 	// Приложения к договорам (специфичный маршрут - ПЕРЕД общими)

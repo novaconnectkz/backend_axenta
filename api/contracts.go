@@ -2642,113 +2642,15 @@ func DeleteContract(c *gin.Context) {
 		return
 	}
 
-	// 1. Отвязываем все объекты от договора перед удалением
-	// Обновляем contract_id на NULL для всех объектов этого договора
-	if err := tenantDB.Model(&models.Object{}).Where("contract_id = ?", contract.ID).UpdateColumn("contract_id", gorm.Expr("NULL")).Error; err != nil {
-		log.Printf("⚠️ Не удалось отвязать объекты от договора %d: %v", contract.ID, err)
-		// Продолжаем удаление договора даже если не удалось отвязать объекты
-	} else {
-		log.Printf("✅ Объекты отвязаны от договора %d", contract.ID)
+	// Бизнес-правило: активный договор с привязанными объектами удалять нельзя.
+	if deletable, reason := contractDeletable(tenantDB, &contract); !deletable {
+		c.JSON(http.StatusConflict, gin.H{"status": "error", "error": reason})
+		return
 	}
 
-	// 2. Удаляем связи из junction table
-	if err := tenantDB.Where("contract_id = ?", contract.ID).Delete(&models.ContractObject{}).Error; err != nil {
-		log.Printf("⚠️ Не удалось отвязать объекты от договора %d через junction table: %v", contract.ID, err)
-		// Продолжаем удаление договора даже если не удалось отвязать объекты
-	} else {
-		log.Printf("✅ Связи объектов с договором %d удалены из junction table", contract.ID)
-	}
-
-	// 3. Удаляем приложения к договору (пробуем в tenant схеме)
-	if err := tenantDB.Where("contract_id = ?", contract.ID).Delete(&models.ContractAppendix{}).Error; err != nil {
-		log.Printf("⚠️ Не удалось удалить приложения к договору %d из tenant схемы: %v (возможно, таблица отсутствует)", contract.ID, err)
-		// Пробуем удалить из public схемы
-		publicDB := database.DB.Session(&gorm.Session{})
-		if err := publicDB.Exec("SET search_path TO public").Error; err == nil {
-			if err := publicDB.Where("contract_id = ?", contract.ID).Delete(&models.ContractAppendix{}).Error; err != nil {
-				log.Printf("⚠️ Не удалось удалить приложения к договору %d из public схемы: %v", contract.ID, err)
-			} else {
-				log.Printf("✅ Приложения к договору %d удалены из public схемы", contract.ID)
-			}
-		}
-	} else {
-		log.Printf("✅ Приложения к договору %d удалены из tenant схемы", contract.ID)
-	}
-
-	// 4. Записываем информацию об удалении в корзину перед удалением
-	// Получаем информацию о пользователе
-	userID, userIDExists := c.Get("user_id")
-	companyID, companyIDExists := c.Get("company_id")
-	var deletedBy uint
-	var deletedByName string
-	var companyIDUint uint
-
-	if userIDExists {
-		deletedBy = userID.(uint)
-		var user models.User
-		if err := tenantDB.First(&user, deletedBy).Error; err == nil {
-			if user.FirstName != "" || user.LastName != "" {
-				deletedByName = fmt.Sprintf("%s %s", user.FirstName, user.LastName)
-			} else {
-				deletedByName = user.Username
-			}
-		}
-	}
-
-	if companyIDExists {
-		companyIDUint = companyID.(uint)
-	}
-
-	// Формируем название и описание для корзины
-	entityName := fmt.Sprintf("Договор %s", contract.Number)
-	entityDescription := fmt.Sprintf("Клиент: %s", contract.ClientName)
-	if contract.Title != "" {
-		entityDescription += fmt.Sprintf(", %s", contract.Title)
-	}
-
-	log.Printf("🗑️ Запись удаления договора в корзину: ID=%d, Name=%s, CompanyID=%d, DeletedBy=%d (%s)",
-		contract.ID, entityName, companyIDUint, deletedBy, deletedByName)
-
-	// Создаем упрощенную копию договора для сохранения в корзину (только основные поля)
-	contractSimplified := map[string]interface{}{
-		"id":                contract.ID,
-		"number":            contract.Number,
-		"title":             contract.Title,
-		"description":       contract.Description,
-		"client_type":       contract.ClientType,
-		"client_name":       contract.ClientName,
-		"client_short_name": contract.ClientShortName,
-		"client_inn":        contract.ClientINN,
-		"client_kpp":        contract.ClientKPP,
-		"client_email":      contract.ClientEmail,
-		"client_phone":      contract.ClientPhone,
-		"status":            contract.Status,
-		"start_date":        contract.StartDate,
-		"end_date":          contract.EndDate,
-		"total_amount":      contract.TotalAmount,
-		"created_at":        contract.CreatedAt,
-		"updated_at":        contract.UpdatedAt,
-	}
-
-	// Записываем в корзину
-	if err := RecordDeletion(
-		tenantDB,
-		"contract",
-		contract.ID,
-		contractSimplified,
-		deletedBy,
-		deletedByName,
-		companyIDUint,
-		entityName,
-		entityDescription,
-	); err != nil {
-		log.Printf("⚠️ Ошибка записи удаления договора в корзину: %v", err)
-	} else {
-		log.Printf("✅ Договор %d успешно записан в корзину", contract.ID)
-	}
-
-	// 5. Удаляем договор из tenant схемы (мягкое удаление)
-	if err := tenantDB.Delete(&contract).Error; err != nil {
+	// Общий путь удаления (отвязка объектов, junction, приложения, корзина, мягкое
+	// удаление) — переиспользуется в BulkDeleteContracts.
+	if err := purgeContractCleanup(c, tenantDB, &contract); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  "Ошибка при удалении договора",

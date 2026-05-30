@@ -1587,6 +1587,26 @@ func DeleteSubscription(c *gin.Context) {
 
 	// Получаем tenant DB для работы с объектами договора
 	tenantDB := middleware.GetTenantDB(c)
+
+	// Бизнес-правило: подписку с привязанными активными объектами под АКТИВНЫМ договором
+	// удалять нельзя — сначала отвязать объекты или сменить статус договора.
+	if tenantDB != nil && subscription.ContractID != nil {
+		var objCnt int64
+		if err := tenantDB.Model(&models.ContractObject{}).
+			Where("subscription_id = ? AND status = ?", uint(subscriptionID), "active").Count(&objCnt).Error; err != nil {
+			// Fail-closed: не смогли проверить объекты — не удаляем (Codex).
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "не удалось проверить привязанные объекты подписки"})
+			return
+		}
+		if objCnt > 0 {
+			var parent models.Contract
+			if e := tenantDB.Select("id, status").First(&parent, *subscription.ContractID).Error; e == nil && parent.Status == "active" {
+				c.JSON(http.StatusConflict, gin.H{"status": "error", "error": "нельзя удалить подписку с привязанными объектами под активным договором — отвяжите объекты или смените статус договора"})
+				return
+			}
+		}
+	}
+
 	if tenantDB != nil && subscription.ContractID != nil {
 		// Деактивируем объекты этой подписки (меняем статус на inactive и обнуляем subscription_id)
 		result := tenantDB.Model(&models.ContractObject{}).
