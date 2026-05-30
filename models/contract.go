@@ -26,6 +26,12 @@ type Contract struct {
 	AdminAccountID uint `json:"admin_account_id" gorm:"not null;index"`
 	CompanyID      uint `json:"company_id" gorm:"not null;index"`
 
+	// Контрагент (Ф1, единый лицевой счёт): N договоров одного контрагента = ОДИН баланс.
+	// Без FK-constraint — counterparties в public, contracts в tenant-схеме (как
+	// ledger_entries.contract_id). Денорм-поля Client* ниже остаются источником до Ф4 (форма).
+	// 0 — ещё не привязан (backfill datafix'ом cmd/backfill_counterparties).
+	CounterpartyID uint `json:"counterparty_id" gorm:"index"`
+
 	// Тип договора
 	ContractType string `json:"contract_type" gorm:"type:varchar(20);default:'client'"` // client или partner
 

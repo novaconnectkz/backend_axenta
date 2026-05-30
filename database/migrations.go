@@ -1184,6 +1184,7 @@ func CreateMissingGlobalTables() error {
 		&models.InvoiceItem{},
 		&models.Invoice{},
 		&models.BillingHistory{},
+		&models.Counterparty{},      // контрагент (единый ЛС per контрагент, Ф1)
 		&models.LedgerEntry{},       // лицевой счёт (проводки)
 		&models.LedgerTransfer{},    // переводы между лицевыми счетами (заголовок пары проводок)
 		&models.BillingSuspension{}, // приостановки договоров за долг (П2)

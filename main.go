@@ -1080,6 +1080,16 @@ func main() {
 	apiGroup.GET("/currency/rate", api.GetCurrencyRate)
 	log.Println("✅ Зарегистрированы /api/auth/currency/* (курсы валют)")
 
+	// Контрагенты (Ф1): единый лицевой счёт per контрагент. CRUD + autocomplete-поиск.
+	// /search — ПЕРЕД /:id (специфичный маршрут раньше параметрического).
+	apiGroup.GET("/counterparties/search", api.SearchCounterparties)
+	apiGroup.GET("/counterparties", api.GetCounterparties)
+	apiGroup.GET("/counterparties/:id", api.GetCounterparty)
+	apiGroup.POST("/counterparties", api.CreateCounterparty)
+	apiGroup.PUT("/counterparties/:id", api.UpdateCounterparty)
+	apiGroup.DELETE("/counterparties/:id", api.DeleteCounterparty)
+	log.Println("✅ Зарегистрированы /api/auth/counterparties/* (контрагенты, Ф1)")
+
 	// Синхронизация договора с подпиской
 	apiGroup.POST("/contracts/:contract_id/sync-from-subscription", api.SyncContractFromSubscription)
 	log.Printf("✅ Зарегистрирован POST /api/auth/contracts/:contract_id/sync-from-subscription -> SyncContractFromSubscription")

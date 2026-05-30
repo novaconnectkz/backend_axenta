@@ -26,6 +26,10 @@ type LedgerEntry struct {
 	AdminAccountID uint  `json:"admin_account_id" gorm:"not null;index"`
 	CompanyID      uint  `json:"company_id" gorm:"not null;index"`
 	ContractID     uint  `json:"contract_id" gorm:"not null;index"`
+	// Денормализованный контрагент (Ф1): баланс агрегируется per-контрагент без cross-schema
+	// JOIN (contracts в tenant, ledger в public). Backfill datafix'ом; 0 до проставления.
+	// Асимметрия: charge остаётся per-договор (ContractID), баланс/платёж — per-контрагент (Ф2).
+	CounterpartyID uint  `json:"counterparty_id" gorm:"index"`
 	SubscriptionID *uint `json:"subscription_id" gorm:"index"`
 	ObjectID       *uint `json:"object_id" gorm:"index"`
 
