@@ -222,3 +222,140 @@ func TestObjectCountOnDay_Historical(t *testing.T) {
 	// 25-е: A + B (C удалён 20-го) = 2.
 	assert.Equal(t, 2, cnt(jan(25)))
 }
+
+// П6: monthFloor + monthlyPlanAmount (yearly → /12).
+func TestMonthlyHelpers(t *testing.T) {
+	assert.Equal(t, time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC), monthFloor(time.Date(2026, 5, 15, 13, 0, 0, 0, time.UTC)))
+	assert.True(t, monthlyPlanAmount(d("600"), "monthly").Equal(d("600")))
+	assert.True(t, monthlyPlanAmount(d("1200"), "yearly").Equal(d("100")), "yearly 1200 → 100/мес")
+	assert.True(t, monthlyPlanAmount(d("500"), "").Equal(d("500")))
+}
+
+// П6: бинарный подсчёт объектов с присутствием ≥ minDays в месяце.
+func TestObjectsPresentInMonthGE(t *testing.T) {
+	db := setupChargeTestDB(t)
+	s := &LedgerChargeScheduler{}
+	subID := uint(200)
+
+	mk := func(start time.Time, end *time.Time, status string, deleted *time.Time) {
+		co := models.ContractObject{
+			ContractID: 1, SubscriptionID: &subID,
+			ObjectID:        uint(time.Now().UnixNano() % 1000000),
+			ObjectCompanyID: 186, ObjectSchema: "tenant_186",
+			Status: status, StartDate: start, EndDate: end,
+		}
+		require.NoError(t, db.Create(&co).Error)
+		if deleted != nil {
+			require.NoError(t, db.Model(&models.ContractObject{}).Where("id = ?", co.ID).
+				Update("deleted_at", deleted).Error)
+		}
+	}
+	jan := func(dd int) time.Time { return time.Date(2026, 1, dd, 0, 0, 0, 0, time.UTC) }
+	janStart := jan(1)
+
+	endJ3 := jan(3)
+	endJ6 := jan(6)
+	mk(jan(1), nil, "active", nil)     // A: весь месяц (31 дн) ≥5 ✓
+	mk(jan(1), &endJ3, "active", nil)  // B: 1-3 (3 дн) <5 ✗
+	mk(jan(1), &endJ6, "active", nil)  // C: 1-6 (6 дн) ≥5 ✓
+	mk(jan(28), nil, "active", nil)    // D: 28-31 (4 дн) <5 ✗
+	mk(jan(1), nil, "inactive", nil)   // E: inactive ✗
+
+	// observedEnd далеко в будущем → месяц считается полностью (как завершённый).
+	obs := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+
+	cnt, err := s.objectsPresentInMonthGE(db, subID, janStart, obs, 5)
+	require.NoError(t, err)
+	assert.Equal(t, 2, cnt, "при minDays=5 присутствуют A и C")
+
+	// minDays=1 → A,B,C,D (E inactive) = 4.
+	cnt1, err := s.objectsPresentInMonthGE(db, subID, janStart, obs, 1)
+	require.NoError(t, err)
+	assert.Equal(t, 4, cnt1)
+
+	// minDays=31 → только A (весь месяц).
+	cnt31, err := s.objectsPresentInMonthGE(db, subID, janStart, obs, 31)
+	require.NoError(t, err)
+	assert.Equal(t, 1, cnt31)
+
+	// Codex (c): observedEnd ограничивает текущий месяц. Наблюдаем только до 4-го января
+	// → A присутствует 3 дня (1,2,3) < 5 → 0. (защита от будущего присутствия prepaid).
+	obsEarly := jan(4)
+	cntEarly, err := s.objectsPresentInMonthGE(db, subID, janStart, obsEarly, 5)
+	require.NoError(t, err)
+	assert.Equal(t, 0, cntEarly, "до 4-го января никто не накопил ≥5 дней")
+}
+
+// П6 Ф2: интеграционный тест monthly-каденции — prepaid/postpaid тайминг,
+// идемпотентность, анти-двойное-списание при наличии дневных проводок.
+func TestChargeSubscriptionMonthly(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.ContractObject{}, &models.LedgerEntry{}))
+	s := &LedgerChargeScheduler{db: db}
+
+	apr := func(dd int) time.Time { return time.Date(2026, 4, dd, 0, 0, 0, 0, time.UTC) }
+	may := func(dd int) time.Time { return time.Date(2026, 5, dd, 0, 0, 0, 0, time.UTC) }
+
+	mkSub := func(id uint, start time.Time) *models.Subscription {
+		sub := &models.Subscription{AdminAccountID: 1, StartDate: start,
+			BillingPlan: models.BillingPlan{Price: d("600"), BillingPeriod: "monthly", Currency: "RUB"}}
+		sub.ID = id
+		return sub
+	}
+	mkObj := func(subID uint, start time.Time, end *time.Time) {
+		co := models.ContractObject{ContractID: 1, SubscriptionID: &subID, ObjectID: uint(time.Now().UnixNano() % 1000000),
+			ObjectCompanyID: 186, ObjectSchema: "tenant_186", Status: "active", StartDate: start, EndDate: end}
+		require.NoError(t, db.Create(&co).Error)
+	}
+
+	cutoff, target := apr(1), may(30)
+	rc := map[string]cachedRate{}
+
+	// --- Prepaid: апрель (полный) + май (прошло ≥5 дней) = 2 проводки, дата = 1-е тек. месяца ---
+	subP := mkSub(300, apr(1))
+	mkObj(300, apr(1), nil)
+	e, _ := s.chargeSubscriptionMonthly(db, 186, subP, 88, "RUB", "prepaid", "cbr_rf", 5, rc, cutoff, target)
+	assert.Equal(t, 2, e, "prepaid: апрель + май")
+	var pe []models.LedgerEntry
+	db.Where("subscription_id = ?", 300).Order("entry_date").Find(&pe)
+	require.Len(t, pe, 2)
+	assert.Equal(t, "autocharge:sub:300:2026-04", pe[0].ExternalID)
+	assert.Equal(t, apr(1), pe[0].EntryDate.UTC(), "prepaid: дата = 1-е апреля")
+	assert.True(t, pe[0].Amount.Equal(d("-600")), "amount апрель")
+	assert.Equal(t, "autocharge:sub:300:2026-05", pe[1].ExternalID)
+	assert.Equal(t, may(1), pe[1].EntryDate.UTC())
+
+	// Идемпотентность: повтор → 0 новых.
+	e2, _ := s.chargeSubscriptionMonthly(db, 186, subP, 88, "RUB", "prepaid", "cbr_rf", 5, rc, cutoff, target)
+	assert.Equal(t, 0, e2)
+
+	// --- Postpaid: апрель списывается 1-го МАЯ; май ещё не наступил (1 июня > target) = 1 проводка ---
+	subPost := mkSub(301, apr(1))
+	mkObj(301, apr(1), nil)
+	ep, _ := s.chargeSubscriptionMonthly(db, 186, subPost, 89, "RUB", "postpaid", "cbr_rf", 5, rc, cutoff, target)
+	assert.Equal(t, 1, ep, "postpaid: только апрель")
+	var poe []models.LedgerEntry
+	db.Where("subscription_id = ?", 301).Find(&poe)
+	require.Len(t, poe, 1)
+	assert.Equal(t, "autocharge:sub:301:2026-04", poe[0].ExternalID)
+	assert.Equal(t, may(1), poe[0].EntryDate.UTC(), "postpaid: дата = 1-е мая (за апрель)")
+
+	// --- Анти-двойное-списание: за апрель уже есть ДНЕВНАЯ проводка → monthly пропускает апрель ---
+	subSwitch := mkSub(302, apr(1))
+	mkObj(302, apr(1), nil)
+	require.NoError(t, db.Create(&models.LedgerEntry{AdminAccountID: 1, CompanyID: 186, ContractID: 90,
+		SubscriptionID: func() *uint { v := uint(302); return &v }(), EntryType: "charge", Amount: d("-20"),
+		Currency: "RUB", Source: "auto_charge", ExternalID: "autocharge:sub:302:2026-04-15", EntryDate: apr(15)}).Error)
+	es, _ := s.chargeSubscriptionMonthly(db, 186, subSwitch, 90, "RUB", "prepaid", "cbr_rf", 5, rc, cutoff, target)
+	var sw []models.LedgerEntry
+	db.Where("subscription_id = ? AND external_id LIKE ?", 302, "autocharge:sub:302:2026-04%").Find(&sw)
+	// апрель: 1 дневная (старая), monthly НЕ добавил за апрель.
+	assert.Len(t, sw, 1, "за апрель только дневная, monthly пропущен")
+	assert.Equal(t, "autocharge:sub:302:2026-04-15", sw[0].ExternalID)
+	// май monthly добавился (за май дневных нет).
+	var swMay int64
+	db.Model(&models.LedgerEntry{}).Where("external_id = ?", "autocharge:sub:302:2026-05").Count(&swMay)
+	assert.EqualValues(t, 1, swMay, "май начислен monthly")
+	_ = es
+}
