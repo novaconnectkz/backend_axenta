@@ -267,7 +267,7 @@ func searchAcrmCompanies(db *gorm.DB, pattern string, limit int) []SearchResultI
 			Type:     "client",
 			Title:    r.Name,
 			Subtitle: "ACRM · учётная запись",
-			URL:      "/accounts?search=" + r.Name + "&source=axenta",
+			URL:      "/accounts?search=" + url.QueryEscape(r.Name) + "&source=axenta&exact=1",
 		})
 	}
 	return out
@@ -302,7 +302,7 @@ func searchAxentaAccounts(db *gorm.DB, pattern string, limit int) []SearchResult
 			Type:     "client",
 			Title:    r.AccountName,
 			Subtitle: subtitle,
-			URL:      "/accounts?search=" + r.AccountName + "&source=axenta",
+			URL:      "/accounts?search=" + url.QueryEscape(r.AccountName) + "&source=axenta&exact=1",
 		})
 	}
 	return out

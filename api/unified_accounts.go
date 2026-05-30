@@ -105,6 +105,9 @@ func GetUnifiedAccounts(c *gin.Context) {
 	mineOnly := strings.ToLower(c.Query("scope")) == "mine"
 	// Ф0: режим выбора партнёра в дропдауне — обходим TTL-гейт Axenta для полноты списка.
 	pickerMode := c.Query("for") == "picker"
+	// exact=1 (deep-link из глобального поиска): точное совпадение по имени аккаунта,
+	// без parent_account_name — иначе клик по компании показывает всех её детей (followup #4).
+	exact := c.Query("exact") == "1"
 
 	if page < 1 {
 		page = 1
@@ -138,7 +141,7 @@ func GetUnifiedAccounts(c *gin.Context) {
 			defer wg.Done()
 			tenantDB := middleware.GetTenantDB(c)
 			t0 := time.Now()
-			items, total, active, clients, partners := fetchAxentaAccountsForUnified(tenantDB, search, accountType, activeStr, parent, mineOnly, pickerMode)
+			items, total, active, clients, partners := fetchAxentaAccountsForUnified(tenantDB, search, accountType, activeStr, parent, mineOnly, pickerMode, exact)
 			log.Printf("🔍 unified/accounts axenta: %d items за %s", len(items), time.Since(t0).Round(time.Millisecond))
 			mu.Lock()
 			allAccounts = append(allAccounts, items...)
@@ -257,7 +260,7 @@ func GetUnifiedAccounts(c *gin.Context) {
 
 // fetchAxentaAccountsForUnified читает axenta_account_snapshots с фильтрами.
 // Возвращает: items, total, active, clients, partners.
-func fetchAxentaAccountsForUnified(db *gorm.DB, search, accountType, activeStr, parent string, mineOnly, ignoreTTL bool) ([]UnifiedAccount, int, int, int, int) {
+func fetchAxentaAccountsForUnified(db *gorm.DB, search, accountType, activeStr, parent string, mineOnly, ignoreTTL, exact bool) ([]UnifiedAccount, int, int, int, int) {
 	if db == nil {
 		return nil, 0, 0, 0, 0
 	}
@@ -280,7 +283,12 @@ func fetchAxentaAccountsForUnified(db *gorm.DB, search, accountType, activeStr, 
 
 	q := db.Model(&models.AxentaAccountSnapshot{})
 
-	if search != "" {
+	if search != "" && exact {
+		// Deep-link из глобального поиска (followup #4): точное совпадение ТОЛЬКО по
+		// account_name, без parent_account_name/admin_fullname и без LIKE-обёртки. Иначе
+		// клик по компании-родителю показывал бы все её дочерние (parent_account_name LIKE).
+		q = q.Where(`LOWER(account_name COLLATE "und-x-icu") = ?`, strings.ToLower(search))
+	} else if search != "" {
 		// Case-insensitive поиск с поддержкой кириллицы:
 		// LOWER(col COLLATE "und-x-icu") LIKE LOWER(?). Без COLLATE LOWER() в БД
 		// с lc_ctype=C не downcase'ит кириллицу (PostgreSQL libc локализация).
@@ -667,7 +675,7 @@ func GetUnifiedAccountParents(c *gin.Context) {
 	all := make([]UnifiedAccount, 0, 4096)
 
 	if tenantDB := middleware.GetTenantDB(c); tenantDB != nil {
-		items, _, _, _, _ := fetchAxentaAccountsForUnified(tenantDB, "", "", "", "", false, true)
+		items, _, _, _, _ := fetchAxentaAccountsForUnified(tenantDB, "", "", "", "", false, true, false)
 		all = append(all, items...)
 	}
 	mineSet := make(map[string]bool)
@@ -868,7 +876,7 @@ func buildAccountMetaIndex(c *gin.Context, loadAxenta, loadWialon, loadSkif, loa
 
 	if loadAxenta {
 		if tenantDB := middleware.GetTenantDB(c); tenantDB != nil {
-			items, _, _, _, _ := fetchAxentaAccountsForUnified(tenantDB, "", "", "", "", false, true)
+			items, _, _, _, _ := fetchAxentaAccountsForUnified(tenantDB, "", "", "", "", false, true, false)
 			for _, ua := range items {
 				put(idx.Axenta, ua)
 				// axenta-юзеры фильтруются по AccountID (имя аккаунта у них не заполнено).
