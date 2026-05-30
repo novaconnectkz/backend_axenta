@@ -30,7 +30,9 @@ type Contract struct {
 	// Без FK-constraint — counterparties в public, contracts в tenant-схеме (как
 	// ledger_entries.contract_id). Денорм-поля Client* ниже остаются источником до Ф4 (форма).
 	// 0 — ещё не привязан (backfill datafix'ом cmd/backfill_counterparties).
-	CounterpartyID uint `json:"counterparty_id" gorm:"index"`
+	// not null;default:0 — чтобы «не привязан» был 0 (а не NULL): иначе на проде
+	// AutoMigrate создаёт nullable-колонку и `counterparty_id = 0` не матчит NULL.
+	CounterpartyID uint `json:"counterparty_id" gorm:"index;not null;default:0"`
 
 	// Тип договора
 	ContractType string `json:"contract_type" gorm:"type:varchar(20);default:'client'"` // client или partner

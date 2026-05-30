@@ -29,7 +29,9 @@ type LedgerEntry struct {
 	// Денормализованный контрагент (Ф1): баланс агрегируется per-контрагент без cross-schema
 	// JOIN (contracts в tenant, ledger в public). Backfill datafix'ом; 0 до проставления.
 	// Асимметрия: charge остаётся per-договор (ContractID), баланс/платёж — per-контрагент (Ф2).
-	CounterpartyID uint  `json:"counterparty_id" gorm:"index"`
+	// not null;default:0 — «не размечен» = 0 (не NULL), иначе на проде AutoMigrate создаёт
+	// nullable-колонку и backfill (`counterparty_id = 0`) пропускает NULL-строки.
+	CounterpartyID uint  `json:"counterparty_id" gorm:"index;not null;default:0"`
 	SubscriptionID *uint `json:"subscription_id" gorm:"index"`
 	ObjectID       *uint `json:"object_id" gorm:"index"`
 

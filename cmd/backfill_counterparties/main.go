@@ -280,8 +280,8 @@ func processSchema(db *gorm.DB, schema string, apply bool) (int, int, int, int) 
 				  AND le.admin_account_id = c.admin_account_id
 				  AND le.company_id = c.company_id
 				  AND c.contract_type = 'client'
-				  AND le.counterparty_id = 0
-				  AND c.counterparty_id <> 0
+				  AND COALESCE(le.counterparty_id,0) = 0
+				  AND COALESCE(c.counterparty_id,0) <> 0
 				  AND le.deleted_at IS NULL`, contractsTbl))
 			if res.Error != nil {
 				return 0, 0, 0, 0, fmt.Errorf("backfill ledger: %w", res.Error)
@@ -290,7 +290,7 @@ func processSchema(db *gorm.DB, schema string, apply bool) (int, int, int, int) 
 
 			// ASSERT: не осталось договоров и проводок без counterparty_id.
 			var orphanContracts int64
-			if e := tx.Table(contractsTbl).Where("contract_type = 'client' AND counterparty_id = 0 AND deleted_at IS NULL").Count(&orphanContracts).Error; e != nil {
+			if e := tx.Table(contractsTbl).Where("contract_type = 'client' AND COALESCE(counterparty_id,0) = 0 AND deleted_at IS NULL").Count(&orphanContracts).Error; e != nil {
 				return 0, 0, 0, 0, fmt.Errorf("assert contracts query: %w", e)
 			}
 			if orphanContracts > 0 {
@@ -300,7 +300,7 @@ func processSchema(db *gorm.DB, schema string, apply bool) (int, int, int, int) 
 			if e := tx.Raw(fmt.Sprintf(`
 				SELECT COUNT(*) FROM public.ledger_entries le
 				JOIN %s c ON le.contract_id = c.id AND le.admin_account_id = c.admin_account_id AND le.company_id = c.company_id
-				WHERE c.contract_type = 'client' AND le.counterparty_id = 0 AND le.deleted_at IS NULL`, contractsTbl)).Scan(&orphanLedger).Error; e != nil {
+				WHERE c.contract_type = 'client' AND COALESCE(le.counterparty_id,0) = 0 AND le.deleted_at IS NULL`, contractsTbl)).Scan(&orphanLedger).Error; e != nil {
 				return 0, 0, 0, 0, fmt.Errorf("assert ledger query: %w", e)
 			}
 			if orphanLedger > 0 {
@@ -312,7 +312,7 @@ func processSchema(db *gorm.DB, schema string, apply bool) (int, int, int, int) 
 			if e := tx.Raw(fmt.Sprintf(`
 				SELECT COUNT(*) FROM public.ledger_entries le
 				JOIN %s c ON le.contract_id = c.id AND le.admin_account_id = c.admin_account_id AND le.company_id = c.company_id
-				WHERE c.contract_type = 'client' AND le.counterparty_id = 0 AND le.deleted_at IS NULL`, contractsTbl)).Scan(&cnt).Error; e != nil {
+				WHERE c.contract_type = 'client' AND COALESCE(le.counterparty_id,0) = 0 AND le.deleted_at IS NULL`, contractsTbl)).Scan(&cnt).Error; e != nil {
 				return 0, 0, 0, 0, fmt.Errorf("dry-run ledger count: %w", e)
 			}
 			ledgerMarked = int(cnt)
