@@ -1189,6 +1189,7 @@ func CreateMissingGlobalTables() error {
 		&models.LedgerTransfer{},    // переводы между лицевыми счетами (заголовок пары проводок)
 		&models.BillingSuspension{}, // приостановки договоров за долг (П2)
 		&models.BillingHold{},       // зонты отсрочки/обещанного платежа (П3+П4)
+		&models.LedgerImportBatch{}, // батчи Excel-импорта платежей (Ф5, откат пачкой)
 		&models.CurrencyRate{},      // курсы валют по датам (П5 мультивалюта)
 		// AxentaAccountSnapshot и AxentaObjectSnapshot теперь тенант-специфичны (IsGlobal: false)
 	}

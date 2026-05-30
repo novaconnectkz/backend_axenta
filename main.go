@@ -1067,6 +1067,10 @@ func main() {
 	apiGroup.GET("/ledger/entries/:contract_id", api.GetLedgerEntries)
 	apiGroup.POST("/ledger/payment", api.PostLedgerPayment)
 	apiGroup.POST("/ledger/import", api.PostLedgerImport)
+	// Ф5: Excel-импорт платежей на контрагентов (батч + откат reversal'ом).
+	apiGroup.POST("/ledger/import-batch", api.PostLedgerImportBatch)
+	apiGroup.POST("/ledger/import-batch/:id/reverse", api.PostLedgerImportBatchReverse)
+	apiGroup.GET("/ledger/import-batches", api.GetLedgerImportBatches)
 	apiGroup.POST("/ledger/transfer", api.PostLedgerTransfer) // перевод между лицевыми счетами
 	apiGroup.POST("/ledger/charge/run", api.PostLedgerChargeRun)
 	// Зонты отсрочки/обещанного платежа (П3+П4): блокируют авто-приостановку за долг.
@@ -1083,6 +1087,7 @@ func main() {
 	// Контрагенты (Ф1): единый лицевой счёт per контрагент. CRUD + autocomplete-поиск.
 	// /search — ПЕРЕД /:id (специфичный маршрут раньше параметрического).
 	apiGroup.GET("/counterparties/search", api.SearchCounterparties)
+	apiGroup.POST("/counterparties/match", api.MatchCounterparties) // Ф5: превью-матчинг Excel-строк
 	apiGroup.GET("/counterparties", api.GetCounterparties)
 	apiGroup.GET("/counterparties/:id", api.GetCounterparty)
 	apiGroup.GET("/counterparties/:id/balance", api.GetCounterpartyBalance) // Ф4b: единый ЛС

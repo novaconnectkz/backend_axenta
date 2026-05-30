@@ -51,6 +51,9 @@ type LedgerEntry struct {
 	// Для reversal: ссылка на сторнируемую проводку.
 	ReversalOfID *uint   `json:"reversal_of_id" gorm:"index"`
 	Metadata     *string `json:"metadata" gorm:"type:jsonb"` // nil → NULL (пустая строка невалидна для jsonb)
+
+	// Ф5: батч Excel-импорта (для отката пачкой). 0 — проводка не из импорт-батча.
+	ImportBatchID uint `json:"import_batch_id" gorm:"index;not null;default:0"`
 }
 
 func (LedgerEntry) TableName() string { return "ledger_entries" }
@@ -166,3 +169,32 @@ type BillingHold struct {
 }
 
 func (BillingHold) TableName() string { return "billing_holds" }
+
+// LedgerImportBatch — заголовок батча Excel-импорта платежей (Ф5). Группирует payment-проводки
+// одного импорта для отката пачкой (reversal). Платежи матчатся на КОНТРАГЕНТА (единый ЛС):
+// проводки получают counterparty_id (contract_id=0, уровень контрагента) + import_batch_id.
+//
+// Глобальная (public) таблица — как ledger_entries. Откат: reversal-проводки на каждую
+// payment-проводку батча; status → reversed (полный) либо остаётся imported (выборочный).
+type LedgerImportBatch struct {
+	ID        uint           `json:"id" gorm:"primarykey"`
+	CreatedAt time.Time      `json:"created_at"`
+	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
+
+	AdminAccountID uint `json:"admin_account_id" gorm:"not null;index"`
+	CompanyID      uint `json:"company_id" gorm:"not null;index"`
+
+	Source       string          `json:"source" gorm:"not null;type:varchar(30);default:'excel'"` // excel|1c|bank|payment_system
+	Status       string          `json:"status" gorm:"not null;type:varchar(20);default:'imported';index"` // imported|reversed
+	RowsTotal    int             `json:"rows_total"`
+	RowsImported int             `json:"rows_imported"`
+	RowsSkipped  int             `json:"rows_skipped"` // дубли по идемпотентности
+	TotalAmount  decimal.Decimal `json:"total_amount" gorm:"type:decimal(15,2)"`
+	Currency     string          `json:"currency" gorm:"not null;default:'RUB';type:varchar(3)"`
+	FileName     string          `json:"file_name" gorm:"type:varchar(255)"`
+	CreatedBy    string          `json:"created_by" gorm:"type:varchar(100)"`
+	ReversedAt   *time.Time      `json:"reversed_at"`
+	ReversedBy   string          `json:"reversed_by" gorm:"type:varchar(100)"`
+}
+
+func (LedgerImportBatch) TableName() string { return "ledger_import_batches" }
