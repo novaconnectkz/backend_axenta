@@ -458,3 +458,99 @@ func TestRouteCadence_Override(t *testing.T) {
 		})
 	}
 }
+
+// П6 Ф5 forward-only: при смене каденции monthly/lump→daily дни месяца, уже покрытого
+// одной проводкой, НЕ списываются повторно посуточно (закрытие латентного двойного счёта).
+func TestDailyChargeSkipsCoveredMonths(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.ContractObject{}, &models.LedgerEntry{}))
+	s := &LedgerChargeScheduler{db: db}
+
+	jun := func(dd int) time.Time { return time.Date(2026, 6, dd, 0, 0, 0, 0, time.UTC) }
+	jul := func(dd int) time.Time { return time.Date(2026, 7, dd, 0, 0, 0, 0, time.UTC) }
+	rc := map[string]cachedRate{}
+	pu := func(v uint) *uint { return &v }
+
+	mkSub := func(id uint, start time.Time, period string) *models.Subscription {
+		sub := &models.Subscription{AdminAccountID: 1, StartDate: start,
+			BillingPlan: models.BillingPlan{Price: d("600"), BillingPeriod: period, Currency: "RUB"}}
+		sub.ID = id
+		return sub
+	}
+	mkObj := func(subID uint, start time.Time) {
+		co := models.ContractObject{ContractID: 1, SubscriptionID: &subID, ObjectID: uint(time.Now().UnixNano() % 1000000),
+			ObjectCompanyID: 186, ObjectSchema: "tenant_186", Status: "active", StartDate: start}
+		require.NoError(t, db.Create(&co).Error)
+	}
+
+	// --- monthly→daily: июнь покрыт месячной проводкой → daily НЕ списывает июнь, постит июль ---
+	subM := mkSub(500, jun(1), "monthly")
+	mkObj(500, jun(1))
+	require.NoError(t, db.Create(&models.LedgerEntry{AdminAccountID: 1, CompanyID: 186, ContractID: 95,
+		SubscriptionID: pu(500), EntryType: "charge", Amount: d("-600"), Currency: "RUB", Source: "auto_charge",
+		ExternalID: "autocharge:sub:500:2026-06", EntryDate: jun(1)}).Error)
+	e, _ := s.chargeSubscription(db, 186, subM, 95, "RUB", "cbr_rf", rc, jun(1), jul(31))
+	var junDaily, julDaily int64
+	db.Model(&models.LedgerEntry{}).Where("external_id LIKE ?", "autocharge:sub:500:2026-06-%").Count(&junDaily)
+	db.Model(&models.LedgerEntry{}).Where("external_id LIKE ?", "autocharge:sub:500:2026-07-%").Count(&julDaily)
+	assert.EqualValues(t, 0, junDaily, "июнь покрыт monthly → 0 дневных")
+	assert.Greater(t, julDaily, int64(0), "июль не покрыт → daily постит")
+	assert.Greater(t, e, 0)
+
+	// --- lump→daily: годовой lump с июня покрывает 12 мес → daily не списывает июнь/июль ---
+	subL := mkSub(501, jun(1), "yearly")
+	mkObj(501, jun(1))
+	require.NoError(t, db.Create(&models.LedgerEntry{AdminAccountID: 1, CompanyID: 186, ContractID: 96,
+		SubscriptionID: pu(501), EntryType: "charge", Amount: d("-7200"), Currency: "RUB", Source: "auto_charge",
+		ExternalID: "autocharge:sub:501:y:2026-06", EntryDate: jun(1)}).Error)
+	el, _ := s.chargeSubscription(db, 186, subL, 96, "RUB", "cbr_rf", rc, jun(1), jul(31))
+	var lumpDaily int64
+	db.Model(&models.LedgerEntry{}).Where("subscription_id = ? AND external_id LIKE ?", 501, "autocharge:sub:501:2026-%-%").Count(&lumpDaily)
+	assert.EqualValues(t, 0, lumpDaily, "период lump покрыт → 0 дневных")
+	assert.Equal(t, 0, el)
+
+	// --- контроль: без покрытия daily постит как обычно ---
+	subD := mkSub(502, jun(1), "monthly")
+	mkObj(502, jun(1))
+	ed, _ := s.chargeSubscription(db, 186, subD, 97, "RUB", "cbr_rf", rc, jun(1), jun(10))
+	assert.Equal(t, 10, ed, "без покрытия — 10 дневных проводок (1-10 июня)")
+}
+
+// П6 Ф5 #1 (Codex): postpaid monthly→daily НЕ теряет 1-е число след. месяца. Postpaid
+// monthly за июнь имеет entry_date=01.07; общий MAX(entry_date) сместил бы daily-старт на
+// 02.07 и потерял 01.07. Daily-checkpoint по дневным проводкам (их нет) → старт от cutoff.
+func TestDailyChargePostpaidMonthlyNoLostDay(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.ContractObject{}, &models.LedgerEntry{}))
+	s := &LedgerChargeScheduler{db: db}
+
+	jun := func(dd int) time.Time { return time.Date(2026, 6, dd, 0, 0, 0, 0, time.UTC) }
+	jul := func(dd int) time.Time { return time.Date(2026, 7, dd, 0, 0, 0, 0, time.UTC) }
+	pu := func(v uint) *uint { return &v }
+	rc := map[string]cachedRate{}
+
+	sub := &models.Subscription{AdminAccountID: 1, StartDate: jun(1),
+		BillingPlan: models.BillingPlan{Price: d("600"), BillingPeriod: "monthly", Currency: "RUB"}}
+	sub.ID = 510
+	co := models.ContractObject{ContractID: 1, SubscriptionID: pu(510), ObjectID: 77,
+		ObjectCompanyID: 186, ObjectSchema: "tenant_186", Status: "active", StartDate: jun(1)}
+	require.NoError(t, db.Create(&co).Error)
+	// Postpaid monthly за июнь: external_id :2026-06, entry_date = 01.07.
+	require.NoError(t, db.Create(&models.LedgerEntry{AdminAccountID: 1, CompanyID: 186, ContractID: 98,
+		SubscriptionID: pu(510), EntryType: "charge", Amount: d("-600"), Currency: "RUB", Source: "auto_charge",
+		ExternalID: "autocharge:sub:510:2026-06", EntryDate: jul(1)}).Error)
+
+	s.chargeSubscription(db, 186, sub, 98, "RUB", "cbr_rf", rc, jun(1), jul(5))
+	// Июнь покрыт monthly → 0 дневных. Июль 1-5 непокрыт → 5 дневных, ВКЛЮЧАЯ 01.07.
+	var junDaily int64
+	db.Model(&models.LedgerEntry{}).Where("external_id LIKE ?", "autocharge:sub:510:2026-06-%").Count(&junDaily)
+	assert.EqualValues(t, 0, junDaily, "июнь покрыт monthly")
+	var jul1 int64
+	db.Model(&models.LedgerEntry{}).Where("external_id = ?", "autocharge:sub:510:2026-07-01").Count(&jul1)
+	assert.EqualValues(t, 1, jul1, "01.07 НЕ потерян (Codex #1)")
+	var julDaily int64
+	db.Model(&models.LedgerEntry{}).Where("external_id LIKE ?", "autocharge:sub:510:2026-07-%").Count(&julDaily)
+	assert.EqualValues(t, 5, julDaily, "июль 1-5 списан посуточно")
+}

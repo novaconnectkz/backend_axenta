@@ -465,7 +465,12 @@ func (s *LedgerChargeScheduler) chargeSubscription(tenantDB *gorm.DB, companyID 
 	if subStart := dayFloor(sub.StartDate.UTC()); subStart.After(startDay) {
 		startDay = subStart
 	}
-	if last := s.lastChargeDate(sub.ID); last != nil {
+	// Checkpoint daily-пути: MAX(entry_date) ТОЛЬКО по дневным проводкам. Месячные/годовые
+	// проводки игнорируем — их entry_date «убегает» вперёд (postpaid monthly за июнь имеет
+	// дату 1 июля), и общий MAX перепрыгнул бы непокрытый дневной день (Codex Ф5 #1). При
+	// свежей смене monthly/lump→daily дневных нет → checkpoint nil → старт от cutoff, а
+	// покрытые месяцы дёшево скипаются coveredMonths-гардом ниже.
+	if last := s.lastDailyChargeDate(sub.ID); last != nil {
 		next := last.AddDate(0, 0, 1)
 		if next.After(startDay) {
 			startDay = next
@@ -474,12 +479,25 @@ func (s *LedgerChargeScheduler) chargeSubscription(tenantDB *gorm.DB, companyID 
 
 	yearly := sub.BillingPlan.BillingPeriod == "yearly"
 
+	// П6 Ф5 (forward-only): месяцы, уже покрытые месячной/годовой проводкой прежней
+	// каденции. При смене monthly/lump→daily пропускаем их дни — иначе месяц, оплаченный
+	// одной проводкой, списался бы повторно посуточно (латентный двойной счёт).
+	coveredMonths, cErr := s.monthsCoveredByLongerCadence(sub.AdminAccountID, companyID, sub.ID)
+	if cErr != nil {
+		log.Printf("⚠️ LedgerCharge: sub %d — ошибка проверки покрытия каденции, стоп подписки: %v", sub.ID, cErr)
+		return
+	}
+
 	for day := startDay; !day.After(targetDate); day = day.AddDate(0, 0, 1) {
 		// Подписка должна быть активна в этот день.
 		if dayFloor(sub.StartDate.UTC()).After(day) {
 			continue
 		}
 		if sub.EndDate != nil && dayFloor(sub.EndDate.UTC()).Before(day) {
+			continue
+		}
+		// Месяц уже покрыт более длинной каденцией (Ф5) → не дублируем посуточно.
+		if coveredMonths[day.Format("2006-01")] {
 			continue
 		}
 
@@ -699,6 +717,44 @@ func (s *LedgerChargeScheduler) periodCoveredByShorterCadence(adminAccountID, co
 	return cnt > 0, nil
 }
 
+// monthsCoveredByLongerCadence — множество месяцев (ключ "2006-01") этой подписки, уже
+// покрытых БОЛЕЕ длинной каденцией: месячной проводкой (:YYYY-MM) или годовым lump
+// (:y:YYYY-MM, покрывает 12 месяцев периода). П6 Ф5 (forward-only): нужно daily-пути,
+// чтобы при смене каденции monthly/lump→daily НЕ списать повторно дни месяца, уже
+// оплаченного одной проводкой (зеркало гардов a/C1/C2, которых на daily-пути не было →
+// латентный двойной счёт). SQL портативен PG+SQLite: `NOT LIKE '..____-__-%'` отсекает
+// дневные external_id (YYYY-MM-DD), оставляя monthly (YYYY-MM) и lump (y:YYYY-MM).
+func (s *LedgerChargeScheduler) monthsCoveredByLongerCadence(adminAccountID, companyID, subID uint) (map[string]bool, error) {
+	prefix := fmt.Sprintf("autocharge:sub:%d:", subID)
+	var ids []string
+	if err := s.db.Model(&models.LedgerEntry{}).
+		Where("admin_account_id = ? AND company_id = ? AND source = ? AND subscription_id = ? AND deleted_at IS NULL",
+			adminAccountID, companyID, "auto_charge", subID).
+		Where("external_id LIKE ?", prefix+"%").
+		Where("external_id NOT LIKE ?", prefix+"____-__-%").
+		Pluck("external_id", &ids).Error; err != nil {
+		return nil, err
+	}
+	covered := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		suf := strings.TrimPrefix(id, prefix)
+		if strings.HasPrefix(suf, "y:") {
+			// Годовой lump: 12 месяцев от начала периода.
+			if t, e := time.Parse("2006-01", strings.TrimPrefix(suf, "y:")); e == nil {
+				for k := 0; k < 12; k++ {
+					covered[t.AddDate(0, k, 0).Format("2006-01")] = true
+				}
+			}
+			continue
+		}
+		// Месячная :YYYY-MM (ровно 7 символов, парсится как 2006-01).
+		if _, e := time.Parse("2006-01", suf); e == nil {
+			covered[suf] = true
+		}
+	}
+	return covered, nil
+}
+
 // chargeSubscriptionMonthly — П6 monthly-каденция: ОДНО начисление за месяц на день
 // биллинга (prepaid → 1-е тек. месяца, postpaid → 1-е след.). Сумма = полная месячная
 // цена × (объекты с присутствием ≥ minDays). Идемпотентность per-month (external_id
@@ -767,6 +823,11 @@ func (s *LedgerChargeScheduler) chargeSubscriptionMonthly(tenantDB *gorm.DB, com
 
 		// Анти-двойное-списание при смене каденции (Codex a): если за этот месяц уже есть
 		// ЕЖЕДНЕВНЫЕ проводки (external_id :YYYY-MM-DD), месяц уже покрыт — не дублируем.
+		// ⚠️ Known limitation (Ф5 #2, под-счёт): при daily→monthly В СЕРЕДИНЕ месяца дни до
+		// смены уже списаны посуточно, а полный monthly за месяц пропускается → остаток
+		// месяца (дни после последней дневной проводки) не добирается. Сознательно: forward-
+		// only без частичного monthly-пересчёта; под-счёт ≪ двойного счёта по тяжести. Чистое
+		// поведение — менять каденцию на границе месяца.
 		var dailyExist int64
 		if e := s.db.Model(&models.LedgerEntry{}).
 			Where("admin_account_id = ? AND company_id = ? AND source = ? AND external_id LIKE ? AND deleted_at IS NULL",
@@ -1038,11 +1099,15 @@ func (s *LedgerChargeScheduler) chargeSubscriptionPeriodLump(tenantDB *gorm.DB, 
 	return
 }
 
-// lastChargeDate — дата последней auto_charge проводки подписки (per-sub checkpoint).
-func (s *LedgerChargeScheduler) lastChargeDate(subID uint) *time.Time {
+// lastDailyChargeDate — последняя дата ДНЕВНОЙ auto_charge проводки подписки (external_id
+// формата `autocharge:sub:N:YYYY-MM-DD`). Daily-checkpoint обязан игнорировать месячные/
+// годовые проводки: их entry_date уезжает вперёд и сместил бы старт daily за непокрытый
+// день при смене каденции (Ф5 #1). Паттерн `____-__-__` (ровно YYYY-MM-DD) портативен PG+SQLite.
+func (s *LedgerChargeScheduler) lastDailyChargeDate(subID uint) *time.Time {
 	var t *time.Time
 	s.db.Model(&models.LedgerEntry{}).
 		Where("subscription_id = ? AND source = ? AND deleted_at IS NULL", subID, "auto_charge").
+		Where("external_id LIKE ?", fmt.Sprintf("autocharge:sub:%d:____-__-__", subID)).
 		Select("MAX(entry_date)").Scan(&t)
 	if t != nil {
 		d := dayFloor(t.UTC())
