@@ -17,8 +17,9 @@ import (
 )
 
 // CurrencyRateService — загрузка и выдача курсов валют (П5 мультивалюта).
-// Источник cbr_rf: ЦБ РФ XML_daily (https://www.cbr.ru/scripts/XML_daily.asp).
-// nbk_kz — задел на будущее (нацбанк РК), пока не реализован.
+// Источники:
+//   - cbr_rf: ЦБ РФ XML_daily (https://www.cbr.ru/scripts/XML_daily.asp), pivot RUB.
+//   - nbk_kz: Нацбанк РК (https://nationalbank.kz/rss/get_rates.cfm), pivot KZT.
 type CurrencyRateService struct {
 	db     *gorm.DB
 	client *http.Client
@@ -75,28 +76,125 @@ func (s *CurrencyRateService) FetchCBRForDate(date time.Time) (int, error) {
 	return s.upsertRates(effDate, "cbr_rf", "RUB", rates)
 }
 
-// fetchCBR парсит CBR XML, возвращает (effective_date, map[CharCode]rate-за-1-единицу).
-func (s *CurrencyRateService) fetchCBR(url string) (time.Time, map[string]decimal.Decimal, error) {
+// httpGetXML — GET с браузерным UA (CBR/НБ РК отдают 403 на дефолтный Go-UA) и
+// 2MB cap на тело. Общий для всех источников курсов.
+func (s *CurrencyRateService) httpGetXML(url, label string) ([]byte, error) {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		return time.Time{}, nil, err
+		return nil, err
 	}
-	// CBR отдаёт 403 на дефолтный Go-http-client UA — ставим браузерный (Codex-staging fix).
 	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; ACRM-billing/1.0)")
 	req.Header.Set("Accept", "application/xml, text/xml, */*")
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return time.Time{}, nil, fmt.Errorf("CBR fetch: %w", err)
+		return nil, fmt.Errorf("%s fetch: %w", label, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return time.Time{}, nil, fmt.Errorf("CBR fetch: HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("%s fetch: HTTP %d", label, resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20)) // 2MB cap
+	if err != nil {
+		return nil, err
+	}
+	return body, nil
+}
+
+// fetchCBR парсит CBR XML, возвращает (effective_date, map[CharCode]rate-за-1-единицу).
+func (s *CurrencyRateService) fetchCBR(url string) (time.Time, map[string]decimal.Decimal, error) {
+	body, err := s.httpGetXML(url, "CBR")
 	if err != nil {
 		return time.Time{}, nil, err
 	}
 	return parseCBRXML(body)
+}
+
+// --- НБ РК (nbk_kz) XML структуры ---
+// Формат get_rates.cfm: UTF-8, <rates><date>dd.mm.yyyy</date><item>...</item></rates>.
+// Курс (<description>) котирован в тенге за <quant> единиц валюты <title> → quote=KZT.
+
+type nbkRates struct {
+	XMLName xml.Name  `xml:"rates"`
+	Date    string    `xml:"date"` // dd.mm.yyyy — фактическая дата курса
+	Items   []nbkItem `xml:"item"`
+}
+
+type nbkItem struct {
+	Title       string `xml:"title"`       // код валюты (USD, EUR)
+	Description string `xml:"description"` // курс в KZT за Quant единиц
+	Quant       string `xml:"quant"`       // номинал
+}
+
+// FetchNBKForDate загружает курсы НБ РК на дату и upsert'ит в currency_rates (quote=KZT).
+// Идемпотентно. Пишем под фактической датой из <date> (как CBR — выходные отдают
+// ближайший доступный день).
+func (s *CurrencyRateService) FetchNBKForDate(date time.Time) (int, error) {
+	day := dayFloor(date.UTC())
+	url := fmt.Sprintf("https://nationalbank.kz/rss/get_rates.cfm?fdate=%s", day.Format("02.01.2006"))
+	body, err := s.httpGetXML(url, "NBK")
+	if err != nil {
+		return 0, err
+	}
+	effDate, rates, err := parseNBKXML(body)
+	if err != nil {
+		return 0, err
+	}
+	if effDate.IsZero() {
+		effDate = day
+	}
+	return s.upsertRates(effDate, "nbk_kz", "KZT", rates)
+}
+
+// parseNBKXML — pure-парсер НБ РК XML (тестируется без сети). UTF-8, поэтому charmap
+// не нужен. rate = description/quant (за 1 единицу). Возвращает дату из <date>.
+func parseNBKXML(body []byte) (time.Time, map[string]decimal.Decimal, error) {
+	var r nbkRates
+	if err := xml.Unmarshal(body, &r); err != nil {
+		return time.Time{}, nil, fmt.Errorf("NBK parse: %w", err)
+	}
+
+	var effDate time.Time
+	if d := strings.TrimSpace(r.Date); d != "" {
+		if t, e := time.Parse("02.01.2006", d); e == nil {
+			effDate = time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+		}
+	}
+
+	out := make(map[string]decimal.Decimal, len(r.Items))
+	for _, it := range r.Items {
+		code := strings.ToUpper(strings.TrimSpace(it.Title))
+		if code == "" {
+			continue
+		}
+		valStr := strings.ReplaceAll(strings.TrimSpace(it.Description), ",", ".")
+		valStr = strings.ReplaceAll(valStr, " ", "")
+		val, err := decimal.NewFromString(valStr)
+		if err != nil || val.LessThanOrEqual(decimal.Zero) {
+			continue
+		}
+		// Quant обязателен для нормализации (как CBR Nominal) — битый не глушим в 1.
+		quant, err := decimal.NewFromString(strings.TrimSpace(it.Quant))
+		if err != nil || quant.LessThanOrEqual(decimal.Zero) {
+			continue
+		}
+		out[code] = val.Div(quant).Round(8) // KZT за 1 единицу base
+	}
+	if len(out) == 0 {
+		return time.Time{}, nil, fmt.Errorf("NBK parse: пустой набор курсов")
+	}
+	return effDate, out, nil
+}
+
+// FetchForDate — диспетчер загрузки по источнику. Расширяемо новыми источниками.
+func (s *CurrencyRateService) FetchForDate(source string, date time.Time) (int, error) {
+	switch source {
+	case "cbr_rf":
+		return s.FetchCBRForDate(date)
+	case "nbk_kz":
+		return s.FetchNBKForDate(date)
+	default:
+		return 0, fmt.Errorf("неизвестный источник курсов: %s", source)
+	}
 }
 
 // parseCBRXML — pure-парсер CBR XML (тестируется без сети). Возвращает фактическую

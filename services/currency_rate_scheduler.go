@@ -1,14 +1,19 @@
 package services
 
 import (
+	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/robfig/cron/v3"
 )
 
-// CurrencyRateScheduler — ежедневная загрузка курсов ЦБ РФ (П5 мультивалюта).
+// rateSources — источники курсов, загружаемые ежедневным прогоном (cbr_rf=RUB, nbk_kz=KZT).
+var rateSources = []string{"cbr_rf", "nbk_kz"}
+
+// CurrencyRateScheduler — ежедневная загрузка курсов валют (П5 мультивалюта).
 // Идемпотентно (upsert по unique), поэтому повторный прогон безопасен.
 type CurrencyRateScheduler struct {
 	cron      *cron.Cron
@@ -36,7 +41,7 @@ func (s *CurrencyRateScheduler) Start() error {
 				log.Printf("❌ ПАНИКА в CurrencyRateScheduler: %v", r)
 			}
 		}()
-		if n, e := s.RunForDate(time.Now().UTC()); e != nil {
+		if n, _, e := s.RunForDate(time.Now().UTC()); e != nil {
 			log.Printf("⚠️ CurrencyRate cron: %v", e)
 		} else {
 			log.Printf("💱 CurrencyRate cron: загружено %d курсов", n)
@@ -49,7 +54,7 @@ func (s *CurrencyRateScheduler) Start() error {
 	s.mu.Lock()
 	s.isRunning = true
 	s.mu.Unlock()
-	log.Println("✅ CurrencyRateScheduler запущен (ежедневно 04:00 UTC, источник cbr_rf)")
+	log.Printf("✅ CurrencyRateScheduler запущен (ежедневно 04:00 UTC, источники: %s)", strings.Join(rateSources, ", "))
 	return nil
 }
 
@@ -63,18 +68,54 @@ func (s *CurrencyRateScheduler) Stop() {
 	}
 }
 
-// RunForDate загружает курсы ЦБ РФ за указанную дату. Возвращает (кол-во, error) —
-// вызывающий (cron/API) отличает успех от сбоя (Codex #4). Сериализован mutex'ом:
-// cron и ручной POST не бьют CBR одновременно (Codex #6).
-func (s *CurrencyRateScheduler) RunForDate(date time.Time) (int, error) {
+// RunForDate загружает курсы всех источников за указанную дату. Возвращает суммарное
+// кол-во загруженных, список ошибок по источникам (для видимости partial-сбоя, Codex F2)
+// и error. Partial-success: если хотя бы ОДИН источник отработал без ошибки — успех (один
+// недоступный источник, напр. NBK из РФ, не валит весь прогон). error только если КАЖДЫЙ
+// источник упал. Сериализован mutex'ом (cron+ручной POST, Codex #6).
+func (s *CurrencyRateScheduler) RunForDate(date time.Time) (int, []string, error) {
+	return s.runForSources(date, rateSources)
+}
+
+// RunForSource загружает курсы одного источника (ручной точечный fetch).
+func (s *CurrencyRateScheduler) RunForSource(date time.Time, source string) (int, []string, error) {
+	return s.runForSources(date, []string{source})
+}
+
+func (s *CurrencyRateScheduler) runForSources(date time.Time, sources []string) (int, []string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	n, err := s.svc.FetchCBRForDate(date)
-	if err != nil {
-		return 0, err
+	total := 0
+	successes := 0 // источников без ошибки (Codex F3: решение по successes, не по total)
+	var errs []string
+	for _, src := range sources {
+		n, err := s.svc.FetchForDate(src, date)
+		if err != nil {
+			errs = append(errs, src+": "+err.Error())
+			log.Printf("⚠️ CurrencyRate: источник %s — %v", src, err)
+			continue
+		}
+		successes++
+		total += n
+		log.Printf("💱 CurrencyRate: источник %s — загружено %d курсов", src, n)
 	}
-	s.lastRun = time.Now()
-	return n, nil
+	// lastRun обновляем только при ≥1 успешном источнике (Codex F1: полный провал не
+	// должен выглядеть как успешный прогон).
+	if successes > 0 {
+		s.lastRun = time.Now()
+	}
+	// Частичный сбой (часть источников отработала, часть упала) — WARN, чтобы постоянно
+	// недоступный источник был виден без раскопок (Codex F2).
+	if successes > 0 && len(errs) > 0 {
+		log.Printf("⚠️ CurrencyRate: частичный сбой — успешно %d/%d источников, ошибки: %s",
+			successes, len(sources), strings.Join(errs, "; "))
+	}
+	// Ни один источник не отработал — это ошибка (Codex F3: по successes, не total —
+	// источник может легитимно вернуть 0 строк без ошибки).
+	if successes == 0 && len(errs) > 0 {
+		return 0, errs, fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
+	return total, errs, nil
 }
 
 func (s *CurrencyRateScheduler) GetStatus() map[string]interface{} {

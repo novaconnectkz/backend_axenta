@@ -17,8 +17,8 @@ func SetCurrencyRateScheduler(s *services.CurrencyRateScheduler) {
 }
 
 // PostCurrencyRatesFetch — POST /api/auth/currency/rates/fetch
-// Ручная загрузка курсов ЦБ РФ. Body опц.: {"date":"YYYY-MM-DD"} (default сегодня).
-// Только admin/superadmin (внешний fetch + запись в public).
+// Ручная загрузка курсов. Body опц.: {"date":"YYYY-MM-DD","source":"cbr_rf|nbk_kz"}.
+// date default сегодня; source пустой → все источники. Только admin/superadmin.
 func PostCurrencyRatesFetch(c *gin.Context) {
 	if !requireContractAssignAccess(c) {
 		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "доступно только администратору"})
@@ -28,7 +28,8 @@ func PostCurrencyRatesFetch(c *gin.Context) {
 		currencyRateScheduler = services.NewCurrencyRateScheduler()
 	}
 	var req struct {
-		Date string `json:"date"`
+		Date   string `json:"date"`
+		Source string `json:"source"`
 	}
 	// Невалидный JSON в непустом теле → 400 (Codex #7), пустое тело — ок (default сегодня).
 	if c.Request.ContentLength != 0 {
@@ -46,17 +47,30 @@ func PostCurrencyRatesFetch(c *gin.Context) {
 		}
 		target = t.UTC()
 	}
-	n, err := currencyRateScheduler.RunForDate(target)
+	var n int
+	var srcErrs []string
+	var err error
+	if req.Source != "" {
+		n, srcErrs, err = currencyRateScheduler.RunForSource(target, req.Source)
+	} else {
+		n, srcErrs, err = currencyRateScheduler.RunForDate(target)
+	}
 	if err != nil {
-		// Внешний fetch/parse/db упал → 502, не молчаливый success (Codex #4).
+		// Все источники упали → 502, не молчаливый success (Codex #4).
 		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": "ошибка загрузки курсов: " + err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{
+	// Частичный сбой возвращаем в теле успешного ответа (Codex F2: persistent NBK-сбой
+	// должен быть виден, а не замаскирован success).
+	data := gin.H{
 		"loaded": n,
 		"date":   target.Format("2006-01-02"),
 		"status": currencyRateScheduler.GetStatus(),
-	}})
+	}
+	if len(srcErrs) > 0 {
+		data["errors"] = srcErrs
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": data})
 }
 
 // GetCurrencyRate — GET /api/auth/currency/rate?base=EUR&quote=RUB&source=cbr_rf&date=YYYY-MM-DD

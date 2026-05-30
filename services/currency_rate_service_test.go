@@ -89,6 +89,51 @@ func TestParseCBRXML_Errors(t *testing.T) {
 	assert.False(t, hasJPY, "JPY с Nominal=0 должен быть пропущен (не делён на 1)")
 }
 
+// НБ РК: UTF-8, <rates><date>dd.mm.yyyy</date><item>{title,description,quant}</item></rates>.
+const nbkSampleXML = `<?xml version="1.0" encoding="utf-8"?>
+<rates>
+	<title>Official exchange rates</title>
+	<date>28.05.2026</date>
+	<item><fullname>ДОЛЛАР США</fullname><title>USD</title><description>70.9012</description><quant>1</quant></item>
+	<item><fullname>ЕВРО</fullname><title>EUR</title><description>82.7224</description><quant>1</quant></item>
+	<item><fullname>ЯПОНСКАЯ ИЕНА</fullname><title>JPY</title><description>49.50</description><quant>100</quant></item>
+</rates>`
+
+func TestParseNBKXML(t *testing.T) {
+	effDate, rates, err := parseNBKXML([]byte(nbkSampleXML))
+	require.NoError(t, err)
+	require.Len(t, rates, 3)
+
+	// Дата из <date>.
+	assert.Equal(t, day(2026, 5, 28), effDate)
+
+	// Quant=1 → как есть.
+	assert.True(t, rates["USD"].Equal(d("70.9012")), "USD got %s", rates["USD"])
+	assert.True(t, rates["EUR"].Equal(d("82.7224")), "EUR got %s", rates["EUR"])
+	// Quant=100 → за 1 единицу = 0.495.
+	assert.True(t, rates["JPY"].Equal(d("0.495")), "JPY got %s (ожидался 0.495 = 49.50/100)", rates["JPY"])
+}
+
+func TestParseNBKXML_Errors(t *testing.T) {
+	// Пустой набор → ошибка.
+	_, _, err := parseNBKXML([]byte(`<rates><date>28.05.2026</date></rates>`))
+	assert.Error(t, err)
+
+	_, _, err = parseNBKXML([]byte(`не xml`))
+	assert.Error(t, err)
+
+	// Битый description + нулевой quant пропускаются, валидный остаётся.
+	partial := `<rates><date>28.05.2026</date>
+		<item><title>EUR</title><description>abc</description><quant>1</quant></item>
+		<item><title>JPY</title><description>50.00</description><quant>0</quant></item>
+		<item><title>USD</title><description>70.90</description><quant>1</quant></item>
+	</rates>`
+	_, rates, err := parseNBKXML([]byte(partial))
+	require.NoError(t, err)
+	assert.Len(t, rates, 1)
+	assert.True(t, rates["USD"].Equal(d("70.90")))
+}
+
 // quoteCcyForSource: cbr_rf котирует в RUB, nbk_kz — в KZT.
 func TestQuoteCcyForSource(t *testing.T) {
 	assert.Equal(t, "RUB", quoteCcyForSource("cbr_rf"))
