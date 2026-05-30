@@ -109,7 +109,7 @@ func GetGlobalSearch(c *gin.Context) {
 		Installations: []SearchResultItem{},
 	}
 	if inScope(scope, "objects") {
-		resp.Objects = searchObjects(tenantDB, pattern, limit)
+		resp.Objects = searchObjects(publicDB, tenantDB, companyID, pattern, limit)
 	}
 	if inScope(scope, "clients") {
 		resp.Clients = searchClients(publicDB, tenantDB, companyID, pattern, limit)
@@ -133,8 +133,24 @@ func GetGlobalSearch(c *gin.Context) {
 	})
 }
 
-// searchObjects — по axenta_object_snapshots (object_name, unique_id, account_name).
-func searchObjects(db *gorm.DB, pattern string, limit int) []SearchResultItem {
+// searchObjects — объединённый поиск объектов по 4 GPS-источникам (followup #5):
+// axenta_object_snapshots (tenant) + wialon_units/skif_units/gelios_units (public,
+// scoping по company через connections либо company_id). Зеркало searchClients/searchUsers.
+func searchObjects(publicDB, tenantDB *gorm.DB, companyID uint, pattern string, limit int) []SearchResultItem {
+	perSource := limit/2 + 1
+	out := make([]SearchResultItem, 0, limit*3)
+	out = append(out, searchAxentaObjects(tenantDB, pattern, perSource)...)
+	out = append(out, searchWialonObjects(publicDB, companyID, pattern, perSource)...)
+	out = append(out, searchSkifObjects(publicDB, companyID, pattern, perSource)...)
+	out = append(out, searchGeliosObjects(publicDB, companyID, pattern, perSource)...)
+	if len(out) > limit*3 {
+		out = out[:limit*3]
+	}
+	return out
+}
+
+// searchAxentaObjects — по axenta_object_snapshots (object_name, unique_id, account_name).
+func searchAxentaObjects(db *gorm.DB, pattern string, limit int) []SearchResultItem {
 	type row struct {
 		ExternalObjectID string
 		ObjectName       string
@@ -166,7 +182,119 @@ func searchObjects(db *gorm.DB, pattern string, limit int) []SearchResultItem {
 			Type:     "object",
 			Title:    r.ObjectName,
 			Subtitle: subtitle,
-			URL:      "/objects?search=" + r.UniqueID,
+			URL:      "/objects?search=" + url.QueryEscape(r.UniqueID),
+		})
+	}
+	return out
+}
+
+// objectStatusBadge — единый бейдж статуса объекта для мульти-источникового поиска.
+func objectStatusBadge(active bool) string {
+	if active {
+		return "активный"
+	}
+	return "неактивный"
+}
+
+// searchWialonObjects — wialon_units (public), scoping JOIN wialon_connections по company.
+func searchWialonObjects(db *gorm.DB, companyID uint, pattern string, limit int) []SearchResultItem {
+	type row struct {
+		ID       uint
+		Name     string
+		IsActive bool
+	}
+	var rows []row
+	db.Table(publicTable(db, "wialon_units")+" AS wu").
+		Joins("JOIN "+publicTable(db, "wialon_connections")+" AS wc ON wc.id = wu.connection_id").
+		Select("wu.id, wu.name, wu.is_active").
+		Where(`wc.company_id = ? AND LOWER(wu.name COLLATE "und-x-icu") LIKE ?`, companyID, pattern).
+		Limit(limit).
+		Scan(&rows)
+
+	out := make([]SearchResultItem, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, SearchResultItem{
+			ID:       "object-wialon:" + strconv.FormatUint(uint64(r.ID), 10),
+			Type:     "object",
+			Title:    r.Name,
+			Subtitle: "Wialon · " + objectStatusBadge(r.IsActive),
+			URL:      "/objects?search=" + url.QueryEscape(r.Name),
+		})
+	}
+	return out
+}
+
+// searchSkifObjects — skif_units (public), прямой company_id, поиск по name/imei.
+func searchSkifObjects(db *gorm.DB, companyID uint, pattern string, limit int) []SearchResultItem {
+	type row struct {
+		ID       uint
+		Name     string
+		IMEI     string
+		IsActive bool
+	}
+	var rows []row
+	db.Table(publicTable(db, "skif_units")).
+		Select("id, name, imei, is_active").
+		Where(`company_id = ? AND skif_deleted_at IS NULL AND (LOWER(name COLLATE "und-x-icu") LIKE ? OR LOWER(imei COLLATE "und-x-icu") LIKE ?)`,
+			companyID, pattern, pattern).
+		Limit(limit).
+		Scan(&rows)
+
+	out := make([]SearchResultItem, 0, len(rows))
+	for _, r := range rows {
+		subtitle := "SKIF · " + objectStatusBadge(r.IsActive)
+		if r.IMEI != "" {
+			subtitle += " · IMEI: " + r.IMEI
+		}
+		term := r.Name
+		if term == "" {
+			term = r.IMEI
+		}
+		out = append(out, SearchResultItem{
+			ID:       "object-skif:" + strconv.FormatUint(uint64(r.ID), 10),
+			Type:     "object",
+			Title:    r.Name,
+			Subtitle: subtitle,
+			URL:      "/objects?search=" + url.QueryEscape(term),
+		})
+	}
+	return out
+}
+
+// searchGeliosObjects — gelios_units (public), scoping JOIN gelios_connections по company,
+// поиск по name/imei (строка поиска обещает «по названию, IMEI»).
+func searchGeliosObjects(db *gorm.DB, companyID uint, pattern string, limit int) []SearchResultItem {
+	type row struct {
+		ID       uint
+		Name     string
+		IMEI     string
+		IsActive bool
+	}
+	var rows []row
+	db.Table(publicTable(db, "gelios_units")+" AS gu").
+		Joins("JOIN "+publicTable(db, "gelios_connections")+" AS gc ON gc.id = gu.connection_id").
+		Select("gu.id, gu.name, gu.imei, gu.is_active").
+		Where(`gc.company_id = ? AND gu.gelios_deleted_at IS NULL AND (LOWER(gu.name COLLATE "und-x-icu") LIKE ? OR LOWER(gu.imei COLLATE "und-x-icu") LIKE ?)`,
+			companyID, pattern, pattern).
+		Limit(limit).
+		Scan(&rows)
+
+	out := make([]SearchResultItem, 0, len(rows))
+	for _, r := range rows {
+		subtitle := "GELIOS · " + objectStatusBadge(r.IsActive)
+		if r.IMEI != "" {
+			subtitle += " · IMEI: " + r.IMEI
+		}
+		term := r.Name
+		if term == "" {
+			term = r.IMEI
+		}
+		out = append(out, SearchResultItem{
+			ID:       "object-gelios:" + strconv.FormatUint(uint64(r.ID), 10),
+			Type:     "object",
+			Title:    r.Name,
+			Subtitle: subtitle,
+			URL:      "/objects?search=" + url.QueryEscape(term),
 		})
 	}
 	return out
