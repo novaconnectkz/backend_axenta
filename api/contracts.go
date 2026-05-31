@@ -1316,6 +1316,8 @@ type CreateContractRequestRaw struct {
 	Description string          `json:"description"`
 	CompanyID   uint            `json:"company_id"`
 	ObjectIDs   []uint          `json:"object_ids"`
+	// Ф4b-followon: явная привязка к контрагенту (единый ЛС). 0/пусто → авто-резолв по идентичности.
+	CounterpartyID uint         `json:"counterparty_id"`
 	ManagerID   *uint           `json:"manager_id"`   // обслуживающий менеджер (только admin назначает)
 	BillingMode string          `json:"billing_mode"` // prepaid|postpaid (только admin, в рамках политики)
 	CreditLimit decimal.Decimal `json:"credit_limit"` // кредит-лимит для постоплаты
@@ -1554,6 +1556,7 @@ func CreateContract(c *gin.Context) {
 		Title:             rawRequest.Title,
 		Description:       rawRequest.Description,
 		CompanyID:         rawRequest.CompanyID,
+		CounterpartyID:    rawRequest.CounterpartyID, // Ф4b: явная привязка (валидируется ниже)
 		ContractType:      contractType,
 		PartnerCompanyID:  rawRequest.PartnerCompanyID,
 		PartnerSource:     rawRequest.PartnerSource,
@@ -1996,6 +1999,18 @@ func CreateContract(c *gin.Context) {
 		}
 		contract.BillingMode = "postpaid"
 		contract.CreditLimit = rawRequest.CreditLimit
+	}
+
+	// Ф4b: явный counterparty_id из тела (FE-селектор) — валидируем принадлежность
+	// admin+company (анти-привязка к чужому ЛС). Невалидный → сброс на авто-резолв.
+	if contract.ContractType == "client" && contract.CounterpartyID != 0 {
+		var cnt int64
+		if e := database.DB.Model(&models.Counterparty{}).
+			Where("id = ? AND admin_account_id = ? AND company_id = ?", contract.CounterpartyID, adminAccountID, contract.CompanyID).
+			Count(&cnt).Error; e != nil || cnt == 0 {
+			log.Printf("⚠️ Явный counterparty_id=%d не принадлежит admin=%d company=%d → авто-резолв", contract.CounterpartyID, adminAccountID, contract.CompanyID)
+			contract.CounterpartyID = 0
+		}
 	}
 
 	// Ф4: назначаем контрагента ДО вставки договора → counterparty_id попадает в тот же INSERT
@@ -2496,6 +2511,19 @@ func UpdateContract(c *gin.Context) {
 		return
 	}
 
+	// Ф4b: явная привязка/смена контрагента из тела — валидируем принадлежность
+	// admin+company (анти-привязка к чужому ЛС). Невалидный → 0 (GORM Updates пропустит
+	// zero → существующая привязка сохранится, ниже сработает авто-резолв при cp=0).
+	if updateData.CounterpartyID != 0 {
+		var cnt int64
+		if e := database.DB.Model(&models.Counterparty{}).
+			Where("id = ? AND admin_account_id = ? AND company_id = ?", updateData.CounterpartyID, adminAccountID, contract.CompanyID).
+			Count(&cnt).Error; e != nil || cnt == 0 {
+			log.Printf("⚠️ UpdateContract: явный counterparty_id=%d не принадлежит admin=%d company=%d → игнор", updateData.CounterpartyID, adminAccountID, contract.CompanyID)
+			updateData.CounterpartyID = 0
+		}
+	}
+
 	// Менеджера договора назначает только admin/superadmin. Прочие роли НЕ могут
 	// переназначить (manager не должен забрать/отдать чужой договор) — сохраняем как было.
 	if !requireContractAssignAccess(c) {
@@ -2560,7 +2588,13 @@ func UpdateContract(c *gin.Context) {
 		tenantDB.Model(&models.Contract{}).Where("id = ?", contract.ID).
 			Updates(map[string]interface{}{"billing_mode": mode, "credit_limit": limit})
 		// Ф2: зеркалим лимит/режим на контрагента (авторитет для sweep/charge).
-		mirrorBillingToCounterparty(contract.CounterpartyID, adminAccountID, contract.CompanyID, mode, limit)
+		// Ф4b (Codex HIGH): при смене контрагента в этом же запросе зеркалим на НОВОГО
+		// (не полагаемся на GORM write-back в contract после Updates).
+		mirrorCPID := contract.CounterpartyID
+		if updateData.CounterpartyID != 0 {
+			mirrorCPID = updateData.CounterpartyID
+		}
+		mirrorBillingToCounterparty(mirrorCPID, adminAccountID, contract.CompanyID, mode, limit)
 	}
 
 	// Загружаем обновленные данные
