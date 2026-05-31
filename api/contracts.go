@@ -2579,28 +2579,35 @@ func UpdateContract(c *gin.Context) {
 
 	// Режим биллинга — явный update (Updates(struct) пропускает zero, иначе credit_limit=0
 	// и downgrade postpaid→prepaid не сохранятся). prepaid принудительно обнуляет лимит.
+	// Зеркалирование на контрагента (mirrorBillingToCounterparty) ОТЛОЖЕНО до после
+	// reset/авто-резолва — иначе при смене/сбросе cp лимит уйдёт на старого контрагента (Codex HIGH).
+	var billingChanged bool
+	var billingMode string
+	var billingLimit decimal.Decimal
 	if requireContractAssignAccess(c) && updateData.BillingMode != "" {
-		mode := updateData.BillingMode
-		limit := updateData.CreditLimit
-		if mode != "postpaid" {
-			limit = decimal.Zero
+		billingMode = updateData.BillingMode
+		billingLimit = updateData.CreditLimit
+		if billingMode != "postpaid" {
+			billingLimit = decimal.Zero
 		}
+		billingChanged = true
 		tenantDB.Model(&models.Contract{}).Where("id = ?", contract.ID).
-			Updates(map[string]interface{}{"billing_mode": mode, "credit_limit": limit})
-		// Ф2: зеркалим лимит/режим на контрагента (авторитет для sweep/charge).
-		// Ф4b (Codex HIGH): при смене контрагента в этом же запросе зеркалим на НОВОГО
-		// (не полагаемся на GORM write-back в contract после Updates).
-		mirrorCPID := contract.CounterpartyID
-		if updateData.CounterpartyID != 0 {
-			mirrorCPID = updateData.CounterpartyID
-		}
-		mirrorBillingToCounterparty(mirrorCPID, adminAccountID, contract.CompanyID, mode, limit)
+			Updates(map[string]interface{}{"billing_mode": billingMode, "credit_limit": billingLimit})
 	}
 
 	// Загружаем обновленные данные
 	// Загружаем Appendices через Preload (если таблица существует)
 	if err := tenantDB.Preload("Appendices").First(&contract, contract.ID).Error; err != nil {
 		log.Printf("⚠️ Не удалось загрузить обновленные данные договора %d: %v", contract.ID, err)
+	}
+
+	// Ф4b-followon: явный сброс ручной привязки (FE очистил селектор) → обнуляем cp
+	// ТОЛЬКО В ПАМЯТИ (не в БД), чтобы блок авто-резолва ниже сделал один Update на
+	// финальный cp. На ошибке резолва БД сохранит СТАРЫЙ cp (Updates(struct) его не
+	// трогал — zero пропущен) — orphan-окна нет (Codex HIGH-1).
+	if updateData.ResetCounterparty && contract.ContractType == "client" && contract.CounterpartyID != 0 {
+		log.Printf("🔄 UpdateContract: сброс ручной привязки контрагента договору %d → авто-резолв", contract.ID)
+		contract.CounterpartyID = 0
 	}
 
 	// Ф4: client-договор без контрагента (старый/не назначенный) → назначить по идентичности.
@@ -2615,6 +2622,12 @@ func UpdateContract(c *gin.Context) {
 				contract.CounterpartyID = cpID
 			}
 		}
+	}
+
+	// Ф2/Ф4b: зеркалим биллинг на ФИНАЛЬНОГО контрагента (после reset/смены/авто-резолва) —
+	// авторитет для sweep/charge. Перенесено сюда из billing-блока выше (Codex HIGH-2).
+	if billingChanged {
+		mirrorBillingToCounterparty(contract.CounterpartyID, adminAccountID, contract.CompanyID, billingMode, billingLimit)
 	}
 
 	// Партнёрский договор не использует подписки → не должен застревать в draft

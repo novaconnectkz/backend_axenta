@@ -34,6 +34,10 @@ type Contract struct {
 	// AutoMigrate создаёт nullable-колонку и `counterparty_id = 0` не матчит NULL.
 	CounterpartyID uint `json:"counterparty_id" gorm:"index;not null;default:0"`
 
+	// Ф4b-followon: транзитный флаг (не в БД) — явный сброс ручной привязки в UpdateContract.
+	// true → counterparty_id обнуляется и переназначается авто-резолвом по идентичности клиента.
+	ResetCounterparty bool `json:"reset_counterparty" gorm:"-"`
+
 	// Тип договора
 	ContractType string `json:"contract_type" gorm:"type:varchar(20);default:'client'"` // client или partner
 
