@@ -238,6 +238,10 @@ func purgeContractCleanup(c *gin.Context, tenantDB *gorm.DB, contract *models.Co
 	if err := tenantDB.Where("contract_id = ?", contract.ID).Delete(&models.ContractObject{}).Error; err != nil {
 		log.Printf("⚠️ Не удалось удалить junction договора %d: %v", contract.ID, err)
 	}
+	// NB: подписки (public.subscriptions) тут НЕ трогаем — это soft-delete (договор в корзине,
+	// восстановим через restoreContract); подписки нужны для restore, а charge-движок soft-deleted
+	// договор и так пропускает (First не находит). Чистка подписок — только при ПЕРМАНЕНТНОМ
+	// удалении (permanentlyDeleteContract, api/trash.go), где договор уже невосстановим.
 	// 3. Приложения (tenant → fallback public).
 	if err := tenantDB.Where("contract_id = ?", contract.ID).Delete(&models.ContractAppendix{}).Error; err != nil {
 		publicDB := database.DB.Session(&gorm.Session{})

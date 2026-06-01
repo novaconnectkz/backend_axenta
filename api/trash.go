@@ -601,7 +601,7 @@ func PermanentlyDeleteItem(c *gin.Context) {
 	case "user":
 		deleteError = permanentlyDeleteUser(tx, deletedItem.EntityID)
 	case "contract":
-		deleteError = permanentlyDeleteContract(tx, deletedItem.EntityID)
+		deleteError = permanentlyDeleteContract(tx, deletedItem.EntityID, deletedItem.CompanyID)
 	case "object":
 		deleteError = permanentlyDeleteObject(tx, deletedItem.EntityID)
 	case "warehouse":
@@ -736,8 +736,26 @@ func permanentlyDeleteUser(db *gorm.DB, entityID uint) error {
 	return db.Unscoped().Delete(&models.User{}, entityID).Error
 }
 
-func permanentlyDeleteContract(db *gorm.DB, entityID uint) error {
-	return db.Unscoped().Delete(&models.Contract{}, entityID).Error
+func permanentlyDeleteContract(db *gorm.DB, entityID, companyID uint) error {
+	if err := db.Unscoped().Delete(&models.Contract{}, entityID).Error; err != nil {
+		return err
+	}
+	// Договор перманентно удалён (невосстановим) → его подписки в public.subscriptions больше
+	// не нужны; hard-delete, чтобы не осиротели (status='active' с мёртвым contract_id засоряет
+	// отчёты/счётчики — см. инцидент 23 orphan 2026-06-01). Best-effort ПОСЛЕ успешного удаления
+	// договора (не валим перманентное удаление из-за подписок). company_id обязателен для скоупа
+	// (0 → skip, чтобы не задеть чужие/мусорные строки). Подписки в public — отдельная сессия.
+	if companyID != 0 {
+		pub := database.DB.Session(&gorm.Session{})
+		if e := pub.Exec("SET search_path TO public").Error; e == nil {
+			if e := pub.Unscoped().
+				Where("contract_id = ? AND company_id = ?", entityID, companyID).
+				Delete(&models.Subscription{}).Error; e != nil {
+				log.Printf("⚠️ Перманентное удаление договора %d: подписки не очищены: %v", entityID, e)
+			}
+		}
+	}
+	return nil
 }
 
 func permanentlyDeleteObject(db *gorm.DB, entityID uint) error {
