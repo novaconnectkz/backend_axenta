@@ -257,21 +257,34 @@ func (s *EnforcementService) tryPhysicalBlock(pub *gorm.DB, act *models.BillingE
 	if act.ID == 0 {
 		return
 	}
+	// Codex #8: атомарный claim строки ПЕРЕД внешним API — чтобы параллельные проходы (если
+	// sweep когда-нибудь распараллелят; сейчас сериализован advisory-lock'ом RunUpToDate) не
+	// дёрнули Axenta дважды на одну учётку. enforced_at = claim-маркер, stale-tolerant (>10мин
+	// → переклейм, если процесс упал между claim и API). Лок НЕ держим через HTTP. Победитель
+	// claim'а — единственный, кто зовёт API.
+	now := time.Now()
+	staleBefore := now.Add(-10 * time.Minute)
+	claim := pub.Table("public.billing_enforcement_actions").
+		Where("id = ? AND physical_ok = ? AND (enforced_at IS NULL OR enforced_at < ?)", act.ID, false, staleBefore).
+		Update("enforced_at", &now)
+	if claim.Error != nil || claim.RowsAffected == 0 {
+		return // не застолбили: другой проход обрабатывает / уже выполнено
+	}
+
 	if cur, err := s.externalState(companyID, t); err == nil && cur == enable {
-		now := time.Now()
 		pub.Table("public.billing_enforcement_actions").Where("id = ?", act.ID).
-			Updates(map[string]any{"physical_ok": true, "enforced_at": &now})
+			Update("physical_ok", true) // enforced_at уже проставлен claim'ом
 		return
 	}
 	if err := s.physicalBlockAccount(companyID, t, enable); err != nil {
+		// Освобождаем claim (enforced_at=NULL) → ReassertPending переретраит; пишем last_error.
 		pub.Table("public.billing_enforcement_actions").Where("id = ?", act.ID).
-			Update("last_error", err.Error())
+			Updates(map[string]any{"last_error": err.Error(), "enforced_at": gorm.Expr("NULL")})
 		log.Printf("❌ ENFORCE live FAIL: system=%s account=%s err=%v", t.System, t.ExternalAccountID, err)
 		return
 	}
-	now := time.Now()
 	pub.Table("public.billing_enforcement_actions").Where("id = ?", act.ID).
-		Updates(map[string]any{"physical_ok": true, "enforced_at": &now, "last_error": ""})
+		Updates(map[string]any{"physical_ok": true, "last_error": ""})
 	log.Printf("✅ ENFORCE blocked: system=%s account=%s", t.System, t.ExternalAccountID)
 }
 
