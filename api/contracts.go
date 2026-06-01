@@ -1311,16 +1311,16 @@ func GetContract(c *gin.Context) {
 // CreateContractRequestRaw представляет сырой запрос с датами как строками
 type CreateContractRequestRaw struct {
 	// Основные поля договора
-	Number      string          `json:"number"`
-	Title       string          `json:"title"`
-	Description string          `json:"description"`
-	CompanyID   uint            `json:"company_id"`
-	ObjectIDs   []uint          `json:"object_ids"`
+	Number      string `json:"number"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	CompanyID   uint   `json:"company_id"`
+	ObjectIDs   []uint `json:"object_ids"`
 	// Ф4b-followon: явная привязка к контрагенту (единый ЛС). 0/пусто → авто-резолв по идентичности.
-	CounterpartyID uint         `json:"counterparty_id"`
-	ManagerID   *uint           `json:"manager_id"`   // обслуживающий менеджер (только admin назначает)
-	BillingMode string          `json:"billing_mode"` // prepaid|postpaid (только admin, в рамках политики)
-	CreditLimit decimal.Decimal `json:"credit_limit"` // кредит-лимит для постоплаты
+	CounterpartyID uint            `json:"counterparty_id"`
+	ManagerID      *uint           `json:"manager_id"`   // обслуживающий менеджер (только admin назначает)
+	BillingMode    string          `json:"billing_mode"` // prepaid|postpaid (только admin, в рамках политики)
+	CreditLimit    decimal.Decimal `json:"credit_limit"` // кредит-лимит для постоплаты
 
 	// Тип договора
 	ContractType     string `json:"contract_type"`      // client или partner
@@ -2579,18 +2579,14 @@ func UpdateContract(c *gin.Context) {
 
 	// Режим биллинга — явный update (Updates(struct) пропускает zero, иначе credit_limit=0
 	// и downgrade postpaid→prepaid не сохранятся). prepaid принудительно обнуляет лимит.
-	// Зеркалирование на контрагента (mirrorBillingToCounterparty) ОТЛОЖЕНО до после
-	// reset/авто-резолва — иначе при смене/сбросе cp лимит уйдёт на старого контрагента (Codex HIGH).
-	var billingChanged bool
-	var billingMode string
-	var billingLimit decimal.Decimal
+	// Б2: billing_mode/credit_limit авторитетны на Contract — зеркало на контрагента снято
+	// (sweep/charge читают с договора). Контрагент.billing_mode/credit_limit — legacy-колонки.
 	if requireContractAssignAccess(c) && updateData.BillingMode != "" {
-		billingMode = updateData.BillingMode
-		billingLimit = updateData.CreditLimit
+		billingMode := updateData.BillingMode
+		billingLimit := updateData.CreditLimit
 		if billingMode != "postpaid" {
 			billingLimit = decimal.Zero
 		}
-		billingChanged = true
 		tenantDB.Model(&models.Contract{}).Where("id = ?", contract.ID).
 			Updates(map[string]interface{}{"billing_mode": billingMode, "credit_limit": billingLimit})
 	}
@@ -2622,12 +2618,6 @@ func UpdateContract(c *gin.Context) {
 				contract.CounterpartyID = cpID
 			}
 		}
-	}
-
-	// Ф2/Ф4b: зеркалим биллинг на ФИНАЛЬНОГО контрагента (после reset/смены/авто-резолва) —
-	// авторитет для sweep/charge. Перенесено сюда из billing-блока выше (Codex HIGH-2).
-	if billingChanged {
-		mirrorBillingToCounterparty(contract.CounterpartyID, adminAccountID, contract.CompanyID, billingMode, billingLimit)
 	}
 
 	// Партнёрский договор не использует подписки → не должен застревать в draft

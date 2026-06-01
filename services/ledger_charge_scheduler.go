@@ -237,8 +237,11 @@ func (s *LedgerChargeScheduler) sweepCompanySuspensions(company models.Company) 
 
 	// Клиентские договоры в активном/приостановленном статусе.
 	var contracts []models.Contract
+	// Order("id") — детерминизм: в чистом Б2 sweep группирует per-cp и берёт лимит ПЕРВОГО
+	// договора группы; без явного порядка Find отдаёт строки произвольно → threshold скакал бы
+	// между договорами с разными лимитами (Codex HIGH). Per-договор порог — Б4.
 	if err := tenantDB.Where("contract_type = ? AND status IN ? AND deleted_at IS NULL",
-		"client", []string{"active", "suspended"}).Find(&contracts).Error; err != nil {
+		"client", []string{"active", "suspended"}).Order("id").Find(&contracts).Error; err != nil {
 		return
 	}
 	pub := s.db.Session(&gorm.Session{})
@@ -273,7 +276,7 @@ func (s *LedgerChargeScheduler) sweepCompanySuspensions(company models.Company) 
 		adminID      uint
 		cpID         uint            // 0 → legacy per-договор
 		contractID   uint            // legacy contract_id (cp=0); 0 для контрагента
-		creditLimit  decimal.Decimal // legacy: с договора; cp: перетираем лимитом контрагента ниже
+		creditLimit  decimal.Decimal // Б2: лимит с договора (cp-группа — лимит первого по id)
 		activeIDs    []uint          // client-договоры в 'active' (кандидаты на suspend)
 		suspendedIDs []uint          // client-договоры в 'suspended' (кандидаты на restore)
 	}
@@ -285,8 +288,8 @@ func (s *LedgerChargeScheduler) sweepCompanySuspensions(company models.Company) 
 			k := unitKey{ct.AdminAccountID, ct.CounterpartyID}
 			u := unitByCP[k]
 			if u == nil {
-				// creditLimit с первого договора группы — fallback, если counterparty-строка
-				// отсутствует/не прочиталась (иначе threshold=0 → ложная блокировка, Codex HIGH-4).
+				// Б2: лимит группы = лимит ПЕРВОГО договора по id (Order("id") выше даёт детерминизм).
+				// Per-договор порог появится в Б4; до него вся cp-группа гасится одним threshold.
 				u = &billingUnit{adminID: ct.AdminAccountID, cpID: ct.CounterpartyID, creditLimit: ct.CreditLimit}
 				unitByCP[k] = u
 				units = append(units, u)
@@ -308,15 +311,9 @@ func (s *LedgerChargeScheduler) sweepCompanySuspensions(company models.Company) 
 	}
 
 	for _, u := range units {
-		creditLimit := u.creditLimit // cp: авторитетный лимит контрагента (fallback на договор)
-		if u.cpID != 0 {
-			var cp models.Counterparty
-			if pub.Table("public.counterparties").Select("credit_limit").
-				Where("id = ? AND admin_account_id = ? AND company_id = ?", u.cpID, u.adminID, company.ID).
-				First(&cp).Error == nil {
-				creditLimit = cp.CreditLimit
-			}
-		}
+		// Б2: лимит авторитетен на Contract (зеркало на контрагента снято). В чистом Б2 sweep
+		// ещё группирует per-cp → единый лимит группы = лимит договора-юнита (per-договор порог — Б4).
+		creditLimit := u.creditLimit
 		threshold := creditLimit.Neg() // допустимый минус: balance < −creditLimit → блок (в КАЖДОЙ валюте)
 
 		// Per-currency суб-балансы единицы (СТРОГО в рамках company+admin, Codex critical).
@@ -555,17 +552,8 @@ func (s *LedgerChargeScheduler) chargeCompany(company models.Company, cutoff, ta
 				if ccy == "" {
 					ccy = "RUB"
 				}
-				// Ф2: billing_mode авторитетен на контрагенте (fallback на договор при cp=0/отсутствии).
-				// Скоуп id+admin+company (defensive: id — PK, но фиксируем инвариант шардинга).
+				// Б2: billing_mode авторитетен на Contract (зеркало на контрагента снято).
 				billingMode := ct.BillingMode
-				if ct.CounterpartyID != 0 {
-					var cp models.Counterparty
-					if s.db.Table("public.counterparties").Select("billing_mode").
-						Where("id = ? AND admin_account_id = ? AND company_id = ?", ct.CounterpartyID, ct.AdminAccountID, company.ID).
-						First(&cp).Error == nil && cp.BillingMode != "" {
-						billingMode = cp.BillingMode
-					}
-				}
 				info = ctInfo{ok: ct.ContractType == "client" && ct.Status == "active", currency: ccy, billingMode: billingMode, counterpartyID: ct.CounterpartyID}
 			}
 			contractInfo[cid] = info
