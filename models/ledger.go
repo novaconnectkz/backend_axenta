@@ -54,6 +54,14 @@ type LedgerEntry struct {
 
 	// Ф5: батч Excel-импорта (для отката пачкой). 0 — проводка не из импорт-батча.
 	ImportBatchID uint `json:"import_batch_id" gorm:"index;not null;default:0"`
+
+	// Б0 (per-договор аллокатор, read-only): логический период проводки для FIFO-упорядочивания
+	// долгов. НЕ entry_date — postpaid entry_date «убегает» на период вперёд. Заполняется
+	// write-side позже; пока аллокатор резолвит из external_id (autocharge-форматы). Аддитивные
+	// nullable-поля: ничего не читает их в проде до Б4. concepts/wallet-percontract-gating.
+	PeriodStart       *time.Time `json:"period_start" gorm:"index"`
+	PeriodGranularity string     `json:"period_granularity" gorm:"type:varchar(10)"` // day|month|year
+	PeriodKeySource   string     `json:"period_key_source" gorm:"type:varchar(20)"`  // persisted|external_id|entry_date
 }
 
 func (LedgerEntry) TableName() string { return "ledger_entries" }
