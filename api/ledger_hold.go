@@ -27,7 +27,7 @@ var errHoldExists = fmt.Errorf("active hold already exists")
 
 type ledgerHoldRequest struct {
 	ContractID uint    `json:"contract_id" binding:"required"`
-	HoldType   string  `json:"hold_type" binding:"required"` // deferral | promise
+	HoldType   string  `json:"hold_type" binding:"required"`  // deferral | promise
 	HoldUntil  string  `json:"hold_until" binding:"required"` // YYYY-MM-DD — до какой даты держим
 	Amount     float64 `json:"amount"`                        // обязательна для promise
 	Reason     string  `json:"reason"`
@@ -180,6 +180,7 @@ func PostLedgerHold(c *gin.Context) {
 	// Транзакция (вся в одной физ. БД): создать зонт (partial-unique ловит дубль) +
 	// снять активную debt-приостановку этого договора, вернув ПРЕЖНИЙ статус
 	// (UX: оператор дал отсрочку → сервис разблокируется сразу). Ручной suspend не трогаем.
+	var snappedSusps []models.BillingSuspension // снятые в tx — для физразблока после коммита (§3.7b)
 	txErr := database.DB.Transaction(func(tx *gorm.DB) error {
 		// Анти-дубль: один активный зонт на ЕДИНИЦУ (контрагент cp<>0 / договор cp=0).
 		// Гонку ловит partial-unique (idx_hold_cp/idx_hold_legacy) → ниже 23505→409 (Codex #5).
@@ -211,24 +212,48 @@ func PostLedgerHold(c *gin.Context) {
 		} else {
 			suspQ = suspQ.Where("counterparty_id = 0 AND contract_id = ?", req.ContractID)
 		}
-		var susp models.BillingSuspension
-		if suspQ.First(&susp).Error == nil {
-			if e := tx.Table("public.billing_suspensions").Where("id = ?", susp.ID).
+		// Б3.5 §3.7a: зонт per-контрагент снимает ВСЕ его активные debt-приостановки. После Б3
+		// их может быть N (по строке на договор) — раньше First() снимал ровно ОДНУ из N.
+		var susps []models.BillingSuspension
+		if e := suspQ.Find(&susps).Error; e != nil {
+			return e
+		}
+		restoreSet := map[uint]bool{}
+		for i := range susps {
+			s := &susps[i]
+			if e := tx.Table("public.billing_suspensions").Where("id = ?", s.ID).
 				Updates(map[string]interface{}{"active": false, "resolved_at": now}).Error; e != nil {
 				return e
 			}
-			// Вернуть в 'active' ТОЛЬКО договоры, которые эта debt-строка приостановила
+			// Вернуть в 'active' ТОЛЬКО договоры, которые ЭТИ debt-строки приостановили
 			// (AffectedContractIDs) — не топчем приостановленные по др. причине (Codex HIGH-3).
-			// UPDATE условный по 'suspended' — не трогаем ручной cancel/expired/draft.
-			restoreIDs := parseAffectedContractIDs(susp.AffectedContractIDs)
-			if len(restoreIDs) == 0 {
-				restoreIDs = []uint{req.ContractID} // fallback для строк без affected-списка
+			// Fallback per-suspension (Codex HIGH): строка без affected-списка → её собственный
+			// contract_id (cp-строка с ContractID=0 → req.ContractID). Иначе из N снятых suspension
+			// восстановился бы только req.ContractID, остальные остались бы suspended в CRM.
+			affected := parseAffectedContractIDs(s.AffectedContractIDs)
+			if len(affected) == 0 {
+				if s.ContractID != 0 {
+					affected = []uint{s.ContractID}
+				} else {
+					affected = []uint{req.ContractID}
+				}
 			}
+			for _, id := range affected {
+				restoreSet[id] = true
+			}
+		}
+		if len(restoreSet) > 0 {
+			restoreIDs := make([]uint, 0, len(restoreSet))
+			for id := range restoreSet {
+				restoreIDs = append(restoreIDs, id)
+			}
+			// UPDATE условный по 'suspended' — не трогаем ручной cancel/expired/draft.
 			if e := tx.Table(contractsTable).Where("id IN ? AND status = ?", restoreIDs, "suspended").
 				Update("status", "active").Error; e != nil {
 				return e
 			}
 		}
+		snappedSusps = susps
 		return nil
 	})
 	if txErr == errHoldExists {
@@ -244,6 +269,16 @@ func PostLedgerHold(c *gin.Context) {
 	if txErr != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": txErr.Error()})
 		return
+	}
+
+	// Б3.5 §3.7b: зонт = отсрочка → снять и ФИЗИЧЕСКУЮ блокировку учёток (раньше PostLedgerHold
+	// снимал только CRM-статус, физблок в Axenta оставался → зонт был фикцией на физ-уровне).
+	// После коммита, как RESTORE-путь sweep. heldByOther внутри Reactivate защищает учётку,
+	// которую держит ДРУГАЯ активная suspension (общий Axenta-аккаунт у нескольких неоплат).
+	if enforcementSvc != nil {
+		for i := range snappedSusps {
+			enforcementSvc.Reactivate(snappedSusps[i])
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": hold})

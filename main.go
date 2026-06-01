@@ -249,7 +249,10 @@ func main() {
 		ledgerChargeScheduler := services.NewLedgerChargeScheduler()
 		// B1: физическая блокировка неоплаты (тот же AxentaServerToken-singleton, что в api).
 		// По умолчанию выключена (ENABLE_BILLING_ENFORCEMENT) / shadow (BILLING_ENFORCEMENT_MODE).
-		ledgerChargeScheduler.SetEnforcement(services.NewEnforcementService(axentaServerToken))
+		// Один инстанс на scheduler + api (Б3.5: PostLedgerHold физразблокирует учётки при зонте).
+		enforcementSvc := services.NewEnforcementService(axentaServerToken)
+		ledgerChargeScheduler.SetEnforcement(enforcementSvc)
+		api.SetEnforcement(enforcementSvc)
 		api.SetLedgerChargeScheduler(ledgerChargeScheduler)
 		if err := ledgerChargeScheduler.Start(); err != nil {
 			log.Printf("⚠️ LedgerChargeScheduler failed to start: %v", err)

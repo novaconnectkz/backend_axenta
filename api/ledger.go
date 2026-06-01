@@ -33,6 +33,15 @@ func SetLedgerChargeScheduler(s *services.LedgerChargeScheduler) {
 	ledgerChargeScheduler = s
 }
 
+// enforcementSvc — B1-enforcement для физразблока учёток при снятии зонта (Б3.5 §3.7b).
+// Тот же инстанс, что у scheduler (один AxentaServerToken). nil → Reactivate-вызовы no-op.
+var enforcementSvc *services.EnforcementService
+
+// SetEnforcement регистрирует enforcement-сервис (вызывается из main).
+func SetEnforcement(e *services.EnforcementService) {
+	enforcementSvc = e
+}
+
 // PostLedgerChargeRun — POST /api/auth/ledger/charge/run
 // Ручной прогон авто-начисления (для теста). Body опц.: {"date":"YYYY-MM-DD"}
 // — начислить за все недостающие дни до этой даты включительно (default вчера).
@@ -96,6 +105,7 @@ func counterpartyBalance(counterpartyID, adminAccountID, companyID uint) decimal
 // balanceForContract — баланс лицевого счёта, относящийся к договору:
 //   - есть контрагент (counterparty_id<>0) → единый баланс контрагента (все его договоры);
 //   - иначе (партнёр/немигрированный) → legacy баланс самого договора (per-договор).
+//
 // Так Ф2 forward-correct, но не ломает контракты вне модели контрагентов (cp=0).
 func balanceForContract(contractID, counterpartyID, adminAccountID, companyID uint) decimal.Decimal {
 	if counterpartyID != 0 {
@@ -258,7 +268,7 @@ func GetLedgerBalance(c *gin.Context) {
 	if balance.IsNegative() {
 		debtAmount = balance.Abs()
 	}
-	data["balance"] = balance.StringFixed(2)       // >0 переплата, <0 долг
+	data["balance"] = balance.StringFixed(2) // >0 переплата, <0 долг
 	data["is_debt"] = balance.IsNegative()
 	data["debt_amount"] = debtAmount.StringFixed(2) // долг только если balance<0, иначе 0
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": data})
