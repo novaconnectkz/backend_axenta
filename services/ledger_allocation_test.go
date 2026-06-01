@@ -29,7 +29,7 @@ func TestAllocate_EarmarkIsolation(t *testing.T) {
 	r := AllocateCoverage(e, map[uint]bool{10: true, 11: true}, AllocStrictEarmark)
 	cov(t, r, 11, "0.00")     // earmark 3000 гасит свой долг 3000
 	cov(t, r, 10, "-5000.00") // A не покрыт чужими деньгами
-	if r.Quarantined {
+	if len(r.QuarantinedContracts) != 0 {
 		t.Fatal("не должно быть quarantine")
 	}
 }
@@ -68,11 +68,11 @@ func TestAllocate_QuarantineUnresolvedPeriod(t *testing.T) {
 		{ID: 1, ContractID: 10, EntryType: "charge", Amount: adec("-1000"), PeriodOK: false},
 	}
 	r := AllocateCoverage(e, map[uint]bool{10: true}, AllocStrictEarmark)
-	if !r.Quarantined {
-		t.Fatal("ожидался quarantine при нерезолвленном периоде debt")
+	if !r.QuarantinedContracts[10] {
+		t.Fatal("ожидался quarantine договора 10 при нерезолвленном периоде debt")
 	}
 	if len(r.Coverage) != 0 {
-		t.Errorf("при quarantine Coverage должен быть пуст, got %v", r.Coverage)
+		t.Errorf("единственный договор в карантине → Coverage пуст, got %v", r.Coverage)
 	}
 }
 
@@ -116,8 +116,8 @@ func TestAllocate_SurplusPolicy(t *testing.T) {
 	open := map[uint]bool{10: true, 11: true}
 
 	strict := AllocateCoverage(mk(), open, AllocStrictEarmark)
-	cov(t, strict, 11, "0.00")     // переплата 500 заперта за B
-	cov(t, strict, 10, "-800.00")  // A не получил чужую переплату
+	cov(t, strict, 11, "0.00")    // переплата 500 заперта за B
+	cov(t, strict, 10, "-800.00") // A не получил чужую переплату
 	if !strict.WalletFreePool.IsZero() {
 		t.Errorf("strict pool = %s, want 0", strict.WalletFreePool)
 	}
@@ -140,7 +140,7 @@ func TestAllocate_TransferOutNotObligation(t *testing.T) {
 	r := AllocateCoverage(e, map[uint]bool{11: true}, AllocStrictEarmark)
 	// earmark = 1000-400=600; obligation=500 → cov=+100 → strict capped 0. Не долг, не quarantine.
 	cov(t, r, 11, "0.00")
-	if r.Quarantined {
+	if len(r.QuarantinedContracts) != 0 {
 		t.Fatal("transfer_out не должен вызывать quarantine")
 	}
 }
@@ -153,8 +153,8 @@ func TestAllocate_ClosedExcludedFromFIFO(t *testing.T) {
 		{ID: 3, ContractID: 0, EntryType: "payment", Amount: adec("1000")},
 	}
 	r := AllocateCoverage(e, map[uint]bool{11: true}, AllocStrictEarmark) // только 11 открыт
-	cov(t, r, 11, "0.00")      // пул ушёл живому, не закрытому 10
-	cov(t, r, 10, "-1000.00")  // закрытый остался в долге (списывается отдельно)
+	cov(t, r, 11, "0.00")                                                 // пул ушёл живому, не закрытому 10
+	cov(t, r, 10, "-1000.00")                                             // закрытый остался в долге (списывается отдельно)
 }
 
 // Codex 5.1: adjustment<0 без периода — обязательство → quarantine (не проскакивает).
@@ -163,11 +163,99 @@ func TestAllocate_AdjustmentNegativeNoPeriodQuarantines(t *testing.T) {
 		{ID: 1, ContractID: 10, EntryType: "adjustment", Amount: adec("-1000"), PeriodOK: false},
 	}
 	r := AllocateCoverage(e, map[uint]bool{10: true}, AllocStrictEarmark)
-	if !r.Quarantined {
-		t.Fatal("adjustment<0 без периода должен квантоваться")
+	if !r.QuarantinedContracts[10] {
+		t.Fatal("adjustment<0 без периода должен квантовать договор 10")
 	}
 	if len(r.Coverage) != 0 {
-		t.Errorf("при quarantine Coverage пуст, got %v", r.Coverage)
+		t.Errorf("единственный договор в карантине → Coverage пуст, got %v", r.Coverage)
+	}
+}
+
+// Решение №7: карантин ПЕР-ДОГОВОР — нерезолвленный charge договора 10 морозит ТОЛЬКО 10,
+// сосед 11 того же контрагента решается нормально (раньше морозилась вся (cp,ccy)).
+func TestAllocate_QuarantinePerContractIsolation(t *testing.T) {
+	e := []AllocEntry{
+		{ID: 1, ContractID: 10, EntryType: "charge", Amount: adec("-1000"), PeriodOK: false}, // 10 без периода → карантин
+		{ID: 2, ContractID: 11, EntryType: "charge", Amount: adec("-3000"), PeriodStart: pm("2026-01"), PeriodOK: true},
+		{ID: 3, ContractID: 11, EntryType: "payment", Amount: adec("3000")}, // 11 гасит свой долг
+		{ID: 4, ContractID: 0, EntryType: "payment", Amount: adec("5000")},  // пул
+	}
+	r := AllocateCoverage(e, map[uint]bool{10: true, 11: true}, AllocWalletRelease)
+	if !r.QuarantinedContracts[10] {
+		t.Fatal("договор 10 должен быть в карантине")
+	}
+	if r.QuarantinedContracts[11] {
+		t.Fatal("договор 11 НЕ должен быть в карантине")
+	}
+	if _, ok := r.Coverage[10]; ok {
+		t.Errorf("карантинный 10 не должен попадать в Coverage, got %v", r.Coverage[10])
+	}
+	cov(t, r, 11, "0.00") // 11 решён нормально (earmark гасит свой долг)
+	// Пул 5000 нетронут долгами (11 покрыт своим earmark, 10 изолирован) → весь в free pool.
+	if !r.WalletFreePool.Equal(adec("5000")) {
+		t.Errorf("pool = %s, want 5000 (карантинный 10 не тянет пул)", r.WalletFreePool)
+	}
+}
+
+// Решение №7 (Codex 5.1): wallet_release — ПЕРЕПЛАТА карантинного договора НЕ утекает в пул
+// и НЕ гасит долг соседа (его покрытие недостоверно без периода). Самый рискованный сдвиг.
+func TestAllocate_QuarantineSurplusNotReleased(t *testing.T) {
+	e := []AllocEntry{
+		{ID: 1, ContractID: 10, EntryType: "charge", Amount: adec("-1000"), PeriodOK: false}, // 10 карантин
+		{ID: 2, ContractID: 10, EntryType: "payment", Amount: adec("5000")},                  // переплата 10 (изолирована)
+		{ID: 3, ContractID: 11, EntryType: "charge", Amount: adec("-2000"), PeriodStart: pm("2026-01"), PeriodOK: true},
+	}
+	r := AllocateCoverage(e, map[uint]bool{10: true, 11: true}, AllocWalletRelease)
+	if !r.QuarantinedContracts[10] {
+		t.Fatal("10 должен быть в карантине")
+	}
+	cov(t, r, 11, "-2000.00") // долг 11 НЕ погашен переплатой карантинного 10
+	if !r.WalletFreePool.IsZero() {
+		t.Errorf("pool = %s, want 0 (переплата карантинного НЕ в пуле)", r.WalletFreePool)
+	}
+}
+
+// Решение №7 (Codex 5.3): пока карантинный 10 изолирован, untagged-пул гасит долг соседа 11.
+// Детерминизм карантинного пути — проверка инвариантности к перестановке entries.
+func TestAllocate_QuarantinePoolPaysNeighborDeterministic(t *testing.T) {
+	base := []AllocEntry{
+		{ID: 1, ContractID: 10, EntryType: "charge", Amount: adec("-9000"), PeriodOK: false}, // 10 карантин
+		{ID: 2, ContractID: 11, EntryType: "charge", Amount: adec("-2000"), PeriodStart: pm("2026-01"), PeriodOK: true},
+		{ID: 3, ContractID: 0, EntryType: "payment", Amount: adec("2000")}, // пул гасит 11
+	}
+	rev := make([]AllocEntry, len(base))
+	for i := range base {
+		rev[i] = base[len(base)-1-i]
+	}
+	open := map[uint]bool{10: true, 11: true}
+	r1 := AllocateCoverage(base, open, AllocWalletRelease)
+	r2 := AllocateCoverage(rev, open, AllocWalletRelease)
+	for _, r := range []AllocResult{r1, r2} {
+		if !r.QuarantinedContracts[10] {
+			t.Fatal("10 в карантине")
+		}
+		cov(t, r, 11, "0.00") // пул 2000 погасил долг 11
+		if !r.WalletFreePool.IsZero() {
+			t.Errorf("pool = %s, want 0", r.WalletFreePool)
+		}
+	}
+	if !r1.Coverage[11].Equal(r2.Coverage[11]) || !r1.WalletFreePool.Equal(r2.WalletFreePool) {
+		t.Error("недетерминизм карантинного пути при перестановке entries")
+	}
+}
+
+// Решение №7 (Codex 5.4): несколько карантинных договоров одновременно → оба изолированы.
+func TestAllocate_MultipleQuarantined(t *testing.T) {
+	e := []AllocEntry{
+		{ID: 1, ContractID: 10, EntryType: "charge", Amount: adec("-1000"), PeriodOK: false},
+		{ID: 2, ContractID: 11, EntryType: "adjustment", Amount: adec("-500"), PeriodOK: false},
+	}
+	r := AllocateCoverage(e, map[uint]bool{10: true, 11: true}, AllocStrictEarmark)
+	if !r.QuarantinedContracts[10] || !r.QuarantinedContracts[11] {
+		t.Fatal("оба договора должны быть в карантине")
+	}
+	if len(r.Coverage) != 0 {
+		t.Errorf("оба в карантине → Coverage пуст, got %v", r.Coverage)
 	}
 }
 

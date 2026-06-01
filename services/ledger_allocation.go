@@ -36,9 +36,13 @@ type AllocEntry struct {
 
 // AllocResult — итог аллокации одной валюты контрагента.
 type AllocResult struct {
-	Coverage       map[uint]decimal.Decimal // per договор: покрытие (отрицательное = непокрытый долг)
+	Coverage       map[uint]decimal.Decimal // per договор: покрытие (отрицательное = непокрытый долг). НЕ содержит карантинных.
 	WalletFreePool decimal.Decimal          // нераспределённый пул (предоплата без адресата)
-	Quarantined    bool                     // есть debt с нерезолвленным периодом → состояние НЕ менять
+	// QuarantinedContracts — договоры с обязательством без резолвленного периода: их состояние
+	// НЕ меняется (ни suspend, ни restore, ни fulfill — needs_manual_reconcile). Решение №7:
+	// карантин per-ДОГОВОР (раньше один такой charge морозил всю (cp,ccy)) — нерезолвленный
+	// charge изолирует ТОЛЬКО свой договор, остальные договоры контрагента решаются нормально.
+	QuarantinedContracts map[uint]bool
 }
 
 // farFutureFIFO — сентинел для FIFO-упорядочивания долгов БЕЗ датированного начисления
@@ -56,15 +60,20 @@ func isObligation(e AllocEntry) bool {
 // AllocateCoverage — чистая детерминированная аллокация. entries — все проводки (cp, ccy);
 // openContracts — договоры в active|suspended (кандидаты на FIFO-погашение и suspend). Порядок
 // entries НЕ влияет на результат (детерминизм по period_start, charge_id, contract_id).
+//
+// ВНИМАНИЕ вызывающему (Б4 sweep): карантин — PER-ДОГОВОР, НЕ глобальный (решение №7).
+// Проверяй res.QuarantinedContracts[contractID] для КАЖДОГО договора: отсутствие договора в
+// res.Coverage = не делать suspend/restore ТОЛЬКО по нему (needs_manual_reconcile), а НЕ
+// фриз всей единицы (cp,ccy). Соседи контрагента решаются по своему Coverage как обычно.
 func AllocateCoverage(entries []AllocEntry, openContracts map[uint]bool, policy string) AllocResult {
-	res := AllocResult{Coverage: map[uint]decimal.Decimal{}}
+	res := AllocResult{Coverage: map[uint]decimal.Decimal{}, QuarantinedContracts: map[uint]bool{}}
 
-	// Quarantine: непарсируемый период у обязательства (charge/adjustment<0) → ни suspend,
-	// ни restore, ни fulfill (needs_manual_reconcile). Codex 5.1: не только charge.
+	// Quarantine per-ДОГОВОР (решение №7): обязательство (charge/adjustment<0) с нерезолвленным
+	// периодом морозит ТОЛЬКО свой договор (needs_manual_reconcile) — соседи контрагента решаются.
+	// Codex 5.1: не только charge, adjustment<0 тоже обязательство.
 	for _, e := range entries {
 		if isObligation(e) && !e.PeriodOK {
-			res.Quarantined = true
-			return res
+			res.QuarantinedContracts[e.ContractID] = true
 		}
 	}
 
@@ -75,6 +84,12 @@ func AllocateCoverage(entries []AllocEntry, openContracts map[uint]bool, policy 
 	earliestID := map[uint]uint{}            // id старейшего charge (tie-break)
 
 	for _, e := range entries {
+		// Карантинный договор изолируется ЦЕЛИКОМ: его проводки не влияют ни на coverage
+		// соседей, ни на общий пул (без резолвленного периода достоверно посчитать его
+		// покрытие нельзя). contract_id=0 (untagged-пул) карантину не подлежит.
+		if e.ContractID != 0 && res.QuarantinedContracts[e.ContractID] {
+			continue
+		}
 		switch {
 		case isObligation(e): // charge или adjustment<0 на договор → обязательство (period-bound)
 			obligation[e.ContractID] = obligation[e.ContractID].Add(e.Amount.Abs())
@@ -113,7 +128,9 @@ func AllocateCoverage(entries []AllocEntry, openContracts map[uint]bool, policy 
 		all[c] = true
 	}
 	for c := range openContracts {
-		all[c] = true
+		if !res.QuarantinedContracts[c] { // карантинному договору coverage не считаем
+			all[c] = true
+		}
 	}
 	for c := range all {
 		cov := earmark[c].Sub(obligation[c])
