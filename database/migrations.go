@@ -1184,13 +1184,13 @@ func CreateMissingGlobalTables() error {
 		&models.InvoiceItem{},
 		&models.Invoice{},
 		&models.BillingHistory{},
-		&models.Counterparty{},      // контрагент (единый ЛС per контрагент, Ф1)
-		&models.LedgerEntry{},       // лицевой счёт (проводки)
-		&models.LedgerTransfer{},    // переводы между лицевыми счетами (заголовок пары проводок)
-		&models.BillingSuspension{}, // приостановки договоров за долг (П2)
-		&models.BillingHold{},       // зонты отсрочки/обещанного платежа (П3+П4)
-		&models.LedgerImportBatch{}, // батчи Excel-импорта платежей (Ф5, откат пачкой)
-		&models.CurrencyRate{},      // курсы валют по датам (П5 мультивалюта)
+		&models.Counterparty{},             // контрагент (единый ЛС per контрагент, Ф1)
+		&models.LedgerEntry{},              // лицевой счёт (проводки)
+		&models.LedgerTransfer{},           // переводы между лицевыми счетами (заголовок пары проводок)
+		&models.BillingSuspension{},        // приостановки договоров за долг (П2)
+		&models.BillingHold{},              // зонты отсрочки/обещанного платежа (П3+П4)
+		&models.LedgerImportBatch{},        // батчи Excel-импорта платежей (Ф5, откат пачкой)
+		&models.CurrencyRate{},             // курсы валют по датам (П5 мультивалюта)
 		&models.BillingEnforcementAction{}, // B1: физическая блокировка учётки за неоплату (МЕТОД 1)
 		// AxentaAccountSnapshot и AxentaObjectSnapshot теперь тенант-специфичны (IsGlobal: false)
 	}
@@ -1499,6 +1499,23 @@ func ensureBillingSchemaIntegrity() error {
 		if err := ensureIndexExists(check.name, check.table, check.definition, check.unique); err != nil {
 			issues = append(issues, fmt.Sprintf("индекс %s: %v", check.name, err))
 		}
+	}
+
+	// Б3: per-договор debt-suspension индекс. Старый idx_susp_debt_cp (ключ без contract_id →
+	// max 1 активная debt-строка на cp) заменяется на idx_susp_debt_cp_ct с contract_id в ключе:
+	// sweep сможет держать по строке на договор (per-договор блокировка Б4). До Б4 sweep пишет
+	// ContractID=0 → ключ (cp,0) = по-прежнему 1 на cp (анти-stampede сохранён). Explicit-DDL,
+	// т.к. AutoMigrate не доверяем для нетривиальных партиальных индексов на populated таблице.
+	// Порядок: СНАЧАЛА создать новый, ПОТОМ дропнуть старый — иначе при сбое create осталось бы
+	// окно без анти-stampede защиты (Codex MEDIUM). Идемпотентно (CREATE/DROP IF [NOT] EXISTS).
+	if err := ensureIndexExists("idx_susp_debt_cp_ct", "billing_suspensions",
+		"(admin_account_id, company_id, counterparty_id, contract_id) "+
+			"WHERE active AND deleted_at IS NULL AND reason = 'billing_debt' AND counterparty_id <> 0",
+		true); err != nil {
+		issues = append(issues, fmt.Sprintf("индекс idx_susp_debt_cp_ct: %v", err))
+	} else if err := dropIndexIfExists("idx_susp_debt_cp"); err != nil {
+		// старый дропаем ТОЛЬКО после успешного создания нового
+		issues = append(issues, fmt.Sprintf("drop idx_susp_debt_cp: %v", err))
 	}
 
 	if len(issues) > 0 {

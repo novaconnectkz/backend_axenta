@@ -23,9 +23,9 @@ type LedgerEntry struct {
 	CreatedAt time.Time      `json:"created_at"`
 	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
 
-	AdminAccountID uint  `json:"admin_account_id" gorm:"not null;index"`
-	CompanyID      uint  `json:"company_id" gorm:"not null;index"`
-	ContractID     uint  `json:"contract_id" gorm:"not null;index"`
+	AdminAccountID uint `json:"admin_account_id" gorm:"not null;index"`
+	CompanyID      uint `json:"company_id" gorm:"not null;index"`
+	ContractID     uint `json:"contract_id" gorm:"not null;index"`
 	// Денормализованный контрагент (Ф1): баланс агрегируется per-контрагент без cross-schema
 	// JOIN (contracts в tenant, ledger в public). Backfill datafix'ом; 0 до проставления.
 	// Асимметрия: charge остаётся per-договор (ContractID), баланс/платёж — per-контрагент (Ф2).
@@ -87,10 +87,10 @@ type LedgerTransfer struct {
 	// Кросс-валютный перевод (П5 фаза 3): если валюта источника ≠ валюте получателя,
 	// сумма конвертится по курсу. ToAmount/ToCurrency — что зачислено получателю.
 	// Для одновалютного перевода ToAmount=Amount, ToCurrency=Currency, Rate=1.
-	ToAmount   decimal.Decimal `json:"to_amount" gorm:"type:decimal(15,2)"`           // сумма зачисления получателю (в ToCurrency)
-	ToCurrency string          `json:"to_currency" gorm:"type:varchar(3)"`           // валюта получателя
-	Rate       decimal.Decimal `json:"rate" gorm:"type:decimal(18,8)"`               // применённый курс from→to (1 при одной валюте)
-	RateSource string          `json:"rate_source" gorm:"type:varchar(20)"`          // источник курса (cbr_rf|nbk_kz), пусто при одной валюте
+	ToAmount   decimal.Decimal `json:"to_amount" gorm:"type:decimal(15,2)"` // сумма зачисления получателю (в ToCurrency)
+	ToCurrency string          `json:"to_currency" gorm:"type:varchar(3)"`  // валюта получателя
+	Rate       decimal.Decimal `json:"rate" gorm:"type:decimal(18,8)"`      // применённый курс from→to (1 при одной валюте)
+	RateSource string          `json:"rate_source" gorm:"type:varchar(20)"` // источник курса (cbr_rf|nbk_kz), пусто при одной валюте
 
 	Status      string `json:"status" gorm:"not null;default:'completed';type:varchar(20)"` // completed | reversed
 	Description string `json:"description" gorm:"type:text"`
@@ -109,27 +109,30 @@ type BillingSuspension struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
 
-	// Ф3: debt-приостановка per-КОНТРАГЕНТ (одна на контрагента, гасит ВСЕ его client-договоры).
-	// Дуальный партиальный uniqueIndex (анти-дубль при гонке sweep):
-	//   - idx_susp_debt_cp: cp<>0 → ключ (admin,company,counterparty_id), ContractID=0;
+	// Ф3/Б3: debt-приостановка. Дуальный партиальный uniqueIndex (анти-дубль при гонке sweep):
+	//   - idx_susp_debt_cp_ct: cp<>0 → ключ (admin,company,counterparty_id,contract_id);
+	//     Б3 добавил contract_id в ключ → допускает строку НА КАЖДЫЙ договор cp (per-договор
+	//     блокировка Б4). До Б4 sweep пишет ContractID=0 → ключ (cp,0) = по-прежнему 1 на cp.
 	//   - idx_susp_debt_legacy: cp=0 → legacy per-договор (admin,company,contract_id).
 	// Manual-приостановки (reason='manual') под uniq НЕ попадают (WHERE reason='billing_debt').
-	AdminAccountID uint `json:"admin_account_id" gorm:"not null;index;uniqueIndex:idx_susp_debt_cp,where:active AND deleted_at IS NULL AND reason = 'billing_debt' AND counterparty_id <> 0;uniqueIndex:idx_susp_debt_legacy,where:active AND deleted_at IS NULL AND reason = 'billing_debt' AND counterparty_id = 0"`
-	CompanyID      uint `json:"company_id" gorm:"not null;index;uniqueIndex:idx_susp_debt_cp;uniqueIndex:idx_susp_debt_legacy"`
-	ContractID     uint `json:"contract_id" gorm:"not null;index;uniqueIndex:idx_susp_debt_legacy"`
-	CounterpartyID uint `json:"counterparty_id" gorm:"not null;default:0;index;uniqueIndex:idx_susp_debt_cp"`
+	// priority задаёт порядок колонок struct-tag индекса = порядку explicit-DDL
+	// (ensureBillingSchemaIntegrity) — иначе свежая и мигрированная БД разошлись бы по порядку.
+	AdminAccountID uint `json:"admin_account_id" gorm:"not null;index;uniqueIndex:idx_susp_debt_cp_ct,priority:1,where:active AND deleted_at IS NULL AND reason = 'billing_debt' AND counterparty_id <> 0;uniqueIndex:idx_susp_debt_legacy,where:active AND deleted_at IS NULL AND reason = 'billing_debt' AND counterparty_id = 0"`
+	CompanyID      uint `json:"company_id" gorm:"not null;index;uniqueIndex:idx_susp_debt_cp_ct,priority:2;uniqueIndex:idx_susp_debt_legacy"`
+	ContractID     uint `json:"contract_id" gorm:"not null;index;uniqueIndex:idx_susp_debt_legacy;uniqueIndex:idx_susp_debt_cp_ct,priority:4"`
+	CounterpartyID uint `json:"counterparty_id" gorm:"not null;default:0;index;uniqueIndex:idx_susp_debt_cp_ct,priority:3"`
 
-	Reason         string          `json:"reason" gorm:"not null;type:varchar(30);index"` // billing_debt | manual
-	PreviousStatus string          `json:"previous_status" gorm:"type:varchar(20)"`       // статус договора до приостановки
+	Reason         string `json:"reason" gorm:"not null;type:varchar(30);index"` // billing_debt | manual
+	PreviousStatus string `json:"previous_status" gorm:"type:varchar(20)"`       // статус договора до приостановки
 	// Ф3: CSV id договоров, которые ИМЕННО ЭТА debt-строка перевела active→suspended.
 	// Нужен для точного restore: при погашении долга вернуть в active только эти договоры,
 	// не трогая приостановленные по др. причине (нет подписок/ручной bulk). cp-level строка
 	// гасит N договоров — без списка resolve вслепую поднял бы чужие приостановки.
-	AffectedContractIDs string `json:"affected_contract_ids" gorm:"type:text"`
-	DebtAmount     decimal.Decimal `json:"debt_amount" gorm:"type:decimal(15,2)"`         // долг на момент блокировки
-	Active         bool            `json:"active" gorm:"not null;default:true;index"`
-	SuspendedBy    string          `json:"suspended_by" gorm:"type:varchar(100)"` // scheduler | username
-	ResolvedAt     *time.Time      `json:"resolved_at"`
+	AffectedContractIDs string          `json:"affected_contract_ids" gorm:"type:text"`
+	DebtAmount          decimal.Decimal `json:"debt_amount" gorm:"type:decimal(15,2)"` // долг на момент блокировки
+	Active              bool            `json:"active" gorm:"not null;default:true;index"`
+	SuspendedBy         string          `json:"suspended_by" gorm:"type:varchar(100)"` // scheduler | username
+	ResolvedAt          *time.Time      `json:"resolved_at"`
 }
 
 func (BillingSuspension) TableName() string { return "billing_suspensions" }
@@ -166,9 +169,9 @@ type BillingHold struct {
 	Amount   decimal.Decimal `json:"amount" gorm:"type:decimal(15,2);default:0"`       // promise: обещанная сумма; deferral: 0
 	Currency string          `json:"currency" gorm:"not null;default:'RUB';type:varchar(3)"`
 
-	HoldUntil time.Time `json:"hold_until" gorm:"not null;index"`                         // до какой даты зонт держит
+	HoldUntil time.Time `json:"hold_until" gorm:"not null;index"`                               // до какой даты зонт держит
 	Status    string    `json:"status" gorm:"not null;default:'active';type:varchar(20);index"` // active | fulfilled | expired | cancelled
-	Active    bool      `json:"active" gorm:"not null;default:true;index"`               // = (status==active), для partial-index
+	Active    bool      `json:"active" gorm:"not null;default:true;index"`                      // = (status==active), для partial-index
 
 	DebtAtCreate decimal.Decimal `json:"debt_at_create" gorm:"type:decimal(15,2);default:0"` // долг на момент создания (отчёт)
 	Reason       string          `json:"reason" gorm:"type:text"`
@@ -192,7 +195,7 @@ type LedgerImportBatch struct {
 	AdminAccountID uint `json:"admin_account_id" gorm:"not null;index"`
 	CompanyID      uint `json:"company_id" gorm:"not null;index"`
 
-	Source       string          `json:"source" gorm:"not null;type:varchar(30);default:'excel'"` // excel|1c|bank|payment_system
+	Source       string          `json:"source" gorm:"not null;type:varchar(30);default:'excel'"`          // excel|1c|bank|payment_system
 	Status       string          `json:"status" gorm:"not null;type:varchar(20);default:'imported';index"` // imported|reversed
 	RowsTotal    int             `json:"rows_total"`
 	RowsImported int             `json:"rows_imported"`
