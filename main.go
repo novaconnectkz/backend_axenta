@@ -247,6 +247,9 @@ func main() {
 	// cutoff backfill — env LEDGER_AUTO_CHARGE_START=YYYY-MM-DD (default вчера).
 	if os.Getenv("ENABLE_LEDGER_CHARGE_SCHEDULER") == "true" {
 		ledgerChargeScheduler := services.NewLedgerChargeScheduler()
+		// B1: физическая блокировка неоплаты (тот же AxentaServerToken-singleton, что в api).
+		// По умолчанию выключена (ENABLE_BILLING_ENFORCEMENT) / shadow (BILLING_ENFORCEMENT_MODE).
+		ledgerChargeScheduler.SetEnforcement(services.NewEnforcementService(axentaServerToken))
 		api.SetLedgerChargeScheduler(ledgerChargeScheduler)
 		if err := ledgerChargeScheduler.Start(); err != nil {
 			log.Printf("⚠️ LedgerChargeScheduler failed to start: %v", err)

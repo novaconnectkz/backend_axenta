@@ -36,6 +36,16 @@ type ContractObject struct {
 	// Повторная привязка возможна только на другой срок (без пересечений)
 	StartDate time.Time  `json:"start_date" gorm:"not null"`   // Дата начала привязки (обычно совпадает с StartDate договора)
 	EndDate   *time.Time `json:"end_date" gorm:"default:NULL"` // Дата окончания привязки (опционально, обычно совпадает с EndDate договора)
+
+	// B0 (enforcement): денормализация GPS-системы и владельца-учётки для физической
+	// блокировки неоплаты. ВНИМАНИЕ: OwnerExternalID — КЭШ на момент backfill, НЕ источник
+	// истины (при MoveAccount объект меняет владельца, строка не реконсилится) → enforcement
+	// резолвит владельца на лету из tenant-снапшота, эту колонку лишь сверяет (CacheMismatch).
+	// Наполняется только для Axenta (object_id=external_object_id); wialon/skif/gelios
+	// client-связи договор→юнит нет → остаются source='axenta'-дефолтом до этапа B-link.
+	Source            string `json:"source" gorm:"type:varchar(20);default:'axenta';index"` // axenta|wialon|skif|gelios
+	OwnerConnectionID uint   `json:"owner_connection_id" gorm:"not null;default:0;index"`   // 0 для axenta; connection для прочих
+	OwnerExternalID   string `json:"owner_external_id" gorm:"type:varchar(128);index"`      // КЭШ владельца-учётки (account_external_id)
 }
 
 // TableName задает имя таблицы для модели ContractObject

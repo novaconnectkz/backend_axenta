@@ -1191,6 +1191,7 @@ func CreateMissingGlobalTables() error {
 		&models.BillingHold{},       // зонты отсрочки/обещанного платежа (П3+П4)
 		&models.LedgerImportBatch{}, // батчи Excel-импорта платежей (Ф5, откат пачкой)
 		&models.CurrencyRate{},      // курсы валют по датам (П5 мультивалюта)
+		&models.BillingEnforcementAction{}, // B1: физическая блокировка учётки за неоплату (МЕТОД 1)
 		// AxentaAccountSnapshot и AxentaObjectSnapshot теперь тенант-специфичны (IsGlobal: false)
 	}
 

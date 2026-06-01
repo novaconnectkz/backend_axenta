@@ -35,12 +35,17 @@ import (
 //   - ContractObject.status историчен только по created_at/deleted_at + привязке
 //     start_date/end_date (сам столбец status не версионируется).
 type LedgerChargeScheduler struct {
-	cron      *cron.Cron
-	db        *gorm.DB
-	rateSvc   *CurrencyRateService // конверсия валют при начислении (П5 фаза 2)
-	isRunning bool
-	lastRun   time.Time
+	cron        *cron.Cron
+	db          *gorm.DB
+	rateSvc     *CurrencyRateService // конверсия валют при начислении (П5 фаза 2)
+	enforcement *EnforcementService  // B1: физическая блокировка учётки за неоплату (nil → no-op)
+	isRunning   bool
+	lastRun     time.Time
 }
+
+// SetEnforcement подключает B1-enforcement (вызывается из main.go одним общим
+// AxentaServerToken). nil/не вызван → хуки enforcement — no-op.
+func (s *LedgerChargeScheduler) SetEnforcement(e *EnforcementService) { s.enforcement = e }
 
 // advisory-lock ключ, чтобы два прогона (cron + ручной триггер) не пересеклись.
 const ledgerChargeLockKey int64 = 778811
@@ -182,6 +187,10 @@ func (s *LedgerChargeScheduler) RunSuspensionSweep(companies []models.Company) {
 	}
 	if suspended > 0 || resolved > 0 {
 		log.Printf("🔒 SuspensionSweep: приостановлено=%d, снято=%d", suspended, resolved)
+	}
+	// B1: дотянуть недо-выполненные физблоки (physical_ok=false) вне транзита active→suspended.
+	if s.enforcement != nil {
+		s.enforcement.ReassertPending()
 	}
 }
 
@@ -404,6 +413,9 @@ func (s *LedgerChargeScheduler) sweepCompanySuspensions(company models.Company) 
 			})
 			if err == nil {
 				suspended += len(u.activeIDs)
+				if s.enforcement != nil {
+					s.enforcement.Enforce(susp, tenantDB) // B1: физблок (shadow/live); не возвращает error — физика не откатывает CRM-статус
+				}
 			}
 		case !inDebt && hasActive:
 			// Долг погашен → снять приостановку + вернуть в 'active' ТОЛЬКО договоры, которые
@@ -426,6 +438,9 @@ func (s *LedgerChargeScheduler) sweepCompanySuspensions(company models.Company) 
 			})
 			if err == nil {
 				resolved += len(restoreIDs)
+				if s.enforcement != nil {
+					s.enforcement.Reactivate(active) // B1: физразблок наших block-строк
+				}
 			}
 		}
 	}

@@ -206,3 +206,36 @@ type LedgerImportBatch struct {
 }
 
 func (LedgerImportBatch) TableName() string { return "ledger_import_batches" }
+
+// BillingEnforcementAction — B1: per-target запись физической блокировки/разблокировки
+// учётки в GPS-системе (МЕТОД 1 — учётка целиком). Строка на (suspension, system, account).
+// Отдельная таблица (не JSON в suspension): нужны per-target строки для идемпотентного
+// re-assert (physical_ok=false) и различения billing-блока от ручной деактивации оператором.
+// SHADOW-first: при mode='shadow' строка пишется (physical_ok=false), реальный API НЕ вызывается.
+// Подробности и blast-radius — wiki/concepts/billing-enforcement-layer.
+type BillingEnforcementAction struct {
+	ID        uint           `json:"id" gorm:"primarykey"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
+
+	// Цель: одна активная строка на (suspension, system, connection, account).
+	SuspensionID      uint   `json:"suspension_id" gorm:"not null;index;uniqueIndex:idx_enf_target"`
+	CompanyID         uint   `json:"company_id" gorm:"not null;index"`
+	Level             string `json:"level" gorm:"type:varchar(10);not null;default:'account'"` // B1: всегда 'account' (МЕТОД 2 не делаем)
+	System            string `json:"system" gorm:"type:varchar(20);not null;uniqueIndex:idx_enf_target"`
+	ConnectionID      uint   `json:"connection_id" gorm:"not null;default:0;uniqueIndex:idx_enf_target"`
+	ExternalAccountID string `json:"external_account_id" gorm:"type:varchar(128);not null;uniqueIndex:idx_enf_target"`
+
+	Action          string     `json:"action" gorm:"type:varchar(10);not null"`         // block | unblock
+	Mode            string     `json:"mode" gorm:"type:varchar(10);not null"`           // shadow | live
+	PhysicalOK      bool       `json:"physical_ok" gorm:"not null;default:false;index"` // true ТОЛЬКО после реального успеха в live
+	ManualOverride  bool       `json:"manual_override" gorm:"not null;default:false"`   // внешнее состояние расходится с решением → не авто-реверсить
+	LastError       string     `json:"last_error" gorm:"type:text"`
+	DecisionVersion int        `json:"decision_version" gorm:"not null;default:1"`
+	ForeignObjects  int        `json:"foreign_objects" gorm:"default:0"` // чужие объекты той же учётки (blast radius)
+	CacheMismatch   bool       `json:"cache_mismatch" gorm:"default:false"`
+	EnforcedAt      *time.Time `json:"enforced_at"`
+}
+
+func (BillingEnforcementAction) TableName() string { return "billing_enforcement_actions" }
