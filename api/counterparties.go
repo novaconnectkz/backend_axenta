@@ -166,28 +166,56 @@ func GetCounterpartyBalance(c *gin.Context) {
 	}
 	charged, paid := ledgerBreakdown(0, cp.ID, adminAccountID, companyID) // cp<>0 → агрегат контрагента
 	balance := paid.Sub(charged)
-	debt := decimal.Zero
-	if balance.IsNegative() {
-		debt = balance.Abs()
-	}
 	// Кол-во client-договоров контрагента (tenant-схема текущей компании).
 	var contractsCount int64
 	if tenantDB := middleware.GetTenantDB(c); tenantDB != nil {
 		tenantDB.Model(&models.Contract{}).
 			Where("counterparty_id = ? AND deleted_at IS NULL", cp.ID).Count(&contractsCount)
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{
+	data := gin.H{
 		"counterparty_id": cp.ID,
 		"name":            cp.Name,
-		"balance":         balance.StringFixed(2),
 		"total_charged":   charged.StringFixed(2),
 		"total_paid":      paid.StringFixed(2),
-		"is_debt":         balance.IsNegative(),
-		"debt_amount":     debt.StringFixed(2),
-		"credit_limit":    cp.CreditLimit.StringFixed(2),
+		"credit_limit":    cp.CreditLimit.StringFixed(2), // порог применяется per-currency
 		"billing_mode":    cp.BillingMode,
 		"contracts_count": contractsCount,
-	}})
+	}
+	// Мультивалюта: balance — свёртка по курсу в доминирующую валюту (или суб-баланс этой
+	// валюты при stale). Одновалютный (прод) — прежний balance=paid−charged, без новых полей.
+	subs := ledgerBreakdownByCurrency(0, cp.ID, adminAccountID, companyID)
+	if len(subs) > 1 {
+		target := "RUB"
+		maxCharged := decimal.Zero
+		for _, s := range subs {
+			if s.Charged.GreaterThan(maxCharged) {
+				maxCharged = s.Charged
+				target = contractCurrency(s.Currency)
+			}
+		}
+		data["multicurrency"] = true
+		data["sub_balances"] = subs
+		data["presentation_currency"] = target
+		if pres, ok := presentBalance(subs, target, companyID); ok {
+			balance = pres
+			data["presentation_only"] = true
+		} else {
+			balance = decimal.Zero
+			for _, s := range subs {
+				if contractCurrency(s.Currency) == target {
+					balance = s.Balance
+				}
+			}
+		}
+	}
+	debt := decimal.Zero
+	if balance.IsNegative() {
+		debt = balance.Abs()
+	}
+	data["balance"] = balance.StringFixed(2)
+	data["is_debt"] = balance.IsNegative()
+	data["debt_amount"] = debt.StringFixed(2)
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": data})
 }
 
 // CreateCounterparty — POST /api/auth/counterparties

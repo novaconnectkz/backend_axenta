@@ -173,6 +173,14 @@ func PostLedgerImportBatch(c *gin.Context) {
 	if currency == "" {
 		currency = "RUB"
 	}
+	// Whitelist валюты: платёж в не-поддерживаемой валюте создал бы суб-баланс, который
+	// никакой charge не гасит → ложная приостановка (валюто-корректность).
+	switch currency {
+	case "RUB", "USD", "EUR", "KZT":
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "недопустимая валюта (RUB|USD|EUR|KZT)"})
+		return
+	}
 	username, _ := c.Get("username")
 	createdBy, _ := username.(string)
 
@@ -185,6 +193,36 @@ func PostLedgerImportBatch(c *gin.Context) {
 			Pluck("id", &ids)
 		for _, id := range ids {
 			validCP[id] = true
+		}
+	}
+
+	// Валюты договоров каждого контрагента (cross-schema: contracts в tenant-схеме).
+	// Платёж в валюте, которой нет ни у одного договора cp, не гасит долг и создаёт
+	// фантомный суб-баланс → строку пропускаем (см. per-row проверку ниже).
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB == nil {
+		tenantDB = database.DB
+	}
+	cpCcy := map[uint]map[string]bool{}
+	{
+		ids := make([]uint, 0, len(validCP))
+		for id := range validCP {
+			ids = append(ids, id)
+		}
+		if len(ids) > 0 {
+			var rows []struct {
+				CounterpartyID uint
+				Currency       string
+			}
+			tenantDB.Table("contracts").
+				Select("counterparty_id, currency").
+				Where("counterparty_id IN ? AND deleted_at IS NULL", ids).Scan(&rows)
+			for _, r := range rows {
+				if cpCcy[r.CounterpartyID] == nil {
+					cpCcy[r.CounterpartyID] = map[string]bool{}
+				}
+				cpCcy[r.CounterpartyID][contractCurrency(r.Currency)] = true
+			}
 		}
 	}
 
@@ -212,6 +250,14 @@ func PostLedgerImportBatch(c *gin.Context) {
 			if !validCP[row.CounterpartyID] {
 				skipped++
 				errorsList = append(errorsList, fmt.Sprintf("контрагент %d вне компании", row.CounterpartyID))
+				continue
+			}
+			// Валюто-сверка: платёж в валюте, которой нет ни у одного договора cp, не гасит
+			// долг → фантомный суб-баланс → ложная приостановка. Пропускаем строку (не валим
+			// весь батч). cp без договоров (len 0) — пропускаем проверку (платёж на уровне ЛС).
+			if ccs := cpCcy[row.CounterpartyID]; len(ccs) > 0 && !ccs[currency] {
+				skipped++
+				errorsList = append(errorsList, fmt.Sprintf("контрагент %d: валюта платежа %s не совпадает с валютой его договоров", row.CounterpartyID, currency))
 				continue
 			}
 			entryDate := time.Now().UTC()

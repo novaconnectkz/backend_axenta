@@ -55,6 +55,43 @@ func TestCounterpartyBalanceAggregates(t *testing.T) {
 	assert.Equal(t, "13000.00", paid.StringFixed(2))
 }
 
+// Валюто-fix: USD-charge и RUB-payment НЕ схлопываются в плоский SUM.
+// До фикса counterpartyBalance давал 0 (−100 USD + 100 RUB), скрывая долг.
+func TestLedgerBalancePerCurrencyNoCollapse(t *testing.T) {
+	if err := database.SetupTestDatabase(); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	defer database.CleanupTestDatabase()
+	if err := database.DB.AutoMigrate(&models.LedgerEntry{}, &models.Counterparty{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	const admin, company, cp = uint(1), uint(1), uint(9)
+	mk := func(contractID uint, typ string, amount float64, ccy string) {
+		database.DB.Create(&models.LedgerEntry{
+			AdminAccountID: admin, CompanyID: company, ContractID: contractID, CounterpartyID: cp,
+			EntryType: typ, Amount: decimal.NewFromFloat(amount), Currency: ccy,
+			Source: "manual", EntryDate: time.Now().UTC(),
+		})
+	}
+	mk(301, "charge", -100, "USD")  // USD-долг
+	mk(302, "payment", 100, "RUB")  // RUB-платёж (другой договор/валюта)
+
+	// Per-currency разбивка: ДВЕ строки, НЕ схлопнуты в 0.
+	subs := ledgerBreakdownByCurrency(0, cp, admin, company)
+	byCcy := map[string]decimal.Decimal{}
+	for _, s := range subs {
+		byCcy[s.Currency] = s.Balance
+	}
+	assert.Len(t, subs, 2, "USD и RUB должны быть отдельными суб-балансами")
+	assert.Equal(t, "-100.00", byCcy["USD"].StringFixed(2), "USD-долг виден")
+	assert.Equal(t, "100.00", byCcy["RUB"].StringFixed(2), "RUB-переплата отдельно")
+
+	// balanceForContractCcy фильтрует по валюте: USD-договор видит только свой USD-долг.
+	assert.Equal(t, "-100.00", balanceForContractCcy(301, cp, admin, company, "USD").StringFixed(2))
+	assert.Equal(t, "100.00", balanceForContractCcy(302, cp, admin, company, "RUB").StringFixed(2))
+}
+
 // Ф4: resolveOrCreateCounterparty — find-or-create по идентичности договора (закрывает HIGH-3).
 func TestResolveOrCreateCounterparty(t *testing.T) {
 	if err := database.SetupTestDatabase(); err != nil {

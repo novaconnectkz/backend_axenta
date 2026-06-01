@@ -299,17 +299,6 @@ func (s *LedgerChargeScheduler) sweepCompanySuspensions(company models.Company) 
 	}
 
 	for _, u := range units {
-		// Баланс единицы (по контрагенту/договору) СТРОГО в рамках company+admin (Codex critical).
-		var bal decimal.Decimal
-		balQ := pub.Table("public.ledger_entries").
-			Where("admin_account_id = ? AND company_id = ? AND deleted_at IS NULL", u.adminID, company.ID)
-		if u.cpID != 0 {
-			balQ = balQ.Where("counterparty_id = ?", u.cpID)
-		} else {
-			balQ = balQ.Where("contract_id = ?", u.contractID)
-		}
-		balQ.Select("COALESCE(SUM(amount),0)").Scan(&bal)
-
 		creditLimit := u.creditLimit // cp: авторитетный лимит контрагента (fallback на договор)
 		if u.cpID != 0 {
 			var cp models.Counterparty
@@ -319,7 +308,37 @@ func (s *LedgerChargeScheduler) sweepCompanySuspensions(company models.Company) 
 				creditLimit = cp.CreditLimit
 			}
 		}
-		threshold := creditLimit.Neg() // допустимый минус: balance < −creditLimit → блок
+		threshold := creditLimit.Neg() // допустимый минус: balance < −creditLimit → блок (в КАЖДОЙ валюте)
+
+		// Per-currency суб-балансы единицы (СТРОГО в рамках company+admin, Codex critical).
+		// Валюто-слепой SUM схлопывал бы USD-charge и RUB-payment — блокировка считается
+		// по каждой валюте отдельно, БЕЗ конверсии (курс не должен (раз)блокировать).
+		var subRows []struct {
+			Currency string
+			Bal      decimal.Decimal
+		}
+		balQ := pub.Table("public.ledger_entries").
+			Where("admin_account_id = ? AND company_id = ? AND deleted_at IS NULL", u.adminID, company.ID)
+		if u.cpID != 0 {
+			balQ = balQ.Where("counterparty_id = ?", u.cpID)
+		} else {
+			balQ = balQ.Where("contract_id = ?", u.contractID)
+		}
+		balQ.Select("currency, COALESCE(SUM(amount),0) AS bal").Group("currency").Scan(&subRows)
+
+		// Единица в долге ⇔ хотя бы один суб-баланс < −creditLimit. worstBal — самый
+		// глубокий минус (для отчётного DebtAmount и lifecycle зонта). inDebt считается
+		// ОДИН раз — иначе зонт и suspend разъедутся (один на bal, другой на per-currency).
+		inDebt := false
+		worstBal := decimal.Zero
+		for _, sr := range subRows {
+			if sr.Bal.LessThan(threshold) {
+				inDebt = true
+				if sr.Bal.LessThan(worstBal) {
+					worstBal = sr.Bal
+				}
+			}
+		}
 
 		// Lifecycle зонта (П3/П4) ДО решения о приостановке. Решение — pure holdLifecycleAction.
 		var hold models.BillingHold
@@ -331,7 +350,7 @@ func (s *LedgerChargeScheduler) sweepCompanySuspensions(company models.Company) 
 		}
 		holdActive := false
 		if hasHold {
-			switch holdLifecycleAction(bal, threshold, hold.HoldUntil, now) {
+			switch holdLifecycleActionMulti(inDebt, worstBal, threshold, hold.HoldUntil, now) {
 			case holdFulfill:
 				// Atomic WHERE active=true; ошибку логируем (не глотаем — Codex #7).
 				if e := pub.Table("public.billing_holds").Where("id = ? AND active = ?", hold.ID, true).
@@ -366,12 +385,12 @@ func (s *LedgerChargeScheduler) sweepCompanySuspensions(company models.Company) 
 		hasActive := suspQ.First(&active).Error == nil
 
 		switch {
-		case bal.LessThan(threshold) && !hasActive && !holdActive && len(u.activeIDs) > 0:
+		case inDebt && !hasActive && !holdActive && len(u.activeIDs) > 0:
 			// Долг → приостановить ВСЕ активные договоры единицы (единый ЛС). Одна suspension-строка
 			// (per-контрагент или legacy) + статусы договоров — в одной tx (атомарность, Codex H1).
 			susp := models.BillingSuspension{
 				AdminAccountID: u.adminID, CompanyID: company.ID, ContractID: u.contractID, CounterpartyID: u.cpID,
-				Reason: "billing_debt", PreviousStatus: "active", DebtAmount: bal.Abs(),
+				Reason: "billing_debt", PreviousStatus: "active", DebtAmount: worstBal.Abs(),
 				Active: true, SuspendedBy: "scheduler",
 				AffectedContractIDs: joinUintCSV(u.activeIDs), // точный restore при resolve
 			}
@@ -386,7 +405,7 @@ func (s *LedgerChargeScheduler) sweepCompanySuspensions(company models.Company) 
 			if err == nil {
 				suspended += len(u.activeIDs)
 			}
-		case !bal.LessThan(threshold) && hasActive:
+		case !inDebt && hasActive:
 			// Долг погашен → снять приостановку + вернуть в 'active' ТОЛЬКО договоры, которые
 			// ИМЕННО ЭТА строка приостановила (AffectedContractIDs) — не трогаем приостановленные
 			// по др. причине (нет подписок/ручной bulk). Codex HIGH-2.
@@ -1312,6 +1331,17 @@ func holdLifecycleAction(balance, threshold decimal.Decimal, holdUntil, now time
 		return holdExpire
 	}
 	return holdKeep
+}
+
+// holdLifecycleActionMulti — per-currency обёртка над holdLifecycleAction (сигнатуру
+// pure-функции НЕ меняем, её table-тест остаётся валиден). inDebt уже посчитан по всем
+// суб-балансам единицы (хотя бы один < threshold). Не в долгу → fulfill (передаём
+// threshold==threshold → !LessThan → fulfill); в долгу → решает срок зонта по worstBal.
+func holdLifecycleActionMulti(inDebt bool, worstBal, threshold decimal.Decimal, holdUntil, now time.Time) holdAction {
+	if !inDebt {
+		return holdLifecycleAction(threshold, threshold, holdUntil, now)
+	}
+	return holdLifecycleAction(worstBal, threshold, holdUntil, now)
 }
 
 // --- helpers ---

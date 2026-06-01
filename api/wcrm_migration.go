@@ -1018,9 +1018,14 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 				amount := decimal.NewFromFloat(rec.Balance) // знаковый
 				// Ф2: денорм counterparty_id первичного договора (0 если контрагент ещё не
 				// назначен — баланс тогда per-договор; повторный datafix подхватит позже).
-				var primaryCP uint
+				var prim struct {
+					CounterpartyID uint
+					Currency       string
+				}
 				tx.Table(fmt.Sprintf("tenant_%d.contracts", wcrmTargetTenantID)).
-					Select("counterparty_id").Where("id = ?", primaryContractID).Scan(&primaryCP)
+					Select("counterparty_id, currency").Where("id = ?", primaryContractID).Scan(&prim)
+				primaryCP := prim.CounterpartyID
+				primaryCcy := contractCurrency(prim.Currency)
 				var existsCount int64
 				tx.Model(&models.LedgerEntry{}).
 					Where("admin_account_id = ? AND company_id = ? AND source = 'migration' AND external_id = ? AND deleted_at IS NULL",
@@ -1033,7 +1038,7 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 						CounterpartyID: primaryCP,
 						EntryType:      "migration_balance",
 						Amount:         amount,
-						Currency:       "RUB",
+						Currency:       primaryCcy,
 						Source:         "migration",
 						ExternalID:     ledExtID,
 						Description:    "Импорт остатка лицевого счёта из WCRM",
@@ -1047,7 +1052,7 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 					if err := tx.Model(&models.LedgerEntry{}).
 						Where("admin_account_id = ? AND company_id = ? AND source = 'migration' AND external_id = ? AND deleted_at IS NULL",
 							adminAccountID, wcrmTargetTenantID, ledExtID).
-						Updates(map[string]interface{}{"amount": amount, "counterparty_id": primaryCP}).Error; err != nil {
+						Updates(map[string]interface{}{"amount": amount, "counterparty_id": primaryCP, "currency": primaryCcy}).Error; err != nil {
 						return fmt.Errorf("update ledger migration_balance: %w", err)
 					}
 				}

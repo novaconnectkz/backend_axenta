@@ -2048,8 +2048,11 @@ func GetContractBillingBreakdown(c *gin.Context) {
 	// это потребление, их сюда НЕ включаем, иначе уже списанное «съедало» бы оплачено.
 	// «К оплате» = остаток стоимости после оплаты = max(0, стоимость − оплачено).
 	var ledgerPaid decimal.Decimal
+	// company_id обязателен (contract_id не уникален между tenant-схемами одного admin —
+	// латентный cross-tenant SUM). currency — «оплачено» считаем в валюте договора.
 	database.DB.Table("public.ledger_entries").
-		Where("contract_id = ? AND admin_account_id = ? AND amount > 0 AND deleted_at IS NULL", uint(contractID), adminAccountID).
+		Where("contract_id = ? AND admin_account_id = ? AND company_id = ? AND amount > 0 AND currency = ? AND deleted_at IS NULL",
+			uint(contractID), adminAccountID, contract.CompanyID, contractCurrency(contract.Currency)).
 		Select("COALESCE(SUM(amount),0)").Scan(&ledgerPaid)
 	totalPaid = ledgerPaid
 	totalFuture = totalAmount.Sub(totalPaid)

@@ -66,15 +66,15 @@ func PostLedgerChargeRun(c *gin.Context) {
 // Проводки иммутабельны (правка — reversal-проводкой).
 // ============================================================================
 
-// ledgerBalance считает баланс договора как сумму проводок (источник правды).
-// admin_account_id обязателен: ledger в public, contract_id из разных tenant
-// могут совпадать — без admin-фильтра балансы смешались бы между компаниями.
-func ledgerBalance(contractID, adminAccountID uint) decimal.Decimal {
-	var sum decimal.Decimal
-	database.DB.Model(&models.LedgerEntry{}).
-		Where("contract_id = ? AND admin_account_id = ? AND deleted_at IS NULL", contractID, adminAccountID).
-		Select("COALESCE(SUM(amount), 0)").Scan(&sum)
-	return sum
+// contractCurrency — валюта проводки = валюта договора, с fallback на RUB для
+// пустого значения (legacy-договоры без явной Currency). Единая точка fallback:
+// charge уже пишет валюту договора (см. chargeSubscription), payment/import/hold
+// раньше хардкодили "RUB" — валюто-слепой баланс. Подробности — concepts/multicurrency.
+func contractCurrency(ccy string) string {
+	if ccy == "" {
+		return "RUB"
+	}
+	return ccy
 }
 
 // ── Ф2: баланс per-контрагент (единый лицевой счёт) ─────────────────────────────
@@ -109,14 +109,96 @@ func balanceForContract(contractID, counterpartyID, adminAccountID, companyID ui
 	return sum
 }
 
-// contractLedgerKeys загружает (counterparty_id, company_id) договора из tenant-схемы —
-// для резолва per-контрагент баланса в хендлерах, у которых на входе contract_id.
-func contractLedgerKeys(tenantDB *gorm.DB, contractID uint) (counterpartyID, companyID uint, ok bool) {
-	var ct models.Contract
-	if err := tenantDB.Select("id, counterparty_id, company_id").First(&ct, contractID).Error; err != nil {
-		return 0, 0, false
+// balanceForContractCcy — суб-баланс лицевого счёта в КОНКРЕТНОЙ валюте.
+// Как balanceForContract, но с фильтром currency=ccy: для money-path ответов
+// (new_balance/from_balance/to_balance), где смешивать валюты нельзя (валюто-слепой
+// SUM схлопнул бы USD-charge и RUB-payment). cp<>0 → по контрагенту, иначе по договору.
+func balanceForContractCcy(contractID, counterpartyID, adminAccountID, companyID uint, ccy string) decimal.Decimal {
+	ccy = contractCurrency(ccy)
+	q := database.DB.Model(&models.LedgerEntry{}).
+		Where("admin_account_id = ? AND company_id = ? AND currency = ? AND deleted_at IS NULL",
+			adminAccountID, companyID, ccy)
+	if counterpartyID != 0 {
+		q = q.Where("counterparty_id = ?", counterpartyID)
+	} else {
+		q = q.Where("contract_id = ?", contractID)
 	}
-	return ct.CounterpartyID, ct.CompanyID, true
+	var sum decimal.Decimal
+	q.Select("COALESCE(SUM(amount), 0)").Scan(&sum)
+	return sum
+}
+
+// CurrencyBreakdown — суб-баланс единицы (контрагент/договор) в одной валюте.
+type CurrencyBreakdown struct {
+	Currency string          `json:"currency"`
+	Charged  decimal.Decimal `json:"charged"`
+	Paid     decimal.Decimal `json:"paid"`
+	Balance  decimal.Decimal `json:"balance"` // paid - charged
+}
+
+// ledgerBreakdownByCurrency — баланс единицы, разложенный по валютам (GROUP BY currency).
+// Один договор одновалютен; мультивалюта возникает только у контрагента с договорами
+// в разных валютах. Источник для презентации и для валюто-корректного решения о блокировке.
+func ledgerBreakdownByCurrency(contractID, counterpartyID, adminAccountID, companyID uint) []CurrencyBreakdown {
+	var rows []struct {
+		Currency string
+		Charged  decimal.Decimal
+		Paid     decimal.Decimal
+	}
+	q := database.DB.Model(&models.LedgerEntry{}).
+		Where("admin_account_id = ? AND company_id = ? AND deleted_at IS NULL", adminAccountID, companyID)
+	if counterpartyID != 0 {
+		q = q.Where("counterparty_id = ?", counterpartyID)
+	} else {
+		q = q.Where("contract_id = ?", contractID)
+	}
+	q.Select("currency, COALESCE(SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END),0) AS charged, " +
+		"COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END),0) AS paid").
+		Group("currency").Scan(&rows)
+	out := make([]CurrencyBreakdown, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, CurrencyBreakdown{Currency: r.Currency, Charged: r.Charged, Paid: r.Paid, Balance: r.Paid.Sub(r.Charged)})
+	}
+	return out
+}
+
+// contractLedgerKeys загружает (counterparty_id, company_id, currency) договора из
+// tenant-схемы — для резолва per-контрагент баланса и валюты презентации в хендлерах,
+// у которых на входе contract_id.
+func contractLedgerKeys(tenantDB *gorm.DB, contractID uint) (counterpartyID, companyID uint, currency string, ok bool) {
+	var ct models.Contract
+	if err := tenantDB.Select("id, counterparty_id, company_id, currency").First(&ct, contractID).Error; err != nil {
+		return 0, 0, "", false
+	}
+	return ct.CounterpartyID, ct.CompanyID, ct.Currency, true
+}
+
+// presentBalance — презентационная свёртка суб-балансов в одну валюту по курсу на
+// СЕГОДНЯ (для UI). Возвращает (0,false), если для какой-то валюты курс отсутствует
+// или устарел — тогда вызывающий показывает суб-баланс валюты договора, НЕ обнуляя.
+// ВАЖНО: презентация НИКОГДА не участвует в решении о блокировке (там — без конверсии).
+func presentBalance(subs []CurrencyBreakdown, targetCcy string, companyID uint) (decimal.Decimal, bool) {
+	targetCcy = contractCurrency(targetCcy)
+	rateSource := "cbr_rf"
+	var bs models.BillingSettings
+	if database.DB.Table("public.billing_settings").Where("company_id = ?", companyID).
+		Select("rate_source").First(&bs).Error == nil && bs.RateSource != "" {
+		rateSource = bs.RateSource
+	}
+	total := decimal.Zero
+	for _, sb := range subs {
+		ccy := contractCurrency(sb.Currency)
+		if ccy == targetCcy {
+			total = total.Add(sb.Balance)
+			continue
+		}
+		r, _, stale, err := currencyRateService().GetConversionRate(time.Now().UTC(), ccy, targetCcy, rateSource)
+		if err != nil || stale || r.LessThanOrEqual(decimal.Zero) {
+			return decimal.Zero, false
+		}
+		total = total.Add(sb.Balance.Mul(r))
+	}
+	return total.Round(2), true
 }
 
 // GetLedgerBalance — GET /api/auth/ledger/balance/:contract_id
@@ -142,22 +224,44 @@ func GetLedgerBalance(c *gin.Context) {
 	if tenantDB == nil {
 		tenantDB = database.DB
 	}
-	cpID, companyID, _ := contractLedgerKeys(tenantDB, uint(contractID))
+	cpID, companyID, ccy, _ := contractLedgerKeys(tenantDB, uint(contractID))
 	charged, paid := ledgerBreakdown(uint(contractID), cpID, adminAccountID, companyID)
 	balance := paid.Sub(charged)
+	data := gin.H{
+		"contract_id":     contractID,
+		"counterparty_id": cpID, // 0 = вне модели контрагентов (баланс per-договор)
+		"total_charged":   charged.StringFixed(2),
+		"total_paid":      paid.StringFixed(2),
+	}
+	// Мультивалюта: balance — презентационная свёртка по курсу (или суб-баланс валюты
+	// договора при stale-курсе). Одновалютный случай (прод сегодня) идёт прежним путём —
+	// balance=paid−charged, новые поля не добавляются → FE-контракт не меняется.
+	subs := ledgerBreakdownByCurrency(uint(contractID), cpID, adminAccountID, companyID)
+	if len(subs) > 1 {
+		ccy = contractCurrency(ccy)
+		data["multicurrency"] = true
+		data["sub_balances"] = subs
+		data["presentation_currency"] = ccy
+		if pres, ok := presentBalance(subs, ccy, companyID); ok {
+			balance = pres
+			data["presentation_only"] = true
+		} else {
+			balance = decimal.Zero
+			for _, s := range subs {
+				if contractCurrency(s.Currency) == ccy {
+					balance = s.Balance
+				}
+			}
+		}
+	}
 	debtAmount := decimal.Zero
 	if balance.IsNegative() {
 		debtAmount = balance.Abs()
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{
-		"contract_id":     contractID,
-		"counterparty_id": cpID, // 0 = вне модели контрагентов (баланс per-договор)
-		"balance":         balance.StringFixed(2), // >0 переплата, <0 долг
-		"total_charged":   charged.StringFixed(2),
-		"total_paid":      paid.StringFixed(2),
-		"is_debt":         balance.IsNegative(),
-		"debt_amount":     debtAmount.StringFixed(2), // долг только если balance<0, иначе 0
-	}})
+	data["balance"] = balance.StringFixed(2)       // >0 переплата, <0 долг
+	data["is_debt"] = balance.IsNegative()
+	data["debt_amount"] = debtAmount.StringFixed(2) // долг только если balance<0, иначе 0
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": data})
 }
 
 // ledgerBreakdown — (начислено, оплачено) лицевого счёта. cp<>0 → по контрагенту
@@ -201,7 +305,7 @@ func GetLedgerEntries(c *gin.Context) {
 	if tenantDB == nil {
 		tenantDB = database.DB
 	}
-	cpID, companyID, _ := contractLedgerKeys(tenantDB, uint(contractID))
+	cpID, companyID, _, _ := contractLedgerKeys(tenantDB, uint(contractID))
 	q := database.DB.Where("admin_account_id = ? AND company_id = ? AND deleted_at IS NULL", adminAccountID, companyID)
 	if cpID != 0 {
 		q = q.Where("counterparty_id = ?", cpID)
@@ -253,7 +357,7 @@ func PostLedgerPayment(c *gin.Context) {
 		tenantDB = database.DB
 	}
 	var contract models.Contract
-	if err := tenantDB.Select("id, company_id, counterparty_id").First(&contract, req.ContractID).Error; err != nil {
+	if err := tenantDB.Select("id, company_id, counterparty_id, currency").First(&contract, req.ContractID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "договор не найден"})
 		return
 	}
@@ -274,7 +378,7 @@ func PostLedgerPayment(c *gin.Context) {
 		CounterpartyID: contract.CounterpartyID, // Ф2: денорм для баланса per-контрагент
 		EntryType:      "payment",
 		Amount:         decimal.NewFromFloat(req.Amount), // платёж +
-		Currency:       "RUB",
+		Currency:       contractCurrency(contract.Currency),
 		Source:         req.Source,
 		ExternalID:     req.ExternalID,
 		Description:    req.Comment,
@@ -306,7 +410,7 @@ func PostLedgerPayment(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{
 		"entry_id":    entry.ID,
-		"new_balance": balanceForContract(req.ContractID, contract.CounterpartyID, adminAccountID, contract.CompanyID).StringFixed(2),
+		"new_balance": balanceForContractCcy(req.ContractID, contract.CounterpartyID, adminAccountID, contract.CompanyID, contract.Currency).StringFixed(2),
 	}})
 }
 
@@ -359,7 +463,7 @@ func PostLedgerImport(c *gin.Context) {
 			continue
 		}
 		var contract models.Contract
-		if err := tenantDB.Select("id, company_id, counterparty_id").First(&contract, it.ContractID).Error; err != nil {
+		if err := tenantDB.Select("id, company_id, counterparty_id, currency").First(&contract, it.ContractID).Error; err != nil {
 			failed++
 			errorsList = append(errorsList, fmt.Sprintf("договор %d не найден", it.ContractID))
 			continue
@@ -377,7 +481,7 @@ func PostLedgerImport(c *gin.Context) {
 			CounterpartyID: contract.CounterpartyID, // Ф2: денорм
 			EntryType:      "payment",
 			Amount:         decimal.NewFromFloat(it.Amount),
-			Currency:       "RUB",
+			Currency:       contractCurrency(contract.Currency),
 			Source:         body.Source,
 			ExternalID:     it.ExternalID,
 			Description:    it.Comment,
@@ -497,8 +601,8 @@ func PostLedgerTransfer(c *gin.Context) {
 		if database.DB.Where("admin_account_id = ? AND idempotency_key = ?", adminAccountID, req.IdempotencyKey).First(&ex).Error == nil {
 			c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{
 				"transfer_id":  ex.TransferID,
-				"from_balance": balanceForContract(req.FromContractID, from.CounterpartyID, adminAccountID, from.CompanyID).StringFixed(2),
-				"to_balance":   balanceForContract(req.ToContractID, to.CounterpartyID, adminAccountID, to.CompanyID).StringFixed(2),
+				"from_balance": balanceForContractCcy(req.FromContractID, from.CounterpartyID, adminAccountID, from.CompanyID, fromCcy).StringFixed(2),
+				"to_balance":   balanceForContractCcy(req.ToContractID, to.CounterpartyID, adminAccountID, to.CompanyID, toCcy).StringFixed(2),
 				"idempotent":   true,
 			}})
 			return
@@ -581,8 +685,10 @@ func PostLedgerTransfer(c *gin.Context) {
 			return e
 		}
 		var bal decimal.Decimal
+		// Проверка средств — в валюте СПИСАНИЯ (fromCcy): amount тоже в fromCcy.
+		// Без фильтра currency суб-баланс другой валюты ложно «покрыл» бы перевод.
 		balQ := tx.Model(&models.LedgerEntry{}).
-			Where("admin_account_id = ? AND company_id = ? AND deleted_at IS NULL", adminAccountID, from.CompanyID)
+			Where("admin_account_id = ? AND company_id = ? AND currency = ? AND deleted_at IS NULL", adminAccountID, from.CompanyID, fromCcy)
 		if from.CounterpartyID != 0 {
 			balQ = balQ.Where("counterparty_id = ?", from.CounterpartyID)
 		} else {
@@ -632,8 +738,8 @@ func PostLedgerTransfer(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{
 		"transfer_id":  transferID,
-		"from_balance": balanceForContract(req.FromContractID, from.CounterpartyID, adminAccountID, from.CompanyID).StringFixed(2),
-		"to_balance":   balanceForContract(req.ToContractID, to.CounterpartyID, adminAccountID, to.CompanyID).StringFixed(2),
+		"from_balance": balanceForContractCcy(req.FromContractID, from.CounterpartyID, adminAccountID, from.CompanyID, fromCcy).StringFixed(2),
+		"to_balance":   balanceForContractCcy(req.ToContractID, to.CounterpartyID, adminAccountID, to.CompanyID, toCcy).StringFixed(2),
 	}})
 }
 

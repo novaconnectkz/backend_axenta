@@ -78,7 +78,7 @@ func PostLedgerHold(c *gin.Context) {
 		tenantDB = database.DB
 	}
 	var contract models.Contract
-	if err := tenantDB.Select("id, company_id, credit_limit, counterparty_id").First(&contract, req.ContractID).Error; err != nil {
+	if err := tenantDB.Select("id, company_id, credit_limit, counterparty_id, currency").First(&contract, req.ContractID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "договор не найден"})
 		return
 	}
@@ -125,8 +125,11 @@ func PostLedgerHold(c *gin.Context) {
 	// Ф2: долг считаем по балансу КОНТРАГЕНТА (единый ЛС); cp=0 → legacy per-договор.
 	debtAtCreate := decimal.Zero
 	var bal decimal.Decimal
+	// Долг для отчёта — в валюте договора (hold per-договорной семантики); фильтр currency
+	// чтобы валюто-слепой SUM не схлопнул разные валюты контрагента.
 	balQ := database.DB.Model(&models.LedgerEntry{}).
-		Where("admin_account_id = ? AND company_id = ? AND deleted_at IS NULL", adminAccountID, contract.CompanyID)
+		Where("admin_account_id = ? AND company_id = ? AND currency = ? AND deleted_at IS NULL",
+			adminAccountID, contract.CompanyID, contractCurrency(contract.Currency))
 	if contract.CounterpartyID != 0 {
 		balQ = balQ.Where("counterparty_id = ?", contract.CounterpartyID)
 	} else {
@@ -154,7 +157,7 @@ func PostLedgerHold(c *gin.Context) {
 		CounterpartyID: cpID,
 		HoldType:       req.HoldType,
 		Amount:         amount,
-		Currency:       "RUB",
+		Currency:       contractCurrency(contract.Currency),
 		HoldUntil:      holdUntil,
 		Status:         "active",
 		Active:         true,
@@ -268,7 +271,7 @@ func GetLedgerHolds(c *gin.Context) {
 	if tenantDB == nil {
 		tenantDB = database.DB
 	}
-	cpID, companyID, _ := contractLedgerKeys(tenantDB, uint(contractID))
+	cpID, companyID, _, _ := contractLedgerKeys(tenantDB, uint(contractID))
 	q := database.DB.Where("admin_account_id = ? AND deleted_at IS NULL", adminAccountID)
 	if companyID != 0 {
 		q = q.Where("company_id = ?", companyID) // Codex HIGH-5: не течь между компаниями admin
