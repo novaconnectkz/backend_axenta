@@ -355,8 +355,8 @@ func PostLedgerHoldCancel(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "зонт не найден"})
 		return
 	}
-	if !managerCanAccessContract(c, hold.ContractID) {
-		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "договор вне вашего доступа"})
+	if !managerCanAccessHold(c, hold) { // cp-зонт (ContractID=0) → доступ по контрагенту (live-flip gate)
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "зонт вне вашего доступа"})
 		return
 	}
 	if !requireBillingOperation(c, adminAccountID, hold.CompanyID) {

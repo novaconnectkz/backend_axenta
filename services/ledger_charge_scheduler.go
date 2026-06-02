@@ -188,9 +188,11 @@ func (s *LedgerChargeScheduler) RunSuspensionSweep(companies []models.Company) {
 	if suspended > 0 || resolved > 0 {
 		log.Printf("🔒 SuspensionSweep: приостановлено=%d, снято=%d", suspended, resolved)
 	}
-	// B1: дотянуть недо-выполненные физблоки (physical_ok=false) вне транзита active→suspended.
+	// B1: дотянуть недо-выполненные физблоки (physical_ok=false) + физ-РАЗБЛОКИ упавших Reactivate
+	// (block-строка на снятой suspension) вне транзита (live-flip gate).
 	if s.enforcement != nil {
 		s.enforcement.ReassertPending()
+		s.enforcement.ReassertPendingUnblocks()
 	}
 }
 

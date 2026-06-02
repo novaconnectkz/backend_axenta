@@ -156,6 +156,33 @@ func managerCanAccessContract(c *gin.Context, contractID uint) bool {
 	return count > 0
 }
 
+// managerCanAccessHold — доступ к зонту. cp-зонт (CounterpartyID<>0, ContractID=0) — менеджер
+// должен вести ХОТЯ БЫ один договор контрагента; иначе managerCanAccessContract(0) всегда деналит
+// (id=0 не матчит) → менеджер не мог бы отменить cp-зонт (live-flip gate). Legacy-зонт
+// (ContractID<>0) — доступ к самому договору. admin/superadmin — всегда true.
+func managerCanAccessHold(c *gin.Context, hold models.BillingHold) bool {
+	if !isManagerScoped(c) {
+		return true
+	}
+	if hold.CounterpartyID != 0 {
+		uid, ok := currentUserID(c)
+		if !ok {
+			return false
+		}
+		tenantDB := middleware.GetTenantDB(c)
+		if tenantDB == nil {
+			return false // fail-closed
+		}
+		var count int64
+		if err := tenantDB.Model(&models.Contract{}).
+			Where("counterparty_id = ? AND manager_id = ?", hold.CounterpartyID, uid).Count(&count).Error; err != nil {
+			return false // fail-closed
+		}
+		return count > 0
+	}
+	return managerCanAccessContract(c, hold.ContractID)
+}
+
 // requireBillingOperation — разрешена ли операция (перевод/отсрочка/обещание) по
 // политике OperationRoleThreshold компании. admin/superadmin — всегда; manager —
 // только если threshold='manager'. Иначе (нет политики / прочие роли) — deny.

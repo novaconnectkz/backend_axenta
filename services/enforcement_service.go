@@ -49,7 +49,7 @@ func NewEnforcementService(serverTok *AxentaServerToken) *EnforcementService {
 }
 
 // Enabled — для re-assert гейта в sweep.
-func (s *EnforcementService) Enabled() bool { return s != nil && s.enabled }
+func (s *EnforcementService) Enabled() bool  { return s != nil && s.enabled }
 func (s *EnforcementService) ModeLive() bool { return s != nil && s.mode == "live" }
 
 // enforcementTarget — резолвленная цель блокировки (одна учётка GPS).
@@ -58,7 +58,7 @@ type enforcementTarget struct {
 	ConnectionID      uint
 	ExternalAccountID string
 	ObjectsInContract int
-	ForeignObjects    int  // чужие объекты той же учётки (blast radius — гасим и их при МЕТОД 1)
+	ForeignObjects    int // чужие объекты той же учётки (blast radius — гасим и их при МЕТОД 1)
 	Resolved          bool
 	CacheMismatch     bool // co.owner_external_id разошёлся с текущим снапшотом (MoveAccount)
 }
@@ -200,27 +200,32 @@ func (s *EnforcementService) Reactivate(susp models.BillingSuspension) {
 		}
 		// Codex #4: НЕ разблокировать учётку, которую держит ДРУГАЯ активная suspension
 		// (две неоплаты делят один Axenta-аккаунт → объекты из разных договоров).
+		// heldByOther — intent-based (Gemini): ДРУГАЯ активная suspension с block-намерением на ту же
+		// учётку держит её, ДАЖЕ если её физблок ещё не applied (physical_ok=false) — иначе разблок +
+		// последующий re-block дали бы дребезг. physical_ok НЕ фильтруем.
 		var heldByOther int64
 		pub.Table("public.billing_enforcement_actions AS bea").
 			Joins("JOIN billing_suspensions bs ON bs.id = bea.suspension_id").
-			Where("bea.suspension_id <> ? AND bea.action='block' AND bea.physical_ok=? "+
+			Where("bea.suspension_id <> ? AND bea.action='block' "+
 				"AND bea.system=? AND bea.connection_id=? AND bea.external_account_id=? "+
-				"AND bs.active=true AND bs.deleted_at IS NULL", a.SuspensionID, true, a.System, a.ConnectionID, a.ExternalAccountID).
+				"AND bs.active=true AND bs.deleted_at IS NULL", a.SuspensionID, a.System, a.ConnectionID, a.ExternalAccountID).
 			Count(&heldByOther)
 		if heldByOther > 0 {
 			log.Printf("⏭️ REACTIVATE skip: учётка system=%s account=%s держится др. активной suspension (%d) — не разблокируем", a.System, a.ExternalAccountID, heldByOther)
 			continue
 		}
 		if err := s.physicalBlockAccount(susp.CompanyID, t, true); err != nil {
-			log.Printf("❌ REACTIVATE FAIL: system=%s account=%s err=%v", a.System, a.ExternalAccountID, err)
+			// Не дропаем: block-строка остаётся (action='block', physical_ok=true), а её suspension
+			// уже снята → ReassertPendingUnblocks дотянет разблок (live-flip gate). Пишем last_error.
+			pub.Table("public.billing_enforcement_actions").Where("id = ?", a.ID).Update("last_error", err.Error())
+			log.Printf("❌ REACTIVATE FAIL (дотянет ReassertPendingUnblocks): system=%s account=%s err=%v", a.System, a.ExternalAccountID, err)
 			continue
 		}
+		// Успех: переводим ТУ ЖЕ строку в action='unblock' (idx_enf_target uniq на suspension+
+		// account → отдельную unblock-строку создавать нельзя, конфликт). Reactivate её больше не берёт.
 		now := time.Now()
-		pub.Table("public.billing_enforcement_actions").Create(&models.BillingEnforcementAction{
-			SuspensionID: susp.ID, CompanyID: susp.CompanyID, System: a.System, Level: "account",
-			ConnectionID: a.ConnectionID, ExternalAccountID: a.ExternalAccountID,
-			Action: "unblock", Mode: "live", PhysicalOK: true, EnforcedAt: &now,
-		})
+		pub.Table("public.billing_enforcement_actions").Where("id = ?", a.ID).
+			Updates(map[string]any{"action": "unblock", "physical_ok": true, "enforced_at": &now, "last_error": ""})
 	}
 }
 
@@ -238,8 +243,8 @@ func (s *EnforcementService) ReassertPending() {
 	// tryPhysicalBlock в live их исполнит (промоут shadow→live).
 	pub.Table("public.billing_enforcement_actions").
 		Joins("JOIN billing_suspensions bs ON bs.id = billing_enforcement_actions.suspension_id").
-		Where("billing_enforcement_actions.action='block' "+
-			"AND billing_enforcement_actions.physical_ok=false AND billing_enforcement_actions.manual_override=false "+
+		Where("billing_enforcement_actions.action='block' " +
+			"AND billing_enforcement_actions.physical_ok=false AND billing_enforcement_actions.manual_override=false " +
 			"AND bs.deleted_at IS NULL AND bs.active=true").
 		Find(&pending)
 	for i := range pending {
@@ -249,6 +254,51 @@ func (s *EnforcementService) ReassertPending() {
 		// (UPDATE ... WHERE physical_ok=false RETURNING id / advisory-lock), чтобы параллельные
 		// проходы sweep не дёрнули Axenta API дважды на одну учётку. Гейт перед включением live.
 		s.tryPhysicalBlock(pub, a, a.CompanyID, t, false)
+	}
+}
+
+// ReassertPendingUnblocks — симметрия ReassertPending для РАЗБЛОКА (live-flip gate). Дотягивает
+// учётки, физически заблокированные нашей block-строкой, чья suspension УЖЕ снята (restore прошёл,
+// а физ-unblock упал/не дошёл) — action остаётся 'block' физически заблокирован при active-договоре
+// в CRM. Без этого упавший Reactivate оставлял бы клиента физически закрытым навсегда. Вызывается
+// в конце sweep. Сериализован advisory-lock'ом RunUpToDate (claim не нужен, как в tryPhysicalBlock).
+func (s *EnforcementService) ReassertPendingUnblocks() {
+	if !s.Enabled() || !s.ModeLive() {
+		return
+	}
+	pub := database.GetDB()
+	var stuck []models.BillingEnforcementAction
+	pub.Table("public.billing_enforcement_actions").
+		Joins("JOIN billing_suspensions bs ON bs.id = billing_enforcement_actions.suspension_id").
+		Where("billing_enforcement_actions.action='block' " +
+			"AND billing_enforcement_actions.physical_ok=true AND billing_enforcement_actions.manual_override=false " +
+			"AND (bs.active=false OR bs.deleted_at IS NOT NULL)").
+		Find(&stuck)
+	now := time.Now()
+	for i := range stuck {
+		a := &stuck[i]
+		// heldByOther: ту же учётку держит ДРУГАЯ активная suspension → НЕ разблокируем (общий аккаунт).
+		// intent-based (Gemini): physical_ok НЕ фильтруем — активная suspension с block-намерением
+		// держит учётку даже до applied физблока (иначе разблок→re-block дребезг).
+		var held int64
+		pub.Table("public.billing_enforcement_actions AS bea").
+			Joins("JOIN billing_suspensions bs ON bs.id = bea.suspension_id").
+			Where("bea.id <> ? AND bea.action='block' "+
+				"AND bea.system=? AND bea.connection_id=? AND bea.external_account_id=? "+
+				"AND bs.active=true AND bs.deleted_at IS NULL", a.ID, a.System, a.ConnectionID, a.ExternalAccountID).
+			Count(&held)
+		if held > 0 {
+			continue // держит активная неоплата — оставляем заблокированной
+		}
+		t := enforcementTarget{System: a.System, ConnectionID: a.ConnectionID, ExternalAccountID: a.ExternalAccountID}
+		if err := s.physicalBlockAccount(a.CompanyID, t, true); err != nil {
+			pub.Table("public.billing_enforcement_actions").Where("id = ?", a.ID).Update("last_error", err.Error())
+			log.Printf("❌ REASSERT-UNBLOCK FAIL: system=%s account=%s err=%v", a.System, a.ExternalAccountID, err)
+			continue
+		}
+		pub.Table("public.billing_enforcement_actions").Where("id = ?", a.ID).
+			Updates(map[string]any{"action": "unblock", "physical_ok": true, "enforced_at": &now, "last_error": ""})
+		log.Printf("✅ REASSERT-UNBLOCK: system=%s account=%s", a.System, a.ExternalAccountID)
 	}
 }
 
