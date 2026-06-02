@@ -97,7 +97,14 @@ func PostLedgerGatingDryRun(c *gin.Context) {
 	}
 	var companies []models.Company
 	if req.CompanyID != 0 {
-		companies = []models.Company{{ID: req.CompanyID}} // DatabaseSchema пусто → tenant_<id> в DryRunGating
+		// Грузим РЕАЛЬНУЮ компанию (с DatabaseSchema): у части компаний схема != tenant_<id>
+		// (напр. company 6 = tenant_default) → бельё {ID} дало бы пустой отчёт (tenant_6 нет).
+		var comp models.Company
+		if e := database.DB.Table("public.companies").First(&comp, req.CompanyID).Error; e != nil {
+			c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "компания не найдена"})
+			return
+		}
+		companies = []models.Company{comp}
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": ledgerChargeScheduler.DryRunGating(companies)})
 }
