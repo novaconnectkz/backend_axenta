@@ -1463,6 +1463,7 @@ func ensureBillingSchemaIntegrity() error {
 		{"billing_settings", "admin_account_id", "BIGINT", true},
 		{"billing_settings", "company_id", "BIGINT", true},
 		{"billing_settings", "min_days_for_full_month", "INTEGER DEFAULT 5", false},
+		{"billing_settings", "per_contract_gating", "BOOLEAN NOT NULL DEFAULT false", false}, // Б4 фичефлаг
 	}
 
 	for _, check := range columnChecks {

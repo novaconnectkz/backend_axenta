@@ -554,3 +554,17 @@ func TestDailyChargePostpaidMonthlyNoLostDay(t *testing.T) {
 	db.Model(&models.LedgerEntry{}).Where("external_id LIKE ?", "autocharge:sub:510:2026-07-%").Count(&julDaily)
 	assert.EqualValues(t, 5, julDaily, "июль 1-5 списан посуточно")
 }
+
+// Б4: resolveAllocPeriod — persisted period_start приоритетен, иначе ParseChargePeriod.
+func TestResolveAllocPeriod(t *testing.T) {
+	ps := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	if got, ok := resolveAllocPeriod(&ps, "anything"); !ok || !got.Equal(ps) {
+		t.Errorf("persisted period_start приоритетен: got=%v ok=%v", got, ok)
+	}
+	if _, ok := resolveAllocPeriod(nil, "autocharge:sub:42:2026-01-15"); !ok {
+		t.Errorf("autocharge external_id должен парситься")
+	}
+	if _, ok := resolveAllocPeriod(nil, "manual-ref-777"); ok {
+		t.Errorf("непарсимый external_id → ok=false")
+	}
+}

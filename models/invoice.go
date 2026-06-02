@@ -220,8 +220,12 @@ type BillingSettings struct {
 	OperationRoleThreshold string          `json:"operation_role_threshold" gorm:"default:'admin';type:varchar(20)"` // мин. роль для перевод/отсрочка/обещание
 
 	// Каденция списания adon-платы (П6, глобальный дефолт компании).
-	ChargeCadence          string `json:"charge_cadence" gorm:"default:'daily';type:varchar(20)"`               // daily | monthly | period (period = по billing_period тарифа)
-	LongSubscriptionCharge string `json:"long_subscription_charge" gorm:"default:'monthly';type:varchar(20)"`   // monthly | lump_sum — как списывать подписки >1 мес / yearly
+	ChargeCadence          string `json:"charge_cadence" gorm:"default:'daily';type:varchar(20)"`             // daily | monthly | period (period = по billing_period тарифа)
+	LongSubscriptionCharge string `json:"long_subscription_charge" gorm:"default:'monthly';type:varchar(20)"` // monthly | lump_sum — как списывать подписки >1 мес / yearly
+
+	// Б4: per-договор блокировка за неоплату (вместо pooled per-контрагент). Фичефлаг,
+	// default false — flip per-company через UPSERT после dry-run. OFF → старый pooled-путь.
+	PerContractGating bool `json:"per_contract_gating" gorm:"not null;default:false"`
 }
 
 // TableName задает имя таблицы для модели BillingSettings

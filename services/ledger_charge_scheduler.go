@@ -216,6 +216,18 @@ func parseUintCSV(s string) []uint {
 	return out
 }
 
+// billingUnit — единица sweep'а: контрагент (cp<>0, все его client-договоры) либо legacy-договор
+// (cp=0). Pooled-путь (OFF) гасит единицу одним решением; per-договор путь (Б4 ON) — по договору.
+type billingUnit struct {
+	adminID         uint
+	cpID            uint                     // 0 → legacy per-договор
+	contractID      uint                     // legacy contract_id (cp=0); 0 для контрагента
+	creditLimit     decimal.Decimal          // Б2: лимит с договора (cp-группа — лимит первого по id)
+	limitByContract map[uint]decimal.Decimal // Б4: per-договор лимит (threshold per-договор, §1.5 гибрид)
+	activeIDs       []uint                   // client-договоры в 'active' (кандидаты на suspend)
+	suspendedIDs    []uint                   // client-договоры в 'suspended' (кандидаты на restore)
+}
+
 func (s *LedgerChargeScheduler) sweepCompanySuspensions(company models.Company) (suspended, resolved int) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -272,14 +284,6 @@ func (s *LedgerChargeScheduler) sweepCompanySuspensions(company models.Company) 
 
 	// Ф3: единица приостановки — КОНТРАГЕНТ (cp<>0, гасит ВСЕ его client-договоры одним
 	// решением) либо отдельный договор (cp=0, legacy). Группируем client-договоры в единицы.
-	type billingUnit struct {
-		adminID      uint
-		cpID         uint            // 0 → legacy per-договор
-		contractID   uint            // legacy contract_id (cp=0); 0 для контрагента
-		creditLimit  decimal.Decimal // Б2: лимит с договора (cp-группа — лимит первого по id)
-		activeIDs    []uint          // client-договоры в 'active' (кандидаты на suspend)
-		suspendedIDs []uint          // client-договоры в 'suspended' (кандидаты на restore)
-	}
 	unitByCP := make(map[unitKey]*billingUnit)
 	units := make([]*billingUnit, 0, len(contracts))
 	for i := range contracts {
@@ -290,17 +294,20 @@ func (s *LedgerChargeScheduler) sweepCompanySuspensions(company models.Company) 
 			if u == nil {
 				// Б2: лимит группы = лимит ПЕРВОГО договора по id (Order("id") выше даёт детерминизм).
 				// Per-договор порог появится в Б4; до него вся cp-группа гасится одним threshold.
-				u = &billingUnit{adminID: ct.AdminAccountID, cpID: ct.CounterpartyID, creditLimit: ct.CreditLimit}
+				u = &billingUnit{adminID: ct.AdminAccountID, cpID: ct.CounterpartyID, creditLimit: ct.CreditLimit,
+					limitByContract: map[uint]decimal.Decimal{}}
 				unitByCP[k] = u
 				units = append(units, u)
 			}
+			u.limitByContract[ct.ID] = ct.CreditLimit // Б4: per-договор порог
 			if ct.Status == "active" {
 				u.activeIDs = append(u.activeIDs, ct.ID)
 			} else {
 				u.suspendedIDs = append(u.suspendedIDs, ct.ID)
 			}
 		} else {
-			u := &billingUnit{adminID: ct.AdminAccountID, contractID: ct.ID, creditLimit: ct.CreditLimit}
+			u := &billingUnit{adminID: ct.AdminAccountID, contractID: ct.ID, creditLimit: ct.CreditLimit,
+				limitByContract: map[uint]decimal.Decimal{ct.ID: ct.CreditLimit}}
 			if ct.Status == "active" {
 				u.activeIDs = []uint{ct.ID}
 			} else {
@@ -310,7 +317,36 @@ func (s *LedgerChargeScheduler) sweepCompanySuspensions(company models.Company) 
 		}
 	}
 
+	// Б4: фичефлаг per-договор блокировки (default OFF → старый pooled-путь). Читаем per company
+	// (как charge-путь). На проде OFF у всех → ON-ветка дремлет до flip per-company после dry-run.
+	perContractGating := false
+	{
+		var bs models.BillingSettings
+		if pub.Table("public.billing_settings").Where("company_id = ?", company.ID).
+			Select("per_contract_gating").First(&bs).Error == nil {
+			perContractGating = bs.PerContractGating
+		}
+	}
+
 	for _, u := range units {
+		// Lifecycle зонта (П3/П4) — зонт per-контрагент в обоих путях. Lookup общий.
+		var hold models.BillingHold
+		var hasHold bool
+		if u.cpID != 0 {
+			hold, hasHold = holdByCP[unitKey{u.adminID, u.cpID}]
+		} else {
+			hold, hasHold = holdByContract[unitKey{u.adminID, u.contractID}]
+		}
+
+		// Б4 ON-путь: per-договор coverage через AllocateCoverage (дремлет пока флаг OFF).
+		if perContractGating {
+			su, re := s.sweepUnitPerContract(u, company, contractsTable, tenantDB, pub, hold, hasHold, now)
+			suspended += su
+			resolved += re
+			continue
+		}
+
+		// ===== OFF-путь (pooled per-контрагент, без изменений) =====
 		// Б2: лимит авторитетен на Contract (зеркало на контрагента снято). В чистом Б2 sweep
 		// ещё группирует per-cp → единый лимит группы = лимит договора-юнита (per-договор порог — Б4).
 		creditLimit := u.creditLimit
@@ -344,15 +380,6 @@ func (s *LedgerChargeScheduler) sweepCompanySuspensions(company models.Company) 
 					worstBal = sr.Bal
 				}
 			}
-		}
-
-		// Lifecycle зонта (П3/П4) ДО решения о приостановке. Решение — pure holdLifecycleAction.
-		var hold models.BillingHold
-		var hasHold bool
-		if u.cpID != 0 {
-			hold, hasHold = holdByCP[unitKey{u.adminID, u.cpID}]
-		} else {
-			hold, hasHold = holdByContract[unitKey{u.adminID, u.contractID}]
 		}
 		holdActive := false
 		if hasHold {
@@ -437,6 +464,226 @@ func (s *LedgerChargeScheduler) sweepCompanySuspensions(company models.Company) 
 				resolved += len(restoreIDs)
 				if s.enforcement != nil {
 					s.enforcement.Reactivate(active) // B1: физразблок наших block-строк
+				}
+			}
+		}
+	}
+	return
+}
+
+// resolveAllocPeriod — период проводки для FIFO-аллокатора (Б4): persisted period_start
+// приоритетен, иначе ParseChargePeriod из external_id (autocharge-форматы). Обязательству
+// (charge/adjustment<0) без резолва аллокатор ставит quarantine ПО ЕГО договору (§7).
+func resolveAllocPeriod(periodStart *time.Time, externalID string) (time.Time, bool) {
+	if periodStart != nil {
+		return *periodStart, true
+	}
+	t, _, ok := ParseChargePeriod(externalID)
+	return t, ok
+}
+
+// sweepUnitPerContract — Б4 ON-путь (флаг per_contract_gating): per-договор блокировка через
+// AllocateCoverage. Деньги контрагента — общий пул (wallet_release §3.9), но обязательство и
+// блокировка — per-ДОГОВОР (§1.5 гибрид: порог с Contract.CreditLimit). Карантинный договор
+// (charge без периода) изолируется и не трогается (§7). Зонт per-cp валюто-агностичен (§3.7c).
+// Legacy pooled-строки (created в OFF-эру) гасятся при выходе cp из долга, но НЕ создаются.
+func (s *LedgerChargeScheduler) sweepUnitPerContract(
+	u *billingUnit, company models.Company, contractsTable string,
+	tenantDB, pub *gorm.DB, hold models.BillingHold, hasHold bool, now time.Time,
+) (suspended, resolved int) {
+
+	// openContracts = active ∪ suspended договоры единицы.
+	openContracts := map[uint]bool{}
+	activeSet := map[uint]bool{}
+	for _, id := range u.activeIDs {
+		openContracts[id] = true
+		activeSet[id] = true
+	}
+	for _, id := range u.suspendedIDs {
+		openContracts[id] = true
+	}
+
+	// Все проводки единицы (по cp или legacy contract), группируем по валюте: договор одновалютен,
+	// мультивалюта возникает лишь у контрагента с договорами в разных валютах (каждая — свой проход).
+	type entRow struct {
+		ID          uint
+		ContractID  uint
+		EntryType   string
+		Currency    string
+		Amount      decimal.Decimal
+		PeriodStart *time.Time
+		ExternalID  string
+	}
+	var rows []entRow
+	eq := pub.Table("public.ledger_entries").
+		Where("admin_account_id=? AND company_id=? AND deleted_at IS NULL", u.adminID, company.ID)
+	if u.cpID != 0 {
+		eq = eq.Where("counterparty_id=?", u.cpID)
+	} else {
+		eq = eq.Where("contract_id=?", u.contractID)
+	}
+	eq.Select("id, contract_id, entry_type, currency, amount, period_start, external_id").Scan(&rows)
+
+	byCcy := map[string][]entRow{}
+	for _, r := range rows {
+		byCcy[r.Currency] = append(byCcy[r.Currency], r)
+	}
+
+	// Per-договор покрытие: договор одновалютен → реальное покрытие = coverage в ЕГО валюте; в
+	// чужих валютных группах coverage 0 (нет проводок). Берём минимум по группам (самый глубокий
+	// долг). Карантин (charge без периода) метит ТОЛЬКО свой договор — соседи решаются (§7).
+	covByContract := map[uint]decimal.Decimal{}
+	quarantined := map[uint]bool{}
+	for _, group := range byCcy {
+		entries := make([]AllocEntry, 0, len(group))
+		for _, r := range group {
+			period, ok := resolveAllocPeriod(r.PeriodStart, r.ExternalID)
+			entries = append(entries, AllocEntry{
+				ID: r.ID, ContractID: r.ContractID, EntryType: r.EntryType,
+				Amount: r.Amount.Round(2), PeriodStart: period, PeriodOK: ok,
+			})
+		}
+		res := AllocateCoverage(entries, openContracts, AllocWalletRelease)
+		for x := range openContracts {
+			if res.QuarantinedContracts[x] {
+				quarantined[x] = true
+				continue
+			}
+			c := res.Coverage[x]
+			if cur, ok := covByContract[x]; !ok || c.LessThan(cur) {
+				covByContract[x] = c
+			}
+		}
+	}
+
+	// cp-level inDebt для lifecycle зонта: любой НЕкарантинный договор в долге (порог per-договор).
+	anyDebt := false
+	worstCov := decimal.Zero
+	for x := range openContracts {
+		if quarantined[x] {
+			continue
+		}
+		if covByContract[x].LessThan(u.limitByContract[x].Neg()) {
+			anyDebt = true
+			if covByContract[x].LessThan(worstCov) {
+				worstCov = covByContract[x]
+			}
+		}
+	}
+
+	// Lifecycle зонта (per-cp, валюто-агностичен §3.7c). anyDebt — АВТОРИТЕТНЫЙ сигнал долга
+	// (уже посчитан с per-договор порогами). threshold=0 в re-check корректен: anyDebt=false →
+	// fulfill; anyDebt=true → worstCov<0 → не fulfill, проверка срока. Передавать сюда групповой
+	// −creditLimit НЕЛЬЗЯ — он мог бы fulfill зонт при живом долге договора с меньшим лимитом (Codex).
+	holdActive := false
+	if hasHold {
+		switch holdLifecycleActionMulti(anyDebt, worstCov, decimal.Zero, hold.HoldUntil, now) {
+		case holdFulfill:
+			if e := pub.Table("public.billing_holds").Where("id=? AND active=true", hold.ID).
+				Updates(map[string]interface{}{"status": "fulfilled", "active": false, "resolved_at": now}).Error; e != nil {
+				log.Printf("⚠️ sweepPerContract: hold %d (fulfilled): %v", hold.ID, e)
+			}
+		case holdExpire:
+			res := pub.Table("public.billing_holds").Where("id=? AND active=true", hold.ID).
+				Updates(map[string]interface{}{"status": "expired", "active": false, "resolved_at": now})
+			if res.Error != nil || res.RowsAffected == 0 {
+				holdActive = true
+			}
+		default:
+			holdActive = true
+		}
+	}
+
+	// §3.6 LEGACY-RESOLVE: активная pooled debt-строка (cp<>0, contract_id=0) из OFF-эры. Пока она
+	// жива — per-договор строки НЕ создаём (анти двойной enforcement-block). Гасим её, когда cp
+	// вышел из долга (естественное затухание §2.5); per-договор появятся на следующем проходе.
+	// ВНИМАНИЕ: при ХРОНИЧЕСКОМ долге (anyDebt всегда true) pooled не гаснет сама → cp застрянет
+	// на pooled-режиме. Авто-форса нет (by design). Форс-переход — ручной cmd-split pooled→per-договор
+	// ДО flip (§2.5/§7), либо SQL `UPDATE billing_suspensions SET active=false WHERE contract_id=0...`.
+	// На проде активных pooled-строк 0 (Фаза 0) → у текущих данных ветка не срабатывает.
+	if u.cpID != 0 {
+		var pooled models.BillingSuspension
+		if pub.Table("public.billing_suspensions").
+			Where("admin_account_id=? AND company_id=? AND counterparty_id=? AND contract_id=0 AND reason='billing_debt' AND active=true AND deleted_at IS NULL",
+				u.adminID, company.ID, u.cpID).First(&pooled).Error == nil {
+			if !anyDebt {
+				restoreIDs := parseUintCSV(pooled.AffectedContractIDs)
+				if len(restoreIDs) == 0 {
+					restoreIDs = u.suspendedIDs
+				}
+				err := pub.Transaction(func(tx *gorm.DB) error {
+					if e := tx.Table("public.billing_suspensions").Where("id=?", pooled.ID).
+						Updates(map[string]interface{}{"active": false, "resolved_at": now}).Error; e != nil {
+						return e
+					}
+					if len(restoreIDs) == 0 {
+						return nil
+					}
+					return tx.Table(contractsTable).Where("id IN ? AND status='suspended'", restoreIDs).Update("status", "active").Error
+				})
+				if err == nil {
+					resolved += len(restoreIDs)
+					if s.enforcement != nil {
+						s.enforcement.Reactivate(pooled)
+					}
+				}
+			}
+			return // пока жила pooled — per-договор решения этим проходом не делаем
+		}
+	}
+
+	// Per-договор suspend/restore.
+	for x := range openContracts {
+		if x == 0 || quarantined[x] {
+			continue // x==0 защитный (договоров с id=0 нет); quarantined → needs_manual_reconcile (§7)
+		}
+		inDebtX := covByContract[x].LessThan(u.limitByContract[x].Neg())
+
+		// hasActive: per-договор debt-suspension (admin,company,cp,X); legacy cp=0 → (cp=0, contract_id=X).
+		susQ := pub.Table("public.billing_suspensions").
+			Where("admin_account_id=? AND company_id=? AND reason='billing_debt' AND active=true AND deleted_at IS NULL AND contract_id=?",
+				u.adminID, company.ID, x)
+		if u.cpID != 0 {
+			susQ = susQ.Where("counterparty_id=?", u.cpID)
+		} else {
+			susQ = susQ.Where("counterparty_id=0")
+		}
+		var activeSusp models.BillingSuspension
+		hasActiveX := susQ.First(&activeSusp).Error == nil
+
+		switch {
+		case inDebtX && !hasActiveX && !holdActive && activeSet[x]:
+			susp := models.BillingSuspension{
+				AdminAccountID: u.adminID, CompanyID: company.ID, ContractID: x, CounterpartyID: u.cpID,
+				Reason: "billing_debt", PreviousStatus: "active",
+				DebtAmount: covByContract[x].Abs(), // §3.9: residual после FIFO
+				Active:     true, SuspendedBy: "scheduler",
+				AffectedContractIDs: joinUintCSV([]uint{x}),
+			}
+			err := pub.Transaction(func(tx *gorm.DB) error {
+				if e := tx.Table("public.billing_suspensions").Create(&susp).Error; e != nil {
+					return e // idx_susp_debt_cp_ct ловит гонку
+				}
+				return tx.Table(contractsTable).Where("id=? AND status='active'", x).Update("status", "suspended").Error
+			})
+			if err == nil {
+				suspended++
+				if s.enforcement != nil {
+					s.enforcement.Enforce(susp, tenantDB)
+				}
+			}
+		case !inDebtX && hasActiveX:
+			err := pub.Transaction(func(tx *gorm.DB) error {
+				if e := tx.Table("public.billing_suspensions").Where("id=?", activeSusp.ID).
+					Updates(map[string]interface{}{"active": false, "resolved_at": now}).Error; e != nil {
+					return e
+				}
+				return tx.Table(contractsTable).Where("id=? AND status='suspended'", x).Update("status", "active").Error
+			})
+			if err == nil {
+				resolved++
+				if s.enforcement != nil {
+					s.enforcement.Reactivate(activeSusp)
 				}
 			}
 		}
