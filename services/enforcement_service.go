@@ -250,9 +250,9 @@ func (s *EnforcementService) ReassertPending() {
 	for i := range pending {
 		a := &pending[i]
 		t := enforcementTarget{System: a.System, ConnectionID: a.ConnectionID, ExternalAccountID: a.ExternalAccountID, ForeignObjects: a.ForeignObjects}
-		// TODO(B1-live, Codex #8): перед live-вызовом атомарно claim'ить строку
-		// (UPDATE ... WHERE physical_ok=false RETURNING id / advisory-lock), чтобы параллельные
-		// проходы sweep не дёрнули Axenta API дважды на одну учётку. Гейт перед включением live.
+		// Codex #8: tryPhysicalBlock атомарно claim'ит строку (UPDATE ... WHERE physical_ok=false,
+		// stale-tolerant) перед внешним вызовом — параллельные проходы sweep не дёрнут Axenta API
+		// дважды на одну учётку.
 		s.tryPhysicalBlock(pub, a, a.CompanyID, t, false)
 	}
 }
