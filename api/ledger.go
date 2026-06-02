@@ -69,6 +69,39 @@ func PostLedgerChargeRun(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": ledgerChargeScheduler.GetStatus()})
 }
 
+// PostLedgerGatingDryRun — POST /api/auth/ledger/gating/dry-run (Б4 Фаза 5).
+// Read-only сравнение pooled (СТАРОЕ) vs per-договор (НОВОЕ) блокировки. Ничего не пишет.
+// Body опц.: {"company_id":N} — иначе все активные компании. Только admin/superadmin.
+func PostLedgerGatingDryRun(c *gin.Context) {
+	if !requireContractAssignAccess(c) {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "доступно только администратору"})
+		return
+	}
+	if ledgerChargeScheduler == nil {
+		ledgerChargeScheduler = services.NewLedgerChargeScheduler()
+	}
+	var req struct {
+		CompanyID uint `json:"company_id"`
+	}
+	_ = c.ShouldBindJSON(&req)
+	// Не-superadmin видит ТОЛЬКО свою компанию (read-only утечка балансов/лимитов чужого tenant —
+	// Codex). superadmin: company_id=0 → все активные. Иначе форсим company_id = компания вызывающего.
+	super, _ := c.Get("is_superadmin")
+	if isSuper, _ := super.(bool); !isSuper {
+		cc := middleware.GetCompanyID(c)
+		if cc == 0 {
+			c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "компания вызывающего не определена"})
+			return
+		}
+		req.CompanyID = cc
+	}
+	var companies []models.Company
+	if req.CompanyID != 0 {
+		companies = []models.Company{{ID: req.CompanyID}} // DatabaseSchema пусто → tenant_<id> в DryRunGating
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": ledgerChargeScheduler.DryRunGating(companies)})
+}
+
 // ============================================================================
 // Лицевой счёт (ledger). Баланс договора = SUM(ledger_entries.amount).
 // payment(+)/charge(−). balance>0 переплата, balance<0 долг.

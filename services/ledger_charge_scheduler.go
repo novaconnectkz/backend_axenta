@@ -194,6 +194,175 @@ func (s *LedgerChargeScheduler) RunSuspensionSweep(companies []models.Company) {
 	}
 }
 
+// ===== Б4 Фаза 5: dry-run сравнения pooled (СТАРОЕ) vs per-договор (НОВОЕ). READ-ONLY. =====
+// Тот же building-блок что live-sweep (buildBillingUnits/computeUnitCoverage) — анти-дрейф §4.2.
+// Решение сравнивается по ДОЛГУ (ignore текущий suspension/hold): steady-state diff для владельца.
+
+type GatingDryRunContract struct {
+	CounterpartyID uint   `json:"counterparty_id"`
+	ContractID     uint   `json:"contract_id"`
+	Coverage       string `json:"coverage"`  // per-договор покрытие (wallet_release)
+	Threshold      string `json:"threshold"` // -limit договора
+	OldState       string `json:"old_state"` // pooled: suspend|active
+	NewState       string `json:"new_state"` // per-договор: suspend|active|quarantine
+}
+
+type GatingDryRunCPThreshold struct {
+	CounterpartyID uint `json:"counterparty_id"`
+	// OldThresholdSum — pooled-порог cp = лимит ПЕРВОГО договора по id (Б2-правило: вся cp-группа
+	// гасится одним threshold). NewThresholdSum — Σ limit[X] по открытым договорам (per-договор).
+	// Рост Σ = §1.5 гейт (овердрафт ×N): flip без апрува нельзя. На однородных лимитах роста нет.
+	OldThresholdSum string `json:"old_threshold_sum"`
+	NewThresholdSum string `json:"new_threshold_sum"`
+}
+
+type GatingDryRunReport struct {
+	CompanyID          uint                      `json:"company_id"`
+	Changed            []GatingDryRunContract    `json:"changed"`                   // договоры с изменённым решением
+	NewBlocks          int                       `json:"new_blocks"`                // active(pooled)→suspend(per-договор)
+	NewUnblocks        int                       `json:"new_unblocks"`              // suspend(pooled)→active(per-договор)
+	QuarantineCount    int                       `json:"quarantine_count"`          // §4.3
+	ThresholdGrowth    []GatingDryRunCPThreshold `json:"threshold_growth"`          // §1.5 гейт: Σ вырос → flip требует апрува
+	PayerBlockedStrict int                       `json:"payer_blocked_strict_only"` // §3.9: strict блокирует, release нет
+}
+
+// DryRunGating — Фаза 5: per company считает pooled-решение и per-договор-решение, возвращает diff.
+// НИЧЕГО не пишет (ни suspension, ни статус, ни enforcement). companies пусто → все активные.
+func (s *LedgerChargeScheduler) DryRunGating(companies []models.Company) []GatingDryRunReport {
+	pub := s.db.Session(&gorm.Session{})
+	if len(companies) == 0 {
+		_ = pub.Table("public.companies").Where("is_active = ?", true).Find(&companies).Error
+	}
+	out := []GatingDryRunReport{}
+	for _, company := range companies {
+		schema := company.DatabaseSchema
+		if schema == "" {
+			schema = fmt.Sprintf("tenant_%d", company.ID)
+		}
+		tenantDB, err := database.ConnectToTenant(schema)
+		if err != nil {
+			continue
+		}
+		var contracts []models.Contract
+		if err := tenantDB.Where("contract_type = ? AND status IN ? AND deleted_at IS NULL",
+			"client", []string{"active", "suspended"}).Order("id").Find(&contracts).Error; err != nil {
+			continue
+		}
+		// Активные не-истёкшие зонты: держат блокировку в ОБОИХ путях (pooled и per-договор) →
+		// hold-юнит из diff исключаем (иначе ложные NewUnblock, Codex HIGH). Read-only — lifecycle
+		// (fulfill/expire) НЕ исполняем (это write), берём упрощённый предикат active+holdUntil>now.
+		heldCP := map[unitKey]bool{}
+		heldContract := map[unitKey]bool{}
+		{
+			var holds []models.BillingHold
+			pub.Table("public.billing_holds").
+				Where("company_id=? AND active=true AND deleted_at IS NULL AND hold_until > ?", company.ID, time.Now().UTC()).
+				Find(&holds)
+			for _, h := range holds {
+				if h.CounterpartyID != 0 {
+					heldCP[unitKey{h.AdminAccountID, h.CounterpartyID}] = true
+				} else {
+					heldContract[unitKey{h.AdminAccountID, h.ContractID}] = true
+				}
+			}
+		}
+
+		rep := GatingDryRunReport{CompanyID: company.ID}
+		for _, u := range buildBillingUnits(contracts) {
+			// Зонт держит suspension в обоих путях → единицу пропускаем (нет diff'а блокировки).
+			if (u.cpID != 0 && heldCP[unitKey{u.adminID, u.cpID}]) ||
+				(u.cpID == 0 && heldContract[unitKey{u.adminID, u.contractID}]) {
+				continue
+			}
+			// OLD pooled: per-ccy SUM, групповой порог = u.creditLimit.
+			var subRows []struct {
+				Currency string
+				Bal      decimal.Decimal
+			}
+			balQ := pub.Table("public.ledger_entries").
+				Where("admin_account_id=? AND company_id=? AND deleted_at IS NULL", u.adminID, company.ID)
+			if u.cpID != 0 {
+				balQ = balQ.Where("counterparty_id=?", u.cpID)
+			} else {
+				balQ = balQ.Where("contract_id=?", u.contractID)
+			}
+			balQ.Select("currency, COALESCE(SUM(amount),0) AS bal").Group("currency").Scan(&subRows)
+			oldThreshold := u.creditLimit.Neg()
+			oldInDebt := false
+			for _, sr := range subRows {
+				if sr.Bal.LessThan(oldThreshold) {
+					oldInDebt = true
+				}
+			}
+
+			// NEW per-договор (обе policy, computeUnitCoverage — тот же код, что live-sweep).
+			covRel, quar := computeUnitCoverage(pub, u, company.ID, AllocWalletRelease)
+			covStrict, _ := computeUnitCoverage(pub, u, company.ID, AllocStrictEarmark)
+
+			// openContracts единицы.
+			open := map[uint]bool{}
+			for _, id := range u.activeIDs {
+				open[id] = true
+			}
+			for _, id := range u.suspendedIDs {
+				open[id] = true
+			}
+
+			// §1.5 Σthreshold: old = групповой порог cp (один), new = Σ limit[X] открытых.
+			if u.cpID != 0 {
+				newSum := decimal.Zero
+				for x := range open {
+					newSum = newSum.Add(u.limitByContract[x])
+				}
+				if newSum.GreaterThan(u.creditLimit) {
+					rep.ThresholdGrowth = append(rep.ThresholdGrowth, GatingDryRunCPThreshold{
+						CounterpartyID:  u.cpID,
+						OldThresholdSum: u.creditLimit.StringFixed(2),
+						NewThresholdSum: newSum.StringFixed(2),
+					})
+				}
+			}
+
+			for x := range open {
+				if x == 0 {
+					continue
+				}
+				thr := u.limitByContract[x].Neg()
+				newState := "active"
+				if quar[x] {
+					newState = "quarantine"
+					rep.QuarantineCount++
+				} else if covRel[x].LessThan(thr) {
+					newState = "suspend"
+				}
+				// §3.9: strict блокирует, а release — нет (переплата соседа гасит под release).
+				if !quar[x] && covStrict[x].LessThan(thr) && !covRel[x].LessThan(thr) {
+					rep.PayerBlockedStrict++
+				}
+				oldState := "active"
+				if oldInDebt {
+					oldState = "suspend"
+				}
+				if oldState != newState {
+					rep.Changed = append(rep.Changed, GatingDryRunContract{
+						CounterpartyID: u.cpID, ContractID: x,
+						Coverage: covRel[x].StringFixed(2), Threshold: thr.StringFixed(2),
+						OldState: oldState, NewState: newState,
+					})
+					if oldState == "active" && newState == "suspend" {
+						rep.NewBlocks++
+					}
+					if oldState == "suspend" && newState == "active" {
+						rep.NewUnblocks++
+					}
+				}
+			}
+		}
+		out = append(out, rep)
+	}
+	return out
+}
+
 // joinUintCSV / parseUintCSV — сериализация списка id договоров для BillingSuspension.AffectedContractIDs.
 func joinUintCSV(ids []uint) string {
 	parts := make([]string, 0, len(ids))
@@ -226,6 +395,113 @@ type billingUnit struct {
 	limitByContract map[uint]decimal.Decimal // Б4: per-договор лимит (threshold per-договор, §1.5 гибрид)
 	activeIDs       []uint                   // client-договоры в 'active' (кандидаты на suspend)
 	suspendedIDs    []uint                   // client-договоры в 'suspended' (кандидаты на restore)
+}
+
+// unitKey — ключ единицы sweep. admin обязателен: contract/cp id могут совпадать у разных
+// админов одной company (Codex #3).
+type unitKey struct {
+	adminID uint
+	id      uint // counterparty_id (cp-unit) или contract_id (legacy)
+}
+
+// buildBillingUnits — группировка client-договоров в единицы (per-cp / legacy per-договор).
+// Чистая (без БД/записи), общая для live-sweep И dry-run (анти-дрейф §4.2). contracts должны
+// идти Order("id") для детерминизма cp-группового лимита (Б2).
+func buildBillingUnits(contracts []models.Contract) []*billingUnit {
+	unitByCP := make(map[unitKey]*billingUnit)
+	units := make([]*billingUnit, 0, len(contracts))
+	for i := range contracts {
+		ct := &contracts[i]
+		if ct.CounterpartyID != 0 {
+			k := unitKey{ct.AdminAccountID, ct.CounterpartyID}
+			u := unitByCP[k]
+			if u == nil {
+				u = &billingUnit{adminID: ct.AdminAccountID, cpID: ct.CounterpartyID, creditLimit: ct.CreditLimit,
+					limitByContract: map[uint]decimal.Decimal{}}
+				unitByCP[k] = u
+				units = append(units, u)
+			}
+			u.limitByContract[ct.ID] = ct.CreditLimit
+			if ct.Status == "active" {
+				u.activeIDs = append(u.activeIDs, ct.ID)
+			} else {
+				u.suspendedIDs = append(u.suspendedIDs, ct.ID)
+			}
+		} else {
+			u := &billingUnit{adminID: ct.AdminAccountID, contractID: ct.ID, creditLimit: ct.CreditLimit,
+				limitByContract: map[uint]decimal.Decimal{ct.ID: ct.CreditLimit}}
+			if ct.Status == "active" {
+				u.activeIDs = []uint{ct.ID}
+			} else {
+				u.suspendedIDs = []uint{ct.ID}
+			}
+			units = append(units, u)
+		}
+	}
+	return units
+}
+
+// computeUnitCoverage — Б4: per-договор покрытие единицы (READ-ONLY). Грузит проводки cp,
+// группирует по валюте, зовёт AllocateCoverage(policy), берёт min coverage per договор (договор
+// одновалютен; чужие группы дают 0). Общий код для live-sweep (sweepUnitPerContract) и dry-run —
+// анти-дрейф §4.2 (одно решение, два потребителя). Карантин (charge без периода) — per-договор (§7).
+func computeUnitCoverage(pub *gorm.DB, u *billingUnit, companyID uint, policy string) (cov map[uint]decimal.Decimal, quarantined map[uint]bool) {
+	openContracts := map[uint]bool{}
+	for _, id := range u.activeIDs {
+		openContracts[id] = true
+	}
+	for _, id := range u.suspendedIDs {
+		openContracts[id] = true
+	}
+
+	type entRow struct {
+		ID          uint
+		ContractID  uint
+		EntryType   string
+		Currency    string
+		Amount      decimal.Decimal
+		PeriodStart *time.Time
+		ExternalID  string
+	}
+	var rows []entRow
+	eq := pub.Table("public.ledger_entries").
+		Where("admin_account_id=? AND company_id=? AND deleted_at IS NULL", u.adminID, companyID)
+	if u.cpID != 0 {
+		eq = eq.Where("counterparty_id=?", u.cpID)
+	} else {
+		eq = eq.Where("contract_id=?", u.contractID)
+	}
+	eq.Select("id, contract_id, entry_type, currency, amount, period_start, external_id").Scan(&rows)
+
+	byCcy := map[string][]entRow{}
+	for _, r := range rows {
+		byCcy[r.Currency] = append(byCcy[r.Currency], r)
+	}
+
+	cov = map[uint]decimal.Decimal{}
+	quarantined = map[uint]bool{}
+	for _, group := range byCcy {
+		entries := make([]AllocEntry, 0, len(group))
+		for _, r := range group {
+			period, ok := resolveAllocPeriod(r.PeriodStart, r.ExternalID)
+			entries = append(entries, AllocEntry{
+				ID: r.ID, ContractID: r.ContractID, EntryType: r.EntryType,
+				Amount: r.Amount.Round(2), PeriodStart: period, PeriodOK: ok,
+			})
+		}
+		res := AllocateCoverage(entries, openContracts, policy)
+		for x := range openContracts {
+			if res.QuarantinedContracts[x] {
+				quarantined[x] = true
+				continue
+			}
+			c := res.Coverage[x]
+			if cur, ok := cov[x]; !ok || c.LessThan(cur) {
+				cov[x] = c
+			}
+		}
+	}
+	return cov, quarantined
 }
 
 func (s *LedgerChargeScheduler) sweepCompanySuspensions(company models.Company) (suspended, resolved int) {
@@ -261,11 +537,6 @@ func (s *LedgerChargeScheduler) sweepCompanySuspensions(company models.Company) 
 
 	// Активные holds компании (Ф3: per-контрагент или legacy per-договор). Индексируем
 	// двояко: cp<>0 → по (admin, counterparty_id); cp=0 → по (admin, contract_id).
-	// admin в ключе обязателен: id может совпадать у разных админов одной company (Codex #3).
-	type unitKey struct {
-		adminID uint
-		id      uint // counterparty_id (cp-unit) или contract_id (legacy)
-	}
 	holdByCP := make(map[unitKey]models.BillingHold)
 	holdByContract := make(map[unitKey]models.BillingHold)
 	{
@@ -282,40 +553,8 @@ func (s *LedgerChargeScheduler) sweepCompanySuspensions(company models.Company) 
 		}
 	}
 
-	// Ф3: единица приостановки — КОНТРАГЕНТ (cp<>0, гасит ВСЕ его client-договоры одним
-	// решением) либо отдельный договор (cp=0, legacy). Группируем client-договоры в единицы.
-	unitByCP := make(map[unitKey]*billingUnit)
-	units := make([]*billingUnit, 0, len(contracts))
-	for i := range contracts {
-		ct := &contracts[i]
-		if ct.CounterpartyID != 0 {
-			k := unitKey{ct.AdminAccountID, ct.CounterpartyID}
-			u := unitByCP[k]
-			if u == nil {
-				// Б2: лимит группы = лимит ПЕРВОГО договора по id (Order("id") выше даёт детерминизм).
-				// Per-договор порог появится в Б4; до него вся cp-группа гасится одним threshold.
-				u = &billingUnit{adminID: ct.AdminAccountID, cpID: ct.CounterpartyID, creditLimit: ct.CreditLimit,
-					limitByContract: map[uint]decimal.Decimal{}}
-				unitByCP[k] = u
-				units = append(units, u)
-			}
-			u.limitByContract[ct.ID] = ct.CreditLimit // Б4: per-договор порог
-			if ct.Status == "active" {
-				u.activeIDs = append(u.activeIDs, ct.ID)
-			} else {
-				u.suspendedIDs = append(u.suspendedIDs, ct.ID)
-			}
-		} else {
-			u := &billingUnit{adminID: ct.AdminAccountID, contractID: ct.ID, creditLimit: ct.CreditLimit,
-				limitByContract: map[uint]decimal.Decimal{ct.ID: ct.CreditLimit}}
-			if ct.Status == "active" {
-				u.activeIDs = []uint{ct.ID}
-			} else {
-				u.suspendedIDs = []uint{ct.ID}
-			}
-			units = append(units, u)
-		}
-	}
+	// Ф3: единица — КОНТРАГЕНТ (cp<>0) либо legacy-договор (cp=0). Общий buildBillingUnits (анти-дрейф).
+	units := buildBillingUnits(contracts)
 
 	// Б4: фичефлаг per-договор блокировки (default OFF → старый pooled-путь). Читаем per company
 	// (как charge-путь). На проде OFF у всех → ON-ветка дремлет до flip per-company после dry-run.
@@ -492,69 +731,19 @@ func (s *LedgerChargeScheduler) sweepUnitPerContract(
 	tenantDB, pub *gorm.DB, hold models.BillingHold, hasHold bool, now time.Time,
 ) (suspended, resolved int) {
 
-	// openContracts = active ∪ suspended договоры единицы.
-	openContracts := map[uint]bool{}
+	// openContracts/activeSet — для решения о suspend/restore.
 	activeSet := map[uint]bool{}
+	openContracts := map[uint]bool{}
 	for _, id := range u.activeIDs {
-		openContracts[id] = true
 		activeSet[id] = true
+		openContracts[id] = true
 	}
 	for _, id := range u.suspendedIDs {
 		openContracts[id] = true
 	}
 
-	// Все проводки единицы (по cp или legacy contract), группируем по валюте: договор одновалютен,
-	// мультивалюта возникает лишь у контрагента с договорами в разных валютах (каждая — свой проход).
-	type entRow struct {
-		ID          uint
-		ContractID  uint
-		EntryType   string
-		Currency    string
-		Amount      decimal.Decimal
-		PeriodStart *time.Time
-		ExternalID  string
-	}
-	var rows []entRow
-	eq := pub.Table("public.ledger_entries").
-		Where("admin_account_id=? AND company_id=? AND deleted_at IS NULL", u.adminID, company.ID)
-	if u.cpID != 0 {
-		eq = eq.Where("counterparty_id=?", u.cpID)
-	} else {
-		eq = eq.Where("contract_id=?", u.contractID)
-	}
-	eq.Select("id, contract_id, entry_type, currency, amount, period_start, external_id").Scan(&rows)
-
-	byCcy := map[string][]entRow{}
-	for _, r := range rows {
-		byCcy[r.Currency] = append(byCcy[r.Currency], r)
-	}
-
-	// Per-договор покрытие: договор одновалютен → реальное покрытие = coverage в ЕГО валюте; в
-	// чужих валютных группах coverage 0 (нет проводок). Берём минимум по группам (самый глубокий
-	// долг). Карантин (charge без периода) метит ТОЛЬКО свой договор — соседи решаются (§7).
-	covByContract := map[uint]decimal.Decimal{}
-	quarantined := map[uint]bool{}
-	for _, group := range byCcy {
-		entries := make([]AllocEntry, 0, len(group))
-		for _, r := range group {
-			period, ok := resolveAllocPeriod(r.PeriodStart, r.ExternalID)
-			entries = append(entries, AllocEntry{
-				ID: r.ID, ContractID: r.ContractID, EntryType: r.EntryType,
-				Amount: r.Amount.Round(2), PeriodStart: period, PeriodOK: ok,
-			})
-		}
-		res := AllocateCoverage(entries, openContracts, AllocWalletRelease)
-		for x := range openContracts {
-			if res.QuarantinedContracts[x] {
-				quarantined[x] = true
-				continue
-			}
-			c := res.Coverage[x]
-			if cur, ok := covByContract[x]; !ok || c.LessThan(cur) {
-				covByContract[x] = c
-			}
-		}
-	}
+	// Per-договор покрытие (§3.9 wallet_release) — общий computeUnitCoverage (анти-дрейф с dry-run).
+	covByContract, quarantined := computeUnitCoverage(pub, u, company.ID, AllocWalletRelease)
 
 	// cp-level inDebt для lifecycle зонта: любой НЕкарантинный договор в долге (порог per-договор).
 	anyDebt := false

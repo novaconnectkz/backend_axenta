@@ -1079,6 +1079,7 @@ func main() {
 	apiGroup.GET("/ledger/import-batches", api.GetLedgerImportBatches)
 	apiGroup.POST("/ledger/transfer", api.PostLedgerTransfer) // перевод между лицевыми счетами
 	apiGroup.POST("/ledger/charge/run", api.PostLedgerChargeRun)
+	apiGroup.POST("/ledger/gating/dry-run", api.PostLedgerGatingDryRun) // Б4 Фаза 5: pooled vs per-договор (read-only)
 	// Зонты отсрочки/обещанного платежа (П3+П4): блокируют авто-приостановку за долг.
 	apiGroup.GET("/ledger/holds/:contract_id", api.GetLedgerHolds)
 	apiGroup.POST("/ledger/hold", api.PostLedgerHold)
