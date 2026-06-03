@@ -2026,6 +2026,10 @@ func CreateContract(c *gin.Context) {
 		}
 	}
 
+	// Phase C (C-партнёр): для partner-договора заполняем дом идентичности
+	// partner_* из присланных client_* (dual-write до C4). No-op для client.
+	applyPartnerIdentityFromContract(&contract)
+
 	// Ф4: назначаем контрагента ДО вставки договора → counterparty_id попадает в тот же INSERT
 	// (атомарно, не висит cp=0 при сбое — Codex Ф4a). client-договор без явного cp (FE Ф4b может
 	// прислать) → find-or-create по идентичности клиента (закрывает HIGH-3: новые договоры в едином ЛС).
@@ -2648,6 +2652,19 @@ func UpdateContract(c *gin.Context) {
 				Updates(counterpartySnapshotMap(cp)).Error; e != nil {
 				log.Printf("⚠️ UpdateContract: не удалось обновить snapshot client_* договору %d: %v", contract.ID, e)
 			}
+		}
+	}
+
+	// Phase C (C-партнёр): для partner-договора синхронизируем дом идентичности
+	// partner_* из (обновлённых) client_*. contract перезагружен выше — client_*
+	// актуальны. Явная карта (Updates(struct) пропустил бы пустые строки).
+	if contract.ContractType == "partner" {
+		// WHERE дублирует in-memory guard contract_type='partner' (анти-race: если
+		// конкурентный запрос сменил тип после reload — не пишем partner_* на client-строку).
+		if e := tenantDB.Model(&models.Contract{}).
+			Where("id = ? AND contract_type = ?", contract.ID, "partner").
+			Updates(partnerIdentityMap(&contract)).Error; e != nil {
+			log.Printf("⚠️ UpdateContract: не удалось обновить partner_* договору %d: %v", contract.ID, e)
 		}
 	}
 
