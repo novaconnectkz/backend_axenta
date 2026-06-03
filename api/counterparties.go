@@ -218,6 +218,83 @@ func GetCounterpartyBalance(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": data})
 }
 
+// GetCounterpartyContracts — GET /api/auth/counterparties/:id/contracts
+// Договоры контрагента (для карточки контрагента, Фаза A IA-реструктуризации). Read-only.
+// Доступ как у balance: видимость контрагента гейтится менеджер-скоупом (видит cp, если есть
+// хотя бы один свой договор), но СПИСОК отдаёт ВСЕ договоры контрагента (решение владельца:
+// полный ЛС на чтение). Денежные действия по ним остаются под admin-гейтом в своих endpoint'ах.
+func GetCounterpartyContracts(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "некорректный id"})
+		return
+	}
+	q, adminAccountID, companyID, ok := counterpartyScope(c)
+	if !ok {
+		return
+	}
+	q = applyCounterpartyManagerScope(c, q) // гейт видимости контрагента
+	var cp models.Counterparty
+	if err := q.First(&cp, uint(id)).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "контрагент не найден"})
+		return
+	}
+	tenantDB := middleware.GetTenantDB(c)
+	if tenantDB == nil {
+		c.JSON(http.StatusOK, gin.H{"status": "success", "data": []gin.H{}})
+		return
+	}
+	var contracts []models.Contract
+	tenantDB.Where("counterparty_id = ? AND deleted_at IS NULL", cp.ID).
+		Order("created_at DESC").Find(&contracts)
+
+	// Тарифные планы — в public-схеме, подгружаем именами одним запросом.
+	planNames := map[uint]string{}
+	planPrices := map[uint]decimal.Decimal{}
+	var planIDs []uint
+	for i := range contracts {
+		if contracts[i].TariffPlanID != nil && *contracts[i].TariffPlanID > 0 {
+			planIDs = append(planIDs, *contracts[i].TariffPlanID)
+		}
+	}
+	if len(planIDs) > 0 {
+		var plans []models.BillingPlan
+		database.DB.Where("id IN ? AND admin_account_id = ?", planIDs, adminAccountID).Find(&plans)
+		for _, p := range plans {
+			planNames[p.ID] = p.Name
+			planPrices[p.ID] = p.Price
+		}
+	}
+
+	out := make([]gin.H, 0, len(contracts))
+	for i := range contracts {
+		ct := &contracts[i]
+		bal := balanceForContractCcy(ct.ID, 0, adminAccountID, companyID, ct.Currency)
+		row := gin.H{
+			"id":            ct.ID,
+			"number":        ct.Number,
+			"contract_type": ct.ContractType,
+			"status":        ct.Status,
+			"is_active":     ct.IsActive,
+			"currency":      ct.Currency,
+			"total_amount":  ct.TotalAmount.StringFixed(2),
+			"balance":       bal.StringFixed(2),
+			"is_debt":       bal.IsNegative(),
+			"start_date":    ct.StartDate,
+			"end_date":      ct.EndDate,
+			"manager_name":  ct.ManagerName,
+		}
+		if ct.TariffPlanID != nil {
+			row["tariff_name"] = planNames[*ct.TariffPlanID]
+			if price, ok := planPrices[*ct.TariffPlanID]; ok {
+				row["tariff_price"] = price.StringFixed(2)
+			}
+		}
+		out = append(out, row)
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": out})
+}
+
 // CreateCounterparty — POST /api/auth/counterparties
 func CreateCounterparty(c *gin.Context) {
 	if !requireContractAssignAccess(c) {

@@ -1097,7 +1097,8 @@ func main() {
 	apiGroup.POST("/counterparties/match", api.MatchCounterparties) // Ф5: превью-матчинг Excel-строк
 	apiGroup.GET("/counterparties", api.GetCounterparties)
 	apiGroup.GET("/counterparties/:id", api.GetCounterparty)
-	apiGroup.GET("/counterparties/:id/balance", api.GetCounterpartyBalance) // Ф4b: единый ЛС
+	apiGroup.GET("/counterparties/:id/balance", api.GetCounterpartyBalance)     // Ф4b: единый ЛС
+	apiGroup.GET("/counterparties/:id/contracts", api.GetCounterpartyContracts) // Фаза A: договоры контрагента (карточка)
 	apiGroup.POST("/counterparties", api.CreateCounterparty)
 	apiGroup.PUT("/counterparties/:id", api.UpdateCounterparty)
 	apiGroup.DELETE("/counterparties/:id", api.DeleteCounterparty)
