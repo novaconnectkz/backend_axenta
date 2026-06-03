@@ -1660,11 +1660,15 @@ func CreateContract(c *gin.Context) {
 		return
 	}
 
-	if strings.TrimSpace(contract.ClientName) == "" {
-		// TrimSpace: whitespace-only имя → пусто после нормализации в counterparty (Codex Ф4a).
+	// B2 (subject-first): client-договор с явным контрагентом → имя НЕ обязательно в теле,
+	// подтянется snapshot'ом из контрагента (ниже). Невалидный/чужой cp ловится позже
+	// (после валидации cp: client + cp==0 + пустое имя → 400 «выберите контрагента»).
+	// Партнёрский договор и client без cp — имя по-прежнему обязательно.
+	if strings.TrimSpace(contract.ClientName) == "" &&
+		!(contract.ContractType == "client" && contract.CounterpartyID != 0) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
-			"error":  "Имя клиента обязательно",
+			"error":  "Имя клиента обязательно (или выберите контрагента)",
 		})
 		return
 	}
@@ -2013,10 +2017,25 @@ func CreateContract(c *gin.Context) {
 		}
 	}
 
+	// B3 (subject-first dual-write): явно выбранный контрагент → его идентичность авторитетна,
+	// копируем snapshot в contract.Client* (после B2 форма договора client_* не шлёт; счета/1С/
+	// отображение читают snapshot). Только client-договор с валидным cp.
+	if contract.ContractType == "client" && contract.CounterpartyID != 0 {
+		if cp := loadCounterpartyScoped(contract.CounterpartyID, adminAccountID, contract.CompanyID); cp != nil {
+			applyCounterpartySnapshotToContract(cp, &contract)
+		}
+	}
+
 	// Ф4: назначаем контрагента ДО вставки договора → counterparty_id попадает в тот же INSERT
 	// (атомарно, не висит cp=0 при сбое — Codex Ф4a). client-договор без явного cp (FE Ф4b может
 	// прислать) → find-or-create по идентичности клиента (закрывает HIGH-3: новые договоры в едином ЛС).
 	if contract.ContractType == "client" && contract.CounterpartyID == 0 {
+		// B2: форма subject-first шлёт контрагента явно. Если client-договор без cp И без имени
+		// клиента — резолвить не из чего → ошибка (анти-пустой ЛС/договор).
+		if strings.TrimSpace(contract.ClientName) == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "для клиентского договора выберите контрагента"})
+			return
+		}
 		if cpID, e := resolveOrCreateCounterparty(adminAccountID, contract.CompanyID, &contract); e != nil {
 			log.Printf("⚠️ Не удалось назначить контрагента (договор %s): %v", contract.Number, e)
 		} else {
@@ -2616,6 +2635,18 @@ func UpdateContract(c *gin.Context) {
 				log.Printf("⚠️ UpdateContract: не удалось проставить counterparty_id договору %d: %v", contract.ID, e)
 			} else {
 				contract.CounterpartyID = cpID
+			}
+		}
+	}
+
+	// B3 (subject-first dual-write): после финализации контрагента — обновить snapshot client_* в
+	// БД из авторитетного контрагента (Updates(struct) пропускает пустые строки, поэтому явная карта).
+	// Только client-договор с контрагентом. Держит счета/1С/отображение в согласии с контрагентом.
+	if contract.ContractType == "client" && contract.CounterpartyID != 0 {
+		if cp := loadCounterpartyScoped(contract.CounterpartyID, adminAccountID, contract.CompanyID); cp != nil {
+			if e := tenantDB.Model(&models.Contract{}).Where("id = ?", contract.ID).
+				Updates(counterpartySnapshotMap(cp)).Error; e != nil {
+				log.Printf("⚠️ UpdateContract: не удалось обновить snapshot client_* договору %d: %v", contract.ID, e)
 			}
 		}
 	}

@@ -218,6 +218,109 @@ func GetCounterpartyBalance(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": data})
 }
 
+// applyCounterpartySnapshotToContract — B3 (subject-first dual-write): копирует идентичность
+// контрагента в денорм-поля contract.Client* (snapshot). После переноса формы идентичности
+// клиента на контрагента (B2) форма договора client_* больше не шлёт — авторитет на Counterparty,
+// а договор хранит snapshot, чтобы счета/1С/отображение/поиск читали как раньше (не ломались).
+// Вызывается ТОЛЬКО для client-договоров с явным контрагентом; партнёрские не трогаются.
+func applyCounterpartySnapshotToContract(cp *models.Counterparty, ct *models.Contract) {
+	if cp == nil || ct == nil {
+		return
+	}
+	ct.ClientName = cp.Name
+	ct.ClientShortName = cp.ShortName
+	ct.ClientType = cp.ClientType
+	ct.ClientKPP = cp.KPP
+	ct.ClientOGRN = cp.OGRN
+	ct.ClientOKPO = cp.OKPO
+	ct.ClientEmail = cp.Email
+	ct.ClientPhone = cp.Phone
+	ct.ClientWebsite = cp.Website
+	ct.ClientAddress = cp.Address
+	ct.ClientLegalAddress = cp.LegalAddress
+	ct.ClientPostalAddress = cp.PostalAddress
+	ct.ClientDirector = cp.Director
+	ct.ClientBasedOn = cp.BasedOn
+	ct.ClientBankName = cp.BankName
+	ct.ClientBankBIK = cp.BankBIK
+	ct.ClientBankCorrespondentAccount = cp.BankCorrespondentAccount
+	ct.ClientBankAccount = cp.BankAccount
+	ct.ClientBankRecipient = cp.BankRecipient
+	// Идентификатор: tax_id контрагента → соответствующее поле договора по типу.
+	switch cp.IDType {
+	case "inn", "bin", "iin":
+		ct.ClientINN = cp.TaxID
+	}
+	// Физлицо/паспорт.
+	ct.ClientPassportSeries = cp.PassportSeries
+	ct.ClientPassportNumber = cp.PassportNumber
+	ct.ClientPassportIssuedBy = cp.PassportIssuedBy
+	ct.ClientPassportIssueDate = cp.PassportIssueDate
+	ct.ClientPassportDepartmentCode = cp.PassportDepartmentCode
+	ct.ClientRegistrationAddress = cp.RegistrationAddress
+	ct.ClientActualAddress = cp.ActualAddress
+	ct.ClientSNILS = cp.SNILS
+	ct.ClientOGRNIP = cp.OGRNIP
+}
+
+// counterpartySnapshotMap — те же поля что applyCounterpartySnapshotToContract, но как map
+// колонок для tenantDB.Updates (UpdateContract: Updates(struct) пропускает пустые строки, поэтому
+// snapshot пишем явной картой колонок).
+func counterpartySnapshotMap(cp *models.Counterparty) map[string]any {
+	if cp == nil {
+		return map[string]any{}
+	}
+	inn := ""
+	switch cp.IDType {
+	case "inn", "bin", "iin":
+		inn = cp.TaxID
+	}
+	return map[string]any{
+		"client_name":                       cp.Name,
+		"client_short_name":                 cp.ShortName,
+		"client_type":                       cp.ClientType,
+		"client_inn":                        inn,
+		"client_kpp":                        cp.KPP,
+		"client_ogrn":                       cp.OGRN,
+		"client_okpo":                       cp.OKPO,
+		"client_email":                      cp.Email,
+		"client_phone":                      cp.Phone,
+		"client_website":                    cp.Website,
+		"client_address":                    cp.Address,
+		"client_legal_address":              cp.LegalAddress,
+		"client_postal_address":             cp.PostalAddress,
+		"client_director":                   cp.Director,
+		"client_based_on":                   cp.BasedOn,
+		"client_bank_name":                  cp.BankName,
+		"client_bank_bik":                   cp.BankBIK,
+		"client_bank_correspondent_account": cp.BankCorrespondentAccount,
+		"client_bank_account":               cp.BankAccount,
+		"client_bank_recipient":             cp.BankRecipient,
+		"client_passport_series":            cp.PassportSeries,
+		"client_passport_number":            cp.PassportNumber,
+		"client_passport_issued_by":         cp.PassportIssuedBy,
+		"client_passport_issue_date":        cp.PassportIssueDate,
+		"client_passport_department_code":   cp.PassportDepartmentCode,
+		"client_registration_address":       cp.RegistrationAddress,
+		"client_actual_address":             cp.ActualAddress,
+		"client_snils":                      cp.SNILS,
+		"client_ogrn_ip":                    cp.OGRNIP,
+	}
+}
+
+// loadCounterpartyScoped — грузит контрагента в скоупе admin+company (для snapshot). nil если нет.
+func loadCounterpartyScoped(counterpartyID, adminAccountID, companyID uint) *models.Counterparty {
+	if counterpartyID == 0 {
+		return nil
+	}
+	var cp models.Counterparty
+	if err := database.DB.Where("id = ? AND admin_account_id = ? AND company_id = ?",
+		counterpartyID, adminAccountID, companyID).First(&cp).Error; err != nil {
+		return nil
+	}
+	return &cp
+}
+
 // GetCounterpartyContracts — GET /api/auth/counterparties/:id/contracts
 // Договоры контрагента (для карточки контрагента, Фаза A IA-реструктуризации). Read-only.
 // Доступ как у balance: видимость контрагента гейтится менеджер-скоупом (видит cp, если есть
