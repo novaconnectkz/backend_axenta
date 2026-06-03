@@ -1332,6 +1332,11 @@ func CreateMissingGlobalTables() error {
 		log.Printf("⚠️ Ошибка создания таблиц счетов через SQL: %v", err)
 	}
 
+	// Phase D — unique-индексы контрагентов с колонкой kind. counterparties мигрируется
+	// здесь (прямой AutoMigrate), а не через RunMigration, и GORM НЕ альтерит существующий
+	// составной индекс по имени → правим детерминированным raw SQL (не полагаемся на GORM).
+	ensureCounterpartyKindIndexes(DB)
+
 	log.Println("✅ Попытка создания недостающих глобальных таблиц завершена")
 
 	if err := ensureBillingSchemaIntegrity(); err != nil {
@@ -1462,6 +1467,57 @@ func createInvoiceTablesViaSQL() error {
 	log.Println("✅ Таблица billing_history создана")
 
 	return nil
+}
+
+// ensureCounterpartyKindIndexes — Phase D: пересоздаёт unique-индексы контрагентов с
+// колонкой kind (партнёр и клиент с одним ИНН/именем сосуществуют). Идемпотентно:
+// пересоздаёт ТОЛЬКО если idx_cp_identity ещё без kind. Raw SQL (детерминированно,
+// не полагаясь на GORM-пересоздание составного partial-индекса). Определения зеркалят
+// gorm-теги models.Counterparty (порядок колонок: admin, company, kind, …).
+func ensureCounterpartyKindIndexes(db *gorm.DB) {
+	var hasKind bool
+	db.Raw(`SELECT EXISTS(
+		SELECT 1 FROM pg_index i
+		JOIN pg_class c ON c.oid = i.indexrelid
+		JOIN pg_class t ON t.oid = i.indrelid
+		JOIN pg_namespace n ON n.oid = t.relnamespace
+		JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+		WHERE c.relname = 'idx_cp_identity' AND t.relname = 'counterparties'
+		  AND n.nspname = 'public' AND a.attname = 'kind')`).Scan(&hasKind)
+	if hasKind {
+		log.Printf("✅ Phase D: cp unique-индексы уже содержат kind")
+		return
+	}
+	log.Printf("🔧 Phase D: пересоздаю unique-индексы public.counterparties с колонкой kind…")
+	stmts := []string{
+		`DROP INDEX IF EXISTS public.idx_cp_identity`,
+		`DROP INDEX IF EXISTS public.idx_cp_name_legacy`,
+		`CREATE UNIQUE INDEX idx_cp_identity ON public.counterparties
+			(admin_account_id, company_id, kind, id_type, tax_id)
+			WHERE tax_id <> '' AND deleted_at IS NULL`,
+		`CREATE UNIQUE INDEX idx_cp_name_legacy ON public.counterparties
+			(admin_account_id, company_id, kind, name)
+			WHERE (tax_id = '' OR tax_id IS NULL) AND deleted_at IS NULL`,
+	}
+	for _, s := range stmts {
+		if e := db.Exec(s).Error; e != nil {
+			log.Printf("❌ ВНИМАНИЕ Phase D: не удалось выполнить cp-индекс [%s]: %v", s, e)
+		}
+	}
+	// Assert — индекс пересоздан с kind И остался partial.
+	var def string
+	db.Raw(`SELECT COALESCE(indexdef,'') FROM pg_indexes
+		WHERE schemaname='public' AND tablename='counterparties' AND indexname='idx_cp_identity'`).Scan(&def)
+	switch {
+	case def == "":
+		log.Printf("❌ ВНИМАНИЕ: idx_cp_identity отсутствует — уникальность контрагентов НЕ защищена")
+	case !strings.Contains(def, "kind"):
+		log.Printf("❌ ВНИМАНИЕ: idx_cp_identity без kind (%s)", def)
+	case !strings.Contains(strings.ToUpper(def), "WHERE"):
+		log.Printf("❌ ВНИМАНИЕ: idx_cp_identity НЕ partial (%s)", def)
+	default:
+		log.Printf("✅ Phase D: idx_cp_identity пересоздан корректно (kind + partial)")
+	}
 }
 
 func ensureBillingSchemaIntegrity() error {

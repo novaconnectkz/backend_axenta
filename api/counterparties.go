@@ -76,6 +76,11 @@ func GetCounterparties(c *gin.Context) {
 	if c.Query("manual_review") == "1" {
 		q = q.Where("manual_review = ?", true)
 	}
+	// Phase D: фильтр по роли. ?kind=client|partner. Без параметра — справочник
+	// показывает ВСЕХ (и клиентов, и партнёров; FE различает бейджем по полю kind).
+	if k := strings.TrimSpace(c.Query("kind")); k == "client" || k == "partner" {
+		q = q.Where("kind = ?", k)
+	}
 
 	var total int64
 	q.Count(&total)
@@ -105,6 +110,9 @@ func SearchCounterparties(c *gin.Context) {
 		return
 	}
 	q = applyCounterpartyManagerScope(c, q) // Ф4: менеджер — только свои контрагенты
+	// Phase D: селектор формы client-договора — только kind='client' (партнёра нельзя
+	// выбрать контрагентом клиентского договора).
+	q = q.Where("kind = ?", "client")
 	if s := strings.TrimSpace(c.Query("q")); s != "" {
 		pattern := "%" + strings.ToLower(s) + "%"
 		// Скобки обязательны: иначе OR на верхнем уровне обходит admin/company-scope.
@@ -164,6 +172,24 @@ func GetCounterpartyBalance(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "контрагент не найден"})
 		return
 	}
+	// Phase D hard-gate (Codex MEDIUM): партнёр НЕ субъект ЛС — не агрегируем ledger
+	// (даже при случайной проводке не показываем как баланс). Отдаём справочный ответ:
+	// kind + кол-во договоров, без charged/paid/balance/holds. FE рисует снимок-биллинг.
+	if cp.Kind == "partner" {
+		var partnerContracts int64
+		if tenantDB := middleware.GetTenantDB(c); tenantDB != nil {
+			tenantDB.Model(&models.Contract{}).
+				Where("counterparty_id = ? AND deleted_at IS NULL", cp.ID).Count(&partnerContracts)
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "success", "data": gin.H{
+			"counterparty_id": cp.ID,
+			"name":            cp.Name,
+			"kind":            "partner",
+			"is_ledger":       false, // партнёр вне лицевого счёта
+			"contracts_count": partnerContracts,
+		}})
+		return
+	}
 	charged, paid := ledgerBreakdown(0, cp.ID, adminAccountID, companyID) // cp<>0 → агрегат контрагента
 	balance := paid.Sub(charged)
 	// Кол-во client-договоров контрагента (tenant-схема текущей компании).
@@ -175,6 +201,7 @@ func GetCounterpartyBalance(c *gin.Context) {
 	data := gin.H{
 		"counterparty_id": cp.ID,
 		"name":            cp.Name,
+		"kind":            cp.Kind, // Phase D: 'partner' → FE скрывает баланс/платёж/holds (партнёр не субъект ЛС)
 		"total_charged":   charged.StringFixed(2),
 		"total_paid":      paid.StringFixed(2),
 		"credit_limit":    cp.CreditLimit.StringFixed(2), // порог применяется per-currency
@@ -611,11 +638,85 @@ func cpNormalizeName(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
+// firstNonEmpty — первая непустая (после trim) строка из переданных.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 // resolveOrCreateCounterparty — Ф4: находит контрагента по идентичности договора или создаёт
 // нового (та же логика, что datafix Ф1). Закрывает Codex HIGH-3 — новые договоры входят в
 // единый ЛС автоматически. Идентичность: есть ИНН → id_type=inn по ИНН; иначе по имени +
 // manual_review. Возвращает counterparty_id. Гонку (две параллельные вставки) ловит
 // партиальный uniqueIndex → повторный SELECT.
+// resolveOrCreatePartnerCounterparty — Phase D: партнёрский договор → контрагент
+// kind='partner' (СПРАВОЧНИК идентичности, НЕ субъект ЛС). Идентичность из Partner*
+// (дом C-партнёра) с fallback на Client* (snapshot). find() скоупится kind='partner' —
+// партнёр НЕ матчит клиентского cp с тем же ИНН (и наоборот). Биллинг НЕ копируется
+// (prepaid/0) — баланс/начисления к партнёру не применяются. No-op для не-партнёра.
+func resolveOrCreatePartnerCounterparty(adminAccountID, companyID uint, ct *models.Contract) (uint, error) {
+	if ct.ContractType != "partner" {
+		return 0, nil
+	}
+	if adminAccountID == 0 || companyID == 0 {
+		return 0, fmt.Errorf("partner counterparty: пустой admin/company scope")
+	}
+	name := cpNormalizeName(firstNonEmpty(ct.PartnerName, ct.ClientName))
+	inn := strings.TrimSpace(firstNonEmpty(ct.PartnerINN, ct.ClientINN))
+	if name == "" {
+		return 0, fmt.Errorf("partner counterparty: пустое имя партнёра")
+	}
+	idType := "other"
+	manualReview := true
+	if inn != "" {
+		idType = "inn"
+		manualReview = false
+	}
+
+	find := func() (uint, bool) {
+		var id uint
+		q := database.DB.Model(&models.Counterparty{}).Select("id").
+			Where("admin_account_id = ? AND company_id = ? AND kind = ? AND deleted_at IS NULL", adminAccountID, companyID, "partner")
+		if inn != "" {
+			q = q.Where("id_type = ? AND tax_id = ?", idType, inn)
+		} else {
+			q = q.Where("(tax_id = '' OR tax_id IS NULL) AND name = ?", name)
+		}
+		q.Scan(&id)
+		return id, id != 0
+	}
+
+	if id, ok := find(); ok {
+		return id, nil
+	}
+	cp := models.Counterparty{
+		AdminAccountID: adminAccountID, CompanyID: companyID, Country: "ru", Kind: "partner",
+		IDType: idType, TaxID: inn, Name: name, ClientType: ct.ClientType,
+		ShortName: ct.ClientShortName, KPP: ct.ClientKPP, Email: ct.ClientEmail, Phone: ct.ClientPhone,
+		Address: ct.ClientAddress, LegalAddress: ct.ClientLegalAddress, PostalAddress: ct.ClientPostalAddress,
+		OGRN: ct.ClientOGRN, OKPO: ct.ClientOKPO, Director: ct.ClientDirector, BasedOn: ct.ClientBasedOn,
+		Website: ct.ClientWebsite, BankName: ct.ClientBankName, BankBIK: ct.ClientBankBIK,
+		BankCorrespondentAccount: ct.ClientBankCorrespondentAccount, BankAccount: ct.ClientBankAccount,
+		BankRecipient: ct.ClientBankRecipient,
+		// Биллинг НЕ копируем: партнёр не субъект ЛС (snapshot-биллинг). prepaid/0 — нейтрально.
+		BillingMode: "prepaid", CreditLimit: decimal.Zero,
+		ManualReview: manualReview, CreatedBy: "auto:partner-contract",
+	}
+	if err := database.DB.Create(&cp).Error; err != nil {
+		if isUniqueViolation(err) {
+			if id, ok := find(); ok {
+				return id, nil
+			}
+		}
+		return 0, err
+	}
+	return cp.ID, nil
+}
+
 func resolveOrCreateCounterparty(adminAccountID, companyID uint, ct *models.Contract) (uint, error) {
 	if adminAccountID == 0 || companyID == 0 {
 		return 0, fmt.Errorf("counterparty: пустой admin/company scope")

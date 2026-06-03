@@ -39,27 +39,34 @@ type Counterparty struct {
 	AdminAccountID uint `json:"admin_account_id" gorm:"not null;index;uniqueIndex:idx_cp_identity,where:tax_id <> '' AND deleted_at IS NULL;uniqueIndex:idx_cp_name_legacy,where:(tax_id = '' OR tax_id IS NULL) AND deleted_at IS NULL"`
 	CompanyID      uint `json:"company_id" gorm:"not null;index;uniqueIndex:idx_cp_identity;uniqueIndex:idx_cp_name_legacy"`
 
+	// Phase D — роль контрагента: client (субъект лицевого счёта, ledger-биллинг) или
+	// partner (СПРАВОЧНИК идентичности, биллинг snapshot-based — НЕ ledger). Партнёр виден
+	// в разделе Контрагенты с реквизитами, но баланс/начисления/holds к нему НЕ применяются
+	// (денежные потоки гейтятся contract_type='client', а UI/balance — этим kind).
+	// В idx_cp_identity/idx_cp_name_legacy → партнёр и клиент с одним ИНН/именем сосуществуют.
+	Kind string `json:"kind" gorm:"not null;default:'client';type:varchar(20);index;uniqueIndex:idx_cp_identity;uniqueIndex:idx_cp_name_legacy"`
+
 	// Идентификатор контрагента.
-	Country string `json:"country" gorm:"type:varchar(2);default:'ru';index"`                            // ru|kz|...
+	Country string `json:"country" gorm:"type:varchar(2);default:'ru';index"`                                  // ru|kz|...
 	IDType  string `json:"id_type" gorm:"not null;default:'inn';type:varchar(20);uniqueIndex:idx_cp_identity"` // inn|bin|iin|passport|other
-	TaxID   string `json:"tax_id" gorm:"type:varchar(32);uniqueIndex:idx_cp_identity"`                    // ИНН/БИН/ИИН/паспорт; пусто = по имени
+	TaxID   string `json:"tax_id" gorm:"type:varchar(32);uniqueIndex:idx_cp_identity"`                         // ИНН/БИН/ИИН/паспорт; пусто = по имени
 
 	Name       string `json:"name" gorm:"not null;type:varchar(200);index;uniqueIndex:idx_cp_name_legacy"`
 	ClientType string `json:"client_type" gorm:"type:varchar(50)"` // organization|individual_entrepreneur|physical_person
 
 	// Реквизиты (переносятся с Contract.Client* — будущий дом идентичности клиента, форма Ф4).
-	ShortName      string `json:"short_name" gorm:"type:varchar(200)"`
-	KPP            string `json:"kpp" gorm:"type:varchar(20)"`
-	Email          string `json:"email" gorm:"type:varchar(100)"`
-	Phone          string `json:"phone" gorm:"type:varchar(20)"`
-	Address        string `json:"address" gorm:"type:text"`
-	LegalAddress   string `json:"legal_address" gorm:"type:text"`
-	PostalAddress  string `json:"postal_address" gorm:"type:text"`
-	OGRN           string `json:"ogrn" gorm:"type:varchar(20)"`
-	OKPO           string `json:"okpo" gorm:"type:varchar(20)"`
-	Director       string `json:"director" gorm:"type:varchar(200)"`
-	BasedOn        string `json:"based_on" gorm:"type:varchar(200)"`
-	Website        string `json:"website" gorm:"type:varchar(200)"`
+	ShortName     string `json:"short_name" gorm:"type:varchar(200)"`
+	KPP           string `json:"kpp" gorm:"type:varchar(20)"`
+	Email         string `json:"email" gorm:"type:varchar(100)"`
+	Phone         string `json:"phone" gorm:"type:varchar(20)"`
+	Address       string `json:"address" gorm:"type:text"`
+	LegalAddress  string `json:"legal_address" gorm:"type:text"`
+	PostalAddress string `json:"postal_address" gorm:"type:text"`
+	OGRN          string `json:"ogrn" gorm:"type:varchar(20)"`
+	OKPO          string `json:"okpo" gorm:"type:varchar(20)"`
+	Director      string `json:"director" gorm:"type:varchar(200)"`
+	BasedOn       string `json:"based_on" gorm:"type:varchar(200)"`
+	Website       string `json:"website" gorm:"type:varchar(200)"`
 
 	// Банковские реквизиты.
 	BankName                 string `json:"bank_name" gorm:"type:varchar(200)"`

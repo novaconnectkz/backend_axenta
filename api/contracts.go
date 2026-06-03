@@ -2047,6 +2047,17 @@ func CreateContract(c *gin.Context) {
 		}
 	}
 
+	// Phase D: партнёрский договор → контрагент kind='partner' (справочник), counterparty_id
+	// в тот же INSERT. Партнёр НЕ субъект ЛС — биллинг snapshot (contract_type='partner' уже
+	// исключён из charge/sweep). Ошибка резолва не блокирует создание договора (cp=0, добьёт backfill).
+	if contract.ContractType == "partner" && contract.CounterpartyID == 0 {
+		if cpID, e := resolveOrCreatePartnerCounterparty(adminAccountID, contract.CompanyID, &contract); e != nil {
+			log.Printf("⚠️ Не удалось назначить партнёра-контрагента (договор %s): %v", contract.Number, e)
+		} else {
+			contract.CounterpartyID = cpID
+		}
+	}
+
 	if err := tenantDB.Omit("SellerCountryCode", "BuyerCountryCode", "NDSRateOverride", "TariffPlan", "Appendices", "Objects", "IsAutoRenew", "ContractPeriodMonths").Create(&contract).Error; err != nil {
 		log.Printf("❌ Ошибка при создании договора: %v", err)
 		log.Printf("📋 Тип ошибки: %T", err)
@@ -2665,6 +2676,21 @@ func UpdateContract(c *gin.Context) {
 			Where("id = ? AND contract_type = ?", contract.ID, "partner").
 			Updates(partnerIdentityMap(&contract)).Error; e != nil {
 			log.Printf("⚠️ UpdateContract: не удалось обновить partner_* договору %d: %v", contract.ID, e)
+		}
+	}
+
+	// Phase D: партнёрский договор без контрагента → назначить cp kind='partner'
+	// (справочник). Идентичность из partner_*/client_* (актуальны после reload+dual-write выше).
+	if contract.ContractType == "partner" && contract.CounterpartyID == 0 {
+		if cpID, e := resolveOrCreatePartnerCounterparty(adminAccountID, contract.CompanyID, &contract); e != nil {
+			log.Printf("⚠️ UpdateContract: не удалось назначить партнёра-контрагента договору %d: %v", contract.ID, e)
+		} else if cpID != 0 {
+			if e := tenantDB.Model(&models.Contract{}).Where("id = ? AND contract_type = ?", contract.ID, "partner").
+				Update("counterparty_id", cpID).Error; e != nil {
+				log.Printf("⚠️ UpdateContract: не удалось проставить counterparty_id партнёру %d: %v", contract.ID, e)
+			} else {
+				contract.CounterpartyID = cpID
+			}
 		}
 	}
 

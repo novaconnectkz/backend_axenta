@@ -78,8 +78,13 @@ func PostLedgerHold(c *gin.Context) {
 		tenantDB = database.DB
 	}
 	var contract models.Contract
-	if err := tenantDB.Select("id, company_id, credit_limit, counterparty_id, currency").First(&contract, req.ContractID).Error; err != nil {
+	if err := tenantDB.Select("id, company_id, credit_limit, counterparty_id, currency, contract_type").First(&contract, req.ContractID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "договор не найден"})
+		return
+	}
+	// Phase D: партнёр не субъект ЛС → holds к нему неприменимы.
+	if contract.ContractType == "partner" {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "партнёр не ведётся по лицевому счёту — отсрочка недоступна"})
 		return
 	}
 
