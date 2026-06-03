@@ -563,6 +563,9 @@ func UpdateCounterparty(c *gin.Context) {
 	in.CompanyID = companyID
 	in.CreatedBy = existing.CreatedBy
 	in.CreatedAt = existing.CreatedAt
+	// Phase D: kind (роль client|partner) НЕ редактируется формой реквизитов. Select("*")
+	// ниже пишет все колонки → без этого пустой in.Kind затёр бы партнёра в '' (gate сломан).
+	in.Kind = existing.Kind
 	in.TaxID = strings.TrimSpace(in.TaxID)
 	if in.TaxID == "" {
 		in.ManualReview = true
