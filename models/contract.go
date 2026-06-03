@@ -1,9 +1,11 @@
 package models
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
+	"strings"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -52,6 +54,16 @@ type Contract struct {
 	PartnerSource       string `json:"partner_source" gorm:"type:varchar(20);not null;default:'axenta';index"` // axenta|wialon|skif|gelios
 	PartnerConnectionID uint   `json:"partner_connection_id" gorm:"not null;default:0"`                        // connection для wialon/skif/gelios (0 для axenta)
 	PartnerExternalID   string `json:"partner_external_id" gorm:"type:varchar(128);not null;default:''"`       // стабильный ключ партнёра в системе (Axenta id / Wialon resource / SKIF dealer UUID / GELIOS user id)
+
+	// Phase C — дом идентичности партнёра. Партнёр НЕ субъект лицевого счёта (биллинг
+	// snapshot-based, не ledger), поэтому его имя/ИНН/реквизиты живут ЗДЕСЬ, а не в
+	// Counterparty и не в денорм-полях Client* (которые удаляются на C4). Гран —
+	// per-contract (1 партнёр = 1 договор, partial unique index на триплет это
+	// гарантирует), потому отдельная таблица не нужна. PartnerRequisites — jsonb с
+	// остатком реквизитов (kpp/director/банк/адрес), редкий хвост без раздувания схемы.
+	PartnerName       string `json:"partner_name" gorm:"type:varchar(200)"`
+	PartnerINN        string `json:"partner_inn" gorm:"type:varchar(20)"`
+	PartnerRequisites string `json:"partner_requisites" gorm:"type:jsonb;default:'{}'"`
 
 	// Клиент
 	ClientType      string `json:"client_type" gorm:"type:varchar(50)"` // organization, individual_entrepreneur, physical_person
@@ -149,6 +161,72 @@ type Contract struct {
 // TableName задает имя таблицы для модели Contract
 func (Contract) TableName() string {
 	return "contracts"
+}
+
+// ============================================================================
+// Phase C — дом идентичности партнёра. Логика в models, чтобы runtime (api) и
+// backfill (cmd) звали ОДНО и то же — без расхождения SQL/Go.
+// ============================================================================
+
+// BuildPartnerRequisites сериализует «хвост» реквизитов партнёра (всё кроме
+// name+inn — отдельные колонки) в jsonb-строку. Пустые поля опускает, "{}" если пусто.
+func (c *Contract) BuildPartnerRequisites() string {
+	req := map[string]string{
+		"short_name":     c.ClientShortName,
+		"client_type":    c.ClientType,
+		"kpp":            c.ClientKPP,
+		"ogrn":           c.ClientOGRN,
+		"okpo":           c.ClientOKPO,
+		"email":          c.ClientEmail,
+		"phone":          c.ClientPhone,
+		"website":        c.ClientWebsite,
+		"address":        c.ClientAddress,
+		"legal_address":  c.ClientLegalAddress,
+		"director":       c.ClientDirector,
+		"based_on":       c.ClientBasedOn,
+		"bank_name":      c.ClientBankName,
+		"bank_bik":       c.ClientBankBIK,
+		"bank_corr":      c.ClientBankCorrespondentAccount,
+		"bank_account":   c.ClientBankAccount,
+		"bank_recipient": c.ClientBankRecipient,
+	}
+	for k, v := range req {
+		if strings.TrimSpace(v) == "" {
+			delete(req, k)
+		}
+	}
+	if len(req) == 0 {
+		return "{}"
+	}
+	b, err := json.Marshal(req)
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
+}
+
+// ApplyPartnerIdentityFromClient — заполняет partner_* из client_* договора.
+// No-op для не-партнёра. Используется в Create (in-memory) и backfill.
+func (c *Contract) ApplyPartnerIdentityFromClient() {
+	if c.ContractType != "partner" {
+		return
+	}
+	c.PartnerName = c.ClientName
+	c.PartnerINN = c.ClientINN
+	c.PartnerRequisites = c.BuildPartnerRequisites()
+}
+
+// PartnerIdentityMap — те же три поля как карта колонок для Updates
+// (Updates(struct) пропустил бы пустые строки). Пустая карта для не-партнёра.
+func (c *Contract) PartnerIdentityMap() map[string]any {
+	if c.ContractType != "partner" {
+		return map[string]any{}
+	}
+	return map[string]any{
+		"partner_name":       c.ClientName,
+		"partner_inn":        c.ClientINN,
+		"partner_requisites": c.BuildPartnerRequisites(),
+	}
 }
 
 // IsExpired проверяет, истек ли договор

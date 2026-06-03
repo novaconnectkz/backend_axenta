@@ -910,6 +910,25 @@ func RunMigration(db *gorm.DB, migration MigrationInfo) MigrationResult {
 		}
 	}
 
+	// Phase C — guard «1 партнёр = 1 договор»: partial unique index на триплет
+	// идентичности партнёра. Гарантирует, что дом идентичности (PartnerName/INN/
+	// Requisites на договоре) не форкнётся дублирующим партнёрским договором.
+	// Партиал по contract_type='partner' (клиентов не трогает) и deleted_at IS NULL
+	// (soft-delete не блокирует пересоздание). Идемпотентно (IF NOT EXISTS).
+	// search_path уже выставлен на текущую tenant-схему вызывающим RunAllMigrations.
+	if result.Action != "error" && migration.TableName == "contracts" {
+		const idxSQL = `CREATE UNIQUE INDEX IF NOT EXISTS uq_contracts_partner_identity
+			ON contracts (partner_source, partner_connection_id, partner_external_id)
+			WHERE contract_type = 'partner' AND deleted_at IS NULL`
+		if err := db.Exec(idxSQL).Error; err != nil {
+			// Громко: провал = нет guard «1 партнёр=1 договор» (вероятно дубль-триплет в
+			// данных). Не-fatal (boot не валим), но видно в логах для ручного разбора.
+			log.Printf("❌ ВНИМАНИЕ: не удалось создать uq_contracts_partner_identity (guard идентичности партнёра ОТСУТСТВУЕТ, проверь дубли триплета): %v", err)
+		} else {
+			log.Printf("✅ Индекс uq_contracts_partner_identity готов")
+		}
+	}
+
 	result.Duration = time.Since(startTime)
 	return result
 }

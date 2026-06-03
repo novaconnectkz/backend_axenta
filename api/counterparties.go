@@ -308,6 +308,24 @@ func counterpartySnapshotMap(cp *models.Counterparty) map[string]any {
 	}
 }
 
+// Phase C — дом идентичности партнёра: партнёр НЕ субъект лицевого счёта (биллинг
+// snapshot-based), его имя/ИНН/реквизиты живут в partner_* ДОГОВОРА, не в Counterparty.
+// На шаге C-партнёр FE ещё шлёт client_*, поэтому BE dual-write'ит client_*→partner_*.
+// Логика — методы models.Contract (runtime и backfill зовут одно). Тонкие обёртки ниже.
+
+func applyPartnerIdentityFromContract(ct *models.Contract) {
+	if ct != nil {
+		ct.ApplyPartnerIdentityFromClient()
+	}
+}
+
+func partnerIdentityMap(ct *models.Contract) map[string]any {
+	if ct == nil {
+		return map[string]any{}
+	}
+	return ct.PartnerIdentityMap()
+}
+
 // loadCounterpartyScoped — грузит контрагента в скоупе admin+company (для snapshot). nil если нет.
 func loadCounterpartyScoped(counterpartyID, adminAccountID, companyID uint) *models.Counterparty {
 	if counterpartyID == 0 {
