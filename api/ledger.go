@@ -407,8 +407,14 @@ func PostLedgerPayment(c *gin.Context) {
 		tenantDB = database.DB
 	}
 	var contract models.Contract
-	if err := tenantDB.Select("id, company_id, counterparty_id, currency").First(&contract, req.ContractID).Error; err != nil {
+	if err := tenantDB.Select("id, company_id, counterparty_id, currency, contract_type").First(&contract, req.ContractID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "договор не найден"})
+		return
+	}
+	// Phase D: партнёр НЕ субъект ЛС (биллинг snapshot, не ledger). Платёж на партнёрский
+	// договор создал бы фантомную проводку/баланс → запрет (defense-in-depth, FE тоже скрывает).
+	if contract.ContractType == "partner" {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "партнёр не ведётся по лицевому счёту — платёж недоступен"})
 		return
 	}
 
@@ -610,12 +616,17 @@ func PostLedgerTransfer(c *gin.Context) {
 		tenantDB = database.DB
 	}
 	var from, to models.Contract
-	if err := tenantDB.Select("id, currency, company_id, counterparty_id").First(&from, req.FromContractID).Error; err != nil {
+	if err := tenantDB.Select("id, currency, company_id, counterparty_id, contract_type").First(&from, req.FromContractID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "договор-источник не найден"})
 		return
 	}
-	if err := tenantDB.Select("id, currency, company_id, counterparty_id").First(&to, req.ToContractID).Error; err != nil {
+	if err := tenantDB.Select("id, currency, company_id, counterparty_id, contract_type").First(&to, req.ToContractID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "договор-получатель не найден"})
+		return
+	}
+	// Phase D: партнёр не субъект ЛС → перевод с/на партнёрский договор недоступен.
+	if from.ContractType == "partner" || to.ContractType == "partner" {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "партнёр не ведётся по лицевому счёту — перевод недоступен"})
 		return
 	}
 	// Ф2: единый ЛС — перевод внутри ОДНОГО контрагента бессмыслен (один баланс).
