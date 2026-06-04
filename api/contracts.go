@@ -463,7 +463,7 @@ func GetContracts(c *gin.Context) {
 	// Objects не загружаем через Preload, так как они в tenant схеме, а не в public
 	// Их можно загрузить отдельно при необходимости
 
-	// Получаем договоры с пагинацией
+	// Получаем договоры с пагинацией.
 	if err := baseQuery.Offset(offset).Limit(limit).Find(&contracts).Error; err != nil {
 		log.Printf("❌ Ошибка при получении договоров: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -477,6 +477,9 @@ func GetContracts(c *gin.Context) {
 		log.Printf("📋 GetContracts: первый договор: ID=%d, Number=%s, Status=%s, ContractType=%s, PartnerCompanyID=%v",
 			contracts[0].ID, contracts[0].Number, contracts[0].Status, contracts[0].ContractType, contracts[0].PartnerCompanyID)
 	}
+
+	// C4a: имя субъекта для FE-display из public.counterparties (tenantDB не видит, см. attach)
+	attachCounterparties(contracts)
 
 	// Загружаем TariffPlan (BillingPlan) для каждого договора отдельно (он в public схеме)
 	publicDB := database.DB.Session(&gorm.Session{})
@@ -1177,6 +1180,9 @@ func GetContract(c *gin.Context) {
 		}
 		return
 	}
+
+	// C4a: имя субъекта для FE-display из public.counterparties (см. attach)
+	attachCounterpartyToContract(&contract)
 
 	// Загружаем тарифный план
 	if contract.TariffPlanID != nil && *contract.TariffPlanID > 0 {
@@ -3224,6 +3230,8 @@ func GetExpiringContracts(c *gin.Context) {
 		})
 		return
 	}
+
+	attachCounterparties(contracts) // C4a: имя субъекта для FE
 
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",

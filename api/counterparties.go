@@ -395,6 +395,7 @@ func GetCounterpartyContracts(c *gin.Context) {
 	var contracts []models.Contract
 	tenantDB.Where("counterparty_id = ? AND deleted_at IS NULL", cp.ID).
 		Order("created_at DESC").Find(&contracts)
+	attachCounterparties(contracts) // C4a: единый FE-display (cp в public, tenantDB не видит)
 
 	// Тарифные планы — в public-схеме, подгружаем именами одним запросом.
 	planNames := map[uint]string{}

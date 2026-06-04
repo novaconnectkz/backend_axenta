@@ -248,11 +248,12 @@ func GetDashboardActivity(c *gin.Context) {
 	if enabledSources["contracts"] {
 		var contracts []models.Contract
 		applyContractTableScope(c, tenantDB.Model(&models.Contract{}).
-			Preload("Counterparty").
 			Where("admin_account_id = ?", adminAccountID)).
 			Order("updated_at DESC, created_at DESC").
 			Limit(limit / 3). // Треть от лимита для договоров
 			Find(&contracts)
+
+		attachCounterparties(contracts) // C4a: имя субъекта (cp в public, tenantDB не видит)
 
 		for _, contract := range contracts {
 			activityType := "contract_updated"

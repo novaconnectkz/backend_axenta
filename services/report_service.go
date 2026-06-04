@@ -429,7 +429,7 @@ func (rs *ReportService) getWarehouseReportData(params ReportParams) (*ReportDat
 // getContractsReportData получает данные отчета по договорам
 func (rs *ReportService) getContractsReportData(params ReportParams) (*ReportData, error) {
 	var contracts []models.Contract
-	query := rs.db.Preload("Counterparty").Where("company_id = ?", params.CompanyID)
+	query := rs.db.Where("company_id = ?", params.CompanyID)
 
 	if params.DateFrom != nil {
 		query = query.Where("created_at >= ?", params.DateFrom)
@@ -444,6 +444,11 @@ func (rs *ReportService) getContractsReportData(params ReportParams) (*ReportDat
 	if err := query.Find(&contracts).Error; err != nil {
 		return nil, err
 	}
+
+	// C4a: имя субъекта (DisplayName) из public.counterparties. Preload нельзя —
+	// counterparties только в public, а rs.db может быть tenant-conn (search_path
+	// без public) → квалифицируем схему явно, грузим одним запросом.
+	attachCounterpartiesViaDB(rs.db, contracts)
 
 	headers := []string{"ID", "Номер", "Клиент", "Дата начала", "Дата окончания", "Статус", "Стоимость", "Объектов", "Дата создания"}
 	rows := make([]map[string]interface{}, len(contracts))
