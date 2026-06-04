@@ -270,7 +270,7 @@ func purgeContractCleanup(c *gin.Context, tenantDB *gorm.DB, contract *models.Co
 		companyIDUint, _ = companyID.(uint)
 	}
 	entityName := fmt.Sprintf("Договор %s", contract.Number)
-	entityDescription := fmt.Sprintf("Клиент: %s", contract.ClientName)
+	entityDescription := fmt.Sprintf("Клиент: %s", contract.DisplayName())
 	if contract.Title != "" {
 		entityDescription += fmt.Sprintf(", %s", contract.Title)
 	}
