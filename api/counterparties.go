@@ -530,7 +530,7 @@ func UpdateCounterparty(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "некорректный id"})
 		return
 	}
-	q, adminAccountID, companyID, ok := counterpartyScope(c)
+	q, _, _, ok := counterpartyScope(c) // scope уже в q (First грузит existing в admin+company)
 	if !ok {
 		return
 	}
@@ -557,23 +557,52 @@ func UpdateCounterparty(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "недопустимый id_type"})
 		return
 	}
-	// Защищаем неизменяемые/серверные поля.
-	in.ID = existing.ID
-	in.AdminAccountID = adminAccountID
-	in.CompanyID = companyID
-	in.CreatedBy = existing.CreatedBy
-	in.CreatedAt = existing.CreatedAt
-	// Phase D: kind (роль client|partner) НЕ редактируется формой реквизитов. Select("*")
-	// ниже пишет все колонки → без этого пустой in.Kind затёр бы партнёра в '' (gate сломан).
-	in.Kind = existing.Kind
 	in.TaxID = strings.TrimSpace(in.TaxID)
-	if in.TaxID == "" {
-		in.ManualReview = true
+	// Появился валидный tax_id → флаг «нет ИНН, ручная проверка» снимается (Codex).
+	manualReview := in.TaxID == ""
+
+	// Map-based Updates: пишем ТОЛЬКО явно перечисленные редактируемые колонки реквизитов.
+	// Дискриминатор kind (роль client|partner) и серверные поля (id/admin/company/created_*/
+	// updated_at/deleted_at) НЕ в карте → структурно защищены (партнёр не затрётся в '').
+	// Это заменяет хрупкий Select("*"), который писал ВСЕ колонки, включая незаполненные.
+	updates := map[string]any{
+		"client_type":                in.ClientType,
+		"name":                       in.Name,
+		"short_name":                 in.ShortName,
+		"country":                    in.Country,
+		"id_type":                    in.IDType,
+		"tax_id":                     in.TaxID,
+		"kpp":                        in.KPP,
+		"ogrn":                       in.OGRN,
+		"okpo":                       in.OKPO,
+		"email":                      in.Email,
+		"phone":                      in.Phone,
+		"website":                    in.Website,
+		"address":                    in.Address,
+		"legal_address":              in.LegalAddress,
+		"postal_address":             in.PostalAddress,
+		"director":                   in.Director,
+		"based_on":                   in.BasedOn,
+		"bank_name":                  in.BankName,
+		"bank_bik":                   in.BankBIK,
+		"bank_correspondent_account": in.BankCorrespondentAccount,
+		"bank_account":               in.BankAccount,
+		"bank_recipient":             in.BankRecipient,
+		"passport_series":            in.PassportSeries,
+		"passport_number":            in.PassportNumber,
+		"passport_issued_by":         in.PassportIssuedBy,
+		"passport_issue_date":        in.PassportIssueDate,
+		"passport_department_code":   in.PassportDepartmentCode,
+		"registration_address":       in.RegistrationAddress,
+		"actual_address":             in.ActualAddress,
+		"snils":                      in.SNILS,
+		"ogrn_ip":                    in.OGRNIP, // колонка-override (поле OGRNIP)
+		"billing_mode":               in.BillingMode,
+		"credit_limit":               in.CreditLimit,
+		"manual_review":              manualReview,
 	}
 
-	if err := database.DB.Model(&existing).Select("*").
-		Omit("id", "admin_account_id", "company_id", "created_by", "created_at", "deleted_at").
-		Updates(&in).Error; err != nil {
+	if err := database.DB.Model(&existing).Updates(updates).Error; err != nil {
 		if isUniqueViolation(err) {
 			c.JSON(http.StatusConflict, gin.H{"status": "error", "error": "контрагент с таким идентификатором уже существует"})
 			return
