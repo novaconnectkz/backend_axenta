@@ -2597,7 +2597,7 @@ func SendInvoice(c *gin.Context) {
 
 	// Загружаем связанные данные отдельно из схемы public
 	if invoice.ContractID != nil && *invoice.ContractID > 0 {
-		database.DB.Table("public.contracts").Where("id = ?", *invoice.ContractID).First(&invoice.Contract)
+		database.DB.Preload("Counterparty").Table("public.contracts").Where("id = ?", *invoice.ContractID).First(&invoice.Contract)
 	}
 	if invoice.TariffPlanID > 0 {
 		database.DB.Table("public.billing_plans").Where("id = ?", invoice.TariffPlanID).First(&invoice.TariffPlan)
@@ -2629,8 +2629,8 @@ func SendInvoice(c *gin.Context) {
 
 	// Дополняем контактную информацию из договора
 	if invoice.Contract != nil {
-		if _, ok := requestData.ContactInfo["email"]; !ok && invoice.Contract.ClientEmail != "" {
-			requestData.ContactInfo["email"] = invoice.Contract.ClientEmail
+		if _, ok := requestData.ContactInfo["email"]; !ok && invoice.Contract.DisplayEmail() != "" {
+			requestData.ContactInfo["email"] = invoice.Contract.DisplayEmail()
 		}
 		// Telegram и MAX ID можно получить из связанного пользователя, если есть
 	}

@@ -248,6 +248,7 @@ func GetDashboardActivity(c *gin.Context) {
 	if enabledSources["contracts"] {
 		var contracts []models.Contract
 		applyContractTableScope(c, tenantDB.Model(&models.Contract{}).
+			Preload("Counterparty").
 			Where("admin_account_id = ?", adminAccountID)).
 			Order("updated_at DESC, created_at DESC").
 			Limit(limit / 3). // Треть от лимита для договоров
@@ -265,7 +266,7 @@ func GetDashboardActivity(c *gin.Context) {
 				ID:    fmt.Sprintf("contract_%d", contract.ID),
 				Type:  activityType,
 				Title: title,
-				Description: fmt.Sprintf("Договор %s '%s' %s", contract.Number, contract.ClientName, map[string]string{
+				Description: fmt.Sprintf("Договор %s '%s' %s", contract.Number, contract.DisplayName(), map[string]string{
 					"contract_created": "создан",
 					"contract_updated": "обновлен",
 				}[activityType]),
@@ -275,7 +276,7 @@ func GetDashboardActivity(c *gin.Context) {
 				Metadata: map[string]interface{}{
 					"contractId":     contract.ID,
 					"contractNumber": contract.Number,
-					"clientName":     contract.ClientName,
+					"clientName":     contract.DisplayName(),
 				},
 			})
 		}

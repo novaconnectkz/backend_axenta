@@ -429,7 +429,7 @@ func (rs *ReportService) getWarehouseReportData(params ReportParams) (*ReportDat
 // getContractsReportData получает данные отчета по договорам
 func (rs *ReportService) getContractsReportData(params ReportParams) (*ReportData, error) {
 	var contracts []models.Contract
-	query := rs.db.Where("company_id = ?", params.CompanyID)
+	query := rs.db.Preload("Counterparty").Where("company_id = ?", params.CompanyID)
 
 	if params.DateFrom != nil {
 		query = query.Where("created_at >= ?", params.DateFrom)
@@ -463,7 +463,7 @@ func (rs *ReportService) getContractsReportData(params ReportParams) (*ReportDat
 		rows[i] = map[string]interface{}{
 			"ID":             contract.ID,
 			"Номер":          contract.Number,
-			"Клиент":         contract.ClientName,
+			"Клиент":         contract.DisplayName(),
 			"Дата начала":    contract.StartDate.Format("02.01.2006"),
 			"Дата окончания": contract.EndDate.Format("02.01.2006"),
 			"Статус":         contract.Status,

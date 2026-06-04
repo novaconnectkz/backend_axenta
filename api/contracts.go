@@ -386,8 +386,15 @@ func GetContracts(c *gin.Context) {
 		searchQuery = c.Query("search") // Поддержка старого параметра search
 	}
 	if searchQuery != "" {
-		baseQuery = baseQuery.Where("number ILIKE ? OR title ILIKE ? OR client_name ILIKE ?",
-			"%"+searchQuery+"%", "%"+searchQuery+"%", "%"+searchQuery+"%")
+		// C3 (subject-first): имя субъекта ищем в counterparties (client) и
+		// partner_name (partner). client_name — fallback до C4. Подзапрос вместо
+		// JOIN — counterparties (public) имеет created_at/deleted_at, JOIN дал бы
+		// ambiguous-column в существующих ORDER BY/фильтрах списка.
+		pat := "%" + searchQuery + "%"
+		baseQuery = baseQuery.Where(
+			"number ILIKE ? OR title ILIKE ? OR client_name ILIKE ? OR partner_name ILIKE ? "+
+				"OR counterparty_id IN (SELECT id FROM public.counterparties WHERE name ILIKE ? AND deleted_at IS NULL)",
+			pat, pat, pat, pat, pat)
 	}
 
 	// 🔄 Серверная сортировка

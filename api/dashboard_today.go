@@ -176,11 +176,8 @@ func GetRecentInvoices(c *gin.Context) {
 // читаем самые распространённые имена через рефлексию-альтернативу — простую
 // проверку. Если не нашли — возвращаем пустую строку (фронт выводит "—").
 func contractClientName(c *models.Contract) string {
-	// На текущей модели — Contract.ClientName.
-	if c.ClientName != "" {
-		return c.ClientName
-	}
-	return ""
+	// C3: единый слой отображения (partner→partner_*, client→cp/fallback client_*).
+	return c.DisplayName()
 }
 
 // =====================================================================

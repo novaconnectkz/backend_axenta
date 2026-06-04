@@ -156,6 +156,12 @@ type Contract struct {
 	Appendices      []ContractAppendix `json:"appendices,omitempty" gorm:"foreignKey:ContractID;constraint:-"`
 	Objects         []Object           `json:"objects,omitempty" gorm:"foreignKey:ContractID;constraint:-"`          // Прямая связь (для обратной совместимости)
 	ContractObjects []ContractObject   `json:"contract_objects,omitempty" gorm:"foreignKey:ContractID;constraint:-"` // Связи через junction table
+
+	// Counterparty — субъект лицевого счёта (public-схема). На C3 (subject-first)
+	// именно он, а не денорм client_*, становится авторитетом имени/ИНН/реквизитов
+	// для client-договоров. Читается через Display*-методы. constraint:- —
+	// cross-schema (counterparties в public, contracts в tenant), как PartnerCompany.
+	Counterparty *Counterparty `json:"counterparty,omitempty" gorm:"foreignKey:CounterpartyID;constraint:-"`
 }
 
 // TableName задает имя таблицы для модели Contract
@@ -227,6 +233,119 @@ func (c *Contract) PartnerIdentityMap() map[string]any {
 		"partner_inn":        c.ClientINN,
 		"partner_requisites": c.BuildPartnerRequisites(),
 	}
+}
+
+// ============================================================================
+// C3 (subject-first) — единый слой отображения идентичности договора.
+// Авторитет: partner-договор → partner_* (+ partner_requisites), client-договор →
+// связанный Counterparty (если Preload'нут), иначе fallback на денорм client_*
+// (живёт до C4). Читатели (счета/отчёты/поиск/лента) зовут ТОЛЬКО эти методы,
+// чтобы после DROP client_* ничего не сломалось. dual-write держит client_* в
+// синхроне с cp, поэтому fallback корректен даже без Preload.
+// ============================================================================
+
+// partnerRequisite достаёт поле из partner_requisites (jsonb). "" если нет/невалид.
+func (c *Contract) partnerRequisite(key string) string {
+	if strings.TrimSpace(c.PartnerRequisites) == "" || c.PartnerRequisites == "{}" {
+		return ""
+	}
+	var m map[string]string
+	if err := json.Unmarshal([]byte(c.PartnerRequisites), &m); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(m[key])
+}
+
+// DisplayName — полное имя субъекта договора.
+func (c *Contract) DisplayName() string {
+	if c.ContractType == "partner" {
+		if strings.TrimSpace(c.PartnerName) != "" {
+			return c.PartnerName
+		}
+		return c.ClientName // fallback до C4 (партнёр с пустым partner_name)
+	}
+	if c.Counterparty != nil && strings.TrimSpace(c.Counterparty.Name) != "" {
+		return c.Counterparty.Name
+	}
+	return c.ClientName
+}
+
+// DisplayShortName — краткое имя с ОПФ (для организаций).
+func (c *Contract) DisplayShortName() string {
+	if c.ContractType == "partner" {
+		if s := c.partnerRequisite("short_name"); s != "" {
+			return s
+		}
+		return c.ClientShortName // fallback до C4
+	}
+	if c.Counterparty != nil && strings.TrimSpace(c.Counterparty.ShortName) != "" {
+		return c.Counterparty.ShortName
+	}
+	return c.ClientShortName
+}
+
+// DisplayShortOrName — краткое имя, иначе полное (зеркало FE contractDisplayName).
+func (c *Contract) DisplayShortOrName() string {
+	if s := c.DisplayShortName(); strings.TrimSpace(s) != "" {
+		return s
+	}
+	return c.DisplayName()
+}
+
+// DisplayINN — ИНН/БИН субъекта.
+func (c *Contract) DisplayINN() string {
+	if c.ContractType == "partner" {
+		if strings.TrimSpace(c.PartnerINN) != "" {
+			return c.PartnerINN
+		}
+		return c.ClientINN // fallback до C4
+	}
+	if c.Counterparty != nil && strings.TrimSpace(c.Counterparty.TaxID) != "" {
+		return c.Counterparty.TaxID
+	}
+	return c.ClientINN
+}
+
+// DisplayEmail — email субъекта.
+func (c *Contract) DisplayEmail() string {
+	if c.ContractType == "partner" {
+		if s := c.partnerRequisite("email"); s != "" {
+			return s
+		}
+		return c.ClientEmail // fallback до C4
+	}
+	if c.Counterparty != nil && strings.TrimSpace(c.Counterparty.Email) != "" {
+		return c.Counterparty.Email
+	}
+	return c.ClientEmail
+}
+
+// DisplayPhone — телефон субъекта.
+func (c *Contract) DisplayPhone() string {
+	if c.ContractType == "partner" {
+		if s := c.partnerRequisite("phone"); s != "" {
+			return s
+		}
+		return c.ClientPhone // fallback до C4
+	}
+	if c.Counterparty != nil && strings.TrimSpace(c.Counterparty.Phone) != "" {
+		return c.Counterparty.Phone
+	}
+	return c.ClientPhone
+}
+
+// DisplayAddress — адрес субъекта.
+func (c *Contract) DisplayAddress() string {
+	if c.ContractType == "partner" {
+		if s := c.partnerRequisite("address"); s != "" {
+			return s
+		}
+		return c.ClientAddress // fallback до C4
+	}
+	if c.Counterparty != nil && strings.TrimSpace(c.Counterparty.Address) != "" {
+		return c.Counterparty.Address
+	}
+	return c.ClientAddress
 }
 
 // IsExpired проверяет, истек ли договор
