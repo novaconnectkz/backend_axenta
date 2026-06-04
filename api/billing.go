@@ -2462,8 +2462,9 @@ func GetInvoices(c *gin.Context) {
 		for i := range invoices {
 			if invoices[i].ContractID != nil && *invoices[i].ContractID > 0 {
 				var contract models.Contract
-				err := tenantDB.Where("id = ?", *invoices[i].ContractID).
-					Select("id, number, client_name, client_short_name, client_email").
+				err := tenantDB.
+					Where("id = ?", *invoices[i].ContractID).
+					Select("id, number, client_name, client_short_name, client_email, counterparty_id, contract_type, partner_name, partner_requisites").
 					First(&contract).Error
 				if err == nil {
 					invoices[i].Contract = &contract
@@ -2472,6 +2473,14 @@ func GetInvoices(c *gin.Context) {
 				}
 			}
 		}
+		// C4a: имя субъекта для FE — батч-догрузка cp одним запросом (без N+1 в цикле)
+		ptrs := make([]*models.Contract, 0, len(invoices))
+		for i := range invoices {
+			if invoices[i].Contract != nil {
+				ptrs = append(ptrs, invoices[i].Contract)
+			}
+		}
+		attachCounterpartiesPtr(ptrs)
 	} else {
 		fmt.Printf("GetInvoices: не удалось получить тенантную БД\n")
 	}
@@ -2512,6 +2521,7 @@ func GetInvoice(c *gin.Context) {
 	var invoice models.Invoice
 	if err := publicDB.
 		Preload("Contract", "admin_account_id = ?", adminAccountID).
+		Preload("Contract.Counterparty"). // C4a: имя субъекта для FE
 		Preload("TariffPlan", "admin_account_id = ?", adminAccountID).
 		Preload("Items").
 		Where("id = ? AND admin_account_id = ?", id, adminAccountID).
@@ -2777,9 +2787,11 @@ func ProcessPayment(c *gin.Context) {
 		tenantDB := middleware.GetTenantDB(c)
 		if tenantDB != nil {
 			var contract models.Contract
-			if err := tenantDB.Where("id = ? AND admin_account_id = ?", *invoice.ContractID, adminAccountID).
-				Select("id, number, client_name, client_short_name, client_email").
+			if err := tenantDB.
+				Where("id = ? AND admin_account_id = ?", *invoice.ContractID, adminAccountID).
+				Select("id, number, client_name, client_short_name, client_email, counterparty_id, contract_type, partner_name, partner_requisites").
 				First(&contract).Error; err == nil {
+				attachCounterpartyToContract(&contract) // C4a: имя субъекта для FE (cp в public)
 				invoice.Contract = &contract
 			} else {
 				log.Printf("⚠️ Не удалось загрузить договор для счета %d: %v", invoice.ID, err)
@@ -2924,9 +2936,11 @@ func AddManualPayment(c *gin.Context) {
 		tenantDB := middleware.GetTenantDB(c)
 		if tenantDB != nil {
 			var contract models.Contract
-			if err := tenantDB.Where("id = ? AND admin_account_id = ?", *invoice.ContractID, adminAccountID).
-				Select("id, number, client_name, client_short_name, client_email").
+			if err := tenantDB.
+				Where("id = ? AND admin_account_id = ?", *invoice.ContractID, adminAccountID).
+				Select("id, number, client_name, client_short_name, client_email, counterparty_id, contract_type, partner_name, partner_requisites").
 				First(&contract).Error; err == nil {
+				attachCounterpartyToContract(&contract) // C4a: имя субъекта для FE (cp в public)
 				invoice.Contract = &contract
 			} else {
 				log.Printf("⚠️ Не удалось загрузить договор для счета %d: %v", invoice.ID, err)
