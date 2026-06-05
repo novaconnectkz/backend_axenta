@@ -301,15 +301,13 @@ func searchGeliosObjects(db *gorm.DB, companyID uint, pattern string, limit int)
 }
 
 // searchContracts — по contracts (number + имя субъекта).
-// C3 (subject-first): имя берём из counterparties (client-договор) / partner_name
-// (partner-договор); client_name остаётся fallback до C4. JOIN cross-schema —
-// counterparties в public, contracts в tenant (общее соединение PG).
+// C4b (subject-first): имя — counterparties (client) / partner_name (partner).
+// client_* колонки дропнуты → больше не в SQL. JOIN cross-schema (cp в public).
 func searchContracts(c *gin.Context, db *gorm.DB, pattern string, limit int) []SearchResultItem {
 	type row struct {
 		ID           uint
 		Number       string
 		ContractType string
-		ClientName   string
 		PartnerName  string
 		CPName       string
 	}
@@ -317,12 +315,12 @@ func searchContracts(c *gin.Context, db *gorm.DB, pattern string, limit int) []S
 	// Scoping менеджера: ищет только среди своих договоров.
 	applyContractTableScope(c, db.Table("contracts").
 		Select(`contracts.id, contracts.number, contracts.contract_type,
-			contracts.client_name, contracts.partner_name,
+			contracts.partner_name,
 			COALESCE(cp.name, '') AS cp_name`).
 		Joins(`LEFT JOIN public.counterparties cp ON cp.id = contracts.counterparty_id AND cp.deleted_at IS NULL`).
 		Where(`(
 			LOWER(contracts.number COLLATE "und-x-icu") LIKE ?
-			OR LOWER(COALESCE(NULLIF(cp.name, ''), contracts.client_name) COLLATE "und-x-icu") LIKE ?
+			OR LOWER(COALESCE(cp.name, '') COLLATE "und-x-icu") LIKE ?
 			OR LOWER(COALESCE(contracts.partner_name, '') COLLATE "und-x-icu") LIKE ?
 		) AND contracts.deleted_at IS NULL`, pattern, pattern, pattern)).
 		Limit(limit).
@@ -333,8 +331,6 @@ func searchContracts(c *gin.Context, db *gorm.DB, pattern string, limit int) []S
 		name := r.CPName
 		if r.ContractType == "partner" {
 			name = r.PartnerName
-		} else if name == "" {
-			name = r.ClientName
 		}
 		out = append(out, SearchResultItem{
 			ID:       "contract:" + strconv.FormatUint(uint64(r.ID), 10),

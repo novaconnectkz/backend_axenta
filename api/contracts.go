@@ -386,15 +386,15 @@ func GetContracts(c *gin.Context) {
 		searchQuery = c.Query("search") // Поддержка старого параметра search
 	}
 	if searchQuery != "" {
-		// C3 (subject-first): имя субъекта ищем в counterparties (client) и
-		// partner_name (partner). client_name — fallback до C4. Подзапрос вместо
-		// JOIN — counterparties (public) имеет created_at/deleted_at, JOIN дал бы
-		// ambiguous-column в существующих ORDER BY/фильтрах списка.
+		// C4b (subject-first): имя субъекта ищем в counterparties (client, подзапрос)
+		// и partner_name (partner). client_* колонки дропнуты → не в SQL. Подзапрос
+		// вместо JOIN — counterparties (public) имеет created_at/deleted_at, JOIN дал
+		// бы ambiguous-column в существующих ORDER BY/фильтрах списка.
 		pat := "%" + searchQuery + "%"
 		baseQuery = baseQuery.Where(
-			"number ILIKE ? OR title ILIKE ? OR client_name ILIKE ? OR partner_name ILIKE ? "+
+			"number ILIKE ? OR title ILIKE ? OR partner_name ILIKE ? "+
 				"OR counterparty_id IN (SELECT id FROM public.counterparties WHERE name ILIKE ? AND deleted_at IS NULL)",
-			pat, pat, pat, pat, pat)
+			pat, pat, pat, pat)
 	}
 
 	// 🔄 Серверная сортировка
@@ -407,8 +407,10 @@ func GetContracts(c *gin.Context) {
 		"sequential_number": "sequential_number",
 		"number":            "number",
 		"title":             "title",
-		"client_name":       "client_name",
-		"start_date":        "start_date",
+		// C4b: client_name-колонка дропнута → сортировка по имени субъекта через
+		// коррелированный подзапрос в public.counterparties (client + partner cp).
+		"client_name":  "(SELECT name FROM public.counterparties WHERE id = contracts.counterparty_id)",
+		"start_date":   "start_date",
 		"end_date":          "end_date",
 		"total_amount":      "CAST(total_amount AS DECIMAL)",
 		"status":            "status",
@@ -2030,17 +2032,11 @@ func CreateContract(c *gin.Context) {
 		}
 	}
 
-	// B3 (subject-first dual-write): явно выбранный контрагент → его идентичность авторитетна,
-	// копируем snapshot в contract.Client* (после B2 форма договора client_* не шлёт; счета/1С/
-	// отображение читают snapshot). Только client-договор с валидным cp.
-	if contract.ContractType == "client" && contract.CounterpartyID != 0 {
-		if cp := loadCounterpartyScoped(contract.CounterpartyID, adminAccountID, contract.CompanyID); cp != nil {
-			applyCounterpartySnapshotToContract(cp, &contract)
-		}
-	}
+	// C4b: dual-write client_* УДАЛЁН (колонки дропнуты). Идентичность client-договора
+	// живёт в Counterparty; счета/1С/отображение читают cp напрямую (C3/C4a).
 
-	// Phase C (C-партнёр): для partner-договора заполняем дом идентичности
-	// partner_* из присланных client_* (dual-write до C4). No-op для client.
+	// Phase C: для partner-договора заполняем дом идентичности partner_* из присланных
+	// (транзитных) client_* запроса. No-op для client.
 	applyPartnerIdentityFromContract(&contract)
 
 	// Ф4: назначаем контрагента ДО вставки договора → counterparty_id попадает в тот же INSERT
@@ -2644,6 +2640,11 @@ func UpdateContract(c *gin.Context) {
 		log.Printf("⚠️ Не удалось загрузить обновленные данные договора %d: %v", contract.ID, err)
 	}
 
+	// C4b: client_* транзитны (gorm:"-") → reload их НЕ заполнил. Возвращаем
+	// идентичность из тела запроса, чтобы resolveOrCreateCounterparty (client) и
+	// ApplyPartnerIdentityFromClient (partner) ниже видели присланные значения.
+	contract.CopyClientTransientFrom(&updateData)
+
 	// Ф4b-followon: явный сброс ручной привязки (FE очистил селектор) → обнуляем cp
 	// ТОЛЬКО В ПАМЯТИ (не в БД), чтобы блок авто-резолва ниже сделал один Update на
 	// финальный cp. На ошибке резолва БД сохранит СТАРЫЙ cp (Updates(struct) его не
@@ -2667,22 +2668,13 @@ func UpdateContract(c *gin.Context) {
 		}
 	}
 
-	// B3 (subject-first dual-write): после финализации контрагента — обновить snapshot client_* в
-	// БД из авторитетного контрагента (Updates(struct) пропускает пустые строки, поэтому явная карта).
-	// Только client-договор с контрагентом. Держит счета/1С/отображение в согласии с контрагентом.
-	if contract.ContractType == "client" && contract.CounterpartyID != 0 {
-		if cp := loadCounterpartyScoped(contract.CounterpartyID, adminAccountID, contract.CompanyID); cp != nil {
-			if e := tenantDB.Model(&models.Contract{}).Where("id = ?", contract.ID).
-				Updates(counterpartySnapshotMap(cp)).Error; e != nil {
-				log.Printf("⚠️ UpdateContract: не удалось обновить snapshot client_* договору %d: %v", contract.ID, e)
-			}
-		}
-	}
+	// C4b: dual-write snapshot client_* УДАЛЁН (колонки дропнуты). Идентичность
+	// client-договора — в Counterparty; счета/1С/отображение читают cp напрямую.
 
-	// Phase C (C-партнёр): для partner-договора синхронизируем дом идентичности
-	// partner_* из (обновлённых) client_*. contract перезагружен выше — client_*
-	// актуальны. Явная карта (Updates(struct) пропустил бы пустые строки).
-	if contract.ContractType == "partner" {
+	// Phase C: для partner-договора синхронизируем дом идентичности partner_* из
+	// присланных (транзитных) client_*. Guard по непустому имени — частичный апдейт
+	// (без идентичности в теле) НЕ затирает partner_* (после reload они пусты в client_*).
+	if contract.ContractType == "partner" && strings.TrimSpace(contract.ClientName) != "" {
 		// WHERE дублирует in-memory guard contract_type='partner' (анти-race: если
 		// конкурентный запрос сменил тип после reload — не пишем partner_* на client-строку).
 		if e := tenantDB.Model(&models.Contract{}).

@@ -65,42 +65,50 @@ type Contract struct {
 	PartnerINN        string `json:"partner_inn" gorm:"type:varchar(20)"`
 	PartnerRequisites string `json:"partner_requisites" gorm:"type:jsonb;default:'{}'"`
 
-	// Клиент
-	ClientType      string `json:"client_type" gorm:"type:varchar(50)"` // organization, individual_entrepreneur, physical_person
-	ClientName      string `json:"client_name" gorm:"not null;type:varchar(200)"`
-	ClientShortName string `json:"client_short_name" gorm:"type:varchar(200)"` // Сокращенное название с ОПФ (для организаций)
-	ClientINN       string `json:"client_inn" gorm:"type:varchar(20)"`
-	ClientKPP       string `json:"client_kpp" gorm:"type:varchar(20)"`
-	ClientEmail     string `json:"client_email" gorm:"type:varchar(100)"`
-	ClientPhone     string `json:"client_phone" gorm:"type:varchar(20)"`
-	ClientAddress   string `json:"client_address" gorm:"type:text"`
+	// Клиент.
+	// C4b (subject-first): денорм-колонки client_* УДАЛЕНЫ из БД. Поля оставлены
+	// как ТРАНЗИТНЫЕ (gorm:"-") — заполняются из тела запроса (CreateContract/
+	// UpdateContract) и служат in-memory источником для:
+	//   - resolveOrCreateCounterparty (идентичность client-договора → cp),
+	//   - ApplyPartnerIdentityFromClient (client_* запроса → partner_* партнёра),
+	//   - условной валидации имени.
+	// На ЧТЕНИИ из БД пусты → Display*-методы берут cp (client) / partner_* (partner).
+	// Идентичность хранится в Counterparty (client) и partner_* (partner).
+	ClientType      string `json:"client_type" gorm:"-"`
+	ClientName      string `json:"client_name" gorm:"-"`
+	ClientShortName string `json:"client_short_name" gorm:"-"`
+	ClientINN       string `json:"client_inn" gorm:"-"`
+	ClientKPP       string `json:"client_kpp" gorm:"-"`
+	ClientEmail     string `json:"client_email" gorm:"-"`
+	ClientPhone     string `json:"client_phone" gorm:"-"`
+	ClientAddress   string `json:"client_address" gorm:"-"`
 
-	// Дополнительные поля для организаций
-	ClientLegalAddress  string `json:"client_legal_address" gorm:"type:text"`
-	ClientPostalAddress string `json:"client_postal_address" gorm:"type:text"`
-	ClientOGRN          string `json:"client_ogrn" gorm:"type:varchar(20)"`
-	ClientOKPO          string `json:"client_okpo" gorm:"type:varchar(20)"`
-	ClientDirector      string `json:"client_director" gorm:"type:varchar(200)"`
-	ClientBasedOn       string `json:"client_based_on" gorm:"type:varchar(200)"` // Действует на основании
-	ClientWebsite       string `json:"client_website" gorm:"type:varchar(200)"`
+	// Дополнительные поля для организаций (транзитные, см. выше)
+	ClientLegalAddress  string `json:"client_legal_address" gorm:"-"`
+	ClientPostalAddress string `json:"client_postal_address" gorm:"-"`
+	ClientOGRN          string `json:"client_ogrn" gorm:"-"`
+	ClientOKPO          string `json:"client_okpo" gorm:"-"`
+	ClientDirector      string `json:"client_director" gorm:"-"`
+	ClientBasedOn       string `json:"client_based_on" gorm:"-"`
+	ClientWebsite       string `json:"client_website" gorm:"-"`
 
-	// Банковские реквизиты
-	ClientBankName                 string `json:"client_bank_name" gorm:"type:varchar(200)"`
-	ClientBankBIK                  string `json:"client_bank_bik" gorm:"type:varchar(20)"`
-	ClientBankCorrespondentAccount string `json:"client_bank_correspondent_account" gorm:"type:varchar(20)"`
-	ClientBankAccount              string `json:"client_bank_account" gorm:"type:varchar(20)"`
-	ClientBankRecipient            string `json:"client_bank_recipient" gorm:"type:varchar(200)"`
+	// Банковские реквизиты (транзитные)
+	ClientBankName                 string `json:"client_bank_name" gorm:"-"`
+	ClientBankBIK                  string `json:"client_bank_bik" gorm:"-"`
+	ClientBankCorrespondentAccount string `json:"client_bank_correspondent_account" gorm:"-"`
+	ClientBankAccount              string `json:"client_bank_account" gorm:"-"`
+	ClientBankRecipient            string `json:"client_bank_recipient" gorm:"-"`
 
-	// Поля для физических лиц
-	ClientPassportSeries         string `json:"client_passport_series" gorm:"type:varchar(10)"`
-	ClientPassportNumber         string `json:"client_passport_number" gorm:"type:varchar(20)"`
-	ClientPassportIssuedBy       string `json:"client_passport_issued_by" gorm:"type:text"`
-	ClientPassportIssueDate      string `json:"client_passport_issue_date" gorm:"type:varchar(20)"`
-	ClientPassportDepartmentCode string `json:"client_passport_department_code" gorm:"type:varchar(10)"`
-	ClientRegistrationAddress    string `json:"client_registration_address" gorm:"type:text"`
-	ClientActualAddress          string `json:"client_actual_address" gorm:"type:text"`
-	ClientSNILS                  string `json:"client_snils" gorm:"type:varchar(20)"`
-	ClientOGRNIP                 string `json:"client_ogrnip" gorm:"column:client_ogrn_ip;type:varchar(20)"`
+	// Поля для физических лиц (транзитные)
+	ClientPassportSeries         string `json:"client_passport_series" gorm:"-"`
+	ClientPassportNumber         string `json:"client_passport_number" gorm:"-"`
+	ClientPassportIssuedBy       string `json:"client_passport_issued_by" gorm:"-"`
+	ClientPassportIssueDate      string `json:"client_passport_issue_date" gorm:"-"`
+	ClientPassportDepartmentCode string `json:"client_passport_department_code" gorm:"-"`
+	ClientRegistrationAddress    string `json:"client_registration_address" gorm:"-"`
+	ClientActualAddress          string `json:"client_actual_address" gorm:"-"`
+	ClientSNILS                  string `json:"client_snils" gorm:"-"`
+	ClientOGRNIP                 string `json:"client_ogrnip" gorm:"-"`
 
 	// Даты договора
 	StartDate *time.Time `json:"start_date" gorm:"default:NULL"` // Опционально, будет установлено через подписку
@@ -346,6 +354,45 @@ func (c *Contract) DisplayAddress() string {
 		return c.Counterparty.Address
 	}
 	return c.ClientAddress
+}
+
+// CopyClientTransientFrom копирует ТРАНЗИТНЫЕ client_* (gorm:"-") из другого
+// договора (обычно updateData из тела запроса). Нужно после reload из БД, где
+// client_* пусты (не персистятся с C4b), чтобы resolveOrCreateCounterparty и
+// ApplyPartnerIdentityFromClient видели идентичность из запроса.
+func (c *Contract) CopyClientTransientFrom(src *Contract) {
+	if src == nil {
+		return
+	}
+	c.ClientType = src.ClientType
+	c.ClientName = src.ClientName
+	c.ClientShortName = src.ClientShortName
+	c.ClientINN = src.ClientINN
+	c.ClientKPP = src.ClientKPP
+	c.ClientEmail = src.ClientEmail
+	c.ClientPhone = src.ClientPhone
+	c.ClientAddress = src.ClientAddress
+	c.ClientLegalAddress = src.ClientLegalAddress
+	c.ClientPostalAddress = src.ClientPostalAddress
+	c.ClientOGRN = src.ClientOGRN
+	c.ClientOKPO = src.ClientOKPO
+	c.ClientDirector = src.ClientDirector
+	c.ClientBasedOn = src.ClientBasedOn
+	c.ClientWebsite = src.ClientWebsite
+	c.ClientBankName = src.ClientBankName
+	c.ClientBankBIK = src.ClientBankBIK
+	c.ClientBankCorrespondentAccount = src.ClientBankCorrespondentAccount
+	c.ClientBankAccount = src.ClientBankAccount
+	c.ClientBankRecipient = src.ClientBankRecipient
+	c.ClientPassportSeries = src.ClientPassportSeries
+	c.ClientPassportNumber = src.ClientPassportNumber
+	c.ClientPassportIssuedBy = src.ClientPassportIssuedBy
+	c.ClientPassportIssueDate = src.ClientPassportIssueDate
+	c.ClientPassportDepartmentCode = src.ClientPassportDepartmentCode
+	c.ClientRegistrationAddress = src.ClientRegistrationAddress
+	c.ClientActualAddress = src.ClientActualAddress
+	c.ClientSNILS = src.ClientSNILS
+	c.ClientOGRNIP = src.ClientOGRNIP
 }
 
 // IsExpired проверяет, истек ли договор
