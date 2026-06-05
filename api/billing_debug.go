@@ -60,6 +60,7 @@ func GetContractBillingAnalysis(c *gin.Context) {
 		})
 		return
 	}
+	attachCounterpartyToContract(&contract) // C4b: cp для DisplayName
 
 	// Получаем все счета по договору
 	publicDB := database.DB.Session(&gorm.Session{})
@@ -113,7 +114,7 @@ func GetContractBillingAnalysis(c *gin.Context) {
 				"id":            contract.ID,
 				"number":        contract.Number,
 				"title":         contract.Title,
-				"client_name":   contract.ClientName,
+				"client_name":   contract.DisplayName(), // C4b: имя из cp/partner (client_* дропнуты)
 				"contract_type": contract.ContractType,
 				"status":        contract.Status,
 				"start_date":    contract.StartDate,

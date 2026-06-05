@@ -2464,7 +2464,7 @@ func GetInvoices(c *gin.Context) {
 				var contract models.Contract
 				err := tenantDB.
 					Where("id = ?", *invoices[i].ContractID).
-					Select("id, number, client_name, client_short_name, client_email, counterparty_id, contract_type, partner_name, partner_requisites").
+					Select("id, number, counterparty_id, contract_type, partner_name, partner_requisites").
 					First(&contract).Error
 				if err == nil {
 					invoices[i].Contract = &contract
@@ -2789,7 +2789,7 @@ func ProcessPayment(c *gin.Context) {
 			var contract models.Contract
 			if err := tenantDB.
 				Where("id = ? AND admin_account_id = ?", *invoice.ContractID, adminAccountID).
-				Select("id, number, client_name, client_short_name, client_email, counterparty_id, contract_type, partner_name, partner_requisites").
+				Select("id, number, counterparty_id, contract_type, partner_name, partner_requisites").
 				First(&contract).Error; err == nil {
 				attachCounterpartyToContract(&contract) // C4a: имя субъекта для FE (cp в public)
 				invoice.Contract = &contract
@@ -2938,7 +2938,7 @@ func AddManualPayment(c *gin.Context) {
 			var contract models.Contract
 			if err := tenantDB.
 				Where("id = ? AND admin_account_id = ?", *invoice.ContractID, adminAccountID).
-				Select("id, number, client_name, client_short_name, client_email, counterparty_id, contract_type, partner_name, partner_requisites").
+				Select("id, number, counterparty_id, contract_type, partner_name, partner_requisites").
 				First(&contract).Error; err == nil {
 				attachCounterpartyToContract(&contract) // C4a: имя субъекта для FE (cp в public)
 				invoice.Contract = &contract

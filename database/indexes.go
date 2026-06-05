@@ -121,12 +121,8 @@ var PerformanceIndexes = []DatabaseIndex{
 		Columns: []string{"end_date"},
 		Type:    "btree",
 	},
-	{
-		Name:    "idx_contracts_client_inn",
-		Table:   "contracts",
-		Columns: []string{"client_inn"},
-		Type:    "btree",
-	},
+	// C4b: idx_contracts_client_inn УДАЛЁН — колонка contracts.client_inn дропнута
+	// (идентичность на Counterparty). Поиск по ИНН — через public.counterparties.
 
 	// Индексы для таблицы installations
 	{

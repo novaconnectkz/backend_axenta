@@ -269,18 +269,22 @@ func purgeContractCleanup(c *gin.Context, tenantDB *gorm.DB, contract *models.Co
 	if companyID, exists := c.Get("company_id"); exists {
 		companyIDUint, _ = companyID.(uint)
 	}
+	attachCounterpartyToContract(contract) // C4b: cp для DisplayName (client_* пусты)
 	entityName := fmt.Sprintf("Договор %s", contract.Number)
 	entityDescription := fmt.Sprintf("Клиент: %s", contract.DisplayName())
 	if contract.Title != "" {
 		entityDescription += fmt.Sprintf(", %s", contract.Title)
 	}
+	// C4b: client_* колонки дропнуты → в снимок корзины кладём идентичность из
+	// авторитета (counterparty_id + partner_* + отображаемое имя) для осмысленного
+	// восстановления/аудита.
 	contractSimplified := map[string]interface{}{
 		"id": contract.ID, "number": contract.Number, "title": contract.Title,
-		"description": contract.Description, "client_type": contract.ClientType,
-		"client_name": contract.ClientName, "client_short_name": contract.ClientShortName,
-		"client_inn": contract.ClientINN, "client_kpp": contract.ClientKPP,
-		"client_email": contract.ClientEmail, "client_phone": contract.ClientPhone,
-		"status": contract.Status, "start_date": contract.StartDate, "end_date": contract.EndDate,
+		"description": contract.Description, "contract_type": contract.ContractType,
+		"counterparty_id": contract.CounterpartyID, "display_name": contract.DisplayName(),
+		"partner_name": contract.PartnerName, "partner_inn": contract.PartnerINN,
+		"partner_requisites": contract.PartnerRequisites,
+		"status":             contract.Status, "start_date": contract.StartDate, "end_date": contract.EndDate,
 		"total_amount": contract.TotalAmount, "created_at": contract.CreatedAt, "updated_at": contract.UpdatedAt,
 	}
 	if err := RecordDeletion(tenantDB, "contract", contract.ID, contractSimplified,

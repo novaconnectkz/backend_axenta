@@ -816,18 +816,14 @@ func PostWcrmMigrationApprove(c *gin.Context) {
 				return fmt.Errorf("lookup contract %s: %w", extID, findErr)
 			} else {
 				// UPDATE только import-owned поля (не трогаем ручные правки вне allowlist).
+				// C4b: client_* колонки дропнуты — идентичность на Counterparty (linkage
+				// уже есть с первичного импорта). Обновляем только не-идентичность.
 				if err := tx.Model(&existing).Updates(map[string]interface{}{
-					"number":            targetNumber,
-					"client_type":       ctype,
-					"client_name":       clientName,
-					"client_short_name": rec.Company.Name,
-					"client_inn":        rec.Company.INN,
-					"client_kpp":        rec.Company.KPP,
-					"client_director":   rec.Company.HeadName,
-					"start_date":        startPtr,
-					"end_date":          endPtr,
-					"status":            status,
-					"is_active":         isActive,
+					"number":     targetNumber,
+					"start_date": startPtr,
+					"end_date":   endPtr,
+					"status":     status,
+					"is_active":  isActive,
 				}).Error; err != nil {
 					return fmt.Errorf("update contract %s: %w", extID, err)
 				}

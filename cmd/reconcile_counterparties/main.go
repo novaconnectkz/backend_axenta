@@ -329,42 +329,10 @@ func main() {
 			}
 		}
 
-		// ── [7] snapshot-drift (WARN) ──
-		{
-			type row struct {
-				ID         uint
-				ClientName string
-				ClientINN  string
-				CpName     string
-				CpTaxID    string
-			}
-			var rows []row
-			q := `SELECT c.id, c.client_name, c.client_inn, cp.name AS cp_name, cp.tax_id AS cp_tax_id
-				FROM contracts c
-				JOIN public.counterparties cp
-					ON cp.id=c.counterparty_id AND cp.admin_account_id=c.admin_account_id
-					AND cp.company_id=c.company_id AND cp.deleted_at IS NULL
-				WHERE c.deleted_at IS NULL AND c.contract_type='client' AND c.counterparty_id<>0
-					AND ( (cp.tax_id<>'' AND coalesce(c.client_inn,'')<>cp.tax_id)
-						OR coalesce(c.client_name,'')<>cp.name )` + companyFilter("c") + `
-				ORDER BY c.id`
-			if err := tdb.Raw(q).Scan(&rows).Error; err != nil {
-				errBlock(sch+" [7] snapshot-drift", err)
-			} else if len(rows) == 0 {
-				log.Printf("  ✅ [7] snapshot-drift (client_* vs cp): нет")
-			} else {
-				log.Printf("  ⚠️ [7] SNAPSHOT-DRIFT: %d договоров (client_* != cp), примеры:", len(rows))
-				warns += len(rows)
-				for i, r := range rows {
-					if i >= *driftSample {
-						log.Printf("      … ещё %d", len(rows)-*driftSample)
-						break
-					}
-					log.Printf("      договор %d: name[%q→cp %q] inn[%q→cp %q]",
-						r.ID, r.ClientName, r.CpName, r.ClientINN, r.CpTaxID)
-				}
-			}
-		}
+		// ── [7] snapshot-drift — УДАЛЁН (C4b): денорм client_* дропнуты, дрейфовать
+		// нечему (идентичность только на Counterparty). Чек оставлен бы 42P01 на
+		// дропнутых колонках. Linkage-целостность покрыта чеками [1]-[6] выше.
+		_ = driftSample
 	}
 
 	log.Printf("🏁 ИТОГО: блокирующих находок=%d, warn=%d", blocking, warns)
