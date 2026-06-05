@@ -110,11 +110,14 @@ func SearchCounterparties(c *gin.Context) {
 		return
 	}
 	q = applyCounterpartyManagerScope(c, q) // Ф4: менеджер — только свои контрагенты
-	// Селектор client-договора — kind='client'; партнёрского — kind='partner' (?kind=partner).
-	// По умолчанию client (обратная совместимость существующих вызовов).
-	if strings.TrimSpace(c.Query("kind")) == "partner" {
+	// Роль: client-договор → client; партнёрский → all (единый контрагент, любой kind);
+	// явный partner → только партнёры. По умолчанию client (обратная совместимость).
+	switch strings.TrimSpace(c.Query("kind")) {
+	case "partner":
 		q = q.Where("kind = ?", "partner")
-	} else {
+	case "all":
+		// без фильтра — все роли (единый контрагент)
+	default:
 		q = q.Where("kind = ?", "client")
 	}
 	if s := strings.TrimSpace(c.Query("q")); s != "" {
@@ -383,6 +386,14 @@ func CreateCounterparty(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "недопустимый id_type"})
 		return
 	}
+	// Роль (kind): client по умолчанию; явно client|partner из формы.
+	if cp.Kind == "" {
+		cp.Kind = "client"
+	}
+	if cp.Kind != "client" && cp.Kind != "partner" {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "недопустимая роль контрагента"})
+		return
+	}
 	cp.TaxID = strings.TrimSpace(cp.TaxID)
 	if cp.BillingMode == "" {
 		cp.BillingMode = "prepaid"
@@ -503,6 +514,10 @@ func UpdateCounterparty(c *gin.Context) {
 		"billing_mode":               in.BillingMode,
 		"credit_limit":               in.CreditLimit,
 		"manual_review":              manualReview,
+	}
+	// Роль (kind) меняется ТОЛЬКО на валидное значение (защита от затирания партнёра в '' старой формой).
+	if in.Kind == "client" || in.Kind == "partner" {
+		updates["kind"] = in.Kind
 	}
 
 	if err := database.DB.Model(&existing).Updates(updates).Error; err != nil {

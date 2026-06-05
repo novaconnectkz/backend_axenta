@@ -2020,18 +2020,16 @@ func CreateContract(c *gin.Context) {
 		contract.CreditLimit = rawRequest.CreditLimit
 	}
 
-	// Ф4b: явный counterparty_id из тела (FE-селектор) — валидируем принадлежность
-	// admin+company (анти-привязка к чужому ЛС). Для партнёрского — ещё и kind='partner'
-	// (нельзя привязать client-контрагента к партнёрскому договору). Невалидный → авто-резолв.
+	// Ф4b: явный counterparty_id из тела (FE-селектор) — валидируем ТОЛЬКО принадлежность
+	// admin+company (анти-привязка к чужому ЛС). Единый контрагент: и client, и partner договор
+	// может ссылаться на любого СВОЕГО контрагента (kind — метка роли, не жёсткое ограничение;
+	// партнёрский договор и так не идёт в charge/ledger). Невалидный → авто-резолв.
 	if contract.CounterpartyID != 0 && (contract.ContractType == "client" || contract.ContractType == "partner") {
-		vq := database.DB.Model(&models.Counterparty{}).
-			Where("id = ? AND admin_account_id = ? AND company_id = ?", contract.CounterpartyID, adminAccountID, contract.CompanyID)
-		if contract.ContractType == "partner" {
-			vq = vq.Where("kind = ?", "partner")
-		}
 		var cnt int64
-		if e := vq.Count(&cnt).Error; e != nil || cnt == 0 {
-			log.Printf("⚠️ Явный counterparty_id=%d не валиден для admin=%d company=%d type=%s → авто-резолв", contract.CounterpartyID, adminAccountID, contract.CompanyID, contract.ContractType)
+		if e := database.DB.Model(&models.Counterparty{}).
+			Where("id = ? AND admin_account_id = ? AND company_id = ?", contract.CounterpartyID, adminAccountID, contract.CompanyID).
+			Count(&cnt).Error; e != nil || cnt == 0 {
+			log.Printf("⚠️ Явный counterparty_id=%d не принадлежит admin=%d company=%d → авто-резолв", contract.CounterpartyID, adminAccountID, contract.CompanyID)
 			contract.CounterpartyID = 0
 		}
 	}
