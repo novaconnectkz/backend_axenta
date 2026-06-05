@@ -92,6 +92,10 @@ type PartnerDailySnapshot struct {
 	// (нет данных, force-sync упал) → снимок уйдёт в needs_review. Не персистится.
 	SourceWarn string `json:"-" gorm:"-"`
 
+	// ContractNumber — человекочитаемый № договора (резолвится в API из tenant.contracts,
+	// не персистится). В справочнике показываем его вместо внутреннего contract_id.
+	ContractNumber string `json:"contract_number" gorm:"-"`
+
 	// PartnerName — имя партнёрского аккаунта/дилера (резолвится в API, не персистится).
 	// Чтобы по строкам «без договора» было видно, чьи это объекты.
 	PartnerName string `json:"partner_name" gorm:"-"`
