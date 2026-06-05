@@ -110,9 +110,13 @@ func SearchCounterparties(c *gin.Context) {
 		return
 	}
 	q = applyCounterpartyManagerScope(c, q) // Ф4: менеджер — только свои контрагенты
-	// Phase D: селектор формы client-договора — только kind='client' (партнёра нельзя
-	// выбрать контрагентом клиентского договора).
-	q = q.Where("kind = ?", "client")
+	// Селектор client-договора — kind='client'; партнёрского — kind='partner' (?kind=partner).
+	// По умолчанию client (обратная совместимость существующих вызовов).
+	if strings.TrimSpace(c.Query("kind")) == "partner" {
+		q = q.Where("kind = ?", "partner")
+	} else {
+		q = q.Where("kind = ?", "client")
+	}
 	if s := strings.TrimSpace(c.Query("q")); s != "" {
 		pattern := "%" + strings.ToLower(s) + "%"
 		// Скобки обязательны: иначе OR на верхнем уровне обходит admin/company-scope.
