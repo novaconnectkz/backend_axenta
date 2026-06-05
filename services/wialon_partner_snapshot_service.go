@@ -131,6 +131,12 @@ func (s *WialonPartnerSnapshotService) GenerateForTenant(tenantDB *gorm.DB, date
 			continue
 		}
 
+		// Подтверждённый вручную снимок заморожен — cron его не перезатирает.
+		if partnerSnapshotIsApproved(tenantDB, "wialon", c.PartnerConnectionID, c.PartnerExternalID, c.ID, day) {
+			log.Printf("🔒 Wialon снимок договора %d на %s подтверждён вручную — пропуск", c.ID, day.Format("2006-01-02"))
+			continue
+		}
+
 		total, active, ok := s.aggregateAccount(c.PartnerConnectionID, c.PartnerExternalID)
 		if !ok {
 			log.Printf("⚠️ Wialon договор %d: аккаунт %s не найден в wialon_account_statuses, пропуск (без zero-снимка)", c.ID, c.PartnerExternalID)
@@ -154,7 +160,10 @@ func (s *WialonPartnerSnapshotService) GenerateForTenant(tenantDB *gorm.DB, date
 			DiscountPercent:    c.GetDiscountPercent(active),
 			DiscountFixed:      c.GetDiscountFixed(),
 			Status:             "completed",
-			Notes:              "Wialon partner snapshot (Ф2): прямой units_count аккаунта (per-account, без дерева)",
+			// Ф1: cross-source -1 (account_statuses.units_count уже выведен из wialon_units —
+			// тот же синк, независимого второго контура нет; сверка через continuity-guard). Ф2: Z-отчёт.
+			VerifySecondaryCount: -1,
+			Notes:                "Wialon partner snapshot (Ф2): прямой units_count аккаунта (per-account, без дерева)",
 		}
 
 		// BeforeCreate досчитает daily_price/cost_before_discount/discount_amount/daily_cost.

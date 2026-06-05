@@ -164,12 +164,20 @@ func (s *GeliosPartnerSnapshotService) GenerateForTenant(tenantDB *gorm.DB, date
 			continue
 		}
 
+		// Подтверждённый вручную снимок заморожен — cron его не перезатирает.
+		if partnerSnapshotIsApproved(tenantDB, "gelios", c.PartnerConnectionID, c.PartnerExternalID, c.ID, day) {
+			log.Printf("🔒 GELIOS снимок договора %d на %s подтверждён вручную — пропуск", c.ID, day.Format("2006-01-02"))
+			continue
+		}
+
 		units, ok, warnNotes := s.aggregateUser(c.PartnerConnectionID, c.PartnerExternalID)
 		status := "completed"
 		notes := "GELIOS partner snapshot (Ф3): прямой units_count юзера (per-account, без поддерева)"
+		sourceWarn := ""
 		if !ok {
 			status = "warning"
 			notes = "GELIOS partner snapshot (Ф3) WARNING: " + warnNotes + " — daily_cost=0"
+			sourceWarn = warnNotes // Ф1: guard переведёт снимок в needs_review
 		}
 
 		snap := models.PartnerDailySnapshot{
@@ -189,7 +197,10 @@ func (s *GeliosPartnerSnapshotService) GenerateForTenant(tenantDB *gorm.DB, date
 			DiscountPercent:    c.GetDiscountPercent(units),
 			DiscountFixed:      c.GetDiscountFixed(),
 			Status:             status,
-			Notes:              notes,
+			// Ф1: cross-source -1 (нет чистого join units→user; continuity-guard + warning-сигнал). Ф2: события.
+			VerifySecondaryCount: -1,
+			SourceWarn:           sourceWarn,
+			Notes:                notes,
 		}
 
 		if err := tenantDB.Clauses(clause.OnConflict{

@@ -424,16 +424,64 @@ func (bs *BillingService) CalculateBillingForPartnerContract(contract *models.Co
 		}
 	}
 
-	// Получаем ежедневные снимки для договора за период
+	// Ф1: снимки читаем из ТЕНАНТ-схемы договора (там пишут все 4 источника),
+	// а не из public (исторически протухшая копия). Резолвим схему ЯВНО и fail-closed:
+	// GetTenantDBByID на ошибке вернул бы main-пул (public) → тихий недосчёт по протухшим
+	// данным. Здесь — ошибка вместо молчаливого чтения public (Codex critical).
+	var comp struct {
+		DatabaseSchema string `gorm:"column:database_schema"`
+	}
+	if err := bs.db.Table("public.companies").Select("database_schema").
+		Where("id = ?", contract.CompanyID).First(&comp).Error; err != nil {
+		return nil, fmt.Errorf("billing-gate: компания %d не найдена для резолва схемы: %w", contract.CompanyID, err)
+	}
+	schema := comp.DatabaseSchema
+	if schema == "" {
+		schema = fmt.Sprintf("tenant_%d", contract.CompanyID)
+	}
+	snapDB, err := database.ConnectToTenant(schema)
+	if err != nil {
+		return nil, fmt.Errorf("billing-gate: не удалось подключиться к tenant-схеме %s: %w", schema, err)
+	}
+
+	// Ф1 billing-gate: в расчёт идут ТОЛЬКО доверенные снимки (verified/manual_approved).
+	// needs_review/estimated в начисление НЕ попадают (тихий недосчёт исключён —
+	// заблокированные дни видны отдельно + алерт), что для денег безопаснее.
 	var snapshots []models.PartnerDailySnapshot
-	if err := publicDB.
+	if err := snapDB.
 		Where("contract_id = ? AND snapshot_date >= ? AND snapshot_date <= ?", contract.ID, periodStart, periodEnd).
+		Where("verify_status IN ?", []string{models.VerifyStatusVerified, models.VerifyStatusApproved}).
 		Order("snapshot_date ASC").
 		Find(&snapshots).Error; err != nil {
 		return nil, fmt.Errorf("ошибка получения снимков: %w", err)
 	}
 
-	log.Printf("📊 Найдено снимков для договора за период: %d", len(snapshots))
+	// Заблокированные гейтом снимки (для наблюдаемости/алертов) — НЕ суммируются.
+	var blocked []models.PartnerDailySnapshot
+	if err := snapDB.
+		Where("contract_id = ? AND snapshot_date >= ? AND snapshot_date <= ?", contract.ID, periodStart, periodEnd).
+		Where("verify_status NOT IN ?", []string{models.VerifyStatusVerified, models.VerifyStatusApproved}).
+		Order("snapshot_date ASC").
+		Find(&blocked).Error; err == nil && len(blocked) > 0 {
+		blockedRisk := decimal.Zero
+		for _, b := range blocked {
+			blockedRisk = blockedRisk.Add(b.AmountAtRisk)
+		}
+		log.Printf("🚧 billing-gate: договор %d — заблокировано снимков=%d (₽ под риском=%s), требуют ручного подтверждения",
+			contract.ID, len(blocked), blockedRisk.StringFixed(2))
+	}
+
+	// Missing-day: видимость тихого недосчёта (день без строки вообще). present = доверенные+
+	// заблокированные; expected = дней в периоде. Полная readiness-таблица — Ф2.
+	expectedDays := int(periodEnd.Sub(periodStart).Hours()/24) + 1
+	present := len(snapshots) + len(blocked)
+	if expectedDays > 0 && present < expectedDays {
+		log.Printf("⚠️ billing-gate: договор %d — пропущено дней без снимка=%d из %d (период %s–%s) — недосчёт не покрыт начислением",
+			contract.ID, expectedDays-present, expectedDays,
+			periodStart.Format("2006-01-02"), periodEnd.Format("2006-01-02"))
+	}
+
+	log.Printf("📊 Найдено доверенных снимков для договора за период: %d", len(snapshots))
 
 	if len(snapshots) == 0 {
 		log.Printf("⚠️ Нет снимков для партнерского договора %d за период %s - %s",

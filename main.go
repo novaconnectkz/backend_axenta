@@ -1134,6 +1134,11 @@ func main() {
 	log.Println("✅ Зарегистрирован POST /api/auth/contracts/:contract_id/partner-snapshots/generate -> GeneratePartnerSnapshotsForPeriod")
 	log.Println("✅ Зарегистрирован POST /api/auth/contracts/partner-snapshots/generate-all -> GenerateAllPartnerSnapshotsForPeriod")
 
+	// Ф1 billing-gate: справочник снимков (verify_status) + очередь и ручное подтверждение
+	apiGroup.GET("/partner-snapshots/list", api.ListPartnerSnapshots)
+	apiGroup.GET("/partner-snapshots/review-queue", api.GetPartnerSnapshotReviewQueue)
+	apiGroup.POST("/partner-snapshots/:id/approve", api.ApprovePartnerSnapshot)
+
 	// Ф1 SKIF partner billing: ручной триггер снимков дилеров (source=skif)
 	apiGroup.POST("/skif/partner-snapshots/generate", api.GenerateSkifPartnerSnapshots)
 
