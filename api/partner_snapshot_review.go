@@ -28,6 +28,41 @@ func partnerSnapshotTenantDB(c *gin.Context) (*gorm.DB, bool) {
 	return db, ok
 }
 
+// resolveContractNumbers проставляет человекочитаемый № договора (tenant.contracts.number)
+// по contract_id — чтобы в справочнике показывать «AX-…/442» вместо внутреннего «#97».
+func resolveContractNumbers(db *gorm.DB, rows []models.PartnerDailySnapshot) {
+	ids := map[uint]struct{}{}
+	for i := range rows {
+		if rows[i].ContractID > 0 {
+			ids[rows[i].ContractID] = struct{}{}
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	idList := make([]uint, 0, len(ids))
+	for id := range ids {
+		idList = append(idList, id)
+	}
+	var cs []struct {
+		ID     uint
+		Number string
+	}
+	if err := db.Table("contracts").Select("id, number").
+		Where("id IN ?", idList).Find(&cs).Error; err != nil {
+		return // best-effort: FE покажет внутренний id
+	}
+	numByID := make(map[uint]string, len(cs))
+	for _, x := range cs {
+		numByID[x.ID] = x.Number
+	}
+	for i := range rows {
+		if n := numByID[rows[i].ContractID]; n != "" {
+			rows[i].ContractNumber = n
+		}
+	}
+}
+
 // resolvePartnerNames best-effort проставляет имя владельца (аккаунт/дилер/юзер) в строки
 // снимков — чтобы по «без договора» было видно, чьи объекты. Резолвит ВСЕ 4 источника:
 //
@@ -215,6 +250,7 @@ func ListPartnerSnapshots(c *gin.Context) {
 	}
 
 	resolvePartnerNames(db, rows)
+	resolveContractNumbers(db, rows)
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":    "success",
@@ -263,6 +299,7 @@ func GetPartnerSnapshotReviewQueue(c *gin.Context) {
 	}
 
 	resolvePartnerNames(db, rows)
+	resolveContractNumbers(db, rows)
 
 	totalRisk := decimal.Zero
 	for i := range rows {
