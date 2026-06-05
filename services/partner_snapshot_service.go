@@ -204,24 +204,25 @@ func (s *PartnerSnapshotService) CreateSnapshotForPartnerAccountWithoutContract(
 
 	// Создаем снимок
 	snapshot := models.PartnerDailySnapshot{
-		AdminAccountID:     companyID,
-		CompanyID:          companyID,
-		ContractID:         0, // Нет договора
-		SnapshotDate:       snapshotDate,
-		PartnerCompanyID:   partnerAccountID,
-		TariffPlanID:       defaultPlan.ID,
-		MonthlyPrice:       monthlyPrice,
-		DailyPrice:         dailyPrice,
-		TotalObjectsCount:  len(objects),
-		ActiveObjectsCount: activeCount,
-		DiscountType:       "none",
-		DiscountPercent:    decimal.Zero,
-		DiscountFixed:      decimal.Zero,
-		CostBeforeDiscount: costBeforeDiscount,
-		DiscountAmount:     decimal.Zero,
-		DailyCost:          dailyCost,
-		Status:             "completed",
-		Notes:              fmt.Sprintf("Автоматический снимок партнера БЕЗ договора: %s", partnerName),
+		AdminAccountID:       companyID,
+		CompanyID:            companyID,
+		ContractID:           0, // Нет договора
+		SnapshotDate:         snapshotDate,
+		PartnerCompanyID:     partnerAccountID,
+		TariffPlanID:         defaultPlan.ID,
+		MonthlyPrice:         monthlyPrice,
+		DailyPrice:           dailyPrice,
+		TotalObjectsCount:    len(objects),
+		ActiveObjectsCount:   activeCount,
+		DiscountType:         "none",
+		DiscountPercent:      decimal.Zero,
+		DiscountFixed:        decimal.Zero,
+		CostBeforeDiscount:   costBeforeDiscount,
+		DiscountAmount:       decimal.Zero,
+		DailyCost:            dailyCost,
+		Status:               "completed",
+		VerifySecondaryCount: -1, // Ф1: cross-source для Axenta в Ф2; сверка через continuity-guard
+		Notes:                fmt.Sprintf("Автоматический снимок партнера БЕЗ договора: %s", partnerName),
 	}
 
 	if err := db.Create(&snapshot).Error; err != nil {
@@ -452,8 +453,11 @@ func (s *PartnerSnapshotService) CreateSnapshotForContractWithTokenAndDBAndSourc
 		DiscountPercent:    discountPercent,
 		DiscountFixed:      discountFixed,
 		Status:             "completed",
+		// Ф1: cross-source -1 (валидный второй счёт Axenta = COUNT axenta_object_snapshots
+		// по дереву аккаунтов — отложен в Ф2; live-stats глобален, не per-партнёр). Сверка: continuity-guard.
+		VerifySecondaryCount: -1,
 	}
-	// DailyPrice, CostBeforeDiscount, DiscountAmount и DailyCost будут рассчитаны в BeforeCreate
+	// DailyPrice, CostBeforeDiscount, DiscountAmount, DailyCost + verify-поля рассчитает BeforeCreate
 
 	if err := db.Create(&snapshot).Error; err != nil {
 		// Проверяем, является ли ошибка нарушением уникального ограничения (снимок уже существует)
@@ -465,6 +469,12 @@ func (s *PartnerSnapshotService) CreateSnapshotForContractWithTokenAndDBAndSourc
 			if err := db.Unscoped().
 				Where("contract_id = ? AND snapshot_date = ?", contract.ID, snapshotDate).
 				First(&existingSnapshot).Error; err == nil {
+				// Подтверждённый вручную снимок заморожен — не перезатираем (Codex critical).
+				if existingSnapshot.VerifyStatus == models.VerifyStatusApproved {
+					log.Printf("🔒 Axenta снимок договора %d на %s подтверждён вручную — пропуск обновления",
+						contract.ID, snapshotDate.Format("2006-01-02"))
+					return nil
+				}
 				// Обновляем существующий снимок
 				existingSnapshot.TotalObjectsCount = objectsCount
 				existingSnapshot.ActiveObjectsCount = activeObjectsCount
@@ -475,31 +485,10 @@ func (s *PartnerSnapshotService) CreateSnapshotForContractWithTokenAndDBAndSourc
 				existingSnapshot.Status = "completed"
 				existingSnapshot.DeletedAt = gorm.DeletedAt{}
 
-				// Пересчитываем стоимость (аналогично коду выше для обновления)
-				if discountFixed.GreaterThan(decimal.Zero) {
-					effectiveMonthlyPrice := monthlyPrice.Sub(discountFixed)
-					if effectiveMonthlyPrice.IsNegative() {
-						effectiveMonthlyPrice = decimal.Zero
-					}
-					effectiveDailyPrice := effectiveMonthlyPrice.Div(decimal.NewFromInt(30)).Round(4)
-					existingSnapshot.DailyPrice = effectiveDailyPrice
-					baseDailyPrice := monthlyPrice.Div(decimal.NewFromInt(30)).Round(4)
-					existingSnapshot.CostBeforeDiscount = baseDailyPrice.Mul(decimal.NewFromInt(int64(activeObjectsCount))).Round(2)
-					existingSnapshot.DiscountAmount = discountFixed.Div(decimal.NewFromInt(30)).Mul(decimal.NewFromInt(int64(activeObjectsCount))).Round(2)
-					existingSnapshot.DailyCost = effectiveDailyPrice.Mul(decimal.NewFromInt(int64(activeObjectsCount))).Round(2)
-				} else {
-					baseDailyPrice := monthlyPrice.Div(decimal.NewFromInt(30)).Round(4)
-					existingSnapshot.DailyPrice = baseDailyPrice
-					costBeforeDiscount := baseDailyPrice.Mul(decimal.NewFromInt(int64(activeObjectsCount))).Round(2)
-					existingSnapshot.CostBeforeDiscount = costBeforeDiscount
-					if discountPercent.GreaterThan(decimal.Zero) {
-						discountMultiplier := discountPercent.Div(decimal.NewFromInt(100))
-						existingSnapshot.DiscountAmount = costBeforeDiscount.Mul(discountMultiplier).Round(2)
-					} else {
-						existingSnapshot.DiscountAmount = decimal.Zero
-					}
-					existingSnapshot.DailyCost = costBeforeDiscount.Sub(existingSnapshot.DiscountAmount).Round(2)
-				}
+				// Ф1: единый пересчёт цен (days-in-month, фикс прежнего хардкода /30) +
+				// сверки через модель. Save не триггерит BeforeCreate, поэтому Recompute явно.
+				existingSnapshot.VerifySecondaryCount = -1
+				existingSnapshot.Recompute(db)
 
 				if err := db.Unscoped().Save(&existingSnapshot).Error; err != nil {
 					return fmt.Errorf("ошибка обновления существующего снимка: %w", err)
@@ -517,6 +506,19 @@ func (s *PartnerSnapshotService) CreateSnapshotForContractWithTokenAndDBAndSourc
 		discountPercent.StringFixed(2), snapshot.DailyCost.StringFixed(2), snapshot.CostBeforeDiscount.StringFixed(2))
 
 	return nil
+}
+
+// partnerSnapshotIsApproved — true если снимок за этот ключ уже подтверждён вручную
+// (manual_approved). Cron-upsert НЕ должен его перезатирать: иначе ночной прогон снимает
+// ручное подтверждение оператора и возвращает день в needs_review/verified (Codex critical).
+// Подтверждённый снимок = заморожен (числа уже приняты оператором).
+func partnerSnapshotIsApproved(db *gorm.DB, source string, connID uint, extID string, contractID uint, day time.Time) bool {
+	var cnt int64
+	db.Model(&models.PartnerDailySnapshot{}).
+		Where("partner_source = ? AND connection_id = ? AND partner_external_id = ? AND contract_id = ? AND snapshot_date = ? AND verify_status = ?",
+			source, connID, extID, contractID, day, models.VerifyStatusApproved).
+		Count(&cnt)
+	return cnt > 0
 }
 
 // fetchPartnerObjects получает все объекты партнера из Axenta Cloud API
@@ -783,24 +785,25 @@ func (s *PartnerSnapshotService) CreateVirtualOthersSnapshot(
 	costBeforeDiscount := dailyRate.Mul(decimal.NewFromInt(int64(activeObjects)))
 
 	snapshot := models.PartnerDailySnapshot{
-		AdminAccountID:     companyID,
-		CompanyID:          companyID,
-		ContractID:         0, // Нет договора
-		SnapshotDate:       snapshotDate,
-		PartnerCompanyID:   virtualPartnerID, // 0 = виртуальный партнер "Прочие"
-		TariffPlanID:       defaultPlan.ID,
-		MonthlyPrice:       defaultPlan.Price,
-		DailyPrice:         dailyRate,
-		TotalObjectsCount:  totalObjects,
-		ActiveObjectsCount: activeObjects,
-		DiscountType:       "none",
-		DiscountPercent:    decimal.Zero,
-		DiscountFixed:      decimal.Zero,
-		CostBeforeDiscount: costBeforeDiscount,
-		DiscountAmount:     decimal.Zero,
-		DailyCost:          costBeforeDiscount,
-		Status:             "completed",
-		Notes:              "Учётная запись GLOMOS (186) - прямые клиенты без партнёров в иерархии",
+		AdminAccountID:       companyID,
+		CompanyID:            companyID,
+		ContractID:           0, // Нет договора
+		SnapshotDate:         snapshotDate,
+		PartnerCompanyID:     virtualPartnerID, // 0 = виртуальный партнер "Прочие"
+		TariffPlanID:         defaultPlan.ID,
+		MonthlyPrice:         defaultPlan.Price,
+		DailyPrice:           dailyRate,
+		TotalObjectsCount:    totalObjects,
+		ActiveObjectsCount:   activeObjects,
+		DiscountType:         "none",
+		DiscountPercent:      decimal.Zero,
+		DiscountFixed:        decimal.Zero,
+		CostBeforeDiscount:   costBeforeDiscount,
+		DiscountAmount:       decimal.Zero,
+		DailyCost:            costBeforeDiscount,
+		Status:               "completed",
+		VerifySecondaryCount: -1, // Ф1: cross-source для Axenta в Ф2; сверка через continuity-guard
+		Notes:                "Учётная запись GLOMOS (186) - прямые клиенты без партнёров в иерархии",
 	}
 
 	if err := tenantDB.Create(&snapshot).Error; err != nil {
@@ -904,24 +907,25 @@ func (s *PartnerSnapshotService) CreateSnapshotWithObjectCounts(
 	}
 
 	snapshot := models.PartnerDailySnapshot{
-		AdminAccountID:     companyID,
-		CompanyID:          companyID,
-		ContractID:         contractID,
-		SnapshotDate:       snapshotDate,
-		PartnerCompanyID:   partnerID,
-		TariffPlanID:       tariffPlan.ID,
-		MonthlyPrice:       monthlyPrice,
-		DailyPrice:         dailyRate,
-		TotalObjectsCount:  totalObjects,
-		ActiveObjectsCount: activeObjects,
-		DiscountType:       discountType,
-		DiscountPercent:    discountPercent,
-		DiscountFixed:      discountFixed,
-		CostBeforeDiscount: costBeforeDiscount,
-		DiscountAmount:     discountAmount,
-		DailyCost:          dailyCost,
-		Status:             "completed",
-		Notes:              notes,
+		AdminAccountID:       companyID,
+		CompanyID:            companyID,
+		ContractID:           contractID,
+		SnapshotDate:         snapshotDate,
+		PartnerCompanyID:     partnerID,
+		TariffPlanID:         tariffPlan.ID,
+		MonthlyPrice:         monthlyPrice,
+		DailyPrice:           dailyRate,
+		TotalObjectsCount:    totalObjects,
+		ActiveObjectsCount:   activeObjects,
+		DiscountType:         discountType,
+		DiscountPercent:      discountPercent,
+		DiscountFixed:        discountFixed,
+		CostBeforeDiscount:   costBeforeDiscount,
+		DiscountAmount:       discountAmount,
+		DailyCost:            dailyCost,
+		Status:               "completed",
+		VerifySecondaryCount: -1, // Ф1: cross-source для Axenta в Ф2; сверка через continuity-guard
+		Notes:                notes,
 	}
 
 	if err := tenantDB.Create(&snapshot).Error; err != nil {

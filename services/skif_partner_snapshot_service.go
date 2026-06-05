@@ -62,6 +62,24 @@ func (s *SkifPartnerSnapshotService) aggregateDealer(connID uint, dealerUUID str
 	return total, active
 }
 
+// secondaryActiveCount — НЕЗАВИСИМЫЙ второй счёт активных для cross-source сверки (Ф1).
+// Основной active = Σ units_count из skif_company_statuses (поле API auth_admin_query).
+// Второй = COUNT строк skif_units (отдельная выгрузка SyncUnits) активных компаний дилера —
+// другой API-контур, ловит расхождение между «заявленным» и «фактическим» числом юнитов.
+// -1 = посчитать не удалось → guard пропустит cross-source.
+func (s *SkifPartnerSnapshotService) secondaryActiveCount(connID uint, dealerUUID string) int {
+	activeCompanies := s.db.Table("skif_company_statuses").
+		Select("skif_company_id").
+		Where("connection_id = ? AND skif_dealer_id = ? AND company_status = ?", connID, dealerUUID, "ACTIVE")
+	var cnt int64
+	if err := s.db.Table("skif_units").
+		Where("connection_id = ? AND skif_deleted_at IS NULL AND skif_company_id IN (?)", connID, activeCompanies).
+		Count(&cnt).Error; err != nil {
+		return -1
+	}
+	return int(cnt)
+}
+
 // GenerateForAllTenants — daily проход: пишет SKIF-снимки за date по всем активным тенантам.
 func (s *SkifPartnerSnapshotService) GenerateForAllTenants(date time.Time) (int, error) {
 	if err := s.db.Exec("SET search_path TO public").Error; err != nil {
@@ -114,6 +132,12 @@ func (s *SkifPartnerSnapshotService) GenerateForTenant(tenantDB *gorm.DB, date t
 			continue
 		}
 
+		// Подтверждённый вручную снимок заморожен — cron его не перезатирает.
+		if partnerSnapshotIsApproved(tenantDB, "skif", c.PartnerConnectionID, c.PartnerExternalID, c.ID, day) {
+			log.Printf("🔒 SKIF снимок договора %d на %s подтверждён вручную — пропуск", c.ID, day.Format("2006-01-02"))
+			continue
+		}
+
 		total, active := s.aggregateDealer(c.PartnerConnectionID, c.PartnerExternalID)
 
 		snap := models.PartnerDailySnapshot{
@@ -133,7 +157,9 @@ func (s *SkifPartnerSnapshotService) GenerateForTenant(tenantDB *gorm.DB, date t
 			DiscountPercent:    c.GetDiscountPercent(active),
 			DiscountFixed:      c.GetDiscountFixed(),
 			Status:             "completed",
-			Notes:              "SKIF partner snapshot (Ф1): Σ units компаний дилера, active = company_status ACTIVE",
+			// Ф1 двойная сверка: cross-source второй счёт из skif_units (другой контур).
+			VerifySecondaryCount: s.secondaryActiveCount(c.PartnerConnectionID, c.PartnerExternalID),
+			Notes:                "SKIF partner snapshot (Ф1): Σ units компаний дилера, active = company_status ACTIVE",
 		}
 
 		// BeforeCreate досчитает daily_price/cost_before_discount/discount_amount/daily_cost.
