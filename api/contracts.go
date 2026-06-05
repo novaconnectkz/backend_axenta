@@ -1675,15 +1675,15 @@ func CreateContract(c *gin.Context) {
 		return
 	}
 
-	// B2 (subject-first): client-договор с явным контрагентом → имя НЕ обязательно в теле,
-	// подтянется snapshot'ом из контрагента (ниже). Невалидный/чужой cp ловится позже
-	// (после валидации cp: client + cp==0 + пустое имя → 400 «выберите контрагента»).
-	// Партнёрский договор и client без cp — имя по-прежнему обязательно.
-	if strings.TrimSpace(contract.ClientName) == "" &&
-		!(contract.ContractType == "client" && contract.CounterpartyID != 0) {
+	// Единый контрагент: имя клиента в теле НЕ требуется, если выбран контрагент (любой роли) —
+	// идентичность подтянется из него. Партнёрский договор и без контрагента имя НЕ требует
+	// (идентичность из учётной записи партнёра, PartnerName → auto-resolve). Имя обязательно
+	// ТОЛЬКО для client-договора без контрагента.
+	if contract.ContractType == "client" && contract.CounterpartyID == 0 &&
+		strings.TrimSpace(contract.ClientName) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status": "error",
-			"error":  "Имя клиента обязательно (или выберите контрагента)",
+			"error":  "Для клиентского договора выберите контрагента (или заполните имя клиента)",
 		})
 		return
 	}
