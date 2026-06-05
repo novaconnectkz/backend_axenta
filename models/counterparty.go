@@ -97,3 +97,27 @@ type Counterparty struct {
 }
 
 func (Counterparty) TableName() string { return "counterparties" }
+
+// BeforeSave авто-классифицирует идентификатор: РФ + tax_id формата ИНН (10 орг / 12 ИП-физ,
+// все цифры) + id_type='other' → 'inn'. Закрывает баг авто-создания партнёр-контрагента, где
+// ИНН попал в tax_id, но id_type остался 'other' (FE рисовал «ID:» вместо «ИНН:»). KZ БИН/ИИН
+// (другой country) и явные bin/iin/passport НЕ трогаем — апгрейдим только 'other'.
+func (cp *Counterparty) BeforeSave(tx *gorm.DB) error {
+	if cp.IDType == "other" && (cp.Country == "ru" || cp.Country == "") && isRuInnFormat(cp.TaxID) {
+		cp.IDType = "inn"
+	}
+	return nil
+}
+
+// isRuInnFormat — строка из 10 или 12 цифр (формат ИНН РФ).
+func isRuInnFormat(s string) bool {
+	if len(s) != 10 && len(s) != 12 {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}

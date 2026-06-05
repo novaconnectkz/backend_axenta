@@ -409,12 +409,12 @@ func GetContracts(c *gin.Context) {
 		"title":             "title",
 		// C4b: client_name-колонка дропнута → сортировка по имени субъекта через
 		// коррелированный подзапрос в public.counterparties (client + partner cp).
-		"client_name":  "(SELECT name FROM public.counterparties WHERE id = contracts.counterparty_id)",
-		"start_date":   "start_date",
-		"end_date":          "end_date",
-		"total_amount":      "CAST(total_amount AS DECIMAL)",
-		"status":            "status",
-		"contract_type":     "contract_type",
+		"client_name":   "(SELECT name FROM public.counterparties WHERE id = contracts.counterparty_id)",
+		"start_date":    "start_date",
+		"end_date":      "end_date",
+		"total_amount":  "CAST(total_amount AS DECIMAL)",
+		"status":        "status",
+		"contract_type": "contract_type",
 	}
 
 	sortField, ok := allowedSortFields[sortBy]
@@ -2021,13 +2021,17 @@ func CreateContract(c *gin.Context) {
 	}
 
 	// Ф4b: явный counterparty_id из тела (FE-селектор) — валидируем принадлежность
-	// admin+company (анти-привязка к чужому ЛС). Невалидный → сброс на авто-резолв.
-	if contract.ContractType == "client" && contract.CounterpartyID != 0 {
+	// admin+company (анти-привязка к чужому ЛС). Для партнёрского — ещё и kind='partner'
+	// (нельзя привязать client-контрагента к партнёрскому договору). Невалидный → авто-резолв.
+	if contract.CounterpartyID != 0 && (contract.ContractType == "client" || contract.ContractType == "partner") {
+		vq := database.DB.Model(&models.Counterparty{}).
+			Where("id = ? AND admin_account_id = ? AND company_id = ?", contract.CounterpartyID, adminAccountID, contract.CompanyID)
+		if contract.ContractType == "partner" {
+			vq = vq.Where("kind = ?", "partner")
+		}
 		var cnt int64
-		if e := database.DB.Model(&models.Counterparty{}).
-			Where("id = ? AND admin_account_id = ? AND company_id = ?", contract.CounterpartyID, adminAccountID, contract.CompanyID).
-			Count(&cnt).Error; e != nil || cnt == 0 {
-			log.Printf("⚠️ Явный counterparty_id=%d не принадлежит admin=%d company=%d → авто-резолв", contract.CounterpartyID, adminAccountID, contract.CompanyID)
+		if e := vq.Count(&cnt).Error; e != nil || cnt == 0 {
+			log.Printf("⚠️ Явный counterparty_id=%d не валиден для admin=%d company=%d type=%s → авто-резолв", contract.CounterpartyID, adminAccountID, contract.CompanyID, contract.ContractType)
 			contract.CounterpartyID = 0
 		}
 	}
