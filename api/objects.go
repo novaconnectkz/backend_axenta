@@ -117,6 +117,8 @@ func GetObject(c *gin.Context) {
 		return
 	}
 
+	attachCounterpartyToContract(object.Contract) // C4b: имя субъекта договора для FE (cp в public)
+
 	c.JSON(200, gin.H{"status": "success", "data": object})
 }
 
@@ -229,6 +231,7 @@ func CreateObject(c *gin.Context) {
 		c.JSON(500, gin.H{"status": "error", "error": "Ошибка загрузки созданного объекта: " + err.Error()})
 		return
 	}
+	attachCounterpartyToContract(object.Contract) // C4b: имя субъекта договора для FE
 
 	// Синхронизация объекта с Axetna.cloud временно отключена
 	// TODO: включить когда интеграция будет готова
@@ -371,6 +374,7 @@ func UpdateObject(c *gin.Context) {
 		c.JSON(500, gin.H{"status": "error", "error": "Ошибка загрузки обновленного объекта: " + err.Error()})
 		return
 	}
+	attachCounterpartyToContract(existingObject.Contract) // C4b: имя субъекта договора для FE
 
 	// Синхронизируем обновление объекта с Axetna.cloud асинхронно
 	// Синхронизация временно отключена

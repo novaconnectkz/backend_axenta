@@ -2489,6 +2489,9 @@ contractCreated:
 		scheduler.SyncAdminAsync(adminAccountID)
 	}
 
+	// C4b: догружаем cp в ответ → FE показывает имя сразу (без refresh списка)
+	attachCounterpartyToContract(&contract)
+
 	// Формируем ответ с информацией об ошибках привязки объектов, если они есть
 	response := gin.H{
 		"status": "success",
@@ -2744,6 +2747,8 @@ func UpdateContract(c *gin.Context) {
 			}
 		}
 	}
+
+	attachCounterpartyToContract(&contract) // C4b: cp в ответ → имя сразу
 
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
@@ -6348,6 +6353,8 @@ func SyncContractFromSubscription(c *gin.Context) {
 	if err := loadContractObjectsWithNames(tenantDB, &contract, userToken); err != nil {
 		log.Printf("⚠️ Ошибка загрузки объектов договора: %v", err)
 	}
+
+	attachCounterpartyToContract(&contract) // C4b: cp в ответ → имя сразу
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
