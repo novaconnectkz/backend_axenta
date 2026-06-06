@@ -255,6 +255,14 @@ func (s *PartnerSnapshotService) CreateSnapshotForContractWithTokenAndDBAndSourc
 		Where("contract_id = ? AND snapshot_date = ?", contract.ID, snapshotDate).
 		First(&existingSnapshot).Error; err == nil {
 
+		// Подтверждённый вручную снимок заморожен — регенерация не перезатирает
+		// операторское решение (Codex critical, как в dup-key ветке ниже).
+		if existingSnapshot.VerifyStatus == models.VerifyStatusApproved {
+			log.Printf("🔒 Снимок договора %d на %s подтверждён вручную — пропуск регенерации",
+				contract.ID, snapshotDate.Format("2006-01-02"))
+			return nil
+		}
+
 		// Проверяем является ли это сегодняшним снимком
 		today := time.Now().UTC()
 		todayStart := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
@@ -337,42 +345,15 @@ func (s *PartnerSnapshotService) CreateSnapshotForContractWithTokenAndDBAndSourc
 		existingSnapshot.Status = "completed"
 		existingSnapshot.DeletedAt = gorm.DeletedAt{} // Восстанавливаем если был удален
 
-		// DailyPrice, CostBeforeDiscount, DiscountAmount и DailyCost будут рассчитаны в BeforeCreate/BeforeSave
-		// Но так как это update, пересчитаем вручную
-
-		// Для фиксированной скидки: применяем к месячному тарифу
-		// Для процентной скидки: применяем к дневной стоимости
-		if discountFixed.GreaterThan(decimal.Zero) {
-			// Фиксированная скидка применяется к МЕСЯЧНОМУ тарифу
-			effectiveMonthlyPrice := monthlyPrice.Sub(discountFixed)
-			if effectiveMonthlyPrice.IsNegative() {
-				effectiveMonthlyPrice = decimal.Zero
-			}
-			effectiveDailyPrice := effectiveMonthlyPrice.Div(decimal.NewFromInt(30)).Round(4)
-			existingSnapshot.DailyPrice = effectiveDailyPrice
-
-			baseDailyPrice := monthlyPrice.Div(decimal.NewFromInt(30)).Round(4)
-			existingSnapshot.CostBeforeDiscount = baseDailyPrice.Mul(decimal.NewFromInt(int64(activeObjectsCount))).Round(2)
-			existingSnapshot.DiscountAmount = discountFixed.Div(decimal.NewFromInt(30)).Mul(decimal.NewFromInt(int64(activeObjectsCount))).Round(2)
-			existingSnapshot.DailyCost = effectiveDailyPrice.Mul(decimal.NewFromInt(int64(activeObjectsCount))).Round(2)
-		} else {
-			// Базовая дневная цена
-			baseDailyPrice := monthlyPrice.Div(decimal.NewFromInt(30)).Round(4)
-			existingSnapshot.DailyPrice = baseDailyPrice
-
-			costBeforeDiscount := baseDailyPrice.Mul(decimal.NewFromInt(int64(activeObjectsCount))).Round(2)
-			existingSnapshot.CostBeforeDiscount = costBeforeDiscount
-
-			// Процентная скидка применяется к стоимости
-			if discountPercent.GreaterThan(decimal.Zero) {
-				discountMultiplier := discountPercent.Div(decimal.NewFromInt(100))
-				existingSnapshot.DiscountAmount = costBeforeDiscount.Mul(discountMultiplier).Round(2)
-			} else {
-				existingSnapshot.DiscountAmount = decimal.Zero
-			}
-
-			existingSnapshot.DailyCost = costBeforeDiscount.Sub(existingSnapshot.DiscountAmount).Round(2)
-		}
+		// Update-путь: BeforeCreate (где живёт ценовой расчёт + continuity-guard) на Save
+		// НЕ срабатывает. Поэтому пересчитываем явно через Recompute — иначе verify-поля
+		// (verify_status/amount_at_risk/delta_pct) застревают от первоначальной генерации,
+		// а кнопка «Подтвердить»/предупреждение не уходят после регена. Recompute = ComputeCosts
+		// (days_in_month, не хардкод /30) + applyVerifyGuard (baseline читается из tx-схемы).
+		// VerifySecondaryCount=-1 до Recompute (симметрия с create/dup: cross-source Axenta
+		// отложен, иначе старый secondary ложно вернёт needs_review — Codex).
+		existingSnapshot.VerifySecondaryCount = -1
+		existingSnapshot.Recompute(db)
 
 		// Используем Unscoped() для сохранения, чтобы обновить даже мягко удаленную запись
 		if err := db.Unscoped().Save(&existingSnapshot).Error; err != nil {
