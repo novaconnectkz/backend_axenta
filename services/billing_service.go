@@ -372,6 +372,20 @@ func (bs *BillingService) CalculateBillingForPartnerContract(contract *models.Co
 		return nil, fmt.Errorf("для партнерского договора не указан partner_company_id")
 	}
 
+	// Клемп периода снизу к start_date договора: договор не биллится до своей даты
+	// начала, даже если к нему привязаны более ранние снимки (напр. авто-релинк
+	// «без договора» через RelinkOrphanPartnerSnapshots). Без клемпа произвольный
+	// period_start от пользователя посчитал бы до-контрактные дни.
+	if contract.StartDate != nil {
+		sd := *contract.StartDate
+		startDay := time.Date(sd.Year(), sd.Month(), sd.Day(), 0, 0, 0, 0, time.UTC)
+		if startDay.After(periodStart) {
+			log.Printf("📅 Период склемплен к start_date договора %d: %s → %s",
+				contract.ID, periodStart.Format("2006-01-02"), startDay.Format("2006-01-02"))
+			periodStart = startDay
+		}
+	}
+
 	// Проверяем, что у договора есть тарифный план
 	if contract.TariffPlanID == nil {
 		return nil, fmt.Errorf("у партнерского договора не указан тарифный план")

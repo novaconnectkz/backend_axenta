@@ -1460,6 +1460,96 @@ func (s *PartnerSnapshotService) CountPartnerObjectsFromDB(
 	return int(totalCount), int(activeCount), nil
 }
 
+// RelinkOrphanPartnerSnapshots привязывает существующие снимки партнёра «без договора»
+// (contract_id=0) к только что созданному партнёрскому договору: для каждой даты
+// генерирует contract-linked снимок (data_source=db, без Axenta-токена — Recompute +
+// continuity-guard + freeze approved внутри) и мягко удаляет orphan-ряд cid=0.
+// Вызывается в горутине после создания договора. schema — имя tenant-схемы из
+// контекста запроса (contract.CompanyID может быть 0, поэтому схему передаём явно).
+//
+// ВАЖНО (деньги): релинкается ВСЯ история «без договора» партнёра. Безопасно, потому
+// что CalculateBillingForPartnerContract КЛЕМПИТ period_start снизу к contract.StartDate
+// (даже если к договору привязаны более ранние снимки — они не попадут в счёт).
+// Цель — чтобы «без договора» в справочнике сменилось номером договора по всей истории.
+func RelinkOrphanPartnerSnapshots(contract models.Contract, schema string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("❌ ПАНИКА в RelinkOrphanPartnerSnapshots (договор %d): %v", contract.ID, r)
+		}
+	}()
+
+	if contract.ContractType != "partner" || contract.PartnerCompanyID == nil ||
+		*contract.PartnerCompanyID == 0 || contract.TariffPlanID == nil {
+		return
+	}
+	// Пустая/public схема → ConnectToTenant отдаёт глобальный DB (fail-open в public). Не работаем.
+	if schema == "" || schema == "public" {
+		log.Printf("⚠️ Релинк orphan: некорректная схема %q (договор %s) — пропуск", schema, contract.Number)
+		return
+	}
+	tenantDB, err := database.ConnectToTenant(schema)
+	if err != nil {
+		log.Printf("⚠️ Релинк orphan: нет подключения к схеме %s: %v", schema, err)
+		return
+	}
+
+	const relinkCap = 400
+	var orphans []models.PartnerDailySnapshot
+	if err := tenantDB.
+		Where("partner_company_id = ? AND contract_id = 0 AND deleted_at IS NULL", *contract.PartnerCompanyID).
+		Order("snapshot_date ASC").
+		Limit(relinkCap).
+		Find(&orphans).Error; err != nil {
+		log.Printf("⚠️ Релинк orphan: ошибка выборки снимков партнёра %d: %v", *contract.PartnerCompanyID, err)
+		return
+	}
+	if len(orphans) == 0 {
+		return
+	}
+	if len(orphans) == relinkCap {
+		log.Printf("⚠️ Релинк orphan партнёра %d: достигнут лимит %d — часть старых снимков не релинкнута",
+			*contract.PartnerCompanyID, relinkCap)
+	}
+
+	svc := NewPartnerSnapshotService()
+	relinked := 0
+	for i := range orphans {
+		// Подтверждённый вручную orphan не трогаем — операторское решение важнее авто-релинка.
+		if orphans[i].VerifyStatus == models.VerifyStatusApproved {
+			continue
+		}
+		date := orphans[i].SnapshotDate
+		orphanID := orphans[i].ID
+		// Per-date транзакция: создание contract-ряда + удаление orphan атомарны.
+		// При гонке (второй договор того же партнёра) delete вернёт RowsAffected=0 →
+		// откатываем создание этого ряда (orphan уже забрал первый релинк). Падение
+		// процесса между шагами не оставит дубль — оба или ни одного.
+		txErr := tenantDB.Transaction(func(tx *gorm.DB) error {
+			if e := svc.CreateSnapshotForContractWithTokenAndDBAndSource(&contract, date, "", tx, "db"); e != nil {
+				return e
+			}
+			// verify_status <> approved прямо в DELETE: если оператор подтвердил orphan
+			// между пред-проверкой и этим моментом — RowsAffected=0 → откат (TOCTOU-guard).
+			res := tx.Where("id = ? AND contract_id = 0 AND verify_status <> ?", orphanID, models.VerifyStatusApproved).
+				Delete(&models.PartnerDailySnapshot{})
+			if res.Error != nil {
+				return res.Error
+			}
+			if res.RowsAffected == 0 {
+				return fmt.Errorf("orphan %d уже обработан/подтверждён (гонка) — откат", orphanID)
+			}
+			return nil
+		})
+		if txErr != nil {
+			log.Printf("⚠️ Релинк orphan: договор %s на %s — %v", contract.Number, date.Format("2006-01-02"), txErr)
+			continue // orphan оставляем — данные не теряем
+		}
+		relinked++
+	}
+	log.Printf("✅ Релинк orphan-снимков партнёра %d → договор %s: %d/%d привязано",
+		*contract.PartnerCompanyID, contract.Number, relinked, len(orphans))
+}
+
 // AutoCalculateBillingForAllPartners автоматически запускает расчет биллинга за весь период
 // для всех партнеров всех компаний, если еще нет снимков
 // Вызывается после первой успешной синхронизации данных

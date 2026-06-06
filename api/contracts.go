@@ -2559,6 +2559,12 @@ contractCreated:
 		}
 	}
 
+	// Партнёрский договор: в фоне привязываем существующие снимки «без договора»
+	// (cid=0) этого партнёра к новому договору — чтобы «без договора» в справочнике
+	// сменилось номером договора без ручного релинка. No-op для client-договоров.
+	// Схему берём из контекста (contract.CompanyID может быть 0).
+	go services.RelinkOrphanPartnerSnapshots(contract, c.GetString("schema_name"))
+
 	c.JSON(http.StatusCreated, response)
 }
 
