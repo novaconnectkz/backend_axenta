@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"backend_axenta/audit"
@@ -222,6 +223,42 @@ func ListPartnerSnapshots(c *gin.Context) {
 		if t, err := time.Parse("2006-01-02", ed); err == nil {
 			q = q.Where("snapshot_date <= ?", t)
 		}
+	}
+
+	// Поиск по колонке «Договор»: номер договора ИЛИ имя партнёра (4 источника).
+	// partner_daily_snapshots не хранит номер/имя — резолвим matching id'шники и фильтруем
+	// по contract_id / partner_company_id / partner_external_id. COLLATE "und-x-icu" — для
+	// регистронезависимого поиска по кириллице под lc_collate=C (голый ILIKE не сфолдит).
+	if qstr := strings.TrimSpace(c.Query("q")); qstr != "" {
+		like := "%" + qstr + "%"
+		var cids []uint
+		db.Table("contracts").Where("number ILIKE ?", like).Pluck("id", &cids)
+		var axIDs []int64
+		db.Table("axenta_account_snapshots").
+			Where("deleted_at IS NULL AND account_name ILIKE ? COLLATE \"und-x-icu\"", like).
+			Pluck("external_account_id", &axIDs)
+		var skifIDs []string
+		db.Table("public.skif_dealers").
+			Where("name ILIKE ? COLLATE \"und-x-icu\"", like).Pluck("skif_dealer_id", &skifIDs)
+		var wlIDs []int64
+		db.Table("public.wialon_account_statuses").
+			Where("name ILIKE ? COLLATE \"und-x-icu\"", like).Pluck("wialon_user_id", &wlIDs)
+		wlStr := make([]string, 0, len(wlIDs))
+		for _, id := range wlIDs {
+			wlStr = append(wlStr, fmt.Sprintf("%d", id))
+		}
+		var gIDs []string
+		db.Table("public.gelios_users").
+			Where("legal_name ILIKE ? COLLATE \"und-x-icu\" OR login ILIKE ? COLLATE \"und-x-icu\"", like, like).
+			Pluck("gelios_user_id", &gIDs)
+
+		// OR-группа: пустые IN-наборы дают IN (NULL) → matches nothing (безопасно).
+		grp := db.Where("contract_id IN ?", cids).
+			Or("partner_company_id IN ?", axIDs).
+			Or("partner_source = ? AND partner_external_id IN ?", "skif", skifIDs).
+			Or("partner_source = ? AND partner_external_id IN ?", "wialon", wlStr).
+			Or("partner_source = ? AND partner_external_id IN ?", "gelios", gIDs)
+		q = q.Where(grp)
 	}
 
 	limit := 100
