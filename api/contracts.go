@@ -2069,6 +2069,34 @@ func CreateContract(c *gin.Context) {
 		}
 	}
 
+	// Корзина-чек: idx_contracts_number — полный UNIQUE(number), удалённый (soft-delete)
+	// договор тоже держит номер. Заранее ловим коллизию и даём понятное сообщение вместо
+	// сырого 23505 idx_contracts_number. Различаем «в корзине» vs «активный».
+	{
+		var existing models.Contract
+		if e := tenantDB.Unscoped().Select("id", "number", "deleted_at").
+			Where("number = ?", contract.Number).First(&existing).Error; e == nil {
+			if existing.DeletedAt.Valid {
+				log.Printf("⚠️ Номер договора %q занят удалённым договором id=%d (в корзине)", contract.Number, existing.ID)
+				c.JSON(http.StatusConflict, gin.H{
+					"status":              "error",
+					"code":                "number_in_trash",
+					"error":               fmt.Sprintf("Договор с номером «%s» находится в корзине. Восстановите его или удалите окончательно из корзины, либо укажите другой номер.", contract.Number),
+					"trashed_contract_id": existing.ID,
+				})
+			} else {
+				log.Printf("⚠️ Номер договора %q уже занят активным договором id=%d", contract.Number, existing.ID)
+				c.JSON(http.StatusConflict, gin.H{
+					"status":      "error",
+					"code":        "number_exists",
+					"error":       fmt.Sprintf("Договор с номером «%s» уже существует.", contract.Number),
+					"contract_id": existing.ID,
+				})
+			}
+			return
+		}
+	}
+
 	if err := tenantDB.Omit("SellerCountryCode", "BuyerCountryCode", "NDSRateOverride", "TariffPlan", "Appendices", "Objects", "IsAutoRenew", "ContractPeriodMonths").Create(&contract).Error; err != nil {
 		log.Printf("❌ Ошибка при создании договора: %v", err)
 		log.Printf("📋 Тип ошибки: %T", err)
@@ -2082,6 +2110,24 @@ func CreateContract(c *gin.Context) {
 		// Проверяем, не связана ли ошибка с NOT NULL ограничением на tariff_plan_id
 		errorStr := err.Error()
 		log.Printf("🔍 Анализ ошибки БД: %s", errorStr)
+
+		// Fallback на гонку: дубликат номера (проактивный чек выше мог разойтись с параллельным INSERT).
+		if strings.Contains(errorStr, "idx_contracts_number") {
+			var existing models.Contract
+			trashed := false
+			if e := tenantDB.Unscoped().Select("id", "deleted_at").
+				Where("number = ?", contract.Number).First(&existing).Error; e == nil {
+				trashed = existing.DeletedAt.Valid
+			}
+			msg := fmt.Sprintf("Договор с номером «%s» уже существует.", contract.Number)
+			code := "number_exists"
+			if trashed {
+				msg = fmt.Sprintf("Договор с номером «%s» находится в корзине. Восстановите его или удалите окончательно из корзины, либо укажите другой номер.", contract.Number)
+				code = "number_in_trash"
+			}
+			c.JSON(http.StatusConflict, gin.H{"status": "error", "code": code, "error": msg})
+			return
+		}
 
 		// Проверяем различные варианты ошибок, связанных с tariff_plan_id
 		if strings.Contains(errorStr, "tariff_plan_id") &&
