@@ -576,8 +576,9 @@ func fetchWialonAccountsForUnified(companyID uint, search, accountType, activeSt
 
 // fetchWialonPartnersForUnified — Wialon-дилеры (partner billing Ф2) из
 // wialon_account_statuses (DB, не Redis → работает на staging). Дилер =
-// dealer_rights=true. Per-account модель (A): дерево в Wialon-данных не строится
-// (нет bpact, crt схлопывается, общий мастер-ресурс) → биллинг по прямым units_count.
+// dealer_rights=true. Модель «поддерево» (2026-06-06): биллинг по account_data
+// (objects_total/objects_active = поддерево дилера), а НЕ по прямым units_count
+// (он недосчитывает субаккаунты). Только is_direct_dealer → без двойного счёта.
 //
 // Source="wialon" + ID=wialon_user_id → ключ дропдауна wialon|connID|userID,
 // partner_external_id=userID для снимков W4.
@@ -617,8 +618,8 @@ func fetchWialonPartnersForUnified(companyID uint, search, activeStr, parent str
 			ID:            int(r.WialonUserID),
 			Name:          r.Name,
 			Type:          "partner",
-			ObjectsTotal:  r.UnitsCount,
-			ObjectsActive: r.UnitsCount, // per-account: активные = прямые units
+			ObjectsTotal:  r.ObjectsTotal,  // поддерево (account_data), не прямой units_count
+			ObjectsActive: r.ObjectsActive, // оплачиваемые (activated_units), деактивированные исключены
 			IsActive:      r.IsActive,
 			Source:        "wialon",
 			SourceLabel:   "Wialon",

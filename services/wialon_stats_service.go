@@ -207,6 +207,23 @@ func (s *WialonStatsService) collectAccountsForConnection(conn models.WialonConn
 		return 0, nil
 	}
 
+	// Корректное дилерство. SearchUsersWithHost ставит DealerRights из user fl&0x10 —
+	// это бит флагов avl_user, НЕ права дилера (даёт ложь: Шевердяев dealer=f, хотя в CMS
+	// дилер). Дилер в Wialon = владелец avl_resource с sys_account_enable_parent=1.
+	// dealerMap содержит id дилерских ресурсов; точный join — по user.bact
+	// (BillingAccountID = id billing-ресурса аккаунта), а НЕ по user.id (тот матчился бы
+	// через resourceID-1-эвристику → коллизии/пропуски: на conn 7 пропускал реального
+	// дилера tehnologii.t@yandex.ru, у которого user.id ≠ resource.id-1). Fail-closed:
+	// при ошибке прерываем сбор (прежний snapshot сохранится, freshness-guard → needs_review),
+	// НЕ оставляем врущий fl&0x10 и НЕ обнуляем всем (= недобиллинг).
+	dealerMap, derr := s.wialonService.SearchResourcesWithHost(conn.Host, eid)
+	if derr != nil {
+		return 0, fmt.Errorf("dealer detection (search resources) conn=%d: %w", conn.ID, derr)
+	}
+	for i := range accounts {
+		accounts[i].DealerRights = dealerMap[accounts[i].BillingAccountID]
+	}
+
 	// Аккаунт интеграции (токен-овнер) = его bact (resource). Прямой дилер =
 	// тот, чей parentAccountId == ownerBact. ownerBact=0 (сбой resolve) → is_direct
 	// неопределим → НЕ перезаписываем прежнее значение (см. known/unknown ниже).
@@ -245,6 +262,31 @@ func (s *WialonStatsService) collectAccountsForConnection(conn models.WialonConn
 		countByUser[c.UserID] = c.Cnt
 	}
 
+	// objects_total/objects_active per user_id из account_data (поддерево) — база
+	// partner billing. wialon_object_stats дублирует строки по ресурсам аккаунта одним
+	// значением (напр. Шевердяев: 3 ресурса × 110). Берём ОДНУ свежайшую строку через
+	// DISTINCT ON (а НЕ раздельные MAX(total)/MAX(active) — те могли бы собрать пару из
+	// РАЗНЫХ строк → active>total; и НЕ SUM — иначе 3× овербиллинг по дублям). ORDER BY
+	// last_collected_at DESC отсекает протухшие orphan-строки исчезнувших ресурсов.
+	// objects_active = activated_units.usage (оплачиваемые), objects_total = все.
+	type userObjects struct {
+		UserID int64
+		Total  int
+		Active int
+	}
+	var objs []userObjects
+	if err := s.db.Raw(`
+		SELECT DISTINCT ON (user_id) user_id AS user_id, objects_total AS total, objects_active AS active
+		FROM public.wialon_object_stats
+		WHERE connection_id = ? AND user_id > 0
+		ORDER BY user_id, last_collected_at DESC, objects_total DESC`, conn.ID).Scan(&objs).Error; err != nil {
+		return 0, fmt.Errorf("objects_active aggregate conn=%d: %w", conn.ID, err)
+	}
+	objByUser := make(map[int64]userObjects, len(objs))
+	for _, o := range objs {
+		objByUser[o.UserID] = o
+	}
+
 	// Делим на «known»/«unknown» по определимости is_direct_dealer.
 	// Определимо когда: НЕ дилер (is_direct всегда false) ИЛИ
 	// (ownerBact известен И parentAccountId дилера разрезолвлен).
@@ -266,6 +308,8 @@ func (s *WialonStatsService) collectAccountsForConnection(conn models.WialonConn
 			IsDirectDealer:  a.DealerRights && ownerBact != 0 && resolved && parentAcc == ownerBact,
 			IsActive:        a.IsActive,
 			UnitsCount:      countByUser[a.ID],
+			ObjectsTotal:    objByUser[a.ID].Total,
+			ObjectsActive:   objByUser[a.ID].Active,
 			LastCollectedAt: cycleStart,
 		}
 		directKnown := !a.DealerRights || (ownerBact != 0 && resolved)
@@ -299,7 +343,7 @@ func (s *WialonStatsService) upsertAccountBatch(batch []models.WialonAccountStat
 	if len(batch) == 0 {
 		return nil
 	}
-	cols := []string{"name", "parent_user_id", "dealer_rights", "is_active", "units_count", "last_collected_at", "updated_at"}
+	cols := []string{"name", "parent_user_id", "dealer_rights", "is_active", "units_count", "objects_total", "objects_active", "last_collected_at", "updated_at"}
 	if withDirect {
 		cols = append(cols, "parent_account_id", "is_direct_dealer")
 	}

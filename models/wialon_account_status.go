@@ -11,15 +11,17 @@ import "time"
 // schedulers off) данных нет. Заполняется WialonStatsService при синке на проде;
 // на staging приезжает через restore прод-БД (как skif_company_statuses → Ф1).
 //
-// Модель A (per-account, разведка 2026-05-23): дилер-дерево в Wialon НЕ строится
-// — поля bpact нет, parent_user_id(=crt) схлопывается под root-интеграторов, юниты
-// биллятся на общий мастер-ресурс. Поэтому Wialon-партнёр = аккаунт с DealerRights,
-// биллится за СВОИ прямые units_count (НЕ за поддерево). parent_user_id хранится,
-// но для биллинга НЕ используется (оставлен на случай будущей иерархии).
+// Модель «поддерево» (2026-06-06): Wialon-партнёр = ПРЯМОЙ дилер под интеграционной
+// у/з (is_direct_dealer), биллится за ВСЁ поддерево под собой — как Wialon CMS и
+// bill_wialon. База биллинга — account/get_account_data (activated_units.usage), а НЕ
+// прямой units_count: для дилера с субаккаунтами units_count недосчитывал (напр.
+// Шевердяев: прямые 31, поддерево 110). Двойного счёта нет — биллятся только прямые
+// дилеры под интеграцией, их дети (под ними, не под интеграцией) отдельно не биллятся.
+// См. ObjectsTotal/ObjectsActive ниже.
 //
-// units_count — прямой счёт юнитов аккаунта: wialon_units.billing_id →
-// wialon_object_stats.resource_id → user_id (покрытие 100%, без дублей
-// wialon_object_stats.active).
+// units_count — прямой счёт юнитов аккаунта (wialon_units.billing_id →
+// wialon_object_stats.resource_id → user_id). Оставлен для справки/UI, но для
+// дилерского биллинга НЕ годится (только прямые, без поддерева).
 //
 // Глобальная таблица в public-схеме (как wialon_units), т.к. ссылается на
 // wialon_connections (которая глобальная).
@@ -50,7 +52,18 @@ type WialonAccountStatus struct {
 	IsActive bool `json:"is_active" gorm:"index;default:true"`
 
 	// UnitsCount — прямой счёт юнитов аккаунта (не recursive).
+	// ВНИМАНИЕ: для дилеров недосчитывает поддерево (только прямые юниты). Для
+	// partner billing используется ObjectsTotal/ObjectsActive (account_data, поддерево).
 	UnitsCount int `json:"units_count" gorm:"default:0"`
+
+	// ObjectsTotal/ObjectsActive — поддеревная метрика из account/get_account_data
+	// (activated_units.usage + seasonal_units.usage), агрегированная MAX per user_id
+	// из wialon_object_stats (строки дублируются по ресурсам аккаунта одним значением →
+	// MAX, не SUM). Это база partner billing Wialon (модель «поддерево», = CMS/bill_wialon):
+	// дилер биллится за ВСЁ под собой. ObjectsActive = оплачиваемые (activated_units),
+	// ObjectsTotal = все (activated+seasonal). Заполняются в collectAccountsForConnection.
+	ObjectsTotal  int `json:"objects_total" gorm:"not null;default:0"`
+	ObjectsActive int `json:"objects_active" gorm:"not null;default:0"`
 
 	LastCollectedAt time.Time `json:"last_collected_at" gorm:"not null;index"`
 	CreatedAt       time.Time `json:"created_at"`

@@ -1552,6 +1552,16 @@ func (s *WialonService) SearchResourcesWithHost(host string, sessionID string) (
 		return nil, fmt.Errorf("ошибка чтения ответа: %w", err)
 	}
 
+	// Wialon на ошибку отдаёт {"error":N}, которое успешно парсится в пустой
+	// WialonSearchResponse (items=[]). Без этой проверки сбой API → пустой dealerMap →
+	// всем аккаунтам dealer_rights=false → недобиллинг партнёров (Codex). Fail-closed.
+	var errCheck struct {
+		Error int `json:"error"`
+	}
+	if json.Unmarshal(body, &errCheck) == nil && errCheck.Error != 0 {
+		return nil, fmt.Errorf("Wialon API error %d (поиск дилерских ресурсов)", errCheck.Error)
+	}
+
 	var searchResp WialonSearchResponse
 	if err := json.Unmarshal(body, &searchResp); err != nil {
 		return nil, fmt.Errorf("ошибка парсинга ответа: %w", err)

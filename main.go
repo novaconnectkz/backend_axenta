@@ -220,7 +220,7 @@ func main() {
 		}
 
 		// Ф2: Wialon partner snapshot scheduler (00:50 UTC) — снимки дилеров source=wialon
-		// (per-account: прямой units_count, без дерева — см. wialon-partner-billing-ph2).
+		// (модель «поддерево»: account_data objects_active, биллим оплачиваемые юниты дерева).
 		wialonPartnerSnapshotScheduler := services.NewWialonPartnerSnapshotService(database.DB)
 		if err := wialonPartnerSnapshotScheduler.Start(); err != nil {
 			log.Printf("⚠️ Wialon Partner Snapshot Scheduler failed to start: %v", err)

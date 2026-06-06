@@ -13,8 +13,8 @@ import (
 )
 
 // GenerateWialonPartnerSnapshots — ручной триггер Wialon partner-снимков за сегодня
-// (UTC) для текущего тенанта. Ф2 (per-account): прямой units_count аккаунта-дилера
-// → partner_daily_snapshots (source=wialon). Идемпотентно (OnConflict upsert).
+// (UTC) для текущего тенанта. Ф2 (модель «поддерево»): account_data objects_active
+// дилера → partner_daily_snapshots (source=wialon). Идемпотентно (OnConflict upsert).
 //
 // POST /api/auth/wialon/partner-snapshots/generate
 func GenerateWialonPartnerSnapshots(c *gin.Context) {
