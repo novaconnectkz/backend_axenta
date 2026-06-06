@@ -133,6 +133,14 @@ func (s *PartnerSnapshotScheduler) createDailySnapshots() {
 			if lastSnapshotDate != nil {
 				// Начинаем со следующего дня после последнего снимка
 				startDate = lastSnapshotDate.AddDate(0, 0, 1)
+				// КРИТИЧНО: targetDate (вчера) обрабатываем ВСЕГДА, даже если за него уже есть
+				// снимок. Иначе ЧАСТИЧНЫЙ снимок (1 строка от ручной генерации) поднимает
+				// MAX(snapshot_date)=вчера → startDate=сегодня > target → день пропускается
+				// целиком. Clamp гарантирует регенерацию (идемпотентный upsert докинет полный
+				// набор). Так один ручной снимок не «закрывает» день для авто-генерации.
+				if startDate.After(targetDate) {
+					startDate = targetDate
+				}
 				log.Printf("📅 Найдена последняя дата снимка: %s, начинаем обработку с %s до %s",
 					lastSnapshotDate.Format("2006-01-02"), startDate.Format("2006-01-02"), targetDate.Format("2006-01-02"))
 			} else {
