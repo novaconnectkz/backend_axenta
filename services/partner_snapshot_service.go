@@ -1382,9 +1382,12 @@ func (s *PartnerSnapshotService) CountPartnerObjectsFromDB(
 	// Или где в иерархии содержится путь через партнера (более точный поиск)
 	// Используем паттерн " > PartnerName > " чтобы избежать ложных срабатываний
 	hierarchyPattern := "% > " + partnerAccountName + " > %"
+	// БЕЗ фильтра is_active на суб-аккаунтах: деактивированный аккаунт партнёра
+	// может держать живые активные объекты (Axenta их считает и биллит). Фильтруем
+	// активность на уровне ОБЪЕКТА ниже, не на уровне аккаунта.
 	if err := tenantDB.
-		Where("(parent_account_name = ? OR hierarchy LIKE ? OR hierarchy = ?) AND is_active = ?",
-			partnerAccountName, hierarchyPattern, partnerAccountName, true).
+		Where("(parent_account_name = ? OR hierarchy LIKE ? OR hierarchy = ?)",
+			partnerAccountName, hierarchyPattern, partnerAccountName).
 		Find(&childAccounts).Error; err != nil {
 		return 0, 0, fmt.Errorf("ошибка поиска дочерних аккаунтов: %w", err)
 	}
@@ -1421,8 +1424,8 @@ func (s *PartnerSnapshotService) CountPartnerObjectsFromDB(
 			var nestedChildren []models.AxentaAccountSnapshot
 			nestedPattern := "% > " + currentAccount.AccountName + " > %"
 			if err := tenantDB.
-				Where("(parent_account_name = ? OR hierarchy LIKE ?) AND is_active = ?",
-					currentAccount.AccountName, nestedPattern, true).
+				Where("(parent_account_name = ? OR hierarchy LIKE ?)",
+					currentAccount.AccountName, nestedPattern).
 				Find(&nestedChildren).Error; err == nil {
 				for _, nested := range nestedChildren {
 					if !accountIDs[nested.ExternalAccountID] {

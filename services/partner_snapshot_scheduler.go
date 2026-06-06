@@ -672,8 +672,8 @@ func (s *PartnerSnapshotScheduler) distributeObjectsByPartnerFromDB(
 		// Или где в hierarchy содержится путь через партнера (более точный поиск)
 		hierarchyPattern := "% > " + partnerAccountName + " > %"
 		if err := tenantDB.
-			Where("(parent_account_name = ? OR hierarchy LIKE ? OR hierarchy = ?) AND is_active = ?",
-				partnerAccountName, hierarchyPattern, partnerAccountName, true).
+			Where("(parent_account_name = ? OR hierarchy LIKE ? OR hierarchy = ?)",
+				partnerAccountName, hierarchyPattern, partnerAccountName).
 			Find(&childAccounts).Error; err != nil {
 			log.Printf("⚠️ Ошибка поиска дочерних аккаунтов для партнера %d: %v", partnerID, err)
 			continue
@@ -710,8 +710,8 @@ func (s *PartnerSnapshotScheduler) distributeObjectsByPartnerFromDB(
 				var nestedChildren []models.AxentaAccountSnapshot
 				nestedPattern := "% > " + currentAccount.AccountName + " > %"
 				if err := tenantDB.
-					Where("(parent_account_name = ? OR hierarchy LIKE ?) AND is_active = ?",
-						currentAccount.AccountName, nestedPattern, true).
+					Where("(parent_account_name = ? OR hierarchy LIKE ?)",
+						currentAccount.AccountName, nestedPattern).
 					Find(&nestedChildren).Error; err == nil {
 					for _, nested := range nestedChildren {
 						if !accountIDsMap[nested.ExternalAccountID] {
