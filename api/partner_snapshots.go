@@ -946,7 +946,7 @@ func GeneratePartnerSnapshotsForPeriod(c *gin.Context) {
 		log.Printf("✅ Wialon снимки за период: договор %d, создано %d, провалов %d за %d дней", contract.ID, n, failedDays, periodDays)
 		c.JSON(http.StatusOK, gin.H{
 			"status":        "success",
-			"message":       "Снимки Wialon за период созданы (история get_statistics, прошлые дни = estimated)",
+			"message":       "Снимки Wialon за период созданы (история get_statistics; точные дни авто-verified, неопределённые — на проверке)",
 			"success_count": n,
 			"error_count":   failedDays, // Codex M8: частичные провалы записи видны клиенту
 			"period_days":   periodDays,
