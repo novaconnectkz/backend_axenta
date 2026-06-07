@@ -1139,6 +1139,8 @@ func main() {
 	apiGroup.GET("/partner-snapshots/review-queue", api.GetPartnerSnapshotReviewQueue)
 	apiGroup.POST("/partner-snapshots/:id/approve", api.ApprovePartnerSnapshot)
 	apiGroup.POST("/partner-snapshots/approve-bulk", api.ApprovePartnerSnapshotsBulk)
+	apiGroup.POST("/partner-snapshots/hide-dealer", api.HidePartnerDealer)
+	apiGroup.POST("/partner-snapshots/unhide-dealer", api.UnhidePartnerDealer)
 
 	// Ф1 SKIF partner billing: ручной триггер снимков дилеров (source=skif)
 	apiGroup.POST("/skif/partner-snapshots/generate", api.GenerateSkifPartnerSnapshots)

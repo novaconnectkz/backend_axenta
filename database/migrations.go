@@ -561,6 +561,12 @@ func GetAllMigrations() []MigrationInfo {
 			Description: "Корзина удаленных элементов (аудит удалений)",
 			IsGlobal:    false,
 		},
+		{
+			TableName:   "partner_hidden_dealers",
+			Model:       &models.PartnerHiddenDealer{},
+			Description: "Скрытые из справочника дилеры-ориентиры (contract_id=0)",
+			IsGlobal:    false,
+		},
 	}
 }
 

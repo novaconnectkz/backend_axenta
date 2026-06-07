@@ -100,6 +100,15 @@ type PartnerDailySnapshot struct {
 	// Чтобы по строкам «без договора» было видно, чьи это объекты.
 	PartnerName string `json:"partner_name" gorm:"-"`
 
+	// ConnectionName — имя подключения-сервиса (glomoskz/glomosuz/app.gpsnetwork…),
+	// резолвится в API из public.{wialon,skif,gelios}_connections по connection_id.
+	// Для axenta (connection_id=0) пусто — одно облако. Не персистится.
+	ConnectionName string `json:"connection_name" gorm:"-"`
+
+	// IsHidden — дилер-ориентир скрыт из справочника (резолвится в API при show_hidden,
+	// не персистится; источник истины — таблица partner_hidden_dealers).
+	IsHidden bool `json:"is_hidden" gorm:"-"`
+
 	// Дополнительная информация
 	Notes string `json:"notes" gorm:"type:text"` // Примечания (например, ошибки)
 }

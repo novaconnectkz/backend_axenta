@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Ф1 billing-gate: справочник снимков + очередь ручного подтверждения.
@@ -174,6 +175,88 @@ func resolvePartnerNames(db *gorm.DB, rows []models.PartnerDailySnapshot) {
 	}
 }
 
+// resolveConnectionNames best-effort проставляет ЛОГИН учётки подключения в строки снимков —
+// чтобы в колонке «Система» было видно glomoskz/glomosuz/Профмонитор (логин, которым везде
+// оперируем), а не просто «wialon» и не адрес хоста. Берём логин-поле per source
+// (wialon.user_name / skif.login / gelios.username), с fallback на name если логин пуст.
+// Axenta (connection_id=0) пропускается — одно облако, отдельной учётки-сервиса нет.
+func resolveConnectionNames(db *gorm.DB, rows []models.PartnerDailySnapshot) {
+	// table, login-колонка (whitelist — не пользовательский ввод, безопасно интерполировать).
+	srcCol := map[string][2]string{
+		"wialon": {"public.wialon_connections", "user_name"},
+		"skif":   {"public.skif_connections", "login"},
+		"gelios": {"public.gelios_connections", "username"},
+	}
+	idsBySrc := map[string]map[uint]struct{}{}
+	for i := range rows {
+		s := rows[i].PartnerSource
+		if _, ok := srcCol[s]; !ok || rows[i].ConnectionID == 0 {
+			continue
+		}
+		if idsBySrc[s] == nil {
+			idsBySrc[s] = map[uint]struct{}{}
+		}
+		idsBySrc[s][rows[i].ConnectionID] = struct{}{}
+	}
+	key := func(s string, id uint) string { return s + "|" + strconv.FormatUint(uint64(id), 10) }
+	nameByKey := map[string]string{}
+	for s, ids := range idsBySrc {
+		idList := make([]uint, 0, len(ids))
+		for id := range ids {
+			idList = append(idList, id)
+		}
+		tc := srcCol[s]
+		var rr []struct {
+			ID    uint
+			Login string
+			Name  string
+		}
+		db.Table(tc[0]).Select("id, "+tc[1]+" AS login, name").Where("id IN ?", idList).Find(&rr)
+		for _, x := range rr {
+			v := x.Login
+			if v == "" {
+				v = x.Name // fallback: логин не заполнен → показываем имя подключения
+			}
+			nameByKey[key(s, x.ID)] = v
+		}
+	}
+	for i := range rows {
+		if n := nameByKey[key(rows[i].PartnerSource, rows[i].ConnectionID)]; n != "" {
+			rows[i].ConnectionName = n
+		}
+	}
+}
+
+// hiddenDealerKey — составной ключ скрытого дилера (source|connection_id|external_id).
+func hiddenDealerKey(source string, conn uint, ext string) string {
+	return source + "|" + strconv.FormatUint(uint64(conn), 10) + "|" + ext
+}
+
+// markHiddenFlags проставляет IsHidden строкам-ориентирам (contract_id=0), чей дилер есть в
+// partner_hidden_dealers. Нужен только когда show_hidden=true (иначе такие строки отфильтрованы
+// из выборки и помечать нечего). Таблица скрытых мала — грузим целиком.
+func markHiddenFlags(db *gorm.DB, rows []models.PartnerDailySnapshot) {
+	if len(rows) == 0 {
+		return
+	}
+	var hd []models.PartnerHiddenDealer
+	if err := db.Find(&hd).Error; err != nil || len(hd) == 0 {
+		return
+	}
+	set := make(map[string]struct{}, len(hd))
+	for _, h := range hd {
+		set[hiddenDealerKey(h.PartnerSource, h.ConnectionID, h.PartnerExternalID)] = struct{}{}
+	}
+	for i := range rows {
+		if rows[i].ContractID != 0 {
+			continue
+		}
+		if _, ok := set[hiddenDealerKey(rows[i].PartnerSource, rows[i].ConnectionID, rows[i].PartnerExternalID)]; ok {
+			rows[i].IsHidden = true
+		}
+	}
+}
+
 // applyDirectPartnerFilter ограничивает выборку ПРЯМЫМИ партнёрами (Axenta-иерархия глубина 1:
 // «ROOT > X»). Суб-партнёры (партнёры наших партнёров, глубина ≥2: «ROOT > Партнёр > X») —
 // в счёт не идут (биллинг прямого партнёра уже включает поддерево через Axenta API), это шум.
@@ -276,6 +359,18 @@ func ListPartnerSnapshots(c *gin.Context) {
 
 	q = applyDirectPartnerFilter(c, db, q) // только прямые партнёры (без партнёров наших партнёров)
 
+	// Скрытые дилеры-ориентиры: по умолчанию прячем (contract_id=0, чей ключ в
+	// partner_hidden_dealers). show_hidden=true — показываем их с пометкой is_hidden.
+	// Договорные строки (contract_id>0) скрывать нельзя, поэтому фильтр их не трогает.
+	showHidden := c.Query("show_hidden") == "true"
+	if !showHidden {
+		sub := db.Table("partner_hidden_dealers AS phd").Select("1").
+			Where("phd.partner_source = partner_daily_snapshots.partner_source").
+			Where("phd.connection_id = partner_daily_snapshots.connection_id").
+			Where("phd.partner_external_id = partner_daily_snapshots.partner_external_id")
+		q = q.Where("contract_id > 0 OR NOT EXISTS (?)", sub)
+	}
+
 	var total int64
 	q.Count(&total)
 
@@ -288,6 +383,10 @@ func ListPartnerSnapshots(c *gin.Context) {
 
 	resolvePartnerNames(db, rows)
 	resolveContractNumbers(db, rows)
+	resolveConnectionNames(db, rows)
+	if showHidden {
+		markHiddenFlags(db, rows)
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":    "success",
@@ -623,4 +722,146 @@ func ApprovePartnerSnapshotsBulk(c *gin.Context) {
 		"approved_count": res.RowsAffected,
 		"amount_total":   agg.Sum.InexactFloat64(),
 	})
+}
+
+// hideDealerBody — тело запроса hide/unhide: идентификатор дилера-ориентира.
+type hideDealerBody struct {
+	Source       string `json:"source"`
+	ConnectionID uint   `json:"connection_id"`
+	ExternalID   string `json:"external_id"`
+}
+
+// HidePartnerDealer — скрыть дилера-ориентир из справочника снимков (все даты, включая
+// будущие). Только ориентиры (contract_id=0): если у дилера есть хоть один договорный снимок
+// (contract_id>0) — отказ, чтобы денежная строка не пропала из вида. Реверсивно (unhide).
+// POST /api/auth/partner-snapshots/hide-dealer  body {source, connection_id, external_id}
+func HidePartnerDealer(c *gin.Context) {
+	if _, err := middleware.GetAdminAccountID(c); err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
+	db, ok := partnerSnapshotTenantDB(c)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "Tenant DB не найдена"})
+		return
+	}
+	if !requireContractAssignAccess(c) {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "скрытие доступно только admin/superadmin"})
+		return
+	}
+
+	var body hideDealerBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "неверный формат запроса"})
+		return
+	}
+	body.Source = strings.TrimSpace(body.Source)
+	body.ExternalID = strings.TrimSpace(body.ExternalID)
+	if body.Source == "" || body.ExternalID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "source и external_id обязательны"})
+		return
+	}
+
+	var userID uint
+	if v, ok := c.Get("user_id"); ok {
+		switch t := v.(type) {
+		case uint:
+			userID = t
+		case int:
+			userID = uint(t)
+		case float64:
+			userID = uint(t)
+		}
+	}
+
+	rec := models.PartnerHiddenDealer{
+		PartnerSource:     body.Source,
+		ConnectionID:      body.ConnectionID,
+		PartnerExternalID: body.ExternalID,
+		HiddenBy:          userID,
+	}
+
+	// Защита денежных: guard (нет договорных снимков contract_id>0) + insert атомарны в одной
+	// транзакции — иначе ночной cron мог бы вписать договорной снимок между проверкой и вставкой.
+	// errHasContract — sentinel «у дилера есть договорные снимки» (→ 400, остальные ошибки → 500).
+	errHasContract := fmt.Errorf("dealer has contract snapshots")
+	txErr := db.Transaction(func(tx *gorm.DB) error {
+		var contractRows int64
+		if e := tx.Model(&models.PartnerDailySnapshot{}).
+			Where("partner_source = ? AND connection_id = ? AND partner_external_id = ? AND contract_id > 0",
+				body.Source, body.ConnectionID, body.ExternalID).Count(&contractRows).Error; e != nil {
+			return e // fail-closed: ошибка БД не должна пропустить скрытие
+		}
+		if contractRows > 0 {
+			return errHasContract
+		}
+		// Идемпотентно: повторное скрытие уже скрытого дилера не ошибка.
+		return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&rec).Error
+	})
+	if txErr == errHasContract {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "у дилера есть договорные снимки — скрывать можно только ориентиры без договора",
+		})
+		return
+	}
+	if txErr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": txErr.Error()})
+		return
+	}
+
+	audit.LogSuccess(c, "partner_snapshot.hide_dealer", gin.H{
+		"partner_source": body.Source,
+		"connection_id":  body.ConnectionID,
+		"external_id":    body.ExternalID,
+		"hidden_by":      userID,
+	})
+
+	c.JSON(http.StatusOK, gin.H{"status": "success", "message": "Дилер скрыт из справочника"})
+}
+
+// UnhidePartnerDealer — вернуть скрытого дилера-ориентира в справочник.
+// POST /api/auth/partner-snapshots/unhide-dealer  body {source, connection_id, external_id}
+func UnhidePartnerDealer(c *gin.Context) {
+	if _, err := middleware.GetAdminAccountID(c); err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
+	db, ok := partnerSnapshotTenantDB(c)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "Tenant DB не найдена"})
+		return
+	}
+	if !requireContractAssignAccess(c) {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "управление видимостью доступно только admin/superadmin"})
+		return
+	}
+
+	var body hideDealerBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "неверный формат запроса"})
+		return
+	}
+	body.Source = strings.TrimSpace(body.Source)
+	body.ExternalID = strings.TrimSpace(body.ExternalID)
+	if body.Source == "" || body.ExternalID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "source и external_id обязательны"})
+		return
+	}
+
+	res := db.Where("partner_source = ? AND connection_id = ? AND partner_external_id = ?",
+		body.Source, body.ConnectionID, body.ExternalID).Delete(&models.PartnerHiddenDealer{})
+	if res.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": res.Error.Error()})
+		return
+	}
+
+	audit.LogSuccess(c, "partner_snapshot.unhide_dealer", gin.H{
+		"partner_source": body.Source,
+		"connection_id":  body.ConnectionID,
+		"external_id":    body.ExternalID,
+		"rows_affected":  res.RowsAffected,
+	})
+
+	c.JSON(http.StatusOK, gin.H{"status": "success", "message": "Дилер возвращён в справочник"})
 }
