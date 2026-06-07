@@ -167,8 +167,7 @@ func GetUnifiedAccounts(c *gin.Context) {
 
 			// Ф2: Wialon-партнёры (дилеры) из wialon_account_statuses (DB, не Redis) —
 			// отдельными type=partner строками. Только при accountType=partner
-			// (запрос дропдауна договора): Redis-блок дилеров не отдаёт как partner,
-			// поэтому дублей нет. DB-источник → работает на staging (Redis холодный).
+			// (запрос дропдауна договора). DB-источник → работает на staging (Redis холодный).
 			var partnerItems []UnifiedAccount
 			var wPartners int
 			if accountType == "partner" {
@@ -176,7 +175,13 @@ func GetUnifiedAccounts(c *gin.Context) {
 			}
 
 			mu.Lock()
-			allAccounts = append(allAccounts, items...)
+			// В partner-режиме (дропдаун партнёрского договора) показываем ТОЛЬКО прямых
+			// дилеров из DB (partnerItems, is_direct_dealer). Redis-блок WH-учёток не
+			// добавляем: его Type=partner-классификация ≠ is_direct_dealer (тянула
+			// субдилеров-как-учётки, не-дилерские клиентские у/з и дубли прямых дилеров).
+			if accountType != "partner" {
+				allAccounts = append(allAccounts, items...)
+			}
 			allAccounts = append(allAccounts, partnerItems...)
 			stats.WialonTotal = wTotal
 			stats.WialonActive = wActive
