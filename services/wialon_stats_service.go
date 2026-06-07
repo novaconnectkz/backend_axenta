@@ -224,19 +224,9 @@ func (s *WialonStatsService) collectAccountsForConnection(conn models.WialonConn
 		accounts[i].DealerRights = dealerMap[accounts[i].BillingAccountID]
 	}
 
-	// Аккаунт интеграции (токен-овнер) = его bact (resource). Прямой дилер =
-	// тот, чей parentAccountId == ownerBact. ownerBact=0 (сбой resolve) → is_direct
-	// неопределим → НЕ перезаписываем прежнее значение (см. known/unknown ниже).
-	ownerBact := int64(0)
-	if ownerUserID > 0 {
-		if b, berr := s.ResolveBactForUser(conn.Host, eid, ownerUserID); berr != nil {
-			log.Printf("⚠️ WialonStats accounts: ResolveBactForUser(owner=%d) conn=%d: %v", ownerUserID, conn.ID, berr)
-		} else {
-			ownerBact = b
-		}
-	}
-
-	// parentAccountId по дилерам (account/get_account_data, батчами).
+	// parentAccountId по дилерам (account/get_account_data, батчами) — для отображения
+	// «Родительская у/з» в справочнике. is_direct_dealer теперь считается по parent_user_id
+	// (см. ниже), не по этому ресурсу.
 	parentByUser := s.fetchDealerParentAccounts(conn.Host, eid, accounts)
 
 	// units_count per user_id: unit → billing-resource → resource creator (user).
@@ -288,16 +278,20 @@ func (s *WialonStatsService) collectAccountsForConnection(conn models.WialonConn
 	}
 
 	// Делим на «known»/«unknown» по определимости is_direct_dealer.
-	// Определимо когда: НЕ дилер (is_direct всегда false) ИЛИ
-	// (ownerBact известен И parentAccountId дилера разрезолвлен).
-	// Неопределимые НЕ перезаписывают parent_account_id/is_direct_dealer
-	// (preserve prior) — иначе transient-сбой ResolveBactForUser (ownerBact=0,
-	// Codex B2) или item-error get_account_data (Codex SF1) молча обнулит
-	// дропдаун партнёров на следующем синке.
+	// ПРЯМОЙ дилер = дилер ПРЯМО под интеграционным аккаунтом (токен-овнером):
+	// parent_user_id == ownerUserID (= login.User.ID, user-id владельца токена).
+	// Раньше сравнивали parentAccountId == ownerBact (billing-ресурс), но субдилеры
+	// дилера ДЕЛЯТ ресурс корня (glomosuz: HOWO/Volvo под glomos_uz имеют
+	// parent_account_id корня) → флаг ловил всё поддерево (glomosuz 24 вместо 2,
+	// glomoskz субдилеры под Навигатор/ProfiGPS/Imperium). user-id родителя различает
+	// уровни точно («Родительская у/з == интеграция» в Wialon CMS). Иммунно к неполному
+	// SearchUsers: субдилер.parent = id дилера ≠ ownerUserID независимо от полноты списка
+	// (Codex: dealerIDs-подход был уязвим — пропавший дилер-родитель делал ребёнка прямым).
+	// ownerUserID=0 (сбой логина) → is_direct неопределим → НЕ перезаписываем прежнее.
 	known := make([]models.WialonAccountStatus, 0, len(accounts))
 	unknown := make([]models.WialonAccountStatus, 0)
 	for _, a := range accounts {
-		parentAcc, resolved := parentByUser[a.ID]
+		parentAcc := parentByUser[a.ID]
 		rec := models.WialonAccountStatus{
 			ConnectionID:    conn.ID,
 			WialonUserID:    a.ID,
@@ -305,15 +299,15 @@ func (s *WialonStatsService) collectAccountsForConnection(conn models.WialonConn
 			ParentUserID:    a.ParentId,
 			DealerRights:    a.DealerRights,
 			ParentAccountID: parentAcc,
-			IsDirectDealer:  a.DealerRights && ownerBact != 0 && resolved && parentAcc == ownerBact,
+			IsDirectDealer:  a.DealerRights && ownerUserID != 0 && a.ParentId == ownerUserID,
 			IsActive:        a.IsActive,
 			UnitsCount:      countByUser[a.ID],
 			ObjectsTotal:    objByUser[a.ID].Total,
 			ObjectsActive:   objByUser[a.ID].Active,
 			LastCollectedAt: cycleStart,
 		}
-		directKnown := !a.DealerRights || (ownerBact != 0 && resolved)
-		if directKnown {
+		// is_direct неопределим только при сбое логина (ownerUserID=0) → preserve prior.
+		if !a.DealerRights || ownerUserID != 0 {
 			known = append(known, rec)
 		} else {
 			unknown = append(unknown, rec)
