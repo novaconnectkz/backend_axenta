@@ -107,8 +107,10 @@ func (s *PartnerSnapshotService) CreateDailySnapshots() error {
 
 	// Получаем все партнерские договоры
 	var contracts []models.Contract
+	// status='active' — паритет с wialon/skif/gelios генераторами: расторгнутые/черновые
+	// партнёрские договоры снимки не получают (прод: все 32 axenta-партнёра = active).
 	if err := s.db.
-		Where("contract_type = ? AND partner_company_id IS NOT NULL AND tariff_plan_id IS NOT NULL", "partner").
+		Where("contract_type = ? AND status = ? AND partner_company_id IS NOT NULL AND tariff_plan_id IS NOT NULL", "partner", "active").
 		Find(&contracts).Error; err != nil {
 		return fmt.Errorf("ошибка получения партнерских договоров: %w", err)
 	}
@@ -246,6 +248,13 @@ func (s *PartnerSnapshotService) CreateSnapshotForContractWithTokenAndDB(contrac
 
 // CreateSnapshotForContractWithTokenAndDBAndSource создает снимок с выбором источника данных
 func (s *PartnerSnapshotService) CreateSnapshotForContractWithTokenAndDBAndSource(contract *models.Contract, snapshotDate time.Time, token string, db *gorm.DB, dataSource string) error {
+	// Single-point энфорс срока договора: ВСЕ axenta-пути создания снимка (forward daily,
+	// manual period, batch jobs, auto-calc) воронкой через эту функцию. Дата вне
+	// [start_date, end_date] → no-op (не пишем снимок, без ошибки). end_date NULL = open.
+	if !contract.IsActiveOn(snapshotDate) {
+		return nil
+	}
+
 	tokenPreview := token
 	if len(token) > 10 {
 		tokenPreview = token[:10] + "..."
