@@ -367,9 +367,11 @@ func (bs *BillingService) CalculateBillingForPartnerContract(contract *models.Co
 	log.Printf("🔧 Расчет биллинга для партнерского договора %d за период %s - %s",
 		contract.ID, periodStart.Format("2006-01-02"), periodEnd.Format("2006-01-02"))
 
-	// Проверяем, что указан partner_company_id
-	if contract.PartnerCompanyID == nil {
-		return nil, fmt.Errorf("для партнерского договора не указан partner_company_id")
+	// partner_company_id обязателен ТОЛЬКО для axenta (Ф0-ключ). Для wialon/skif/gelios он
+	// nil — сумма ниже идёт по contract_id (source-agnostic), гейт был вестигиальным и ронял
+	// invoice-путь non-axenta партнёров (Codex Q6a). Денег не меняет: charge'а у партнёров нет.
+	if contract.PartnerSource == "axenta" && contract.PartnerCompanyID == nil {
+		return nil, fmt.Errorf("для партнерского договора Axenta не указан partner_company_id")
 	}
 
 	// Клемп периода снизу к start_date договора: договор не биллится до своей даты
