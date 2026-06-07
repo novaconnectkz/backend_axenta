@@ -5,13 +5,31 @@ import (
 	"backend_axenta/models"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/robfig/cron/v3"
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+// wialonAutoVerifyMaxDaily — Вариант 4: порог авто-verify бэкфилл-снимка (₽/день, до скидки).
+// Структурно точный день (seasonal=0) дороже порога остаётся estimated → проходит через
+// оператора. env WIALON_AUTOVERIFY_MAX_DAILY_RUB; пусто/0/невалид = без порога (полный авто).
+func wialonAutoVerifyMaxDaily() decimal.Decimal {
+	s := strings.TrimSpace(os.Getenv("WIALON_AUTOVERIFY_MAX_DAILY_RUB"))
+	if s == "" {
+		return decimal.Zero
+	}
+	d, err := decimal.NewFromString(s)
+	if err != nil || d.IsNegative() {
+		return decimal.Zero
+	}
+	return d
+}
 
 // WialonPartnerSnapshotService — Ф2 partner billing для Wialon-дилеров.
 //
@@ -279,10 +297,18 @@ func (s *WialonPartnerSnapshotService) GenerateForContractPeriod(tenantDB *gorm.
 		return 0, 0, fmt.Errorf("get_statistics(bact=%d): %w", bactRes, err)
 	}
 	totalByDate := make(map[string]int, len(stats))
+	windowHasChurn := false // Codex#1: были ли created/deleted в окне — признак нестабильности
 	for _, st := range stats {
 		k := time.Unix(st.Timestamp, 0).UTC().Format("2006-01-02")
 		totalByDate[k] = st.UnitTotal
+		if st.UnitCreated > 0 || st.UnitDeleted > 0 {
+			windowHasChurn = true
+		}
 	}
+
+	// Codex#6: согласованность текущих данных. activeNow>totalNow → seasonal клемпнут в 0 и
+	// «структурно точно» стало бы ложным → авто-verify запрещён (данные синка противоречивы).
+	consistentNow := totalNow >= activeNow
 
 	// Codex H5: партнёр должен быть ПРЯМЫМ дилером — recursive=0 на bact даёт его поддерево.
 	// Если external_id указывает на вложенного субдилера, поддерево не то что ждёт биллинг →
@@ -312,6 +338,8 @@ func (s *WialonPartnerSnapshotService) GenerateForContractPeriod(tenantDB *gorm.
 	// Codex C2/H6: backfill пишет ТОЛЬКО прошлое. Сегодняшним днём владеет forward-cron
 	// (account_data) — иначе гонка last-writer на ключе (contract,today) и флап verify_status.
 	today := time.Now().UTC().Truncate(24 * time.Hour)
+
+	autoVerifyMax := wialonAutoVerifyMaxDaily() // Вариант 4: порог авто-verify (₽/день)
 
 	var lastTotal int
 	haveAnchor := false
@@ -349,6 +377,23 @@ func (s *WialonPartnerSnapshotService) GenerateForContractPeriod(tenantDB *gorm.
 			continue
 		}
 
+		// Вариант 1 (smart-gate): день авто-verified только при СТРОГОЙ структурной точности:
+		//  - seasonalNow==0 (active=total, нет сезонного дрейфа)
+		//  - has (реальная точка get_statistics, не gap-fill carry)
+		//  - consistentNow (active≤total — данные синка не противоречивы; Codex#6)
+		//  - !windowHasChurn (в окне нет created/deleted → набор юнитов стабилен, seasonal вряд ли
+		//    менялся → frozen-now seasonal=0 надёжно для прошлого; Codex#1).
+		// Иначе estimated. baseWarn (не-дилер/протух) → needs_review поверх.
+		isEstimated := !(seasonalNow == 0 && has && consistentNow && !windowHasChurn)
+		// Вариант 4: даже точный, но дорогой день (> порога) → estimated (крупное через оператора).
+		if !isEstimated && autoVerifyMax.IsPositive() {
+			dim := decimal.NewFromInt(int64(time.Date(day.Year(), day.Month()+1, 0, 0, 0, 0, 0, time.UTC).Day()))
+			estDaily := plan.Price.Div(dim).Mul(decimal.NewFromInt(int64(active)))
+			if estDaily.GreaterThan(autoVerifyMax) {
+				isEstimated = true
+			}
+		}
+
 		snap := models.PartnerDailySnapshot{
 			AdminAccountID:       c.AdminAccountID,
 			CompanyID:            c.CompanyID,
@@ -367,12 +412,12 @@ func (s *WialonPartnerSnapshotService) GenerateForContractPeriod(tenantDB *gorm.
 			DiscountFixed:        c.GetDiscountFixed(),
 			Status:               "completed",
 			VerifySecondaryCount: -1,
-			// Codex H4: ЛЮБОЙ реконструированный день — estimated (avl_unit_total реален per-date,
-			// но seasonal заморожен на сегодня → active может дрейфовать; gap-дни — carry-догадка).
-			// estimated не авто-списывается billing'ом → оператор подтверждает прошлые периоды.
-			IsEstimated: true,
+			// Вариант 1+4: estimated только когда есть неопределённость (seasonal>0 дрейф / gap /
+			// дорогой день > порога). Структурно точные дешёвые дни (seasonal=0, реальные данные)
+			// → IsEstimated=false → guard ставит verified → авто-биллинг без оператора.
+			IsEstimated: isEstimated,
 			SourceWarn:  baseWarn,
-			Notes:       "Wialon backfill (M2): get_statistics recursive=0 avl_unit_total, active=total−seasonal(now), estimated",
+			Notes:       "Wialon backfill (M2): get_statistics recursive=0 avl_unit_total, active=total−seasonal(now)",
 		}
 		if e := tenantDB.Clauses(clause.OnConflict{
 			Columns: []clause.Column{
