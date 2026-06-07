@@ -929,6 +929,32 @@ func GeneratePartnerSnapshotsForPeriod(c *gin.Context) {
 		return
 	}
 
+	// Wialon-партнёр: история восстанавливается из get_statistics recursive=0 (M2/M3),
+	// а НЕ через Axenta-путь CreateSnapshotForContractWithToken (тот ходит в Axenta Cloud).
+	// active=total−seasonal(now), снимки IsEstimated при seasonal>0.
+	if contract.PartnerSource == "wialon" {
+		wps := services.NewWialonPartnerSnapshotService(database.DB)
+		n, failedDays, werr := wps.GenerateForContractPeriod(db, contract.ID, startDate, endDate)
+		if werr != nil {
+			log.Printf("❌ Wialon backfill договора %d: %v", contract.ID, werr)
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": werr.Error()})
+			return
+		}
+		startDay := time.Date(startDate.Year(), startDate.Month(), startDate.Day(), 0, 0, 0, 0, startDate.Location())
+		endDay := time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 0, 0, 0, 0, endDate.Location())
+		periodDays := int(endDay.Sub(startDay).Hours()/24) + 1
+		log.Printf("✅ Wialon снимки за период: договор %d, создано %d, провалов %d за %d дней", contract.ID, n, failedDays, periodDays)
+		c.JSON(http.StatusOK, gin.H{
+			"status":        "success",
+			"message":       "Снимки Wialon за период созданы (история get_statistics, прошлые дни = estimated)",
+			"success_count": n,
+			"error_count":   failedDays, // Codex M8: частичные провалы записи видны клиенту
+			"period_days":   periodDays,
+			"source":        "wialon",
+		})
+		return
+	}
+
 	// Создаем сервис снимков
 	snapshotService := services.NewPartnerSnapshotService()
 

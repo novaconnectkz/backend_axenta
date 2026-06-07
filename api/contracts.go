@@ -1553,17 +1553,21 @@ func CreateContract(c *gin.Context) {
 			log.Printf("✅ Партнёрский договор: статус установлен active (биллинг по объектам, без подписки)")
 		}
 
-		// Для партнерских договоров автоматически устанавливаем период
-		// Начало: текущая дата
-		// Конец: конец текущего календарного года
+		// start_date УВАЖАЕМ (если передан) — раньше форсили now, что делало невозможным
+		// бэкдейт → M4 auto-backfill истории не запускался (start_date<сегодня никогда не
+		// истинно). Бэкдейт нужен для реконструкции прошлых снимков партнёра (M2/M4).
 		now := time.Now()
-		startDate = &now
-
-		// Конец текущего года (31 декабря 23:59:59)
+		if startDate == nil {
+			startDate = &now
+		}
+		// end_date партнёра ВСЕГДА конец года (как до фичи). Уважение переданного end_date
+		// НЕ вводим: forward-биллинг/снимки верхнюю границу договора не энфорсят (Codex D1),
+		// короткий end_date создал бы рассинхрон без реального обрезания начислений.
+		// Энфорс верхней границы — отдельная задача, вне scope бэкфилла.
 		endOfYear := time.Date(now.Year(), 12, 31, 23, 59, 59, 0, now.Location())
 		endDate = &endOfYear
 
-		log.Printf("📅 Партнерский договор: период установлен автоматически с %v по %v", *startDate, *endDate)
+		log.Printf("📅 Партнерский договор: период с %v по %v (start передан=%v)", *startDate, *endDate, rawRequest.StartDateStr != "")
 	}
 
 	contract := models.Contract{
@@ -2196,6 +2200,43 @@ func CreateContract(c *gin.Context) {
 contractCreated:
 
 	log.Printf("✅ Договор успешно создан с ID=%d (контрагент %d)", contract.ID, contract.CounterpartyID)
+
+	// M4: авто-бэкфилл истории Wialon-партнёрского договора со start_date в прошлом.
+	// Зеркало axenta auto-relink: горутина реконструирует [start_date..сегодня] через
+	// get_statistics recursive=0 (M2). Снимки IsEstimated при seasonal>0, billing их не
+	// авто-списывает. Forward-снимок за сегодня добьёт daily-cron. Горутина берёт СВОЙ
+	// tenantDB (request-scoped возвращается в пул после ответа).
+	if contract.ContractType == "partner" && contract.PartnerSource == "wialon" &&
+		contract.PartnerExternalID != "" && contract.PartnerConnectionID > 0 &&
+		contract.TariffPlanID != nil && contract.StartDate != nil {
+		sd := *contract.StartDate
+		startDay := time.Date(sd.Year(), sd.Month(), sd.Day(), 0, 0, 0, 0, time.UTC)
+		todayDay := time.Now().UTC().Truncate(24 * time.Hour)
+		if startDay.Before(todayDay) {
+			companyID := contract.CompanyID
+			contractID := contract.ID
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("⚠️ Wialon auto-backfill договора %d паника: %v", contractID, r)
+					}
+				}()
+				tdb := database.GetTenantDBByID(companyID)
+				if tdb == nil {
+					log.Printf("⚠️ Wialon auto-backfill договора %d: tenantDB nil (company=%d)", contractID, companyID)
+					return
+				}
+				wps := services.NewWialonPartnerSnapshotService(database.DB)
+				n, failedDays, err := wps.GenerateForContractPeriod(tdb, contractID, startDay, todayDay)
+				if err != nil {
+					log.Printf("⚠️ Wialon auto-backfill договора %d: %v", contractID, err)
+					return
+				}
+				log.Printf("✅ Wialon auto-backfill договора %d: создано %d, провалов %d [%s..%s)",
+					contractID, n, failedDays, startDay.Format("2006-01-02"), todayDay.Format("2006-01-02"))
+			}()
+		}
+	}
 
 	// Убеждаемся, что таблица contract_objects существует перед привязкой объектов
 	if err := ensureContractObjectsTable(tenantDB); err != nil {

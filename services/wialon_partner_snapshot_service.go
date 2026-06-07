@@ -3,6 +3,7 @@ package services
 import (
 	"backend_axenta/database"
 	"backend_axenta/models"
+	"fmt"
 	"log"
 	"strconv"
 	"time"
@@ -198,4 +199,189 @@ func (s *WialonPartnerSnapshotService) GenerateForTenant(tenantDB *gorm.DB, date
 		log.Printf("✅ Wialon снимок: договор %d аккаунт %s — %d/%d объектов (active/total)", c.ID, c.PartnerExternalID, active, total)
 	}
 	return created, nil
+}
+
+// GenerateForContractPeriod — backfill снимков Wialon-партнёрского договора за [from..to].
+//
+// История total per-date берётся из get_statistics recursive=0 на bact-ресурсе ПРЯМОГО дилера.
+// M1-замер (conn 7/8/9, 2026-06-06): recursive=0 на bact дилера = поддеревный avl_unit_total,
+// сходится с forward account_data (gate2 чисто); recursive=1 над-считает x2 (bact уже агрегирует
+// поддерево). active(date) = total(date) − seasonal(now): связь activated == avl_unit − seasonal
+// подтверждена на 12 субъектах с деактивированными (gate1).
+//
+// seasonal заморожен на текущем значении (get_statistics не отдаёт per-date activated/seasonal,
+// только avl_unit_total). → снимок IsEstimated при seasonal>0 (active может дрейфовать на длинных
+// окнах). При seasonal==0 active=total=реальные API-данные → не estimated.
+//
+// Идемпотентно (OnConflict UpdateAll), уважает подтверждённые вручную снимки. Дни пишутся по
+// возрастанию даты, чтобы continuity-guard видел baseline предыдущего дня.
+func (s *WialonPartnerSnapshotService) GenerateForContractPeriod(tenantDB *gorm.DB, contractID uint, from, to time.Time) (created int, failed int, err error) {
+	var c models.Contract
+	if err := tenantDB.First(&c, contractID).Error; err != nil {
+		return 0, 0, fmt.Errorf("договор %d: %w", contractID, err)
+	}
+	if c.ContractType != "partner" || c.PartnerSource != "wialon" || c.PartnerExternalID == "" {
+		return 0, 0, fmt.Errorf("договор %d не Wialon-партнёрский (type=%s source=%s ext=%q)",
+			contractID, c.ContractType, c.PartnerSource, c.PartnerExternalID)
+	}
+	if c.TariffPlanID == nil {
+		return 0, 0, fmt.Errorf("договор %d без тарифа", contractID)
+	}
+	var plan models.BillingPlan
+	if err := s.db.Table("public.billing_plans").Where("id = ?", *c.TariffPlanID).First(&plan).Error; err != nil {
+		return 0, 0, fmt.Errorf("тариф %d: %w", *c.TariffPlanID, err)
+	}
+
+	userID, err := strconv.ParseInt(c.PartnerExternalID, 10, 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("partner_external_id %q не число: %w", c.PartnerExternalID, err)
+	}
+
+	// seasonal(now) = objects_total − objects_active (заморожен) из wialon_account_statuses.
+	// fresh учитываем: total истории — live (get_statistics), а seasonal — из таблицы синка;
+	// если таблица устарела (>24ч), seasonal на старых данных → needs_review (паритет forward).
+	totalNow, activeNow, fresh, ok := s.aggregateAccount(c.PartnerConnectionID, c.PartnerExternalID)
+	if !ok {
+		return 0, 0, fmt.Errorf("аккаунт %s не найден в wialon_account_statuses", c.PartnerExternalID)
+	}
+	seasonalNow := totalNow - activeNow
+	if seasonalNow < 0 {
+		seasonalNow = 0
+	}
+
+	// Коннект + login в Wialon.
+	var conn models.WialonConnection
+	if err := s.db.First(&conn, c.PartnerConnectionID).Error; err != nil {
+		return 0, 0, fmt.Errorf("коннект %d: %w", c.PartnerConnectionID, err)
+	}
+	ws := NewWialonService()
+	ss := NewWialonStatsService()
+	hs := NewWialonHistoryService(s.db, ws, ss)
+	login, err := ws.LoginWithHost(conn.Host, conn.Token)
+	if err != nil {
+		return 0, 0, fmt.Errorf("login conn %d: %w", conn.ID, err)
+	}
+	defer func() { _ = ws.LogoutWithHost(conn.Host, login.Eid) }()
+	apiURL := conn.Host + "/wialon/ajax.html"
+
+	bactRes, err := ss.ResolveBactForUser(conn.Host, login.Eid, userID)
+	if err != nil || bactRes == 0 {
+		return 0, 0, fmt.Errorf("resolve bact user=%d: %v (bact=%d)", userID, err, bactRes)
+	}
+
+	// get_statistics recursive=0 → avl_unit_total per-date (M1: НЕ recursive=1).
+	stats, err := hs.GetStatistics(apiURL, login.Eid, bactRes, from, to)
+	if err != nil {
+		return 0, 0, fmt.Errorf("get_statistics(bact=%d): %w", bactRes, err)
+	}
+	totalByDate := make(map[string]int, len(stats))
+	for _, st := range stats {
+		k := time.Unix(st.Timestamp, 0).UTC().Format("2006-01-02")
+		totalByDate[k] = st.UnitTotal
+	}
+
+	// Codex H5: партнёр должен быть ПРЯМЫМ дилером — recursive=0 на bact даёт его поддерево.
+	// Если external_id указывает на вложенного субдилера, поддерево не то что ждёт биллинг →
+	// помечаем снимки SourceWarn (→ needs_review), не авто-биллим сомнительное.
+	baseWarn := ""
+	if !fresh {
+		baseWarn = "wialon stats устарели (sync не обновлял аккаунт >24ч) — seasonal на устаревших данных"
+		log.Printf("⚠️ Wialon backfill договор %d: stats аккаунта %s устарели → needs_review", c.ID, c.PartnerExternalID)
+	}
+	var isDirect bool
+	// Codex D2: проверяем .Error — строку уже подтвердил aggregateAccount (ok=true), поэтому
+	// ошибка тут транзиентная; не штрафуем ложным needs_review. Warn только при ПОДТВЕРЖДЁННОМ
+	// not-direct (запрос прошёл, is_direct_dealer=false).
+	if e := s.db.Table("public.wialon_account_statuses").
+		Select("is_direct_dealer").
+		Where("connection_id = ? AND wialon_user_id = ?", c.PartnerConnectionID, userID).
+		Scan(&isDirect).Error; e != nil {
+		log.Printf("⚠️ Wialon backfill договор %d: чтение is_direct_dealer: %v (warn пропущен)", c.ID, e)
+	} else if !isDirect {
+		if baseWarn != "" {
+			baseWarn += "; "
+		}
+		baseWarn += "партнёр не прямой дилер (recursive=0 покрывает лишь его поддерево)"
+		log.Printf("⚠️ Wialon backfill договор %d: аккаунт %s не is_direct_dealer → needs_review", c.ID, c.PartnerExternalID)
+	}
+
+	// Codex C2/H6: backfill пишет ТОЛЬКО прошлое. Сегодняшним днём владеет forward-cron
+	// (account_data) — иначе гонка last-writer на ключе (contract,today) и флап verify_status.
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+
+	var lastTotal int
+	haveAnchor := false
+	for d := from; !d.After(to); d = d.AddDate(0, 0, 1) {
+		day := time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, time.UTC)
+		if !day.Before(today) {
+			break // сегодня и будущее — не наши (forward-cron); даты по возрастанию → break
+		}
+		key := day.Format("2006-01-02")
+
+		// Codex C1: has=true (API вернул точку, даже UnitTotal=0 — реальный простой) → доверяем
+		// значению, не подменяем carry. Carry только на gap (has=false): API день не вернул.
+		total, has := totalByDate[key]
+		if has {
+			lastTotal = total
+			haveAnchor = true
+		} else {
+			if !haveAnchor {
+				continue // gap до первой known-точки — аккаунт ещё не существовал, zero-снимок не пишем
+			}
+			total = lastTotal // gap после данных — несём последний known (день всё равно estimated)
+		}
+
+		active := total - seasonalNow
+		if active < 0 {
+			active = 0
+		}
+
+		// Подтверждённый вручную снимок заморожен — не перезатираем (pre-check, паритет forward-cron).
+		if partnerSnapshotIsApproved(tenantDB, "wialon", c.PartnerConnectionID, c.PartnerExternalID, c.ID, day) {
+			continue
+		}
+
+		snap := models.PartnerDailySnapshot{
+			AdminAccountID:       c.AdminAccountID,
+			CompanyID:            c.CompanyID,
+			ContractID:           c.ID,
+			SnapshotDate:         day,
+			PartnerCompanyID:     0,
+			PartnerSource:        "wialon",
+			ConnectionID:         c.PartnerConnectionID,
+			PartnerExternalID:    c.PartnerExternalID,
+			TariffPlanID:         plan.ID,
+			MonthlyPrice:         plan.Price,
+			TotalObjectsCount:    total,
+			ActiveObjectsCount:   active,
+			DiscountType:         c.DiscountType,
+			DiscountPercent:      c.GetDiscountPercent(active),
+			DiscountFixed:        c.GetDiscountFixed(),
+			Status:               "completed",
+			VerifySecondaryCount: -1,
+			// Codex H4: ЛЮБОЙ реконструированный день — estimated (avl_unit_total реален per-date,
+			// но seasonal заморожен на сегодня → active может дрейфовать; gap-дни — carry-догадка).
+			// estimated не авто-списывается billing'ом → оператор подтверждает прошлые периоды.
+			IsEstimated: true,
+			SourceWarn:  baseWarn,
+			Notes:       "Wialon backfill (M2): get_statistics recursive=0 avl_unit_total, active=total−seasonal(now), estimated",
+		}
+		if e := tenantDB.Clauses(clause.OnConflict{
+			Columns: []clause.Column{
+				{Name: "partner_source"}, {Name: "connection_id"}, {Name: "partner_external_id"},
+				{Name: "contract_id"}, {Name: "snapshot_date"},
+			},
+			UpdateAll: true,
+		}).Create(&snap).Error; e != nil {
+			log.Printf("⚠️ Wialon backfill договор %d %s: %v", c.ID, key, e)
+			failed++ // Codex M8: частичные провалы видимы вызывающему, не молчим
+			continue
+		}
+		created++
+	}
+
+	log.Printf("✅ Wialon backfill договор %d (%s): создано %d, провалов %d [%s..%s), seasonal(now)=%d direct=%v",
+		c.ID, c.PartnerExternalID, created, failed, from.Format("2006-01-02"), today.Format("2006-01-02"),
+		seasonalNow, isDirect)
+	return created, failed, nil
 }
