@@ -37,7 +37,8 @@ func NewSkifPartnerSnapshotService(db *gorm.DB) *SkifPartnerSnapshotService {
 func (s *SkifPartnerSnapshotService) Start() error {
 	c := cron.New(cron.WithLocation(time.UTC), cron.WithChain(cron.Recover(cron.DefaultLogger)))
 	_, err := c.AddFunc("45 0 * * *", func() {
-		yesterday := time.Now().UTC()
+		// Снимок за ВЧЕРА — завершившийся день (сегодня ещё идёт, биллить нельзя). N=08.06→07.06.
+		yesterday := time.Now().UTC().AddDate(0, 0, -1)
 		if _, e := s.GenerateForAllTenants(yesterday); e != nil {
 			log.Printf("⚠️ SKIF partner snapshot cron: %v", e)
 		}

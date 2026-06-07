@@ -99,8 +99,9 @@ func NewPartnerSnapshotService() *PartnerSnapshotService {
 func (s *PartnerSnapshotService) CreateDailySnapshots() error {
 	log.Printf("📸 Начинаем создание ежедневных снимков партнерских договоров...")
 
-	// Дата снимка - начало текущего дня в UTC
-	now := time.Now().UTC()
+	// Дата снимка — ВЧЕРА (завершившийся день; сегодня ещё идёт, биллить незавершённый нельзя).
+	// N=08.06 00:30 → снимок 07.06. account_data на 00:30 ≈ конец вчера.
+	now := time.Now().UTC().AddDate(0, 0, -1)
 	snapshotDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 
 	log.Printf("📅 Дата снимка: %s", snapshotDate.Format("2006-01-02"))

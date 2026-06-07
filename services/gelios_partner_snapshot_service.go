@@ -45,8 +45,9 @@ func NewGeliosPartnerSnapshotService(db *gorm.DB) *GeliosPartnerSnapshotService 
 func (s *GeliosPartnerSnapshotService) Start() error {
 	c := cron.New(cron.WithLocation(time.UTC), cron.WithChain(cron.Recover(cron.DefaultLogger)))
 	_, err := c.AddFunc("55 0 * * *", func() {
-		today := time.Now().UTC()
-		if _, e := s.GenerateForAllTenants(today); e != nil {
+		// Снимок за ВЧЕРА — завершившийся день (сегодня ещё идёт, биллить нельзя). N=08.06→07.06.
+		yesterday := time.Now().UTC().AddDate(0, 0, -1)
+		if _, e := s.GenerateForAllTenants(yesterday); e != nil {
 			log.Printf("⚠️ GELIOS partner snapshot cron: %v", e)
 		}
 	})
