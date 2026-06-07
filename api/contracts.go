@@ -2253,7 +2253,7 @@ contractCreated:
 					return
 				}
 				wps := services.NewWialonPartnerSnapshotService(database.DB)
-				n, failedDays, err := wps.GenerateForContractPeriod(tdb, contractID, startDay, todayDay)
+				n, failedDays, err := wps.GenerateForContractPeriod(tdb, contractID, startDay, todayDay, false)
 				if err != nil {
 					log.Printf("⚠️ Wialon auto-backfill договора %d: %v", contractID, err)
 					return

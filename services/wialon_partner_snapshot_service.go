@@ -61,11 +61,16 @@ func NewWialonPartnerSnapshotService(db *gorm.DB) *WialonPartnerSnapshotService 
 const wialonStatsStaleAfter = 24 * time.Hour
 
 // Start запускает daily-cron (00:50 UTC — после SKIF 00:45, до billing 01:00).
+// Пишет снимок за ВЧЕРА (день N-1, только что завершившийся) — сегодняшний день ещё идёт,
+// его биллить нельзя. На N=08.06 00:50 → снимок 07.06. Плюс fillForwardGaps добирает старые дыры.
 func (s *WialonPartnerSnapshotService) Start() error {
-	c := cron.New(cron.WithLocation(time.UTC), cron.WithChain(cron.Recover(cron.DefaultLogger)))
+	// SkipIfStillRunning (Codex): не запускать новый прогон, пока идёт предыдущий (gap-fill
+	// может затянуться) — иначе перекрытие → last-writer-wins на upsert.
+	c := cron.New(cron.WithLocation(time.UTC), cron.WithChain(
+		cron.SkipIfStillRunning(cron.DefaultLogger), cron.Recover(cron.DefaultLogger)))
 	_, err := c.AddFunc("50 0 * * *", func() {
-		today := time.Now().UTC()
-		if _, e := s.GenerateForAllTenants(today); e != nil {
+		yesterday := time.Now().UTC().AddDate(0, 0, -1)
+		if _, e := s.GenerateForAllTenants(yesterday); e != nil {
 			log.Printf("⚠️ Wialon partner snapshot cron: %v", e)
 		}
 	})
@@ -147,6 +152,12 @@ func (s *WialonPartnerSnapshotService) GenerateForTenant(tenantDB *gorm.DB, date
 	created := 0
 	for i := range contracts {
 		c := &contracts[i]
+		// Gap-aware: добрать пропущенные прошлые дни [last_snapshot+1 .. вчера] через
+		// get_statistics (smart-gate) ДО записи сегодня. Пропуски возникают, если день не записан
+		// кроном (сервер лежал в 00:50 / договор создан в середине дня после крона) — без добора
+		// день остаётся вечной дырой. GenerateForContractPeriod сам уважает срок и smart-gate.
+		s.fillForwardGaps(tenantDB, c, day)
+
 		// Энфорс срока договора: не пишем снимок вне [start_date, end_date] (end_date NULL = open).
 		if !c.IsActiveOn(day) {
 			continue
@@ -223,6 +234,50 @@ func (s *WialonPartnerSnapshotService) GenerateForTenant(tenantDB *gorm.DB, date
 	return created, nil
 }
 
+// fillForwardGaps — gap-aware добор: восстанавливает ЛЮБЫЕ пропущенные дни договора в окне
+// [start_date .. min(вчера, end_date)] через get_statistics (smart-gate). Триггерится из daily-
+// крона ПЕРЕД записью сегодня. Сравнивает фактическое число снимков с ожидаемым; полно → no-op
+// (get_statistics не дёргается). Есть дыра (хвост ИЛИ интерьер — лежал крон / договор создан
+// после 00:50 / пропущенный день) → перезаливает весь период (идемпотентно). Самозалечивание.
+func (s *WialonPartnerSnapshotService) fillForwardGaps(tenantDB *gorm.DB, c *models.Contract, snapDay time.Time) {
+	if c.StartDate == nil || c.TariffPlanID == nil || c.PartnerExternalID == "" {
+		return
+	}
+	startDay := time.Date(c.StartDate.Year(), c.StartDate.Month(), c.StartDate.Day(), 0, 0, 0, 0, time.UTC)
+	// snapDay = день, который пишет forward-путь (вчера). Дыры добираем СТРОГО до него, чтобы не
+	// пересекаться с forward-записью snapDay (его account_data пишет цикл отдельно).
+	upper := snapDay.AddDate(0, 0, -1)
+	if c.EndDate != nil {
+		ed := time.Date(c.EndDate.Year(), c.EndDate.Month(), c.EndDate.Day(), 0, 0, 0, 0, time.UTC)
+		if ed.Before(upper) {
+			upper = ed // договор закончился раньше — ожидаем дни только до end_date
+		}
+	}
+	if startDay.After(upper) {
+		return // прошлого in-period окна нет
+	}
+
+	expected := int64(upper.Sub(startDay).Hours()/24) + 1
+	var actual int64
+	tenantDB.Table("partner_daily_snapshots").
+		Where("partner_source = ? AND connection_id = ? AND partner_external_id = ? AND contract_id = ? AND deleted_at IS NULL",
+			"wialon", c.PartnerConnectionID, c.PartnerExternalID, c.ID).
+		Where("snapshot_date >= ? AND snapshot_date <= ?", startDay, upper).
+		Count(&actual)
+	if actual >= expected {
+		return // дыр нет — не дёргаем get_statistics (норма каждого дня)
+	}
+
+	n, failed, err := s.GenerateForContractPeriod(tenantDB, c.ID, startDay, upper, true) // gapOnly
+	if err != nil {
+		log.Printf("⚠️ Wialon gap-fill договор %d [%s..%s]: %v",
+			c.ID, startDay.Format("2006-01-02"), upper.Format("2006-01-02"), err)
+		return
+	}
+	log.Printf("🩹 Wialon gap-fill договор %d: было %d/%d, добор %d (провалов %d) [%s..%s]",
+		c.ID, actual, expected, n, failed, startDay.Format("2006-01-02"), upper.Format("2006-01-02"))
+}
+
 // GenerateForContractPeriod — backfill снимков Wialon-партнёрского договора за [from..to].
 //
 // История total per-date берётся из get_statistics recursive=0 на bact-ресурсе ПРЯМОГО дилера.
@@ -237,7 +292,9 @@ func (s *WialonPartnerSnapshotService) GenerateForTenant(tenantDB *gorm.DB, date
 //
 // Идемпотентно (OnConflict UpdateAll), уважает подтверждённые вручную снимки. Дни пишутся по
 // возрастанию даты, чтобы continuity-guard видел baseline предыдущего дня.
-func (s *WialonPartnerSnapshotService) GenerateForContractPeriod(tenantDB *gorm.DB, contractID uint, from, to time.Time) (created int, failed int, err error) {
+// gapOnly=true: пишем ТОЛЬКО дни без существующего (non-deleted) снимка — для gap-fill, чтобы
+// одна дыра не перезатёрла весь период (Codex#1). gapOnly=false: перезалив всего (manual «за период»).
+func (s *WialonPartnerSnapshotService) GenerateForContractPeriod(tenantDB *gorm.DB, contractID uint, from, to time.Time, gapOnly bool) (created int, failed int, err error) {
 	var c models.Contract
 	if err := tenantDB.First(&c, contractID).Error; err != nil {
 		return 0, 0, fmt.Errorf("договор %d: %w", contractID, err)
@@ -306,6 +363,21 @@ func (s *WialonPartnerSnapshotService) GenerateForContractPeriod(tenantDB *gorm.
 		}
 	}
 
+	// gapOnly (Codex#1): даты с уже существующим non-deleted снимком — НЕ перезаписываем
+	// (одна дыра не должна перетереть весь период). deleted_at IS NULL (Codex#2: soft-deleted
+	// не маскируют дыру — raw Table() обходит default-scope GORM).
+	existingDates := map[string]bool{}
+	if gapOnly {
+		var dates []time.Time
+		tenantDB.Table("partner_daily_snapshots").
+			Where("partner_source = ? AND connection_id = ? AND partner_external_id = ? AND contract_id = ? AND deleted_at IS NULL AND snapshot_date >= ? AND snapshot_date <= ?",
+				"wialon", c.PartnerConnectionID, c.PartnerExternalID, c.ID, from, to).
+			Pluck("snapshot_date", &dates)
+		for _, d := range dates {
+			existingDates[d.UTC().Format("2006-01-02")] = true
+		}
+	}
+
 	// Codex#6: согласованность текущих данных. activeNow>totalNow → seasonal клемпнут в 0 и
 	// «структурно точно» стало бы ложным → авто-verify запрещён (данные синка противоречивы).
 	consistentNow := totalNow >= activeNow
@@ -353,6 +425,9 @@ func (s *WialonPartnerSnapshotService) GenerateForContractPeriod(tenantDB *gorm.
 			continue
 		}
 		key := day.Format("2006-01-02")
+		if gapOnly && existingDates[key] {
+			continue // день уже есть (non-deleted) — gap-fill не перезаписывает (Codex#1)
+		}
 
 		// Codex C1: has=true (API вернул точку, даже UnitTotal=0 — реальный простой) → доверяем
 		// значению, не подменяем carry. Carry только на gap (has=false): API день не вернул.

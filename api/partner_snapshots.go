@@ -934,7 +934,7 @@ func GeneratePartnerSnapshotsForPeriod(c *gin.Context) {
 	// active=total−seasonal(now), снимки IsEstimated при seasonal>0.
 	if contract.PartnerSource == "wialon" {
 		wps := services.NewWialonPartnerSnapshotService(database.DB)
-		n, failedDays, werr := wps.GenerateForContractPeriod(db, contract.ID, startDate, endDate)
+		n, failedDays, werr := wps.GenerateForContractPeriod(db, contract.ID, startDate, endDate, false)
 		if werr != nil {
 			log.Printf("❌ Wialon backfill договора %d: %v", contract.ID, werr)
 			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": werr.Error()})
