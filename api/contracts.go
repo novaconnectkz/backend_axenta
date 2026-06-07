@@ -1512,6 +1512,13 @@ func CreateContract(c *gin.Context) {
 		if rawRequest.PartnerSource == "" {
 			rawRequest.PartnerSource = "axenta"
 		}
+		// Канонизация: пикер партнёра берёт source из /unified/accounts, где для wialon он =
+		// display-label "WL(имя)"/"WH(имя)" (unified_accounts.go:565 — нужен для wl/wh фильтра
+		// экспорта аккаунтов). Биллинг-пайплайн (forward-крон/period/backfill) матчит строго
+		// "wialon" → канонизируем здесь, иначе договор «невидим» (skif/gelios уже канонично).
+		if strings.HasPrefix(rawRequest.PartnerSource, "WL(") || strings.HasPrefix(rawRequest.PartnerSource, "WH(") {
+			rawRequest.PartnerSource = "wialon"
+		}
 
 		if rawRequest.PartnerSource == "axenta" {
 			// Axenta: ключ партнёра = partner_company_id (как раньше).
