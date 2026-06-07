@@ -3,6 +3,7 @@ package services
 import (
 	"backend_axenta/database"
 	"backend_axenta/models"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -126,7 +127,7 @@ func (s *WialonPartnerSnapshotService) GenerateForAllTenants(date time.Time) (in
 		if tenantDB == nil {
 			continue
 		}
-		n, err := s.GenerateForTenant(tenantDB, date)
+		n, err := s.GenerateForTenant(tenantDB, company.ID, date)
 		if err != nil {
 			log.Printf("⚠️ Wialon partner snapshots tenant %d: %v", company.ID, err)
 			continue
@@ -139,7 +140,9 @@ func (s *WialonPartnerSnapshotService) GenerateForAllTenants(date time.Time) (in
 }
 
 // GenerateForTenant — снимки за date для active Wialon-партнёрских договоров тенанта.
-func (s *WialonPartnerSnapshotService) GenerateForTenant(tenantDB *gorm.DB, date time.Time) (int, error) {
+// companyID — id тенанта (public.companies): нужен для прохода по дилерам БЕЗ договора
+// (connections + дефолт-план), который зеркалит Axenta (см. generateNoContractDealers).
+func (s *WialonPartnerSnapshotService) GenerateForTenant(tenantDB *gorm.DB, companyID uint, date time.Time) (int, error) {
 	var contracts []models.Contract
 	if err := tenantDB.
 		Where("contract_type = ? AND status = ? AND partner_source = ?", "partner", "active", "wialon").
@@ -231,7 +234,126 @@ func (s *WialonPartnerSnapshotService) GenerateForTenant(tenantDB *gorm.DB, date
 		created++
 		log.Printf("✅ Wialon снимок: договор %d аккаунт %s — %d/%d объектов (active/total)", c.ID, c.PartnerExternalID, active, total)
 	}
+
+	// Дилеры БЕЗ договора — ориентир по дефолт-тарифу (паритет с Axenta). Не биллится.
+	created += s.generateNoContractDealers(tenantDB, companyID, contracts, day)
 	return created, nil
+}
+
+// generateNoContractDealers пишет снимки-«ориентиры» для прямых Wialon-дилеров,
+// у которых НЕТ активного партнёрского договора на день — чтобы они были видны в
+// справочнике снимков (оранжевое «без договора», подсветка) так же, как Axenta-партнёры
+// без договора. Стоимость считается по ДЕФОЛТНОМУ тарифу тенанта (как ориентир) с
+// contract_id=0 — в биллинг такой снимок НЕ идёт (billing всегда фильтрует contract.ID>0).
+//
+// Скоуп: только is_direct_dealer (прямые под интеграционной у/з) — дилеры-дилеров не
+// плодим (паритет с дропдауном договоров и applyDirectPartnerFilter в списке).
+func (s *WialonPartnerSnapshotService) generateNoContractDealers(
+	tenantDB *gorm.DB, companyID uint, contracts []models.Contract, day time.Time,
+) int {
+	// 1) Дефолт-план тенанта (зеркало Axenta: последний active). Fallback 70₽ ТОЛЬКО
+	//    когда плана нет (ErrRecordNotFound); реальная ошибка БД (timeout/SQL) → НЕ пишем
+	//    ориентиры с выдуманной ценой, выходим (Codex #3: не маскировать сбой как 70₽).
+	var defaultPlan models.BillingPlan
+	if err := s.db.Table("public.billing_plans").
+		Where("is_active = ? AND admin_account_id = ?", true, companyID).
+		Order("created_at DESC").First(&defaultPlan).Error; err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("⚠️ Wialon ориентиры: ошибка чтения billing_plans (company %d): %v — пропуск", companyID, err)
+			return 0
+		}
+		defaultPlan = models.BillingPlan{Name: "Базовый партнёрский план", Price: decimal.NewFromFloat(70), BillingPeriod: "monthly", AdminAccountID: companyID}
+	}
+
+	// 2) Множество (connID|extID) дилеров, у которых УЖЕ есть договор, активный на день —
+	//    их пропускаем (биллящаяся строка договора имеет приоритет, без дублей в справочнике).
+	contracted := make(map[string]bool, len(contracts))
+	for i := range contracts {
+		c := &contracts[i]
+		if c.IsActiveOn(day) {
+			contracted[fmt.Sprintf("%d|%s", c.PartnerConnectionID, c.PartnerExternalID)] = true
+		}
+	}
+
+	// 3) Connections тенанта (public, keyed company_id).
+	var connIDs []uint
+	if err := s.db.Table("public.wialon_connections").
+		Where("company_id = ? AND deleted_at IS NULL", companyID).
+		Pluck("id", &connIDs).Error; err != nil {
+		log.Printf("⚠️ Wialon ориентиры: ошибка чтения connections (company %d): %v — пропуск", companyID, err)
+		return 0
+	}
+	if len(connIDs) == 0 {
+		return 0
+	}
+
+	// 4) Прямые дилеры по этим connections.
+	var dealers []models.WialonAccountStatus
+	if err := s.db.Table("public.wialon_account_statuses").
+		Where("connection_id IN ? AND is_direct_dealer = ? AND is_active = ?", connIDs, true, true).
+		Find(&dealers).Error; err != nil {
+		log.Printf("⚠️ Wialon ориентиры: ошибка чтения дилеров (company %d): %v — пропуск", companyID, err)
+		return 0
+	}
+
+	created := 0
+	for i := range dealers {
+		d := &dealers[i]
+		extID := fmt.Sprintf("%d", d.WialonUserID)
+		if contracted[fmt.Sprintf("%d|%s", d.ConnectionID, extID)] {
+			continue // есть договор → не дублируем «ориентиром»
+		}
+		// Подтверждённый вручную «без договора» снимок заморожен — не перезатираем.
+		if partnerSnapshotIsApproved(tenantDB, "wialon", d.ConnectionID, extID, 0, day) {
+			continue
+		}
+
+		// Устаревшие stats (sync застрял) → needs_review (не показываем молча старое как точное).
+		sourceWarn := ""
+		if time.Since(d.LastCollectedAt) > wialonStatsStaleAfter {
+			sourceWarn = "wialon stats устарели (sync не обновлял аккаунт > 24ч)"
+		}
+
+		snap := models.PartnerDailySnapshot{
+			AdminAccountID:     companyID,
+			CompanyID:          companyID,
+			ContractID:         0, // Нет договора — ориентир, в биллинг не идёт
+			SnapshotDate:       day,
+			PartnerCompanyID:   0,
+			PartnerSource:      "wialon",
+			ConnectionID:       d.ConnectionID,
+			PartnerExternalID:  extID,
+			TariffPlanID:       defaultPlan.ID,
+			MonthlyPrice:       defaultPlan.Price,
+			TotalObjectsCount:  d.ObjectsTotal,
+			ActiveObjectsCount: d.ObjectsActive,
+			DiscountType:       "none", // без договора — без скидок
+			DiscountPercent:    decimal.Zero,
+			DiscountFixed:      decimal.Zero,
+			Status:             "completed",
+			VerifySecondaryCount: -1,
+			SourceWarn:           sourceWarn,
+			Notes:                "Wialon дилер БЕЗ договора: ориентир по дефолт-тарифу (в биллинг не идёт)",
+		}
+
+		// BeforeCreate досчитает daily_cost + verify_status. OnConflict по тому же
+		// составному ключу (contract_id=0 не пересекается с договорными строками).
+		if err := tenantDB.Clauses(clause.OnConflict{
+			Columns: []clause.Column{
+				{Name: "partner_source"}, {Name: "connection_id"}, {Name: "partner_external_id"},
+				{Name: "contract_id"}, {Name: "snapshot_date"},
+			},
+			UpdateAll: true,
+		}).Create(&snap).Error; err != nil {
+			log.Printf("⚠️ Wialon снимок-ориентир дилера %s (conn %d): %v", extID, d.ConnectionID, err)
+			continue
+		}
+		created++
+	}
+	if created > 0 {
+		log.Printf("✅ Wialon снимки-ориентиры (без договора): создано/обновлено %d за %s", created, day.Format("2006-01-02"))
+	}
+	return created
 }
 
 // fillForwardGaps — gap-aware добор: восстанавливает ЛЮБЫЕ пропущенные дни договора в окне

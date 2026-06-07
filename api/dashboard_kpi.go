@@ -185,6 +185,7 @@ func sumBilledFromSnapshots(tenantDB *gorm.DB, from, to time.Time) decimal.Decim
 		Select("COALESCE(SUM(daily_cost), 0) as sum").
 		Where("snapshot_date >= ? AND snapshot_date < ?", from, to).
 		Where("status = ?", "completed").
+		Where("contract_id > 0"). // только биллящиеся; cid=0 = «без договора» ориентир (не деньги)
 		Scan(&row)
 	return row.Sum
 }
@@ -213,6 +214,7 @@ func sumBilledPerSource(tenantDB *gorm.DB, from, to time.Time) []SourceBreakdown
 		Select("partner_source, COALESCE(SUM(daily_cost), 0) AS sum").
 		Where("snapshot_date >= ? AND snapshot_date < ?", from, to).
 		Where("status = ?", "completed").
+		Where("contract_id > 0"). // только биллящиеся; cid=0 = «без договора» ориентир (не деньги)
 		Where("partner_source <> ''").
 		Group("partner_source").
 		Scan(&rows).Error

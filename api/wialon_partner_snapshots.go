@@ -30,9 +30,10 @@ func GenerateWialonPartnerSnapshots(c *gin.Context) {
 	}
 	tenantDB := tenantDBVal.(*gorm.DB)
 
+	companyID := middleware.GetCompanyID(c)
 	svc := services.NewWialonPartnerSnapshotService(database.DB)
 	// Снимок за ВЧЕРА — последний завершившийся день (сегодня ещё идёт, биллить нельзя).
-	created, err := svc.GenerateForTenant(tenantDB, time.Now().UTC().AddDate(0, 0, -1))
+	created, err := svc.GenerateForTenant(tenantDB, companyID, time.Now().UTC().AddDate(0, 0, -1))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": err.Error()})
 		return

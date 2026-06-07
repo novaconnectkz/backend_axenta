@@ -2260,6 +2260,31 @@ contractCreated:
 				}
 				log.Printf("✅ Wialon auto-backfill договора %d: создано %d, провалов %d [%s..%s)",
 					contractID, n, failedDays, startDay.Format("2006-01-02"), todayDay.Format("2006-01-02"))
+
+				// Релинк: бэкфилл создал договорные строки для активных дней договора;
+				// удаляем дублирующие «без договора» (contract_id=0) того же дилера ТОЛЬКО
+				// в окне действия договора, чтобы в справочнике/объектных KPI дилер не
+				// считался дважды. Орфаны ВНЕ окна (до start_date или после end_date)
+				// сохраняем — там договора действительно нет. Верхнюю границу клемпим до
+				// end_date (если задан и раньше today), иначе до today. manual_approved не трогаем.
+				upperDel := todayDay
+				if contract.EndDate != nil {
+					ed := *contract.EndDate
+					endDay := time.Date(ed.Year(), ed.Month(), ed.Day(), 0, 0, 0, 0, time.UTC)
+					if endDay.Before(upperDel) {
+						upperDel = endDay
+					}
+				}
+				del := tdb.Where(
+					"partner_source = ? AND connection_id = ? AND partner_external_id = ? AND contract_id = 0 AND snapshot_date >= ? AND snapshot_date <= ? AND verify_status <> ? AND deleted_at IS NULL",
+					"wialon", contract.PartnerConnectionID, contract.PartnerExternalID, startDay, upperDel, models.VerifyStatusApproved,
+				).Delete(&models.PartnerDailySnapshot{})
+				if del.Error != nil {
+					log.Printf("⚠️ Wialon релинк-очистка орфанов договора %d: %v", contractID, del.Error)
+				} else if del.RowsAffected > 0 {
+					log.Printf("✅ Wialon релинк: удалено %d орфан-снимков «без договора» дилера %s в окне договора %d",
+						del.RowsAffected, contract.PartnerExternalID, contractID)
+				}
 			}()
 		}
 	}
