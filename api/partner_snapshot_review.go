@@ -450,3 +450,177 @@ func ApprovePartnerSnapshot(c *gin.Context) {
 		"id":      id,
 	})
 }
+
+// ApprovePartnerSnapshotsBulk — массовое подтверждение всех заблокированных (needs_review/
+// estimated) снимков по фильтрам (source/contract_id/период/q — те же что в списке, чтобы
+// «Подтвердить всё» совпадало с видимым). Атомарный UPDATE → manual_approved (WHERE forces
+// статус → гонка с cron безопасна: пересчитанные verified/уже approved не трогаются).
+// POST /api/auth/partner-snapshots/approve-bulk
+func ApprovePartnerSnapshotsBulk(c *gin.Context) {
+	if _, err := middleware.GetAdminAccountID(c); err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
+	db, ok := partnerSnapshotTenantDB(c)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "Tenant DB не найдена"})
+		return
+	}
+	// Codex C1: массовое подтверждение (деньги, скопом) — только admin/superadmin.
+	if !requireContractAssignAccess(c) {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "массовое подтверждение доступно только admin/superadmin"})
+		return
+	}
+
+	var body struct {
+		Source     string `json:"source"`
+		ContractID uint   `json:"contract_id"`
+		StartDate  string `json:"start_date"`
+		EndDate    string `json:"end_date"`
+		Q          string `json:"q"`
+		Comment    string `json:"comment"`
+		ApproveAll bool   `json:"approve_all"` // явное согласие на тенант-wide (без фильтров)
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		// Codex C2: НЕ глотаем ошибку — кривой JSON не должен молча расшириться до «всех».
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "неверный формат запроса"})
+		return
+	}
+
+	var userID uint
+	if v, ok := c.Get("user_id"); ok {
+		switch t := v.(type) {
+		case uint:
+			userID = t
+		case int:
+			userID = uint(t)
+		case float64:
+			userID = uint(t)
+		}
+	}
+	// Codex H: финансовое одобрение без ответственного актора недопустимо.
+	if userID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "не удалось определить пользователя-подтверждающего"})
+		return
+	}
+
+	// Только заблокированные снимки — форсим в WHERE (race-safe, как в single approve).
+	q := db.Model(&models.PartnerDailySnapshot{}).
+		Where("verify_status IN ?", []string{models.VerifyStatusNeedsRev, models.VerifyStatusEstimated})
+	hasFilter := false
+	if body.Source != "" {
+		q = q.Where("partner_source = ?", body.Source)
+		hasFilter = true
+	}
+	if body.ContractID > 0 {
+		q = q.Where("contract_id = ?", body.ContractID)
+		hasFilter = true
+	}
+	if body.StartDate != "" {
+		// Codex C2: переданная-но-кривая дата → 400, не молчаливое расширение скоупа.
+		t, err := time.Parse("2006-01-02", body.StartDate)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "неверный start_date (YYYY-MM-DD)"})
+			return
+		}
+		q = q.Where("snapshot_date >= ?", t)
+		hasFilter = true
+	}
+	if body.EndDate != "" {
+		t, err := time.Parse("2006-01-02", body.EndDate)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "неверный end_date (YYYY-MM-DD)"})
+			return
+		}
+		q = q.Where("snapshot_date <= ?", t)
+		hasFilter = true
+	}
+	// Поиск по «Договору» (номер/имя партнёра) — зеркало ListPartnerSnapshots, чтобы bulk
+	// совпадал с отфильтрованным видом.
+	if qstr := strings.TrimSpace(body.Q); qstr != "" {
+		like := "%" + qstr + "%"
+		var cids []uint
+		db.Table("contracts").Where("number ILIKE ?", like).Pluck("id", &cids)
+		var axIDs []int64
+		db.Table("axenta_account_snapshots").
+			Where("deleted_at IS NULL AND account_name ILIKE ? COLLATE \"und-x-icu\"", like).
+			Pluck("external_account_id", &axIDs)
+		var skifIDs []string
+		db.Table("public.skif_dealers").
+			Where("name ILIKE ? COLLATE \"und-x-icu\"", like).Pluck("skif_dealer_id", &skifIDs)
+		var wlIDs []int64
+		db.Table("public.wialon_account_statuses").
+			Where("name ILIKE ? COLLATE \"und-x-icu\"", like).Pluck("wialon_user_id", &wlIDs)
+		wlStr := make([]string, 0, len(wlIDs))
+		for _, id := range wlIDs {
+			wlStr = append(wlStr, fmt.Sprintf("%d", id))
+		}
+		var gIDs []string
+		db.Table("public.gelios_users").
+			Where("legal_name ILIKE ? COLLATE \"und-x-icu\" OR login ILIKE ? COLLATE \"und-x-icu\"", like, like).
+			Pluck("gelios_user_id", &gIDs)
+		grp := db.Where("contract_id IN ?", cids).
+			Or("partner_company_id IN ?", axIDs).
+			Or("partner_source = ? AND partner_external_id IN ?", "skif", skifIDs).
+			Or("partner_source = ? AND partner_external_id IN ?", "wialon", wlStr).
+			Or("partner_source = ? AND partner_external_id IN ?", "gelios", gIDs)
+		q = q.Where(grp)
+		hasFilter = true
+	}
+
+	// Codex C2/H: без фильтров операция = ВЕСЬ заблокированный биллинг тенанта (скопом обходит
+	// гейт, который мог заблокировать по реальной причине — обнуление/скачок/cross-source).
+	// Требуем явное approve_all=true для тенант-wide, иначе ≥1 фильтр.
+	if !hasFilter && !body.ApproveAll {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status": "error",
+			"error":  "укажите хотя бы один фильтр (source/contract_id/период/q) либо approve_all=true для всего тенанта",
+		})
+		return
+	}
+
+	q = applyDirectPartnerFilter(c, db, q) // только прямые партнёры
+
+	// Сумма под риском ДО апдейта (для отчёта оператору).
+	var agg struct {
+		Cnt int64
+		Sum decimal.Decimal
+	}
+	q.Session(&gorm.Session{}).
+		Select("COUNT(*) as cnt, COALESCE(SUM(daily_cost),0) as sum").Scan(&agg)
+
+	now := time.Now().UTC()
+	note := "массово подтверждено вручную"
+	if body.Comment != "" {
+		note += ": " + body.Comment
+	}
+	res := q.Updates(map[string]interface{}{
+		"verify_status": models.VerifyStatusApproved,
+		"approved_by":   userID,
+		"verified_at":   now,
+		"verify_notes":  gorm.Expr("COALESCE(verify_notes, '') || ?", " | "+note),
+	})
+	if res.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": res.Error.Error()})
+		return
+	}
+
+	audit.LogSuccess(c, "partner_snapshot.manual_approve_bulk", gin.H{
+		"approved_count": res.RowsAffected,
+		"amount_total":   agg.Sum.StringFixed(2),
+		"source":         body.Source,
+		"contract_id":    body.ContractID,
+		"start_date":     body.StartDate,
+		"end_date":       body.EndDate,
+		"q":              body.Q,
+		"approved_by":    userID,
+		"comment":        body.Comment,
+	})
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":         "success",
+		"message":        fmt.Sprintf("Подтверждено снимков: %d (на сумму %s ₽)", res.RowsAffected, agg.Sum.StringFixed(2)),
+		"approved_count": res.RowsAffected,
+		"amount_total":   agg.Sum.InexactFloat64(),
+	})
+}
