@@ -403,6 +403,27 @@ func (c *Contract) IsExpired() bool {
 	return time.Now().After(*c.EndDate)
 }
 
+// IsActiveOn — действует ли договор в дату date (день в UTC) по границам [StartDate, EndDate].
+// nil-граница = открытый конец интервала (партнёрский договор без end_date биллится до явного
+// закрытия). Используется forward-генераторами снимков и биллингом, чтобы не начислять вне
+// срока договора (end_date по умолчанию NULL — фейк-дефолт «конец года» убран).
+func (c *Contract) IsActiveOn(date time.Time) bool {
+	day := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, time.UTC)
+	if c.StartDate != nil {
+		sd := *c.StartDate
+		if day.Before(time.Date(sd.Year(), sd.Month(), sd.Day(), 0, 0, 0, 0, time.UTC)) {
+			return false
+		}
+	}
+	if c.EndDate != nil {
+		ed := *c.EndDate
+		if day.After(time.Date(ed.Year(), ed.Month(), ed.Day(), 0, 0, 0, 0, time.UTC)) {
+			return false
+		}
+	}
+	return true
+}
+
 // IsExpiringSoon проверяет, истекает ли договор скоро
 func (c *Contract) IsExpiringSoon() bool {
 	if c.EndDate == nil {

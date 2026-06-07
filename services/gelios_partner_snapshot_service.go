@@ -154,6 +154,10 @@ func (s *GeliosPartnerSnapshotService) GenerateForTenant(tenantDB *gorm.DB, date
 	created := 0
 	for i := range contracts {
 		c := &contracts[i]
+		// Энфорс срока договора: не пишем снимок вне [start_date, end_date] (end_date NULL = open).
+		if !c.IsActiveOn(day) {
+			continue
+		}
 		if c.TariffPlanID == nil {
 			log.Printf("⚠️ GELIOS договор %d без тарифа, пропуск", c.ID)
 			continue

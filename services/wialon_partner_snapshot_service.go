@@ -129,6 +129,10 @@ func (s *WialonPartnerSnapshotService) GenerateForTenant(tenantDB *gorm.DB, date
 	created := 0
 	for i := range contracts {
 		c := &contracts[i]
+		// Энфорс срока договора: не пишем снимок вне [start_date, end_date] (end_date NULL = open).
+		if !c.IsActiveOn(day) {
+			continue
+		}
 		if c.TariffPlanID == nil {
 			log.Printf("⚠️ Wialon договор %d без тарифа, пропуск", c.ID)
 			continue
@@ -315,6 +319,10 @@ func (s *WialonPartnerSnapshotService) GenerateForContractPeriod(tenantDB *gorm.
 		day := time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, time.UTC)
 		if !day.Before(today) {
 			break // сегодня и будущее — не наши (forward-cron); даты по возрастанию → break
+		}
+		// Энфорс срока договора: не реконструируем снимки вне [start_date, end_date].
+		if !c.IsActiveOn(day) {
+			continue
 		}
 		key := day.Format("2006-01-02")
 

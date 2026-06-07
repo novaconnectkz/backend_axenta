@@ -1560,14 +1560,13 @@ func CreateContract(c *gin.Context) {
 		if startDate == nil {
 			startDate = &now
 		}
-		// end_date партнёра ВСЕГДА конец года (как до фичи). Уважение переданного end_date
-		// НЕ вводим: forward-биллинг/снимки верхнюю границу договора не энфорсят (Codex D1),
-		// короткий end_date создал бы рассинхрон без реального обрезания начислений.
-		// Энфорс верхней границы — отдельная задача, вне scope бэкфилла.
-		endOfYear := time.Date(now.Year(), 12, 31, 23, 59, 59, 0, now.Location())
-		endDate = &endOfYear
-
-		log.Printf("📅 Партнерский договор: период с %v по %v (start передан=%v)", *startDate, *endDate, rawRequest.StartDateStr != "")
+		// end_date партнёра по умолчанию NULL (open-ended) — биллится до явного закрытия.
+		// Раньше форсили «конец года создания» → накапливались договоры с истёкшим end_date,
+		// которые на деле ongoing (32/32 в проде = фейк-дефолт). Теперь end_date энфорсится
+		// (billing + снимки через IsActiveOn), поэтому фейк-дефолт убран; явный end_date
+		// уважаем как реальный конец. endDate остаётся nil если не передан.
+		log.Printf("📅 Партнерский договор: период с %v по end=%v (start передан=%v, end передан=%v)",
+			*startDate, endDate, rawRequest.StartDateStr != "", rawRequest.EndDateStr != "")
 	}
 
 	contract := models.Contract{

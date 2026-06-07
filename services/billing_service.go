@@ -386,6 +386,18 @@ func (bs *BillingService) CalculateBillingForPartnerContract(contract *models.Co
 		}
 	}
 
+	// Клемп периода сверху к end_date договора: после окончания договор не биллится.
+	// end_date по умолчанию NULL (open-ended) → клемпа нет; заданный end_date энфорсится.
+	if contract.EndDate != nil {
+		ed := *contract.EndDate
+		endDay := time.Date(ed.Year(), ed.Month(), ed.Day(), 0, 0, 0, 0, time.UTC)
+		if endDay.Before(periodEnd) {
+			log.Printf("📅 Период склемплен к end_date договора %d: %s → %s",
+				contract.ID, periodEnd.Format("2006-01-02"), endDay.Format("2006-01-02"))
+			periodEnd = endDay
+		}
+	}
+
 	// Проверяем, что у договора есть тарифный план
 	if contract.TariffPlanID == nil {
 		return nil, fmt.Errorf("у партнерского договора не указан тарифный план")

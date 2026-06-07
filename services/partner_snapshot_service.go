@@ -125,6 +125,10 @@ func (s *PartnerSnapshotService) CreateDailySnapshots() error {
 	errorCount := 0
 
 	for _, contract := range contracts {
+		// Энфорс срока договора: не пишем снимок вне [start_date, end_date] (end_date NULL = open).
+		if !contract.IsActiveOn(snapshotDate) {
+			continue
+		}
 		if err := s.CreateSnapshotForContract(&contract, snapshotDate); err != nil {
 			log.Printf("❌ Ошибка создания снимка для договора %d: %v", contract.ID, err)
 			errorCount++
