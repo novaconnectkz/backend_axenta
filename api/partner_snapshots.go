@@ -224,6 +224,20 @@ func GetPartnerContractSnapshots(c *gin.Context) {
 		// Если endDate имеет время 23:59:59, то это все еще тот же день
 		endDay := time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 0, 0, 0, 0, time.UTC)
 
+		// Не синтезируем gap-fill за будущие/незавершённые дни: снимок дня N
+		// делается на N+1, поэтому последний день, для которого данные физически
+		// возможны — вчера. Иначе плодим missing_data-строки 0/0/0₽ до конца
+		// периода (см. жалобу: 30-дневный период показывал пустые будущие дни).
+		// Реальные снимки из БД (запрос выше) клемп НЕ трогает — он ограничивает
+		// только синтез виртуальных/missing_data записей в цикле ниже.
+		now := time.Now().UTC()
+		lastCompletedDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -1)
+		if endDay.After(lastCompletedDay) {
+			log.Printf("📅 Клемп gap-fill: endDay %s → %s (не синтезируем будущие дни)",
+				endDay.Format("2006-01-02"), lastCompletedDay.Format("2006-01-02"))
+			endDay = lastCompletedDay
+		}
+
 		// Получаем тарифный план договора
 		var tariffPlan models.BillingPlan
 		publicDB := database.DB.Session(&gorm.Session{})
