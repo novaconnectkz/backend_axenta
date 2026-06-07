@@ -1413,6 +1413,18 @@ type CreateContractRequest struct {
 	ObjectIDs []uint `json:"object_ids"`
 }
 
+// normalizeToUTCDate приводит дату к UTC-полуночи её КАЛЕНДАРНОГО дня (компоненты берутся в
+// зоне самого значения — wall-clock как ввёл юзер, НЕ .UTC().Date()). Нужно, чтобы IsActiveOn
+// (сравнение по UTC-дню) не сдвигал границу договора при offset-таймстемпе (Codex Q4). nil → nil.
+func normalizeToUTCDate(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	y, m, d := t.Date()
+	nd := time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
+	return &nd
+}
+
 // CreateContract создает новый договор
 func CreateContract(c *gin.Context) {
 	adminAccountID, err := middleware.GetAdminAccountID(c)
@@ -1565,6 +1577,14 @@ func CreateContract(c *gin.Context) {
 		// которые на деле ongoing (32/32 в проде = фейк-дефолт). Теперь end_date энфорсится
 		// (billing + снимки через IsActiveOn), поэтому фейк-дефолт убран; явный end_date
 		// уважаем как реальный конец. endDate остаётся nil если не передан.
+
+		// Q4: нормализуем партнёрские start/end к UTC-полуночи КАЛЕНДАРНОГО дня как прислан.
+		// IsActiveOn сравнивает по UTC-дню; offset-таймстемп (напр. 31.12T23:59-05:00) PG хранит
+		// как UTC-instant 01.01 → граница сдвинулась бы на день. .Date() берёт компоненты в зоне
+		// самого значения (wall-clock как ввёл юзер), НЕ .UTC().Date(). Скоуп — только партнёр.
+		startDate = normalizeToUTCDate(startDate)
+		endDate = normalizeToUTCDate(endDate)
+
 		log.Printf("📅 Партнерский договор: период с %v по end=%v (start передан=%v, end передан=%v)",
 			*startDate, endDate, rawRequest.StartDateStr != "", rawRequest.EndDateStr != "")
 	}
